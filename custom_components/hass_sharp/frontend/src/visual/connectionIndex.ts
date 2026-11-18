@@ -207,6 +207,11 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     // the wire it replaces, so the memoised reach of the current graph answers.
     const rewired = () => [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { source: sourceId, target: targetId }]
     if (sourceId === targetId || (hasDataCycle ? closesDataCycle(rewired(), sourceId, targetId) : reach(targetId).has(sourceId))) messages.add(words.ownResult(words.stepName(target, catalog)))
+    // A body wired into an HTTP request whose method sends none (http.body); the method is config, which a wire leaves as it is.
+    if (target.kind === 'http_request' && targetPort === 'body' && input) {
+      const method = typeof target.config.method === 'string' ? target.config.method : 'GET'
+      if (method === 'GET' || method === 'HEAD') messages.add(words.bodyMethod(words.portLabel(dataInputs(target, analysis.ownerOf(target), catalog).body, 'body'), method))
+    }
     if (spec.comparison && input) {
       const resolved = { ...analysis.resolved.get(targetId), [targetPort]: output?.type }
       for (const d of comparisonDiagnostics(target, spec, resolved, catalog))

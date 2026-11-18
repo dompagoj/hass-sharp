@@ -1052,3 +1052,15 @@ it('shows run history tracking a step\'s config does not hold as the entity defi
   })
   expect(toggle.checked).toBe(false)
 })
+
+it('an HTTP request offers its methods and response types by name, and its switches with their labels', async () => {
+  const graph = addNode(createGraph('Plug'), 'http_request', 'get')
+  const { el } = mount(graph, 'get')
+  const options = (id: string) => [...row(el, id)!.querySelectorAll('option')].map(o => o.textContent)
+  await vi.waitFor(() => expect(row(el, 'responseType')).toBeDefined())
+  expect(options('method')).toEqual(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'])
+  expect(options('responseType')).toEqual(['Text', 'JSON object', 'JSON list'])
+  expect(row(el, 'failOnStatus')!.querySelector('label')!.textContent).toBe('Fail on an error status')
+  expect(row(el, 'hideResponse')!.querySelector('label')!.textContent).toBe('Keep the response out of run history')
+  expect(row(el, 'url')).toBeDefined()
+})

@@ -10514,6 +10514,181 @@
           "state of"
         ]
       },
+      "http_request": {
+        "label": "HTTP request",
+        "category": "Data",
+        "description": "Send a request to a web address, such as a device\u0027s own API, and use its answer in later steps.",
+        "minGraphVersion": 5,
+        "config": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+              "HEAD"
+            ],
+            "default": "GET",
+            "label": "Method",
+            "description": "What the request does: GET reads, POST, PUT and PATCH send something, DELETE removes, HEAD asks for the headers only."
+          },
+          "responseType": {
+            "type": "string",
+            "required": true,
+            "enum": [
+              "string",
+              "object",
+              "array"
+            ],
+            "enumLabels": [
+              "Text",
+              "JSON object",
+              "JSON list"
+            ],
+            "default": "string",
+            "label": "Response type",
+            "description": "What the answer is read as: text, or a JSON object or list to take values out of with Get field. An answer of another shape fails the step."
+          },
+          "timeout": {
+            "type": "number",
+            "min": 1,
+            "max": 300,
+            "default": 10,
+            "label": "Timeout",
+            "description": "How many seconds the whole answer may take, from 1 to 300; when the time runs out, the step fails."
+          },
+          "failOnStatus": {
+            "type": "boolean",
+            "default": true,
+            "label": "Fail on an error status",
+            "description": "Fail the step when the answer\u0027s status is not a success (outside 200 to 299), such as 404 for a page that does not exist. Turned off, the step goes on and gives the status."
+          },
+          "hideResponse": {
+            "type": "boolean",
+            "default": false,
+            "label": "Keep the response out of run history",
+            "description": "Show the answer\u0027s body and headers as hidden in run history, and keep them hidden in the steps that use them, as a secret setting is. The status is still shown."
+          }
+        },
+        "inputs": {
+          "url": {
+            "types": [
+              "string"
+            ],
+            "required": true,
+            "label": "URL",
+            "description": "Where to send the request, starting with http:// or https://, such as http://192.168.1.40/rpc/Switch.GetStatus."
+          },
+          "headers": {
+            "types": [
+              "object"
+            ],
+            "required": false,
+            "label": "Headers",
+            "description": "Headers to send, each name with its value, such as Authorization."
+          },
+          "body": {
+            "types": [
+              "string",
+              "object",
+              "array"
+            ],
+            "required": false,
+            "label": "Body",
+            "description": "What to send: text as it is, or an object or list as JSON. A GET or HEAD request sends none."
+          }
+        },
+        "outputs": {
+          "status": {
+            "type": "number",
+            "label": "Status",
+            "description": "The answer\u0027s status code, such as 200."
+          },
+          "body": {
+            "type": "$responseType",
+            "label": "Body",
+            "description": "The answer, as Response type reads it."
+          },
+          "headers": {
+            "type": "object",
+            "label": "Headers",
+            "description": "The answer\u0027s headers, each name in lower case; the values of a header sent more than once are joined with commas."
+          }
+        },
+        "execution": [
+          "next",
+          "error"
+        ],
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "web",
+          "api",
+          "fetch",
+          "rest",
+          "url",
+          "get",
+          "post"
+        ]
+      },
+      "download_file": {
+        "label": "Download file",
+        "category": "Entity",
+        "description": "Download a file this definition needs, such as a model, once: it is kept by its checksum and used again from then on, and a file that does not match its checksum is never kept.",
+        "documents": [
+          "entity"
+        ],
+        "minGraphVersion": 5,
+        "config": {
+          "name": {
+            "type": "string",
+            "label": "File name",
+            "description": "What the file is called on disk, without a folder. Leave empty for the last part of the address."
+          }
+        },
+        "inputs": {
+          "url": {
+            "types": [
+              "string"
+            ],
+            "required": true,
+            "label": "URL",
+            "description": "Where the file is, starting with http:// or https://."
+          },
+          "sha256": {
+            "types": [
+              "string"
+            ],
+            "required": true,
+            "label": "SHA-256 checksum",
+            "description": "The file\u0027s SHA-256 checksum, 64 hexadecimal characters, as its publisher gives it."
+          }
+        },
+        "outputs": {
+          "path": {
+            "type": "string",
+            "label": "Path",
+            "description": "Where the downloaded file is, for the steps that read it."
+          }
+        },
+        "execution": [
+          "next",
+          "error"
+        ],
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "fetch",
+          "model",
+          "firmware",
+          "cache",
+          "checksum"
+        ]
+      },
       "library:shared:global%3A%3ANodeLib.Samples.Describe": {
         "label": "Describe",
         "category": "Fixture",

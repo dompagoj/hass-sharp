@@ -21,7 +21,7 @@ export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: Gr
 export type GraphDocument = 'automation' | 'entity'
 /** `code` names structural kinds (see `diagnosticCodes`), the same in both validators; other diagnostics have none. */
 export interface GraphDiagnostic { nodeId: string | null; message: string; severity: number; inputId?: string; portId?: string; code?: DiagnosticCode }
-export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
+export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumLabels?: string[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
 /**
  * Constraints (enum, pattern, minItems, maxItems, min, max, integer) apply to literal operands only; wires are constrained by type.
  * `connectable: false` marks an input that takes a value only (a Constant's value): it has no pin, and a wire into it is
@@ -692,6 +692,10 @@ export const words = {
   },
   /** A time of day as the daily trigger runs it: 24-hour HH:MM. */
   timeOfDay: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$',
+  /** A web address as an HTTP request or a download takes one: http:// or https://, a host, then anything without a space. */
+  webAddressPattern: '^[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f/?#]+(?:[/?#][^\\x00-\\x20\\x7f]*)?$',
+  /** A SHA-256 checksum: 64 hexadecimal characters, in either case. */
+  checksumPattern: '^[0-9A-Fa-f]{64}$',
   timeOfDayMessage: (label: string) => `${label} must be HH:MM in 24-hour time, from 00:00 to 23:59`,
   /** A Get field path with a ~ that is not ~0 or ~1. */
   pathTilde: 'Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off',
@@ -786,6 +790,12 @@ export const words = {
   },
   /** A Repeat count typed in above the loop's Maximum iterations. */
   repeatCount: (label: string, max: number, maxLabel: string) => `${label} must be at most ${max}, as ${maxLabel} is ${max}`,
+  /** An address typed into an HTTP request or a download that is not a web address. */
+  webAddress: (label: string) => `${label} must start with http:// or https://`,
+  /** A body given to an HTTP request whose method sends none (GET or HEAD). */
+  bodyMethod: (label: string, method: string) => `${label} cannot be sent with ${method}; choose another method or remove it`,
+  /** A download's checksum typed in that is not a SHA-256. */
+  checksum: (label: string) => `${label} must be 64 hexadecimal characters, the file's SHA-256`,
   /** A wire whose value is not visible where it arrives. */
   scopeData: (subject: string) => `${subject} cannot use this value here: it is on the other side of a loop or parallel branch boundary`,
   /** A wire into an input the step (of this kind) does not have; a Constant's value says what to do instead. */
@@ -942,6 +952,7 @@ export const diagnosticCodes = [
   'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.unknownCommand', 'node.document', 'node.singleton', 'root.incoming',
   'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value',
+  'http.url', 'http.body', 'download.checksum',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -1383,6 +1394,28 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
     if (node.kind === 'get_field' && (typeof node.config.pointer !== 'string' || !/^(?:\/(?:[^~]|~[01])*)*$/.test(node.config.pointer)))
       error(node.id, typeof node.config.pointer === 'string' && node.config.pointer.startsWith('/') ? words.pathTilde : 'Path must start with /, such as /state', 'pointer')
+    // An address or a checksum typed in (not connected) that cannot be one: an HTTP request's or a download's.
+    if (node.kind === 'http_request' || node.kind === 'download_file') {
+      const typed = (port: string) => {
+        const operand = incoming.has(key(node.id, port)) ? undefined : inputValue(node, port, catalog)
+        return record(operand) && operand.kind === 'literal' && typeof operand.value === 'string' ? operand.value : undefined
+      }
+      const inputs = dataInputs(node, ownerOf(node)), url = typed('url'), checksum = node.kind === 'download_file' ? typed('sha256') : undefined
+      if (url !== undefined && !matches(url, words.webAddressPattern)) {
+        origin = { kind: 'operand', node: node.id, port: 'url' }
+        error(node.id, words.webAddress(words.portLabel(inputs.url, 'url')), 'url', undefined, 'http.url')
+        origin = graphOrigin
+      }
+      // A body, connected or typed in, on a method that sends none.
+      const method = typeof node.config.method === 'string' ? node.config.method : 'GET'
+      if (node.kind === 'http_request' && (method === 'GET' || method === 'HEAD') && supplied(node, 'body'))
+        error(node.id, words.bodyMethod(words.portLabel(inputs.body, 'body'), method), 'body', undefined, 'http.body')
+      if (checksum !== undefined && !matches(checksum, words.checksumPattern)) {
+        origin = { kind: 'operand', node: node.id, port: 'sha256' }
+        error(node.id, words.checksum(words.portLabel(inputs.sha256, 'sha256')), 'sha256', undefined, 'download.checksum')
+        origin = graphOrigin
+      }
+    }
     if (node.kind === 'parallel' && Array.isArray(node.config.branches)) {
       const ids = new Set<string>()
       for (const branch of node.config.branches) {

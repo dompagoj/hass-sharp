@@ -38,6 +38,8 @@ static class EntityGraphRuntimeTests
         }
         public object? Setting(string key) => Settings.TryGetValue(key, out var value) ? value : throw new KeyNotFoundException(key);
         public bool IsSecret(string key) => Secrets.Contains(key);
+        // Downloads are the host's (see EntityToolsTests); a run here makes none.
+        public SharpFiles Files => throw new InvalidOperationException("This definition downloads nothing");
     }
     /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
     sealed class TraceSink : IRunTraceSink
@@ -163,7 +165,15 @@ static class EntityGraphRuntimeTests
                 (nameof(EntityNodesFailWithoutADefinition), EntityNodesFailWithoutADefinition),
                 (nameof(EntityIsWorksInAnAutomation), EntityIsWorksInAnAutomation),
                 (nameof(SetStateHandsOverOnlyWhatItIsGiven), SetStateHandsOverOnlyWhatItIsGiven),
-                (nameof(APasswordTextsValueOfAnotherTypeIsNotQuoted), APasswordTextsValueOfAnotherTypeIsNotQuoted) })
+                (nameof(APasswordTextsValueOfAnotherTypeIsNotQuoted), APasswordTextsValueOfAnotherTypeIsNotQuoted),
+                (nameof(HttpRequestGetsText), HttpRequestGetsText),
+                (nameof(HttpRequestPostsJsonAndReadsJson), HttpRequestPostsJsonAndReadsJson),
+                (nameof(HttpRequestFailsOnAnErrorStatus), HttpRequestFailsOnAnErrorStatus),
+                (nameof(HttpRequestTimesOutAndIsCancelledWithItsRun), HttpRequestTimesOutAndIsCancelledWithItsRun),
+                (nameof(HttpRequestRefusesWhatItCannotUse), HttpRequestRefusesWhatItCannotUse),
+                (nameof(HttpRequestHidesASecretsInputs), HttpRequestHidesASecretsInputs),
+                (nameof(HttpRequestKeepsItsResponseOutOfRunHistory), HttpRequestKeepsItsResponseOutOfRunHistory),
+                (nameof(CompareOfASecretTextAndANumberDoesNotQuoteIt), CompareOfASecretTextAndANumberDoesNotQuoteIt) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -173,6 +183,7 @@ static class EntityGraphRuntimeTests
         finally { PyInterop.Entity = entity; PyInterop.Log = log; UserScriptManager.CurrentTrigger.Value = trigger; States.Clear(); }
         if (failures.Count > 0) throw new Exception($"Entity graph runtime: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS entity graph runtime: State sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
+        Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
     }
 
     /// <summary>A State hands its inputs to the definition, then marks the entity available.</summary>
@@ -556,5 +567,296 @@ static class EntityGraphRuntimeTests
             catch (InvalidOperationException error) { Check(error.Message == want, $"the refusal {(quote ? "quotes" : "does not quote")} the value: " + error.Message); }
         }
         return Task.CompletedTask;
+    }
+
+    // ---- HTTP request ----
+
+    /// <summary>An HTTP request step: its URL typed in, the rest of its configuration as given.</summary>
+    static JsonObject Request(string id, string url, object? config = null)
+    {
+        var node = N(id, "http_request", config ?? new { });
+        node["config"]!["url"] = Lit("string", url);
+        node["config"]!["responseType"] ??= "string";
+        return node;
+    }
+    static JsonObject Field(string id, string pointer, string type) => N(id, "get_field", new { pointer, type, value = Unset });
+    static readonly (string, string)[] Readings = [("reading", "sensor"), ("count", "sensor")];
+    /// <summary>When started, then the steps in order: the graph of a sensor fed by a request.</summary>
+    static JsonObject Started(JsonObject[] nodes, JsonObject[] edges, params (string Key, string Type)[] settings)
+    {
+        var steps = nodes.Where(n => !VisualNodeCatalog.IsPure(VisualNodeCatalog.Root["nodes"]?[n["kind"]!.GetValue<string>()])).Select(n => n["id"]!.GetValue<string>()).ToArray();
+        var flow = new[] { "setup" }.Concat(steps).ToArray();
+        return Entity([N("setup", "entity_setup"), .. nodes], [.. flow.Zip(flow.Skip(1), (a, b) => E(a, b)).Where(e => !edges.Any(x => x["port"] != null && x["source"]!.GetValue<string>() == e["source"]!.GetValue<string>())), .. edges], Readings, settings);
+    }
+    static string Traced(JsonNode? port) => port?["v"]?.ToJsonString() ?? "none";
+
+    /// <summary>A GET of text: the body is the text, the status a number, the headers an object with lower-case names.</summary>
+    static async Task HttpRequestGetsText()
+    {
+        await using var server = LoopbackServer.Start();
+        server.Respond("/rpc/Switch.GetStatus", new() { Body = System.Text.Encoding.UTF8.GetBytes("on"), Headers = new Dictionary<string, string> { ["X-Device-Name"] = "Plug", ["Content-Type"] = "text/plain; charset=utf-8" } });
+        using var compiled = await Compiled.Of(Started([Request("get", server.Url("/rpc/Switch.GetStatus?id=0")), SetState("set", "reading")], [D("get", "set", "value", "body")]), "a GET of text");
+        var definition = new FakeDefinition(); var sink = new TraceSink();
+        await compiled.Run("setup", definition, sink: sink);
+        Same(definition.Calls, ["state reading value=string:on"], "the body is the text");
+        var request = server.Requests().Single();
+        Check(request.Method == "GET" && request.Target == "/rpc/Switch.GetStatus?id=0" && request.Headers["User-Agent"] == "HassSharp" && request.Body.Length == 0, "the request: " + request.Method + " " + request.Target);
+        var outputs = sink.Event("get")["outputs"]!;
+        Check(Traced(outputs["status"]) == "200" && outputs["status"]!["redacted"] == null, "the status is a number: " + outputs["status"]?.ToJsonString());
+        Check(outputs["headers"]?["v"]?["x-device-name"]?.GetValue<string>() == "Plug" && outputs["headers"]!["v"]!["content-type"]?.GetValue<string>() == "text/plain; charset=utf-8"
+            && outputs["headers"]!["v"]!.AsObject().All(p => p.Key == p.Key.ToLowerInvariant()), "the headers by lower-case name: " + outputs["headers"]?.ToJsonString());
+    }
+
+    /// <summary>
+    /// A POST of a JSON object sends it with Content-Type application/json and the headers given; a header may set another
+    /// type, and text is sent as it is. A JSON object or list answer is read for Get field.
+    /// </summary>
+    static async Task HttpRequestPostsJsonAndReadsJson()
+    {
+        await using var server = LoopbackServer.Start();
+        server.Respond("/rpc/Switch.Set", LoopbackServer.Reply.Text("""{"was_on":false,"name":"Plug"}"""));
+        server.Respond("/meters", LoopbackServer.Reply.Text("[1.5, 2.5, 3.5]"));
+        server.Respond("/note", LoopbackServer.Reply.Text("noted"));
+        var post = Request("post", server.Url("/rpc/Switch.Set"), new JsonObject
+        {
+            ["method"] = "POST", ["responseType"] = "object",
+            ["body"] = Lit("object", new { id = 0, on = true }), ["headers"] = Lit("object", new Dictionary<string, object> { ["X-Key"] = "k1", ["X-Count"] = 2 }),
+        });
+        var list = Request("list", server.Url("/meters"), new { responseType = "array" });
+        var text = Request("text", server.Url("/note"), new JsonObject { ["method"] = "PUT", ["body"] = Lit("string", "<b>on</b>"), ["headers"] = Lit("object", new Dictionary<string, string> { ["Content-Type"] = "text/html" }) });
+        var patch = Request("patch", server.Url("/note"), new JsonObject { ["method"] = "PATCH", ["body"] = Lit("array", new[] { 1, 2 }), ["headers"] = Lit("object", new Dictionary<string, string> { ["content-type"] = "application/merge-patch+json" }) });
+        using var compiled = await Compiled.Of(Started([post, Field("name", "/name", "string"), SetState("set_name", "reading"), list, Field("second", "/1", "number"), SetState("set_count", "count"), text, patch],
+            [D("post", "name", "value", "body"), D("name", "set_name", "value"), D("list", "second", "value", "body"), D("second", "set_count", "value")]), "a POST of JSON");
+        var definition = new FakeDefinition();
+        await compiled.Run("setup", definition);
+        Same(definition.Calls, ["state reading value=string:Plug", "state count value=double:2.5"], "a JSON object and a JSON list are read");
+        var sent = server.Requests();
+        var set = sent.Single(r => r.Path == "/rpc/Switch.Set");
+        Check(set.Method == "POST" && set.Headers["Content-Type"] == "application/json" && System.Text.Encoding.UTF8.GetString(set.Body) == """{"id":0,"on":true}"""
+            && set.Headers["X-Key"] == "k1" && set.Headers["X-Count"] == "2", "the POST: " + set.Headers.GetValueOrDefault("Content-Type") + " " + System.Text.Encoding.UTF8.GetString(set.Body));
+        var put = sent.Single(r => r.Method == "PUT");
+        Check(put.Headers["Content-Type"] == "text/html" && System.Text.Encoding.UTF8.GetString(put.Body) == "<b>on</b>", "text with a header's type: " + put.Headers.GetValueOrDefault("Content-Type"));
+        var merge = sent.Single(r => r.Method == "PATCH");
+        Check(merge.Headers["Content-Type"] == "application/merge-patch+json" && System.Text.Encoding.UTF8.GetString(merge.Body) == "[1,2]", "a list with a header's type: " + merge.Headers.GetValueOrDefault("Content-Type"));
+    }
+
+    /// <summary>
+    /// A status outside 200 to 299 fails the step by a message naming the host and the status; with an On error wire
+    /// the run takes it; with Fail on an error status off it goes on with the status.
+    /// </summary>
+    static async Task HttpRequestFailsOnAnErrorStatus()
+    {
+        await using var server = LoopbackServer.Start();
+        var host = "127.0.0.1:" + server.Port.ToString(CultureInfo.InvariantCulture);
+        server.Respond("/missing", new() { Status = 404, Body = System.Text.Encoding.UTF8.GetBytes("no such page") });
+        var url = server.Url("/missing?token=hunter2");
+        using var plain = await Compiled.Of(Started([Request("get", url), SetState("set", "reading")], [D("get", "set", "value", "body")]), "a GET of a missing page");
+        var definition = new FakeDefinition(); var sink = new TraceSink();
+        var error = await Fails(() => plain.Run("setup", definition, sink: sink), "a 404");
+        Check(error.Message == $"HTTP 404 from {host}", "the message: " + error.Message);
+        Same(definition.Calls, [], "nothing after the failed step runs");
+        Check(sink.Event("get")["status"]?.GetValue<string>() == "failed" && !sink.Final.ToJsonString().Contains("hunter2", StringComparison.Ordinal), "the step failed in the trace: " + sink.Event("get").ToJsonString());
+
+        using var recovered = await Compiled.Of(Started([Request("get", url), SetState("set", "reading"), N("why", "last_error"), SetState("said", "reading")],
+            [E("get", "set"), E("get", "said", "error"), D("get", "set", "value", "body"), D("why", "said", "value", "message")]), "a GET of a missing page with an On error wire");
+        definition = new FakeDefinition();
+        await recovered.Run("setup", definition);
+        Same(definition.Calls, [$"state reading value=string:HTTP 404 from {host}"], "the On error wire is taken");
+
+        using var lenient = await Compiled.Of(Started([Request("get", url, new { failOnStatus = false }), SetState("set", "reading"), SetState("code", "count")],
+            [D("get", "set", "value", "body"), D("get", "code", "value", "status")]), "a GET of a missing page that does not fail on its status");
+        definition = new FakeDefinition();
+        await lenient.Run("setup", definition);
+        Same(definition.Calls, ["state reading value=string:no such page", "state count value=double:404"], "with Fail on an error status off, the step goes on with the status");
+    }
+
+    /// <summary>
+    /// A server that does not answer within the timeout fails the step, naming the host and the timeout; a run cancelled
+    /// mid-request ends cancelled, and no connection is left open after either.
+    /// </summary>
+    static async Task HttpRequestTimesOutAndIsCancelledWithItsRun()
+    {
+        await using var silent = SilentServer.Start();
+        var host = "127.0.0.1:" + silent.Port.ToString(CultureInfo.InvariantCulture);
+        using var compiled = await Compiled.Of(Started([Request("get", silent.Url("/status"), new { timeout = 1 }), SetState("set", "reading")], [D("get", "set", "value", "body")]), "a GET of a server that does not answer");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "a request that times out");
+        Check(error is TimeoutException && error.Message == $"{host} did not answer within 1 second", "the message: " + error.GetType().Name + ": " + error.Message);
+        Check(clock.Elapsed >= TimeSpan.FromMilliseconds(950) && clock.Elapsed < TimeSpan.FromSeconds(5), $"timed out after {clock.Elapsed.TotalMilliseconds} ms");
+        await EntityTestHome.Until(() => silent.Open == 0, "the connection of the timed out request closes");
+
+        using var cancel = new CancellationTokenSource();
+        var definition = new FakeDefinition();
+        var run = compiled.Run("setup", definition, cancel.Token);
+        await EntityTestHome.Until(() => silent.Targets().Length == 2 && silent.Open == 1, "the second request arrives");
+        clock.Restart();
+        cancel.Cancel();
+        var cancelled = await Fails(() => run, "a run cancelled mid-request");
+        Check(cancelled is OperationCanceledException && clock.Elapsed < TimeSpan.FromSeconds(1), $"the run ends cancelled at once: {cancelled.GetType().Name} after {clock.Elapsed.TotalMilliseconds} ms");
+        await EntityTestHome.Until(() => silent.Open == 0, "the connection of the cancelled request closes");
+        Same(definition.Calls, [], "a cancelled request sets nothing");
+    }
+
+    /// <summary>
+    /// An answer over 4 MiB, an answer that is not the JSON shape asked for, a body on a GET or HEAD and an address that is
+    /// not http or https fail the step by messages that quote neither the address nor the answer.
+    /// </summary>
+    static async Task HttpRequestRefusesWhatItCannotUse()
+    {
+        await using var server = LoopbackServer.Start();
+        var host = "127.0.0.1:" + server.Port.ToString(CultureInfo.InvariantCulture);
+        var big = new byte[4 * 1024 * 1024 + 1]; Array.Fill(big, (byte)'a');
+        server.Respond("/big", new() { Body = big });
+        server.Respond("/streamed", new() { Body = big, Chunked = true, Pieces = 8 });
+        server.Respond("/exactly", new() { Body = big[..^1] });
+        server.Respond("/page", LoopbackServer.Reply.Text("<html>hunter2</html>"));
+        server.Respond("/list", LoopbackServer.Reply.Text("""["hunter2"]"""));
+        server.Respond("/object", LoopbackServer.Reply.Text("""{"key":"hunter2"}"""));
+        server.Respond("/twice", LoopbackServer.Reply.Text("""{"hunter2":1,"hunter2":2}"""));
+        async Task<string> Message(JsonObject request, string what)
+        {
+            request["id"] = "get";
+            using var compiled = await Compiled.Of(Started([request], []), what);
+            var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), what);
+            Check(!error.Message.Contains("hunter2", StringComparison.Ordinal) && !error.Message.Contains("/page", StringComparison.Ordinal) && error.InnerException == null, $"{what} quotes what it should not: {error.Message}");
+            return error.Message;
+        }
+        Check(await Message(Request("get", server.Url("/big")), "an answer over 4 MiB") == $"The answer from {host} is larger than 4 MiB", "an answer over 4 MiB");
+        Check(await Message(Request("get", server.Url("/streamed")), "an answer streamed past 4 MiB") == $"The answer from {host} is larger than 4 MiB", "an answer streamed past 4 MiB");
+        foreach (var (path, type, want) in new[] { ("/page", "object", "a JSON object"), ("/list", "object", "a JSON object"), ("/object", "array", "a JSON list"), ("/page", "array", "a JSON list"), ("/twice", "object", "a JSON object") })
+            Check(await Message(Request("get", server.Url(path + "?token=hunter2"), new { responseType = type }), $"{path} read as {type}") == $"The answer from {host} is not {want}", $"{path} read as {type}");
+        // A body on a GET or HEAD, which the validators refuse (http.body), is refused by a graph run as it is too.
+        foreach (var method in new[] { "GET", "HEAD" })
+        {
+            var request = Request("get", server.Url("/page"), new JsonObject { ["method"] = method, ["body"] = Lit("string", "hunter2") });
+            var graph = new JsonObject { ["version"] = 5, ["name"] = "Body", ["nodes"] = new JsonArray(N("t", "trigger", new { type = "manual" }), request), ["edges"] = new JsonArray(E("t", "get")) };
+            var types = new Dictionary<string, Type> { ["boolean"] = typeof(bool), ["number"] = typeof(double), ["string"] = typeof(string), ["object"] = typeof(JsonObject), ["array"] = typeof(JsonArray) };
+            var runtime = new VisualRuntime(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), types, TriggerPayload.Manual(), default, (_, _, _) => Task.CompletedTask);
+            var error = await Fails(() => runtime.RunAsync("t"), "a body on a " + method);
+            Check(error.Message == $"HTTP request cannot send a body with {method}", $"a body on a {method}: {error.Message}");
+        }
+        foreach (var url in new[] { "ftp://127.0.0.1/hunter2", "/page?hunter2", "http://exa mple.com/hunter2" })
+        {
+            var graph = Started([N("url", "constant", new { type = "string", value = Lit("string", url) }), N("get", "http_request", new { responseType = "string", url = Unset })], [D("url", "get", "url")]);
+            using var compiled = await Compiled.Of(graph, "a connected address " + url);
+            var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "an address that is not one: " + url);
+            Check(error.Message == "HTTP request · URL is not an http:// or https:// address", $"{url}: {error.Message}");
+        }
+        // Exactly 4 MiB is read whole.
+        using var exactly = await Compiled.Of(Started([Request("get", server.Url("/exactly")), SetState("set", "count")], [D("get", "set", "value", "body")]), "an answer of exactly 4 MiB");
+        var definition = new FakeDefinition();
+        await exactly.Run("setup", definition);
+        Check(definition.Calls.Single() == "state count value=string:" + new string('a', 4 * 1024 * 1024), "an answer of exactly 4 MiB is read whole: " + definition.Calls.Single().Length);
+    }
+
+    /// <summary>
+    /// A secret setting wired into the URL and into a header: the request is made with them, the trace hides both inputs
+    /// with their wires kept, and a failure names only the host; a header the request cannot send fails without quoting it.
+    /// </summary>
+    static async Task HttpRequestHidesASecretsInputs()
+    {
+        await using var server = LoopbackServer.Start();
+        var host = "127.0.0.1:" + server.Port.ToString(CultureInfo.InvariantCulture);
+        server.Respond("/rpc/Shelly.GetStatus", new() { Status = 401 });
+        var graph = Started(
+            [Setting("address", "address"), Setting("token", "token"), N("headers", "object_create", new JsonObject { ["fields"] = new JsonObject { ["Authorization"] = new JsonObject { ["kind"] = "unset" } } }),
+             N("get", "http_request", new { responseType = "string", url = Unset, headers = Unset }), SetState("set", "reading")],
+            [D("address", "get", "url"), D("token", "headers", "field:Authorization"), D("headers", "get", "headers"), D("get", "set", "value", "status")],
+            ("address", "string"), ("token", "string"));
+        using var compiled = await Compiled.Of(graph, "a request to a secret address with a secret header");
+        var definition = new FakeDefinition { Settings = { ["address"] = server.Url("/rpc/Shelly.GetStatus?auth_key=hunter2"), ["token"] = "Bearer hunter2-token" }, Secrets = { "address", "token" } };
+        var sink = new TraceSink();
+        var error = await Fails(() => compiled.Run("setup", definition, sink: sink), "a secret request that fails");
+        Check(error.Message == $"HTTP 401 from {host}", "the failure names only the host: " + error.Message);
+        var request = server.Requests().Single();
+        Check(request.Target == "/rpc/Shelly.GetStatus?auth_key=hunter2" && request.Headers["Authorization"] == "Bearer hunter2-token", "the request is made with the secrets: " + request.Target);
+        var text = sink.Final.ToJsonString();
+        Check(!text.Contains("hunter2", StringComparison.Ordinal), $"the trace quotes a secret ({text.Length} characters)");
+        var inputs = sink.Event("get")["inputs"]!;
+        foreach (var (port, from) in new[] { ("url", "address"), ("headers", "headers") })
+            Check(inputs[port]?["v"]?.GetValue<string>() == "***" && inputs[port]!["redacted"]?.GetValue<bool>() == true && inputs[port]!["src"]?["node"]?.GetValue<string>() == from,
+                $"the secret {port} is traced hidden from its wire: " + string.Join(",", (inputs[port] as JsonObject ?? []).Select(p => p.Key)));
+        Check(sink.Event("get")["error"]?["message"]?.GetValue<string>() == $"HTTP 401 from {host}", "the trace's failure names only the host");
+
+        // A secret header value that cannot be sent, and a secret address that is not one.
+        foreach (var (address, token) in new[] { (server.Url("/rpc/Shelly.GetStatus"), "hunter2\r\nX-Injected: 1"), ("ftp://hunter2.example/", "hunter2") })
+        {
+            definition = new FakeDefinition { Settings = { ["address"] = address, ["token"] = token }, Secrets = { "address", "token" } };
+            var refused = await Fails(() => compiled.Run("setup", definition), "a secret that cannot be sent: " + address);
+            Check(!refused.Message.Contains("hunter2", StringComparison.Ordinal) && refused.InnerException == null, "the refusal quotes the secret: " + refused.Message);
+            Check(refused.Message == (token.Contains('\n') ? "HTTP request · Headers cannot use the value it was given, which is hidden because it comes from a secret setting" : "HTTP request · URL is not an http:// or https:// address"), "the refusal: " + refused.Message);
+        }
+        // The same header, not secret, is named without its value.
+        definition = new FakeDefinition { Settings = { ["address"] = server.Url("/rpc/Shelly.GetStatus"), ["token"] = "hunter2\r\nX-Injected: 1" }, Secrets = { "address" } };
+        var plain = await Fails(() => compiled.Run("setup", definition), "a header that cannot be sent");
+        Check(plain.Message == "HTTP request · Headers: Authorization cannot be sent", "a header that cannot be sent is named, without its value: " + plain.Message);
+        Check(server.Requests().Length == 1, "a request that cannot be made is not sent: " + server.Requests().Length);
+    }
+
+    /// <summary>
+    /// With Keep the response out of run history, the body and headers are traced hidden, and so is what a Get field
+    /// works out from the body, which is handed to the definition as hidden and logged as ***; the status is shown.
+    /// </summary>
+    static async Task HttpRequestKeepsItsResponseOutOfRunHistory()
+    {
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        await using var server = LoopbackServer.Start();
+        server.Respond("/secret", new() { Body = System.Text.Encoding.UTF8.GetBytes("""{"name":"hunter2","count":3}"""), Headers = new Dictionary<string, string> { ["X-Session"] = "hunter2-session" } });
+        var graph = Started([Request("get", server.Url("/secret"), new { responseType = "object", hideResponse = true }), Field("name", "/name", "string"), SetState("set", "reading"), N("say", "log", new { value = Unset }),
+            Field("broken", "/name", "number"), N("bad", "log", new { value = Unset })],
+            [D("get", "name", "value", "body"), D("name", "set", "value"), D("name", "say", "value"), D("get", "broken", "value", "body"), D("broken", "bad", "value")]);
+        using var compiled = await Compiled.Of(graph, "a request whose response is kept out of run history");
+        var definition = new FakeDefinition(); var sink = new TraceSink();
+        var error = await Fails(() => compiled.Run("setup", definition, sink: sink), "a hidden value of another type");
+        Check(!error.Message.Contains("hunter2", StringComparison.Ordinal), "a failure on the hidden value quotes it: " + error.Message);
+        Check(error.Message == "Get field (used by Log): Get field · Source cannot use the value it was given, which is hidden because it comes from a response kept out of run history", "the failure says why it is hidden: " + error.Message);
+        Same(definition.Calls, ["state reading value=string:hunter2"], "the definition gets the real value");
+        Same(definition.Hidden, ["reading.value"], "the value is handed over as hidden");
+        Check(messages.Contains("***") && !messages.Any(m => m.Contains("hunter2", StringComparison.Ordinal)), "the Log writes ***: " + messages.Count);
+        Check(!sink.Final.ToJsonString().Contains("hunter2", StringComparison.Ordinal), "the trace quotes the hidden response");
+        var outputs = sink.Event("get")["outputs"]!;
+        Check(Traced(outputs["status"]) == "200" && outputs["status"]!["redacted"] == null, "the status is shown: " + outputs["status"]?.ToJsonString());
+        Check(outputs["body"]?["redacted"]?.GetValue<bool>() == true && outputs["headers"]?["redacted"]?.GetValue<bool>() == true, "the body and headers are hidden: " + outputs.ToJsonString());
+        // Get field is worked out for each step that reads it.
+        var fields = sink.Final["events"]!.AsArray().Where(e => e!["node"]!.GetValue<string>() == "name").ToArray();
+        Check(fields.Length == 2 && fields.All(e => e!["inputs"]?["value"]?["redacted"]?.GetValue<bool>() == true && e["outputs"]?["value"]?["redacted"]?.GetValue<bool>() == true), "Get field of the hidden body is hidden: " + string.Join(" ", fields.Select(e => e!.ToJsonString())));
+        // The same response, not hidden, is shown.
+        var shown = (JsonObject)graph.DeepClone();
+        shown["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "get")!["config"]!["hideResponse"] = false;
+        using var plain = await Compiled.Of(shown, "the same request, its response shown");
+        sink = new TraceSink();
+        await Fails(() => plain.Run("setup", new FakeDefinition(), sink: sink), "a value of another type");
+        Check(sink.Event("get")["outputs"]?["body"]?["v"]?["name"]?.GetValue<string>() == "hunter2", "a response not hidden is shown: " + sink.Event("get")["outputs"]?.ToJsonString());
+    }
+
+    /// <summary>
+    /// Compare's ordering of two values of different types (which the validators refuse, so only a graph run as it is
+    /// reaches it) fails without quoting a secret text: the run is made here as the generated code makes it.
+    /// </summary>
+    static async Task CompareOfASecretTextAndANumberDoesNotQuoteIt()
+    {
+        var graph = Entity(
+            [N("t", "trigger", new { type = "manual" }), Setting("pin", "pin"), N("cmp", "compare", new { @operator = "gt", left = Unset, right = Lit("number", 5) }), N("show", "log", new { value = Unset })],
+            [E("t", "show"), D("pin", "cmp", "left"), D("cmp", "show", "value")],
+            [("reading", "sensor")], ("pin", "string"));
+        var types = new Dictionary<string, Type> { ["boolean"] = typeof(bool), ["number"] = typeof(double), ["string"] = typeof(string), ["any"] = typeof(object) };
+        async Task<Exception> Run(params string[] secrets)
+        {
+            var prior = InvocationContext.Current;
+            try
+            {
+                var definition = new FakeDefinition { Settings = { ["pin"] = "hunter2" } };
+                definition.Secrets.UnionWith(secrets);
+                InvocationContext.Current = new InvocationContext("run-compare", InvocationCause.Entity, null, TriggerPayload.Manual()) { Definition = definition };
+                var runtime = new VisualRuntime(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), types, TriggerPayload.Manual(), default, (_, _, _) => Task.CompletedTask, comparisonTypes: new() { ["cmp"] = "any" });
+                return await Fails(() => runtime.RunAsync("t"), "an ordering of text and a number");
+            }
+            finally { InvocationContext.Current = prior; }
+        }
+        var secret = await Run("pin");
+        Check(secret.Message == "Compare (used by Log): Compare · First value cannot use the value it was given, which is hidden because it comes from a secret setting" && secret.InnerException?.InnerException == null,
+            "the ordering of a secret says it is hidden: " + secret.Message);
+        var plain = await Run();
+        Check(plain.Message.Contains("hunter2", StringComparison.Ordinal), "the ordering of a value that is not secret still says what failed: " + plain.Message);
     }
 }

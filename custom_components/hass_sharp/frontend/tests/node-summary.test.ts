@@ -77,3 +77,29 @@ describe('Has state and Current state', () => {
     expect(nodeSummary(wired.nodes[1], nodeCatalog, undefined, wired)).toMatch(/^Has state ▸ .+ is off$/)
   })
 })
+
+describe('HTTP request and Download file', () => {
+  const settingWire: Graph = { ...graph, nodes: [node('setting', { key: 'password' })].map(n => ({ ...n, id: 'k' })), edges: [{ id: 'w', kind: 'data', source: 'k', sourcePort: 'value', target: 'n', targetPort: 'url' }] }
+  it('say the method, host and path of an address typed in, never its query', () => {
+    expect(nodeSummary(node('http_request', { method: 'GET', url: lit('string', 'http://192.168.1.40/rpc/Switch.GetStatus?id=0&auth=hunter2') }))).toBe('GET 192.168.1.40/rpc/Switch.GetStatus')
+    expect(nodeSummary(node('http_request', { method: 'POST', url: lit('string', 'https://user:pass@plug.local:8443/relay/0#x') }))).toBe('POST plug.local:8443/relay/0')
+    // The method's default, and an address without a path.
+    expect(nodeSummary(node('http_request', { url: lit('string', 'http://192.168.1.40/?token=hunter2') }))).toBe('GET 192.168.1.40')
+    expect(both(node('http_request', { method: 'PUT', url: lit('string', 'http://10.0.0.7/settings') }))).toBe('PUT 10.0.0.7/settings')
+  })
+  it('say HTTP request for a connected address, which may be a secret\'s', () => {
+    const summary = nodeSummary(node('http_request', { method: 'GET', url: { kind: 'unset' } }), nodeCatalog, undefined, settingWire)
+    expect(summary).toBe('HTTP request')
+  })
+  it('fall back to the description for an address that is not one', () => {
+    const description = nodeCatalog.nodes.http_request.description
+    expect(nodeSummary(node('http_request', { method: 'GET', url: lit('string', 'ftp://192.168.1.40/file') }))).toBe(description)
+    expect(nodeSummary(node('http_request', { method: 'GET' }))).toBe(description)
+  })
+  it('name the file a download makes: its name, else the last part of the address typed in', () => {
+    const sha = lit('string', 'a'.repeat(64))
+    expect(both(node('download_file', { name: 'model.tflite', url: lit('string', 'https://example.com/get?id=1'), sha256: sha }))).toBe('Download model.tflite')
+    expect(both(node('download_file', { url: lit('string', 'https://example.com/models/model%20v2.tflite?token=hunter2'), sha256: sha }))).toBe('Download model v2.tflite')
+    expect(nodeSummary(node('download_file', { url: { kind: 'unset' }, sha256: sha }), nodeCatalog, undefined, settingWire)).toBe(nodeCatalog.nodes.download_file.description)
+  })
+})

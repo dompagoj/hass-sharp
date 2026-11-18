@@ -148,7 +148,9 @@ export function NodeConfig(props: NodeConfigProps) {
     const options = () => (field.rule.enumSource === 'types' ? (kind() === 'constant' && field.name === 'type' ? constantTypes(props.catalog) : listedTypes(props.catalog)) : (field.rule.enum ?? []).map(String))
     // A Constant's Type list names no two entries alike ("Number (int)" beside Number).
     const constantLabels = createMemo(() => (kind() === 'constant' && field.name === 'type' ? constantTypeLabels(props.catalog, typeof value() === 'string' ? (value() as string) : undefined) : undefined))
-    const optionLabel = (option: string) => (types() ? constantLabels()?.get(option) ?? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : words.key(option))
+    // A choice the catalog names (enumLabels, beside enum) reads as it says ("JSON object"), any other in words.
+    const listed = (option: string) => { const label = field.rule.enumLabels?.[(field.rule.enum ?? []).map(String).indexOf(option)]; return typeof label === 'string' && label ? label : undefined }
+    const optionLabel = (option: string) => (types() ? constantLabels()?.get(option) ?? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : listed(option) ?? words.key(option))
     const number = () => field.rule.type === 'integer' || field.rule.type === 'number'
     const stateContext = createMemo(() => kind() === 'condition' && field.name === 'state' ? entityStateContext(props.graph, props.node, 'entity', props.catalog) : undefined)
     return (

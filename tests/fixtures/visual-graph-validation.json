@@ -35304,5 +35304,685 @@
     },
     "valid": true,
     "noDiagnostics": true
+  },
+  {
+    "name": "automation: HTTP request reads JSON for Get field and posts a JSON body with headers",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "status",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "object",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.40/rpc/Switch.GetStatus?id=0"
+            },
+            "timeout": 5
+          }
+        },
+        {
+          "id": "power",
+          "kind": "get_field",
+          "config": {
+            "pointer": "/apower",
+            "type": "number"
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "post",
+          "kind": "http_request",
+          "config": {
+            "method": "POST",
+            "responseType": "array",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "HTTPS://Plug.local:8443/rpc/Switch.Set#x"
+            },
+            "failOnStatus": false,
+            "hideResponse": true,
+            "headers": {
+              "kind": "literal",
+              "type": "object",
+              "value": {
+                "Authorization": "Bearer abc"
+              }
+            },
+            "body": {
+              "kind": "literal",
+              "type": "object",
+              "value": {
+                "id": 0,
+                "on": true
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:status",
+          "source": "t",
+          "target": "status",
+          "port": "next"
+        },
+        {
+          "id": "status:next:log",
+          "source": "status",
+          "target": "log",
+          "port": "next"
+        },
+        {
+          "id": "log:next:post",
+          "source": "log",
+          "target": "post",
+          "port": "next"
+        },
+        {
+          "id": "status.body:power.value",
+          "kind": "data",
+          "source": "status",
+          "target": "power",
+          "sourcePort": "body",
+          "targetPort": "value"
+        },
+        {
+          "id": "power.value:log.value",
+          "kind": "data",
+          "source": "power",
+          "target": "log",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code http.url: an address typed in that is not an http or https address",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "ftp",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "ftp://192.168.1.40/status"
+            }
+          }
+        },
+        {
+          "id": "nohost",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http:///status"
+            }
+          }
+        },
+        {
+          "id": "space",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://plug.local/a b"
+            }
+          }
+        },
+        {
+          "id": "newline",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://plug.local/status\n"
+            }
+          }
+        },
+        {
+          "id": "empty",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": ""
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:ftp",
+          "source": "t",
+          "target": "ftp",
+          "port": "next"
+        },
+        {
+          "id": "ftp:next:nohost",
+          "source": "ftp",
+          "target": "nohost",
+          "port": "next"
+        },
+        {
+          "id": "nohost:next:space",
+          "source": "nohost",
+          "target": "space",
+          "port": "next"
+        },
+        {
+          "id": "space:next:newline",
+          "source": "space",
+          "target": "newline",
+          "port": "next"
+        },
+        {
+          "id": "newline:next:empty",
+          "source": "newline",
+          "target": "empty",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "ftp",
+    "inputId": "url",
+    "messages": [
+      "URL must start with http:// or https://",
+      "URL must start with http:// or https://",
+      "URL must start with http:// or https://",
+      "URL must start with http:// or https://",
+      "URL must start with http:// or https://"
+    ],
+    "codes": [
+      "http.url",
+      "http.url",
+      "http.url",
+      "http.url",
+      "http.url"
+    ]
+  },
+  {
+    "name": "code http.body: a body on a GET or a HEAD, connected or typed in, and a connected address that is not checked",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "url",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "not an address"
+            }
+          }
+        },
+        {
+          "id": "payload",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "get",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "head",
+          "kind": "http_request",
+          "config": {
+            "method": "HEAD",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.40/"
+            },
+            "body": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "plain",
+          "kind": "http_request",
+          "config": {
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.40/"
+            },
+            "body": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "post",
+          "kind": "http_request",
+          "config": {
+            "method": "POST",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.40/"
+            },
+            "body": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:get",
+          "source": "t",
+          "target": "get",
+          "port": "next"
+        },
+        {
+          "id": "get:next:head",
+          "source": "get",
+          "target": "head",
+          "port": "next"
+        },
+        {
+          "id": "head:next:plain",
+          "source": "head",
+          "target": "plain",
+          "port": "next"
+        },
+        {
+          "id": "plain:next:post",
+          "source": "plain",
+          "target": "post",
+          "port": "next"
+        },
+        {
+          "id": "url.value:get.url",
+          "kind": "data",
+          "source": "url",
+          "target": "get",
+          "sourcePort": "value",
+          "targetPort": "url"
+        },
+        {
+          "id": "payload.value:get.body",
+          "kind": "data",
+          "source": "payload",
+          "target": "get",
+          "sourcePort": "value",
+          "targetPort": "body"
+        },
+        {
+          "id": "payload.value:post.body",
+          "kind": "data",
+          "source": "payload",
+          "target": "post",
+          "sourcePort": "value",
+          "targetPort": "body"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "get",
+    "inputId": "body",
+    "messages": [
+      "Body cannot be sent with GET; choose another method or remove it",
+      "Body cannot be sent with HEAD; choose another method or remove it"
+    ],
+    "codes": [
+      "http.body",
+      "http.body"
+    ]
+  },
+  {
+    "name": "entity graph: Download file in When started hands its path on",
+    "graph": {
+      "version": 5,
+      "name": "Model",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "model",
+          "kind": "download_file",
+          "config": {
+            "name": "model.tflite",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "https://example.com/models/model.tflite?token=abc"
+            },
+            "sha256": {
+              "kind": "literal",
+              "type": "string",
+              "value": "9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08"
+            }
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "power",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:model",
+          "source": "setup",
+          "target": "model",
+          "port": "next"
+        },
+        {
+          "id": "model:next:set",
+          "source": "model",
+          "target": "set",
+          "port": "next"
+        },
+        {
+          "id": "model.path:set.value",
+          "kind": "data",
+          "source": "model",
+          "target": "set",
+          "sourcePort": "path",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        ],
+        "settings": [
+          {
+            "key": "host",
+            "type": "string"
+          },
+          {
+            "key": "token",
+            "type": "string",
+            "secret": true
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code download.checksum: a checksum typed in that is not 64 hexadecimal characters, and an address that is not one",
+    "graph": {
+      "version": 5,
+      "name": "Model",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "short",
+          "kind": "download_file",
+          "config": {
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "https://example.com/model.tflite"
+            },
+            "sha256": {
+              "kind": "literal",
+              "type": "string",
+              "value": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a0"
+            }
+          }
+        },
+        {
+          "id": "letters",
+          "kind": "download_file",
+          "config": {
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "file:///config/model.tflite"
+            },
+            "sha256": {
+              "kind": "literal",
+              "type": "string",
+              "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+            }
+          }
+        },
+        {
+          "id": "wired",
+          "kind": "download_file",
+          "config": {
+            "url": {
+              "kind": "unset"
+            },
+            "sha256": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "host",
+          "kind": "setting",
+          "config": {
+            "key": "host"
+          }
+        },
+        {
+          "id": "token",
+          "kind": "setting",
+          "config": {
+            "key": "token"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:short",
+          "source": "setup",
+          "target": "short",
+          "port": "next"
+        },
+        {
+          "id": "short:next:letters",
+          "source": "short",
+          "target": "letters",
+          "port": "next"
+        },
+        {
+          "id": "letters:next:wired",
+          "source": "letters",
+          "target": "wired",
+          "port": "next"
+        },
+        {
+          "id": "host.value:wired.url",
+          "kind": "data",
+          "source": "host",
+          "target": "wired",
+          "sourcePort": "value",
+          "targetPort": "url"
+        },
+        {
+          "id": "token.value:wired.sha256",
+          "kind": "data",
+          "source": "token",
+          "target": "wired",
+          "sourcePort": "value",
+          "targetPort": "sha256"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        ],
+        "settings": [
+          {
+            "key": "host",
+            "type": "string"
+          },
+          {
+            "key": "token",
+            "type": "string",
+            "secret": true
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "short",
+    "inputId": "sha256",
+    "messages": [
+      "SHA-256 checksum must be 64 hexadecimal characters, the file's SHA-256",
+      "SHA-256 checksum must be 64 hexadecimal characters, the file's SHA-256",
+      "URL must start with http:// or https://"
+    ],
+    "codes": [
+      "download.checksum",
+      "download.checksum",
+      "http.url"
+    ]
+  },
+  {
+    "name": "code node.document: Download file in an automation",
+    "graph": {
+      "version": 5,
+      "name": "Automation",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "model",
+          "kind": "download_file",
+          "config": {
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "https://example.com/model.tflite"
+            },
+            "sha256": {
+              "kind": "literal",
+              "type": "string",
+              "value": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:model",
+          "source": "t",
+          "target": "model",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "model",
+    "messages": [
+      "Download file only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "node.document"
+    ]
   }
 ]

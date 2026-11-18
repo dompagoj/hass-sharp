@@ -196,15 +196,18 @@ public sealed class VisualRuntime
     /// secret is secret. A Setting's own output carries its setting; every output of a value node (one with no flow of its
     /// own) carries what its wired inputs carry, except one of true or false; so do a For each's item, of its list, and a
     /// loop's kept and exported values, of what the Loop result steps of its body give them, as these hand a value on.
-    /// A step's own outputs carry none (a service's response, a node method's results). Empty for a graph without a
-    /// Setting, as every automation's is. Whether a setting is secret is not in the graph (it must not change the source):
-    /// it is asked of the run's definition (<see cref="SecretSetting"/>).
+    /// A step's own outputs carry none (a service's response, a node method's results), except the body and headers of an
+    /// HTTP request that keeps its response out of run history, which carry that request as a secret setting's value
+    /// carries its Setting. Empty for a graph with neither, as nearly every automation's is. Whether a setting is secret
+    /// is not in the graph (it must not change the source): it is asked of the run's definition (<see cref="SecretSetting"/>).
     /// </summary>
     readonly Dictionary<(string Node,string Port),HashSet<string>> settingSources=[];
     // Whether each Setting node's setting is secret, as the run's definition answered; asked once per run.
     readonly Dictionary<string,bool> secretSettings=new(StringComparer.Ordinal);
     void FollowSettings() {
-        foreach(var (id,node) in nodes)if(Text(node,"kind")=="setting")settingSources[(id,"value")]=new(StringComparer.Ordinal){id};
+        foreach(var (id,node) in nodes)
+            if(Text(node,"kind")=="setting")settingSources[(id,"value")]=new(StringComparer.Ordinal){id};
+            else if(HidesResponse(node))foreach(var port in new[]{"body","headers"})settingSources[(id,port)]=new(StringComparer.Ordinal){id};
         if(settingSources.Count==0)return;
         var wired=data.GroupBy(p=>p.Key.Item1,StringComparer.Ordinal).ToDictionary(g=>g.Key,g=>g.Select(p=>(Port:p.Key.Item2,Source:p.Value)).ToArray(),StringComparer.Ordinal);
         var steps=flow.GroupBy(p=>p.Key.Item1,StringComparer.Ordinal).ToDictionary(g=>g.Key,g=>g.Select(p=>p.Value).ToArray(),StringComparer.Ordinal);
@@ -254,6 +257,8 @@ public sealed class VisualRuntime
     /// answer is taken to have said yes: nothing is shown that might be secret.
     /// </summary>
     bool SecretSetting(string node) {
+        // An HTTP request is a source only when it hides its response (see FollowSettings).
+        if(Text(nodes[node],"kind")=="http_request")return true;
         lock(secretSettings)if(secretSettings.TryGetValue(node,out var known))return known;
         bool secret;
         try {secret=InvocationContext.Current?.Definition?.IsSecret(Text(nodes[node]["config"],"key"))??false;}
@@ -274,11 +279,22 @@ public sealed class VisualRuntime
     }
     /// <summary>Whether <paramref name="value"/>, read on the input <paramref name="port"/> of <paramref name="node"/>, came over a wire from a secret output (<see cref="Secret"/>).</summary>
     bool SecretInput(string node,string port,object? value)=>settingSources.Count>0 && data.TryGetValue((node,port),out var source) && Secret(source,value);
-    /// <summary>What a message says in place of a value it would quote, when that value is secret.</summary>
-    const string HiddenValue="a value that is hidden because it comes from a secret setting";
+    /// <summary>Whether an HTTP request step keeps its response out of run history: its body and headers are then secret.</summary>
+    static bool HidesResponse(JsonObject node)=>Text(node,"kind")=="http_request"&&Flag(node["config"],"hideResponse",false);
+    static bool Flag(JsonNode? config,string key,bool fallback)=>config?[key] is JsonValue value&&value.TryGetValue<bool>(out var on)?on:fallback;
+    /// <summary>Why a secret value is hidden, as a message says it: it comes from a secret setting, else from a response kept out of run history.</summary>
+    const string FromSecretSetting="it comes from a secret setting";
+    /// <summary>Why the value on <paramref name="output"/> is hidden (see <see cref="FromSecretSetting"/>), worked out from the sources it carries.</summary>
+    string Because((string Node,string Port) output)=>settingSources.TryGetValue(output,out var sources)&&!sources.Any(source=>Text(nodes[source],"kind")=="setting"&&SecretSetting(source))
+        ?"it comes from a response kept out of run history":FromSecretSetting;
+    /// <summary>Why the value read on the input <paramref name="port"/> of <paramref name="node"/> is hidden: as the output wired to it is.</summary>
+    string Because(string node,string port)=>data.TryGetValue((node,port),out var source)?Because(source):FromSecretSetting;
+    /// <summary>What a message says in place of the value read on the input <paramref name="port"/> of <paramref name="node"/>, when that value is secret.</summary>
+    string HiddenValue(string node,string port)=>"a value that is hidden because "+Because(node,port);
     /// <summary>The failure of a step that could not use a secret value: names the pin, never the value, and keeps no inner failure that might quote it.</summary>
-    InvalidOperationException Hidden(string node,string port)=>Hidden(Pin(node,port));
-    static InvalidOperationException Hidden(string where)=>new($"{where} cannot use the value it was given, which is hidden because it comes from a secret setting");
+    InvalidOperationException Hidden(string node,string port)=>HiddenAt(Pin(node,port),Because(node,port));
+    /// <summary>The failure of a step that could not use a secret value at <paramref name="where"/>, as people see it, hidden <paramref name="because"/>.</summary>
+    static InvalidOperationException HiddenAt(string where,string because)=>new($"{where} cannot use the value it was given, which is hidden because {because}");
     /// <summary>
     /// The runtime's secret guard, which every step that works on a value that may be secret goes through: what
     /// <paramref name="work"/> gives, unless it fails (other than by being cancelled) while <paramref name="secret"/> says
@@ -494,7 +510,7 @@ public sealed class VisualRuntime
         if(declared!="") {
             var given=value;
             value=Guarded(()=>ConvertTo(given,declared,node+"."+port,false),_=>Secret((node,port),given),
-                ()=>new InvalidOperationException($"{Title(node)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(node)?[port],port)} cannot give the value it worked out, which is hidden because it comes from a secret setting"));
+                ()=>new InvalidOperationException($"{Title(node)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(node)?[port],port)} cannot give the value it worked out, which is hidden because {Because((node,port))}"));
         }
         scope.SetOutput((node,port),value);
         if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value,Secret((node,port),value));
@@ -604,15 +620,19 @@ public sealed class VisualRuntime
                     ev=Begin();
                 }
                 object? Get(string p)=>Input(scope,id,p);
-                double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"{Pin(id,p)} must be {(integer?"a whole number":"a number")} from {VisualGraphValidator.Words.Number(min)} to {VisualGraphValidator.Words.Number(max)}, not {(SecretInput(id,p,v)?HiddenValue:Convert.ToString(v,CultureInfo.InvariantCulture))}");return v;}
+                double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"{Pin(id,p)} must be {(integer?"a whole number":"a number")} from {VisualGraphValidator.Words.Number(min)} to {VisualGraphValidator.Words.Number(max)}, not {(SecretInput(id,p,v)?HiddenValue(id,p):Convert.ToString(v,CultureInfo.InvariantCulture))}");return v;}
                 switch(kind) {
                     case "trigger":Trigger(id,scope,n);break;
                     case "if":port=Input<bool>(scope,id,"value")?"true":"false";next=Next(id,port);break;
                     case "condition":port=EntityOf(id,"entity",Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false";next=Next(id,port);break;
                     case "read_entity":Output(scope,id,EntityOf(id,"entity",Input<string>(scope,id,"entity")));break;
                     case "delay":await Waiting(scope,Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken));break;
-                    case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Compare(EntityField(EntityOf(id,"entity",entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
+                    case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Guarded(()=>Compare(EntityField(EntityOf(id,"entity",entity,true),cfg,id),expected,Text(cfg,"operator","eq")),error=>error is not InvalidOperationException&&SecretInput(id,"right",expected),()=>Hidden(id,"right")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
                     case "service":await Service(id,scope,cfg);break;
+                    case "http_request":await HttpRequest(id,scope,cfg);break;
+                    // The definition's downloads, which time spent receiving does not count against a When started flow's limit.
+                    case "download_file":var address=Input<string>(scope,id,"url");var checksum=Input<string>(scope,id,"sha256");
+                        Output(scope,id,await Waiting(scope,definition!.Files.Download(address,checksum,Text(cfg,"name") is {Length:>0} name?name:null,scope.CancellationToken)),"path");break;
                     // A secret is not written to the log: the line is *** (true or false worked out from one is written).
                     case "log":var said=Get("value");PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},SecretInput(id,"value",said)?TraceJson.Redacted:LogText(said));break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
@@ -683,7 +703,9 @@ public sealed class VisualRuntime
                 // The trace shows the values as they came, not as they were widened.
                 if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
                 // As in C#, an ordering with a missing number (a nullable side that is null) is false.
-                var op=Text(cfg,"operator","eq");Output(scope,id,op is not ("eq" or "ne")&&(a==null||b==null)?false:Compare(a,b,op));break;
+                // An ordering of two values of different types (never in a graph the validators let through) quotes neither when one is secret.
+                var op=Text(cfg,"operator","eq");
+                Output(scope,id,op is not ("eq" or "ne")&&(a==null||b==null)?false:Guarded(()=>Compare(a,b,op),_=>SecretInput(id,"left",givenLeft)||SecretInput(id,"right",givenRight),()=>Hidden(id,SecretInput(id,"left",givenLeft)?"left":"right")));break;
             case "constant":case "convert":
                 if(compiledConversions.Contains(id)){await custom(id,scope,this);break;}
                 var convertible=Get("value");
@@ -758,12 +780,12 @@ public sealed class VisualRuntime
     /// <summary><see cref="ReadEntity"/> of the entity a step read on <paramref name="port"/>; an unavailable entity whose id is secret is not named.</summary>
     EntityStateSnapshot EntityOf(string node,string port,string entity,bool fresh=false) {
         return Guarded(()=>ReadEntity(entity,fresh),error=>error is InvalidOperationException&&SecretInput(node,port,entity),
-            ()=>new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because it comes from a secret setting"));
+            ()=>new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because {Because(node,port)}"));
     }
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
-    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting"],StringComparer.Ordinal);
+    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file"],StringComparer.Ordinal);
     /// <summary>
     /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
     /// entity's domain) that is required or given a value (<see cref="Supplied"/>), as <see cref="EntityStateValue"/>
@@ -890,6 +912,133 @@ public sealed class VisualRuntime
         await Waiting(scope,HassServices.CallServiceAsync(domain,name,payload,hidden).WaitAsync(scope.CancellationToken));
         return null;
     }
+    /// <summary>The most an HTTP request step reads of an answer; a longer one fails the step.</summary>
+    internal const int MaxAnswerBytes=4*1024*1024;
+    /// <summary>
+    /// An HTTP request step: its method to its URL (http or https only), with its headers and body (text as it is, an
+    /// object or list as JSON), over the process's one connection pool, within its timeout and cancelled with its run;
+    /// nothing of it outlives the step. A status outside 200 to 299 fails it unless Fail on an error status is off. Its
+    /// outputs are the status, the body as Response type reads it and the headers by lower-case name. Every failure is
+    /// worded by its cause and names the host (and a port that is not the scheme's) only, never the path, the query, a
+    /// header or the body, so that a poll failing for one reason fails with one message; a .NET failure under it, which
+    /// may quote any of them, is not kept.
+    /// </summary>
+    async Task HttpRequest(string id,VisualScope scope,JsonNode cfg) {
+        var method=Text(cfg,"method","GET");var responseType=Text(cfg,"responseType","string");
+        var seconds=cfg["timeout"] is JsonValue limit&&limit.TryGetValue<double>(out var given)&&double.IsFinite(given)?Math.Clamp(given,1,300):10;
+        var url=Input<string>(scope,id,"url");
+        if(!Uri.TryCreate(url,UriKind.Absolute,out var uri)||uri.Scheme is not ("http" or "https")||uri.Host=="")throw new InvalidOperationException($"{Pin(id,"url")} is not an http:// or https:// address");
+        // The host, and the port when it is not the scheme's own: never the user, the path or the query.
+        var host=uri.Authority;
+        object? body=Supplied(id,"body",cfg["body"])?Input(scope,id,"body"):null;
+        if(body!=null&&method is "GET" or "HEAD")throw new InvalidOperationException($"{Title(id)} cannot send a body with {method}");
+        using var request=new HttpRequestMessage(new HttpMethod(method),uri){Content=Content(body)};
+        if(Supplied(id,"headers",cfg["headers"])) {
+            var headers=Input(scope,id,"headers");
+            Guarded(()=>{AddHeaders(id,request,Json(headers));return true;},_=>SecretInput(id,"headers",headers),()=>Hidden(id,"headers"));
+        }
+        using var client=SharpHttp.Create();client.Timeout=Timeout.InfiniteTimeSpan;
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(scope.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(seconds));
+        int status;byte[] answer;JsonObject headersOut;string? charset;
+        try {
+            using var response=await Waiting(scope,client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token));
+            status=(int)response.StatusCode;
+            if(Flag(cfg,"failOnStatus",true)&&status is <200 or >299)throw new HttpRequestException($"HTTP {status.ToString(CultureInfo.InvariantCulture)} from {host}",null,response.StatusCode);
+            headersOut=AnswerHeaders(response);charset=response.Content.Headers.ContentType?.CharSet;
+            answer=await Waiting(scope,ReadAnswer(response.Content,host,deadline.Token));
+        }
+        catch(OperationCanceledException) when(deadline.IsCancellationRequested&&!Cancelled(scope)) {
+            throw new TimeoutException($"{host} did not answer within {VisualGraphValidator.Words.Number(seconds)} second{(seconds==1?"":"s")}");
+        }
+        catch(Exception error) when(error is HttpRequestException {StatusCode:null} or IOException) {
+            throw new HttpRequestException((error as HttpRequestException)?.HttpRequestError switch {
+                HttpRequestError.NameResolutionError=>$"Could not find {host}",
+                HttpRequestError.SecureConnectionError=>$"Could not make a secure connection to {host}",
+                HttpRequestError.ResponseEnded=>$"The answer from {host} broke off",
+                HttpRequestError.InvalidResponse=>$"The answer from {host} could not be read",
+                HttpRequestError.ConnectionError=>$"Could not reach {host}",
+                _ when error is IOException=>$"The answer from {host} broke off",
+                _=>$"Could not reach {host}",
+            });
+        }
+        Output(scope,id,(double)status,"status");
+        Output(scope,id,AnswerBody(answer,charset,responseType,host),"body");
+        Output(scope,id,headersOut,"headers");
+    }
+    /// <summary>What an HTTP request sends: text as it is (<c>text/plain</c>), anything else as JSON (<c>application/json</c>); nothing for no body.</summary>
+    HttpContent? Content(object? body) {
+        if(body==null)return null;
+        var text=body as string??(body is JsonElement {ValueKind:JsonValueKind.String} element?element.GetString():null);
+        if(text!=null)return new StringContent(text);
+        var json=Json(body);
+        if(json is JsonValue value&&value.TryGetValue<string>(out var inner))return new StringContent(inner);
+        var content=new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(json?.ToJsonString()??"null"));
+        content.Headers.ContentType=new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+        return content;
+    }
+    /// <summary>
+    /// The headers of an HTTP request step, each name with text, a number or true or false. A header of the body (such as
+    /// Content-Type) replaces the body's own. One that cannot be sent fails the step by its name, never its value.
+    /// </summary>
+    void AddHeaders(string id,HttpRequestMessage request,JsonNode? headers) {
+        if(headers is not JsonObject named)throw new InvalidOperationException($"{Pin(id,"headers")} needs an object of names and values");
+        foreach(var (name,value) in named) {
+            var text=value is JsonValue scalar?scalar.GetValueKind() switch{JsonValueKind.String=>scalar.GetValue<string>(),JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False=>scalar.ToJsonString(),_=>null}:null;
+            var label=$"{Pin(id,"headers")}: {VisualGraphValidator.Words.Name(name)}";
+            if(text==null)throw new InvalidOperationException($"{label} needs text, a number or true or false");
+            bool added;
+            try {
+                if(text.Any(c=>c is '\r' or '\n' or '\0'))added=false;
+                else if(request.Headers.TryAddWithoutValidation(name,text))added=true;
+                else if(request.Content is {} content) {content.Headers.Remove(name);added=content.Headers.TryAddWithoutValidation(name,text);}
+                else throw new InvalidOperationException($"{label} can only be sent with a body");
+            }
+            catch(Exception error) when(error is FormatException or ArgumentException) {added=false;}
+            if(!added)throw new InvalidOperationException($"{label} cannot be sent");
+        }
+    }
+    /// <summary>An answer's headers and its body's, by lower-case name; the values of a header sent more than once joined with ", ".</summary>
+    static JsonObject AnswerHeaders(HttpResponseMessage response) {
+        var headers=new JsonObject();
+        foreach(var (name,values) in response.Headers.NonValidated.Concat(response.Content.Headers.NonValidated)) {
+            var key=name.ToLowerInvariant();var joined=string.Join(", ",values);
+            headers[key]=headers[key] is JsonValue earlier?earlier.GetValue<string>()+", "+joined:joined;
+        }
+        return headers;
+    }
+    /// <summary>The bytes of an answer, at most <see cref="MaxAnswerBytes"/>: one that says it is longer, or goes on longer, fails.</summary>
+    static async Task<byte[]> ReadAnswer(HttpContent content,string host,CancellationToken token) {
+        if(content.Headers.ContentLength>MaxAnswerBytes)throw TooLarge(host);
+        await using var stream=await content.ReadAsStreamAsync(token);
+        using var bytes=new MemoryStream();
+        var buffer=new byte[81920];int read;
+        while((read=await stream.ReadAsync(buffer,token))>0) {
+            if(bytes.Length+read>MaxAnswerBytes)throw TooLarge(host);
+            bytes.Write(buffer,0,read);
+        }
+        return bytes.ToArray();
+    }
+    static InvalidDataException TooLarge(string host)=>new($"The answer from {host} is larger than {MaxAnswerBytes/1024/1024} MiB");
+    /// <summary>
+    /// An answer as Response type reads it: text in the character set its Content-Type names (UTF-8 when none or one not
+    /// known), or a JSON object or list; an answer of another shape fails without quoting it.
+    /// </summary>
+    static object AnswerBody(byte[] answer,string? charset,string responseType,string host) {
+        System.Text.Encoding encoding;
+        try {encoding=string.IsNullOrWhiteSpace(charset)?System.Text.Encoding.UTF8:System.Text.Encoding.GetEncoding(charset.Trim('"'));}
+        catch(ArgumentException) {encoding=System.Text.Encoding.UTF8;}
+        using var reader=new StreamReader(new MemoryStream(answer),encoding,detectEncodingFromByteOrderMarks:true);
+        var text=reader.ReadToEnd();
+        if(responseType is not ("object" or "array"))return text;
+        JsonNode? parsed;
+        // A name given twice, at any depth, is refused here rather than when a later step reads it (whose message would quote it).
+        try {parsed=JsonNode.Parse(text,documentOptions:new JsonDocumentOptions{AllowDuplicateProperties=false});}
+        catch(JsonException) {parsed=null;}
+        return responseType=="object"
+            ? parsed as JsonObject??throw new InvalidDataException($"The answer from {host} is not a JSON object")
+            : parsed as JsonArray??throw new InvalidDataException($"The answer from {host} is not a JSON list");
+    }
     async Task Parallel(string id,VisualScope parent,int depth) {
         using var cts=new CancellationTokenSource();
         Task cancelCleanup=Task.CompletedTask;using var registration=parent.CancellationToken.Register(()=>{cancelCleanup=cts.CancelAsync();});
@@ -916,7 +1065,7 @@ public sealed class VisualRuntime
             var port=(group=="carry"?"carry:":"export:")+Text(d,"name");var type=Text(d,"type");declarations[port]=type;state[port]=ConvertTo(Operand(parent,d["initial"],id+"."+port),type,id+"."+port,false,Declared(port));
         }
         object?[]? items=null;var count=0;
-        if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"{Pin(id,"count")} must be a whole number from 0 to {max} (Maximum iterations), not {(SecretInput(id,"count",n)?HiddenValue:Convert.ToString(n,CultureInfo.InvariantCulture))}");count=(int)n;}
+        if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"{Pin(id,"count")} must be a whole number from 0 to {max} (Maximum iterations), not {(SecretInput(id,"count",n)?HiddenValue(id,"count"):Convert.ToString(n,CultureInfo.InvariantCulture))}");count=(int)n;}
         if(kind=="foreach") {
             var source=Input(parent,id,"items");var copy=new VisualSnapshot();
             items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(copy.Copy).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"{Pin(id,"items")} needs a list")};
@@ -944,7 +1093,7 @@ public sealed class VisualRuntime
                 var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();
                 foreach(var pair in body.Updates) {
                     // A kept or exported value worked out from a secret is secret (see FollowSettings), and not quoted.
-                    updates[pair.Key]=Guarded(()=>copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key))),_=>Secret((id,pair.Key),pair.Value),()=>Hidden(Declared(pair.Key)()));
+                    updates[pair.Key]=Guarded(()=>copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key))),_=>Secret((id,pair.Key),pair.Value),()=>HiddenAt(Declared(pair.Key)(),Because((id,pair.Key))));
                 }
                 foreach(var pair in updates)state[pair.Key]=pair.Value;
             }

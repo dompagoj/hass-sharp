@@ -572,6 +572,116 @@
           "targetPort": "value"
         }
       ]
+    },
+    {
+      "version": 5,
+      "name": "Read a device over HTTP",
+      "nodes": [
+        {
+          "id": "start",
+          "kind": "trigger",
+          "config": {
+            "type": "manual",
+            "manual": true
+          }
+        },
+        {
+          "id": "status",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "object",
+            "timeout": 10,
+            "failOnStatus": true,
+            "hideResponse": false,
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.40/rpc/Switch.GetStatus?id=0"
+            }
+          }
+        },
+        {
+          "id": "power",
+          "kind": "get_field",
+          "config": {
+            "pointer": "/apower",
+            "type": "number",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "why",
+          "kind": "last_error",
+          "config": {}
+        },
+        {
+          "id": "failed",
+          "kind": "log",
+          "config": {
+            "level": "Warn",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "flow",
+          "source": "start",
+          "target": "status",
+          "port": "next"
+        },
+        {
+          "id": "read",
+          "source": "status",
+          "target": "log",
+          "port": "next"
+        },
+        {
+          "id": "unreachable",
+          "source": "status",
+          "target": "failed",
+          "port": "error"
+        },
+        {
+          "id": "body",
+          "kind": "data",
+          "source": "status",
+          "sourcePort": "body",
+          "target": "power",
+          "targetPort": "value"
+        },
+        {
+          "id": "watts",
+          "kind": "data",
+          "source": "power",
+          "sourcePort": "value",
+          "target": "log",
+          "targetPort": "value"
+        },
+        {
+          "id": "message",
+          "kind": "data",
+          "source": "why",
+          "sourcePort": "message",
+          "target": "failed",
+          "targetPort": "value"
+        }
+      ]
     }
   ],
   "library": {

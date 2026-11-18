@@ -76,4 +76,10 @@ internal interface IDefinitionRuntime
     /// value is treated as secret.
     /// </summary>
     bool IsSecret(string key);
+    /// <summary>
+    /// The definition's downloads, which a Download file step makes (<see cref="SharpFiles.Download"/>): the time one
+    /// receives during the When started flow does not count against its limit, and every one ends when the definition
+    /// stops. Throws <see cref="ObjectDisposedException"/> once it has stopped.
+    /// </summary>
+    SharpFiles Files { get; }
 }

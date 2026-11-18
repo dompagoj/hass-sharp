@@ -267,7 +267,32 @@ function kindText(ctx: Context): string | undefined {
       return entity ? `Has state ▸ ${entity}${state ? ` is ${state}` : ''}` : undefined
     }
     case 'entity_current': { const entity = homeEntity(ctx); return entity ? `Current state ▸ ${entity}` : undefined }
+    // The method, host and path of an address typed in, never its query (it may carry a token); a connected one may be a secret's.
+    case 'http_request': {
+      if (wired(ctx, 'url')) return 'HTTP request'
+      const url = typedAddress(ctx)
+      return url ? `${text(config.method) || 'GET'} ${url.host}${url.pathname === '/' ? '' : url.pathname}` : undefined
+    }
+    case 'download_file': {
+      const named = text(config.name)
+      if (named) return `Download ${named}`
+      const last = wired(ctx, 'url') ? '' : typedAddress(ctx)?.pathname.split('/').at(-1) ?? ''
+      let file = ''
+      try { file = decodeURIComponent(last) } catch { /* not a name */ }
+      return file ? `Download ${file}` : undefined
+    }
   }
+}
+/** Whether a value is connected to the step's input. */
+const wired = (ctx: Context, port: string) => !!ctx.graph?.edges.some(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === port)
+/** The http or https address typed into the step's URL; undefined for none or one that is not one. */
+function typedAddress(ctx: Context): URL | undefined {
+  const operand = inputValue(ctx.node, 'url', ctx.catalog)
+  if (!record(operand) || operand.kind !== 'literal' || typeof operand.value !== 'string') return
+  try {
+    const url = new URL(operand.value)
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url : undefined
+  } catch { return undefined }
 }
 const entityStepWords: Record<string, string> = { entity_state: 'State', set_entity_state: 'Set state', set_entity_available: 'Set available' }
 /** The catalog with the definition of the graph the step is in: lifted already (the canvas), or from the graph. */

@@ -15,7 +15,8 @@ using static VisualExecutionTests;
 /// bad address, checksum or name before any request, and whose receiving does not count against the setup limit. A class
 /// device of a saved library downloads in Setup() and polls with Http from Every(): it publishes what it read, logs a
 /// server that is down once and its recovery once, a wrong checksum fails it, and turning it off cancels the request in
-/// flight with nothing published after.
+/// flight with nothing published after. A plug built from nodes does the same with HTTP request steps (a time pattern
+/// polls, a command posts), and a definition built from nodes downloads a file in its When started flow with Download file.
 /// </summary>
 static class EntityToolsTests
 {
@@ -39,6 +40,8 @@ static class EntityToolsTests
             await SetupLimit(home, server);
             await ClientOwnership(home, server);
             await LibraryDevice(home, server);
+            await GraphPlug(home, server);
+            await GraphDownload(home, server);
         }
         finally
         {
@@ -478,7 +481,170 @@ static class EntityToolsTests
         }
         finally { await api.UnloadAsync(); }
     }
+    // --- A definition built from nodes: HTTP request and Download file steps. ---
+
+    static JsonObject Next(string source, string target) { var wire = E(source, target); wire["id"] = $"{source}:next:{target}"; return wire; }
+    static JsonObject Data(string source, string target, string targetPort, string sourcePort = "value") { var wire = D(source, target, targetPort, sourcePort); wire["id"] = $"{source}.{sourcePort}:{target}.{targetPort}"; return wire; }
+    static JsonObject Request(string id, string url, object? config = null)
+    {
+        var node = N(id, "http_request", config ?? new { });
+        node["config"]!["url"] = Lit("string", url);
+        node["config"]!["responseType"] ??= "string";
+        return node;
+    }
+    static JsonObject SetState(string id, string entity, JsonObject values) { values["entity"] = entity; return N(id, "set_entity_state", values); }
+    static object GraphDefinition(string name, JsonObject[] nodes, JsonObject[] edges, params (string Key, string Domain)[] entities) => new
+    {
+        name,
+        settings = Array.Empty<object>(),
+        entities = entities.Select(e => new { key = e.Key, domain = e.Domain, name = e.Key }).ToArray(),
+        logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) } },
+    };
+    static async Task<JsonObject> Ok(HassSharpManager api, object body)
+    {
+        var answer = JsonNode.Parse(await api.EntityRequest(JsonSerializer.Serialize(body)))!;
+        Check(answer["ok"]!.GetValue<bool>(), "the request failed: " + answer.ToJsonString());
+        return answer["result"]!.AsObject();
+    }
+
+    /// <summary>
+    /// A plug built from nodes alone: a time pattern polls its status with an HTTP request and sets a sensor and a switch
+    /// from the JSON answer; turning the switch on posts to it and sets the switch. Its device going down is logged once
+    /// for many polls and once when it answers again; turning the definition off cancels the poll in flight.
+    /// </summary>
+    static async Task GraphPlug(EntityTestHome home, LoopbackServer server)
+    {
+        var (register, remove) = (PyInterop.BeginRegisterHaTriggers, PyInterop.BeginRemoveHaTriggers);
+        var polls = new List<Func<string, Task>>();
+        PyInterop.BeginRegisterHaTriggers = (_, _, fire, success, _) => { lock (polls) polls.Add(fire); success(Guid.NewGuid().ToString("N")); };
+        PyInterop.BeginRemoveHaTriggers = (_, success, _) => success();
+        server.Respond("/rpc/Switch.GetStatus", LoopbackServer.Reply.Text("""{"output":false,"apower":12.5}"""));
+        server.Respond("/rpc/Switch.Set", LoopbackServer.Reply.Text("""{"was_on":false}"""));
+        var host = "127.0.0.1:" + server.Port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            var poll = N("poll", "trigger", new { type = "ha", trigger = new { trigger = "time_pattern", seconds = "/5" } });
+            poll["label"] = "Poll";
+            JsonObject[] nodes =
+            [
+                poll, Request("status", server.Url("/rpc/Switch.GetStatus?id=0"), new { responseType = "object", timeout = 5 }),
+                N("power", "get_field", new { pointer = "/apower", type = "number", value = new { kind = "unset" } }),
+                N("output", "get_field", new { pointer = "/output", type = "boolean", value = new { kind = "unset" } }),
+                SetState("set_power", "power", new JsonObject()), SetState("set_relay", "relay", new JsonObject()),
+                N("on", "entity_command", new { entity = "relay", command = "turn_on" }),
+                Request("post", server.Url("/rpc/Switch.Set"), new JsonObject { ["method"] = "POST", ["responseType"] = "object", ["body"] = Lit("object", new { id = 0, on = true }) }),
+                SetState("set_on", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+                N("off", "entity_command", new { entity = "relay", command = "turn_off" }),
+                Request("post_off", server.Url("/rpc/Switch.Set"), new JsonObject { ["method"] = "POST", ["responseType"] = "object", ["body"] = Lit("object", new { id = 0, on = false }) }),
+                SetState("set_off", "relay", new JsonObject { ["is_on"] = Lit("boolean", false) }),
+            ];
+            JsonObject[] edges =
+            [
+                Next("poll", "status"), Next("status", "set_power"), Next("set_power", "set_relay"),
+                Data("status", "power", "value", "body"), Data("status", "output", "value", "body"), Data("power", "set_power", "value"), Data("output", "set_relay", "is_on"),
+                Next("on", "post"), Next("post", "set_on"), Next("off", "post_off"), Next("post_off", "set_off"),
+            ];
+            var saved = await Ok(api, new { operation = "save", id = "plug", expectedRevision = 0, definition = GraphDefinition("Plug", nodes, edges, ("power", "sensor"), ("relay", "switch")) });
+            Check(saved["active"]!.GetValue<bool>() && saved["document"]!["status"]!.GetValue<string>() == "running", "the plug runs: " + saved.ToJsonString());
+            Func<string, Task> Tick() { lock (polls) return polls[^1]; }
+            const string Payload = """{"trigger":{"platform":"time_pattern","now":"2026-11-18T10:00:05+00:00"}}""";
+            JsonNode? Last(string key, string value) => home.Snapshots().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "plug:" + key && s["available"]!.GetValue<bool>())?["values"]?[value];
+            await Tick()(Payload);
+            await EntityTestHome.Until(() => Last("power", "value")?.ToJsonString() == "12.5" && Last("relay", "is_on")?.ToJsonString() == "false", "the poll sets the sensor and the switch");
+            Check(server.Requests().Last(r => r.Path == "/rpc/Switch.GetStatus").Target == "/rpc/Switch.GetStatus?id=0", "the poll's request");
+            Console.WriteLine("PASS entity tools: a time pattern of a plug built from nodes polls its status with HTTP request and sets a sensor and a switch from the JSON answer");
+
+            await api.EntityCommand("plug:relay", "turn_on", null);
+            await EntityTestHome.Until(() => Last("relay", "is_on")?.ToJsonString() == "true", "turning the switch on sets it");
+            var posted = server.Requests().Last(r => r.Path == "/rpc/Switch.Set");
+            Check(posted.Method == "POST" && posted.Headers["Content-Type"] == "application/json" && Encoding.UTF8.GetString(posted.Body) == """{"id":0,"on":true}""", "the command posts: " + Encoding.UTF8.GetString(posted.Body));
+            Console.WriteLine("PASS entity tools: turning on a switch built from nodes posts JSON to the device with HTTP request and sets the switch");
+
+            // The device goes down: many polls, one error; it comes back: one line.
+            string[] Errors() => home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Plug: ", StringComparison.Ordinal)).ToArray();
+            var before = Errors().Length;
+            server.Down();
+            try { for (var i = 0; i < 6; i++) await Tick()(Payload); }
+            finally { server.Up(); }
+            var failed = Errors().Skip(before).ToArray();
+            Check(failed.Length == 1 && failed[0] == $"Plug: Poll failed: Could not reach {host}", "a device that is down is logged once for six polls: " + string.Join(" | ", failed));
+            Check(home.Logs(PyLogLevel.Debug).Count(l => l.StartsWith("Plug: Poll failed: ", StringComparison.Ordinal) && l.Contains($"Could not reach {host}", StringComparison.Ordinal)) >= 6, "each failure is logged at Debug: " + string.Join(" | ", home.Logs(PyLogLevel.Debug).TakeLast(3)));
+            server.Respond("/rpc/Switch.GetStatus", LoopbackServer.Reply.Text("""{"output":true,"apower":3}"""));
+            await Tick()(Payload);
+            await Tick()(Payload);
+            await EntityTestHome.Until(() => Last("power", "value")?.ToJsonString() == "3", "the poll works again");
+            Check(home.Logs(PyLogLevel.Info).Count(l => l == "Plug: Poll works again") == 1 && Errors().Length == before + 1, "the recovery is logged once: " + string.Join(" | ", home.Logs().TakeLast(4)));
+            Console.WriteLine("PASS entity tools: a time pattern polling a device that is down with HTTP request logs one error for many polls, and one line when it answers again");
+
+            // Turned off while a poll waits for the device: the request is cancelled at once, and nothing is logged or published after.
+            var answer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            server.Respond("/rpc/Switch.GetStatus", new() { Body = Encoding.UTF8.GetBytes("""{"output":false,"apower":99}"""), Before = answer.Task });
+            var held = server.Count("/rpc/Switch.GetStatus") + 1;
+            var tick = Tick()(Payload);
+            await server.Requested("/rpc/Switch.GetStatus", held);
+            var (warnings, errors) = (home.Logs(PyLogLevel.Warn).Length, home.Logs(PyLogLevel.Error).Length);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var off = await Ok(api, new { operation = "set_enabled", id = "plug", enabled = false });
+            Check(!off["active"]!.GetValue<bool>() && clock.Elapsed < TimeSpan.FromSeconds(2), $"turning off waited {clock.Elapsed.TotalMilliseconds} ms: " + off.ToJsonString());
+            try { await tick.WaitAsync(TimeSpan.FromSeconds(2)); } catch (OperationCanceledException) { }
+            var batches = home.Pushes().Length;
+            answer.SetResult();
+            await Task.Delay(100);
+            Check(!home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("plug:", StringComparison.Ordinal) && s["available"]!.GetValue<bool>()), "a plug turned off published");
+            Check(!home.Snapshots().Any(s => s["values"]?["value"]?.ToJsonString() == "99"), "the cancelled request's answer was published");
+            Check(home.Logs(PyLogLevel.Warn).Length == warnings && home.Logs(PyLogLevel.Error).Length == errors, "stopping logged the poll: " + string.Join(" | ", home.Logs().TakeLast(4)));
+            Console.WriteLine("PASS entity tools: turning a plug built from nodes off cancels its HTTP request in flight at once, logs nothing for it, and publishes nothing after");
+        }
+        finally
+        {
+            await api.UnloadAsync();
+            (PyInterop.BeginRegisterHaTriggers, PyInterop.BeginRemoveHaTriggers) = (register, remove);
+        }
+    }
+
+    /// <summary>
+    /// A definition built from nodes downloads a file in its When started flow and hands its path to a later step; the time
+    /// the download receives does not count against the setup limit, and a definition saved again finds the file without
+    /// a request.
+    /// </summary>
+    static async Task GraphDownload(EntityTestHome home, LoopbackServer server)
+    {
+        var model = Bytes(8_000, 10);
+        var sha = Sha(model);
+        // About 600 ms of receiving, twice the setup limit.
+        server.Respond("/models/model.tflite", new() { Body = model, Pieces = 5, Pause = TimeSpan.FromMilliseconds(150) });
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
+            object Definition() => GraphDefinition("Model",
+                [N("setup", "entity_setup"),
+                 N("download", "download_file", new JsonObject { ["url"] = Lit("string", server.Url("/models/model.tflite?token=hunter2")), ["sha256"] = Lit("string", sha) }),
+                 SetState("set", "model", new JsonObject())],
+                [Next("setup", "download"), Next("download", "set"), Data("download", "set", "value", "path")],
+                ("model", "sensor"));
+            var saved = await Ok(api, new { operation = "save", id = "model", expectedRevision = 0, definition = Definition() });
+            Check(saved["active"]!.GetValue<bool>() && saved["document"]!["status"]!.GetValue<string>() == "running", "a download slower than the setup limit fails the When started flow: " + saved.ToJsonString());
+            var path = Path.Combine(FilesRoot(home), sha, "model.tflite");
+            Check(File.ReadAllBytes(path).SequenceEqual(model) && server.Count("/models/model.tflite") == 1, "the file is downloaded once: " + server.Count("/models/model.tflite"));
+            JsonNode? Shown() => home.Snapshots().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "model:model" && s["available"]!.GetValue<bool>())?["values"]?["value"];
+            await EntityTestHome.Until(() => Shown()?.GetValue<string>() == path, "the next step gets the file's path");
+            Check(home.Logs(PyLogLevel.Info).Contains("Model: Downloading model.tflite from 127.0.0.1") && !home.Logs().Any(l => l.Contains("hunter2", StringComparison.Ordinal)), "the download is logged naming only the host");
+            var again = await Ok(api, new { operation = "save", id = "model", expectedRevision = 1, definition = Definition() });
+            Check(again["document"]!["status"]!.GetValue<string>() == "running" && server.Count("/models/model.tflite") == 1, "a definition saved again finds the file without a request: " + server.Count("/models/model.tflite"));
+            Console.WriteLine("PASS entity tools: Download file in a When started flow downloads once, not counting against the setup limit, and hands the path to the next step; saved again, it finds the file without a request");
+        }
+        finally
+        {
+            DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(60);
+            await api.UnloadAsync();
+        }
+    }
 }
+
 
 /// <summary>Downloads a file in its Setup().</summary>
 sealed class ToolFetcher : SharpDevice

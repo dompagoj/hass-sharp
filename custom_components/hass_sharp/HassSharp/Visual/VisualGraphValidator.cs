@@ -39,6 +39,7 @@ public static class VisualGraphValidator
         "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "node.document", "node.singleton", "root.incoming",
         "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value",
+        "http.url", "http.body", "download.checksum",
     ];
 
     /// <summary>
@@ -131,6 +132,15 @@ public static class VisualGraphValidator
         }
         /// <summary>A time of day as the daily trigger runs it: 24-hour HH:MM.</summary>
         internal const string TimeOfDay = "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$";
+        /// <summary>A web address as an HTTP request or a download takes one: http:// or https://, a host, then anything without a space.</summary>
+        internal const string WebAddressPattern = @"^[Hh][Tt][Tt][Pp][Ss]?://[^\x00-\x20\x7f/?#]+(?:[/?#][^\x00-\x20\x7f]*)?$";
+        /// <summary>A SHA-256 checksum: 64 hexadecimal characters, in either case.</summary>
+        internal const string ChecksumPattern = "^[0-9A-Fa-f]{64}$";
+        /// <summary>An address typed into an HTTP request or a download that is not a web address.</summary>
+        internal static string WebAddress(string label) => $"{label} must start with http:// or https://";
+        internal static string BodyMethod(string label, string method) => $"{label} cannot be sent with {method}; choose another method or remove it";
+        /// <summary>A download's checksum typed in that is not a SHA-256.</summary>
+        internal static string Checksum(string label) => $"{label} must be 64 hexadecimal characters, the file's SHA-256";
         internal static string TimeOfDayMessage(string label) => $"{label} must be HH:MM in 24-hour time, from 00:00 to 23:59";
         /// <summary>A daily trigger's time zone that this machine does not know (the generator checks it, not the validators).</summary>
         internal static string UnknownTimeZone(string zone) => $"Time zone {Name(zone)} is not known; use a name such as Europe/Zagreb or UTC";
@@ -937,6 +947,19 @@ public static class VisualGraphValidator
             // A path that starts with / can still be wrong in one way: a ~ that is not ~0 (a ~ in a key) or ~1 (a / in a key).
             if (kind == "get_field" && (cfg["pointer"] is not JsonValue pointer || !pointer.TryGetValue<string>(out var p) || !Match(p, "^(?:/(?:[^~]|~[01])*)*$")))
                 Error(id, cfg["pointer"] is JsonValue path && path.TryGetValue<string>(out var text) && text.StartsWith('/') ? Words.PathTilde : "Path must start with /, such as /state", "pointer");
+            // An address or a checksum typed in (not connected) that cannot be one: an HTTP request's or a download's.
+            if (kind is "http_request" or "download_file")
+            {
+                string? Typed(string port) => !incoming.ContainsKey((id, port)) && TryGetInputValue(node, port, out var operand) && operand is JsonObject literal && Text(literal, "kind") == "literal"
+                    && literal["value"] is JsonValue typed && typed.TryGetValue<string>(out var value) ? value : null;
+                var inputs = DataInputs(node, Owner(node));
+                if (Typed("url") is { } url && !Match(url, Words.WebAddressPattern)) Error(id, Words.WebAddress(Words.PortLabel(inputs["url"], "url")), "url", code: "http.url");
+                // A body, connected or typed in, on a method that sends none.
+                var method = cfg["method"] is JsonValue chosen && chosen.TryGetValue<string>(out var named) ? named : "GET";
+                if (kind == "http_request" && method is "GET" or "HEAD" && Supplied(node, "body"))
+                    Error(id, Words.BodyMethod(Words.PortLabel(inputs["body"], "body"), method), "body", code: "http.body");
+                if (kind == "download_file" && Typed("sha256") is { } checksum && !Match(checksum, Words.ChecksumPattern)) Error(id, Words.Checksum(Words.PortLabel(inputs["sha256"], "sha256")), "sha256", code: "download.checksum");
+            }
             if (kind == "parallel" && cfg["branches"] is JsonArray branches)
             {
                 var ids = new HashSet<string>();
