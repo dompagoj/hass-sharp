@@ -366,3 +366,66 @@ Findings from phase 1's reviews that this phase does not take. Each later plan c
 - (T12) smoke compares threads by get_ident() in a set that never forgets — ident reuse could flake (entity_bridge_smoke.py:57,82,94,198); use current_thread() and _DummyThread
 - (T12) a malformed payload ends in a bare traceback instead of FAIL: (entity_bridge_smoke.py:207,224,236-238); unexpected stand-in delegate calls only printed, not asserted (:274)
 - (T12) spike erratum carries two details from HA's source rather than the tests ("removal due in 2027.8", the quoted DeviceInfoError text) (spike.md:91,95)
+
+---
+
+## Outcome of phase 2, and what it hands on
+
+Phase 2 ended at `7e4accb` (23 task commits and 5 fix-wave commits after `207c814`). All five suites pass (runtime 388 PASS lines); both packaging smokes pass in the container; the live check against Home Assistant 2026.11.1 passed every step of Task 10 and of the fix wave's re-check.
+
+Decisions taken during the phase that the spec and the tasks above do not state:
+
+- `entity_is` is labelled **Has state**; a second value node, **Current state** (`entity_current`), reads any entity's state. Both work in automations.
+- An entity graph is a graph with an **object** `definition`; a non-object one is ignored. The automation API drops an object `definition` from a client's graph. An entity graph needs no root.
+- A State that fails makes its entity unavailable and logs one warning per reason (naming the node), one info line on recovery, the detail at debug. A value its domain refuses fails the State the same way.
+- A sensor a graph publishes takes: with `options`, one of them; with a unit or state class, a number or numeric text; otherwise any number or text.
+- A command waits at most 30 s (`DefinitionHost.CommandTimeout`); Home Assistant has no limit of its own. A command or setup flow that ends at a Stop step has succeeded.
+- A failing command, setup or trigger flow of a definition logs one line naming the definition and the flow (warning for a command, error otherwise).
+- Trigger flows in a definition are not recorded in run history unless the node sets `trackHistory: true` (host default, `EntityApi.TrackHistory`). Command and setup runs are recorded; State runs are not.
+- A new revision of a graph definition starts each entity (same key and domain) from the running revision's state; a setup flow or a State overrides it.
+- Setting values are not part of the generated source; a library save rebuilds every definition, as it does every automation, and its answer masks secret setting values.
+
+### For phase 3 (panel)
+
+- There is no TypeScript compose/decompose yet. The editor must compose `definition` (entities and settings schema) into the graph before validating — otherwise `graphDocument` reads it as an automation — and decompose before saving.
+- `config.entity`, `config.command` and `config.key` of the entity nodes are free strings: the panel needs pickers fed from `catalog.definition` and `entityDomains`. Entity-only kinds are hidden from the automation palette (`catalogPalette`); the entity editor needs the opposite filter.
+- The flow code still tests `kind == "trigger"`: generalise to "is a root" in `flow/flowModel.ts`, `flow/autoConnect.ts`, `layout.ts`, `graph.ts`, `FlowAdapter.tsx`.
+- History default: `addGraphNode` (`contract.ts`) copies every spec default into config and `TriggerConfig.tsx` shows `trackHistory !== false`, so a trigger added in the panel would be recorded on every tick. Add a document-aware `trackHistoryDefault(kind, document)` used by both, mirroring `EntityApi.TrackHistory`.
+- Run history: `hass_sharp/entities` has no history operation; a definition's runs are read through `hass_sharp/run_history` with the document's `automationId`. `AutomationRuns.tsx` shows the causes `Command` and `Setup` as raw names and their trigger summary as a generic "Trigger"; snapshot graphs of a definition's runs carry `definition`. A `run` operation for definitions is not built.
+- A command's error carries no node name (`RunOutcome.Error` is the innermost message): the run trace must show where it failed.
+- `command.unhandled` has a null `nodeId` (show it at definition level) and names the entity by key while the command error uses its name: say "name (key)" in both validators and the fixture.
+- A definition's save diagnostics include compiler warnings of unrelated node libraries (`nodeId` starting `$library:`), as an automation's do.
+- Secret settings: the entity API's list, read and save answers return values in clear. Mask them with a round trip (keep the stored value when the mask comes back).
+- An entity's key: make it read-only after the first save, or offer an explicit rename (the bridge updates the registry entry's unique id before the sync). A plain rename through the API creates a new entity whose id ends in `_2`.
+- `get_capabilities` carries `entityDomains` for automations too (harmless).
+
+### For phase 4 (tools, more domains, restore)
+
+- A domain is four entries: `SharpDomains` typed class, `SharpDomains.Graph` (state check and apply), the catalog's `entityDomains`, and a Python platform. `EntityDomainTests` pins the first three to each other.
+- `entity_command` has no outputs: a flow cannot read a command's data (a number's value, a light's brightness). `entityDomains.commands` needs a data schema and the node needs outputs.
+- `dynamicInputs: "entity"` makes every state key a required input and `IDefinitionRuntime.SetState` expects every key: light and cover need optional inputs and a merge.
+- First state of an entity: after a reload or restart, states set only by command or trigger flows come back `unknown` (no restore yet). Over a new revision they are carried from the running one, with two gaps to close here: a command or trigger handled by the old revision while the new one is being prepared is overwritten by the earlier copy (carry again after the sync for keys the setup flow did not set, or read the old host's final values once it is invalidated); and an entity that a failing State left unavailable stays unavailable in a revision that no longer has that State (do not carry availability for keys that had a State).
+- A failing poll (a trigger flow) logs an error on every tick: dedupe per reason as State does. A State that never finishes leaves its entity unavailable with no log: add a slow-State warning.
+- A secret setting that flows into another node's inputs is traced there in clear, and reaches State warnings and run errors through refusal texts, which quote the value.
+- `options: []` passes the document check and then refuses every value; a sensor with a numeric device class but no unit or state class takes any text.
+- A number a graph computes as NaN or infinity is refused by the runtime, so the entity is unavailable (a class definition's NaN shows as unknown).
+
+### For phase 6 (MCP and docs)
+
+- A State updates only for entities chosen on its nodes' pins; a library or Custom C# node that reads an entity through `NodeContext.State` does not make it a dependency.
+- Entities of a definition without a device get ids from their name alone (`binary_sensor.any_motion`): name them with clashes in mind.
+- The history default for trigger flows in a definition, the Stop rule and the 30 s command limit belong in the MCP authoring guidance.
+
+### Not tied to a phase
+
+- Turning a definition off cancels its runs with the runner's "reloaded" reason, so a cancelled command says the definition was reloaded.
+- Between the old revision being invalidated and the new one registering, a command still reaches the old host, which ignores its state changes (as in phase 1: commands answer 'The entity is not running' during a replace).
+- `DefinitionGenerator`'s optional diagnostics provider falls back to a process-wide static (production always passes it).
+
+### Test and tooling items
+
+- `tests/python/test_entity_bridge.py`: the write-failure cap test could assert exactly six lines, separate records per entity, and silence after a repeat. No test blocks inside an entity's (not the device's) `Setup()`.
+- `EntityHostTests`: a test's `finally` can miss a thread on an already-failing path. `EntityGraphRuntimeTests`: two tests overwrite `PyInterop.Log` without restoring it; `FakeDefinition.Calls` is a plain list.
+- `RunOutcomeTests`: the thread test sets `Entered` before `Register` (it can only pass falsely, in a microsecond window); `Within` relabels a `TimeoutException` thrown by the awaited task.
+- `EntityGraphTests`: the setup flow's "cancelled" text is untested (it needs the run's own cancellation to win a race with the definition's lifetime).
+- Commits `1c3a3a9`, `888e011`, `5698e38` and every commit from `4c690ed` on carry a "Claude Opus 5.5" co-author trailer (the implementing agents' harness rule); the others carry "Claude Fable 5.2".
