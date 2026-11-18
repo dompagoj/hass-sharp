@@ -73,8 +73,9 @@ class VisualApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0][1]['result'], [{'id': 'a', 'outline': {'nodes': []}}])
 
 
-def load_routes(manager, hass):
-    """Every websocket command of websocket.py, registered against fakes of Home Assistant's websocket API."""
+def load_routes(manager, hass, **fakes):
+    """Every websocket command of websocket.py, registered against fakes of Home Assistant's websocket API. `fakes`
+    replace the default fakes of the names the two modules use (an empty entity registry, no native triggers)."""
     tree = ast.parse(pathlib.Path('custom_components/hass_sharp/websocket.py').read_text())
     tree.body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
     service_tree = ast.parse(pathlib.Path('custom_components/hass_sharp/authoring.py').read_text())
@@ -88,9 +89,12 @@ def load_routes(manager, hass):
     anything = lambda *a, **k: (a[0] if a else None)
     env = {'json': json, 'logger': Mock(), 'dotnet_tasks': types.SimpleNamespace(async_run_dotnet_task=run), 'native_triggers': None,
            'utils': types.SimpleNamespace(get_hass_entity_registry=lambda h: {'entities': []}),
+           'er': types.SimpleNamespace(async_get=lambda h: None, async_entries_for_config_entry=lambda registry, entry_id: []),
+           'DOMAIN': 'hass_sharp',
            'vol': types.SimpleNamespace(Schema=anything, Required=anything, Optional=anything, All=anything, Range=anything, In=anything),
            'websocket_api': types.SimpleNamespace(decorators=types.SimpleNamespace(async_response=lambda f: f),
-                                                  async_register_command=lambda h, name, handler, schema: handlers.__setitem__(name, handler))}
+                                                  async_register_command=lambda h, name, handler, schema: handlers.__setitem__(name, handler)),
+           **fakes}
     exec(compile(service_tree, '<authoring>', 'exec'), env)
     exec(compile(tree, '<websocket>', 'exec'), env)
     env['register_websocket_routes'](hass, manager)
@@ -150,7 +154,8 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         results, errors = await self.send(handlers['hass_sharp/entities'], hass, {'request': request})
         self.assertEqual(errors, [])
         self.assertEqual(calls, [request])
-        self.assertEqual(results, [(1, envelope)])
+        # Each listed definition gains its entity registry entries (test_entity_authoring.py): none here.
+        self.assertEqual(results, [(1, {**envelope, 'result': [{'id': 'porch', 'enabled': True, 'registeredEntities': []}]})])
         # A refusal from .NET is an envelope like any other and is answered as a result.
         refused = {'version': 1, 'ok': False, 'error': {'code': 'not_found', 'detail': 'No such definition'}}
         envelope = refused

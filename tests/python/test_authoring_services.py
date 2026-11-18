@@ -68,9 +68,9 @@ class AuthoringTests(unittest.IsolatedAsyncioTestCase):
             return json.dumps(envelope)
         env={'dotnet_tasks':types.SimpleNamespace(async_run_dotnet_task=run),'native_triggers':None}
         exec(compile(tree,'<authoring>','exec'),env)
-        hass,entity_request=object(),object()
+        hass,entity_request=types.SimpleNamespace(data={}),object()
         service=env['AuthoringService'](hass,types.SimpleNamespace(EntityRequest=entity_request))
-        # Passed through unchanged, whatever the operation, and answered as .NET's envelope parsed.
+        # A definition whose logic is not a graph is passed through unchanged (test_entity_authoring.py), and answered as .NET's envelope parsed.
         request={'operation':'save','definition':{'id':'porch','source':'class Porch {}'},'expectedRevision':3}
         self.assertEqual(await service.entities(request,is_admin=True),envelope)
         self.assertEqual(calls,[(hass,entity_request,json.dumps(request))])
