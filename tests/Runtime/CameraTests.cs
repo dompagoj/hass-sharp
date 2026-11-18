@@ -207,21 +207,40 @@ static class CameraTests
         Check(stale.Message == "View (view) could not make a frame: the camera is off", "the request fails with the reason: " + stale.Message);
         Check(Errors().Length == 2, "another reason logs again: " + string.Join(" | ", Errors()));
 
-        // A frame slower than the limit fails as a timeout; the next request starts a new one.
+        // A frame slower than the limit fails as a timeout. While it still runs no other is started, however long it
+        // hangs: the requests get its outcome, the last good frame for a while and then the timeout. Once it has ended,
+        // late (what it gives is dropped), the next request starts a new one.
         CameraFrames.MakeLimit = TimeSpan.FromMilliseconds(200);
-        Feed(async token => { await Task.Delay(Timeout.Infinite, token); return null; });
+        CameraFrames.GoodFor = TimeSpan.FromMilliseconds(400);
+        Feed(Picture(26));
+        await Task.Delay(30);
+        Check(Width(await api.CameraImage("feed:view")) == 26, "a good frame before the slow one");
+        var late = new TaskCompletionSource<SharpImage?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Feed(token => late.Task.WaitAsync(token));
         before = Calls;
         await Task.Delay(30);
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        var slow =await Throws<TimeoutException>(() => api.CameraImage("feed:view"), "a frame slower than the limit");
-        Check(slow.Message == "View (view) could not make a frame: it took longer than 0.2 s" && clock.Elapsed >= TimeSpan.FromMilliseconds(190) && clock.Elapsed < TimeSpan.FromSeconds(2),
-            $"a frame slower than the limit fails after it ({clock.ElapsedMilliseconds} ms): " + slow.Message);
-        await Task.Delay(30);
-        await Throws<TimeoutException>(() => api.CameraImage("feed:view"), "the next frame, as slow");
+        Check(Width(await api.CameraImage("feed:view")) == 26 && clock.Elapsed >= TimeSpan.FromMilliseconds(190) && clock.Elapsed < TimeSpan.FromSeconds(2),
+            $"a frame slower than the limit answers the last good one after the limit ({clock.ElapsedMilliseconds} ms)");
+        for (var i = 0; i < 3; i++)
+        {
+            await Task.Delay(30);
+            Check(Width(await api.CameraImage("feed:view")) == 26, $"request {i + 1} while the slow frame still runs answers the last good one");
+        }
+        Check(Calls == before + 1, $"no second frame is started while the slow one still runs, not {Calls - before}");
+        await Task.Delay(300);
+        var slow = await Throws<TimeoutException>(() => api.CameraImage("feed:view"), "a request long after the last good frame, the slow one still running");
+        Check(slow.Message == "View (view) could not make a frame: it took longer than 0.2 s", "the request fails with the timeout: " + slow.Message);
+        Check(Calls == before + 1, $"still no second frame is started, not {Calls - before}");
+        Check(Errors().Count(line => line == "Feed: View (view) could not make a frame: it took longer than 0.2 s") == 1, "the timeout is logged once: " + string.Join(" | ", Errors()));
+        late.SetResult(SharpImage.Blank(27, 8));
+        Feed(Picture(28));
+        // Its end reaches the host through a pool continuation.
+        await Task.Delay(50);
+        Check(Width(await api.CameraImage("feed:view")) == 28, "once the slow frame has ended, the next request makes a new one, and the late frame is not shown");
         Check(Calls == before + 2, $"the next request starts a frame of its own, not {Calls - before - 1}");
-        Check(Errors().Last() == "Feed: View (view) could not make a frame: it took longer than 0.2 s", "a timeout is logged: " + string.Join(" | ", Errors()));
         CameraFrames.GoodFor = TimeSpan.FromSeconds(30);
-        Console.WriteLine("PASS camera: a frame that fails answers the last good one, logged once per reason and once when it works again; after a while the request fails with the reason, and a frame slower than the limit fails as a timeout and the next request starts another");
+        Console.WriteLine("PASS camera: a frame that fails answers the last good one, logged once per reason and once when it works again; after a while the request fails with the reason, a frame slower than the limit fails as a timeout, no other starts while it runs, and the next request after it has ended starts another");
     }
 
     static async Task Stopped(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)
@@ -348,9 +367,26 @@ static class CameraTests
         Check(Width(await api.CameraImage("lens:lens")) == 12 && Width(await api.CameraImage("lens:lens")) == 12 && flows == 1, $"the frame flow runs once for two requests within the interval ({flows})");
         await Task.Delay(50);
         Check(Width(await api.CameraImage("lens:lens")) == 12 && flows == 2, $"and again after the interval ({flows})");
+        // A frame flow past the limit is still the one running: none other starts until it has ended.
+        var limit = CameraFrames.MakeLimit;
+        CameraFrames.MakeLimit = TimeSpan.FromMilliseconds(100);
+        var hung = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.FrameNeeded("lens", () => { Interlocked.Increment(ref flows); return hung.Task; });
+        await Task.Delay(50);
+        Check(Width(await api.CameraImage("lens:lens")) == 12 && flows == 3, $"a frame flow past the limit answers the last good frame ({flows})");
+        for (var i = 0; i < 2; i++)
+        {
+            await Task.Delay(50);
+            Check(Width(await api.CameraImage("lens:lens")) == 12 && flows == 3, $"no other frame flow starts while it still runs ({flows})");
+        }
+        hung.SetResult();
+        host.FrameNeeded("lens", () => { Interlocked.Increment(ref flows); host.SetFrame("lens", SharpImage.Blank(14, 8, SharpColor.Red)); return Task.CompletedTask; });
+        await Task.Delay(50);
+        Check(Width(await api.CameraImage("lens:lens")) == 14 && flows == 4, $"once it has ended, the next request runs the flow again ({flows})");
+        CameraFrames.MakeLimit = limit;
         try { host.SetFrame("nothing", SharpImage.Blank(1, 1)); throw new Exception("a frame for an entity the definition does not have was taken"); }
         catch (InvalidOperationException refused) { Check(refused.Message == "Lens has no entity nothing", "a frame for an unknown entity: " + refused.Message); }
-        Console.WriteLine("PASS camera: a frame interval outside 0.5 to 60 is refused at save; a camera built from nodes runs with its own, and the frame flow its graph gives runs before a request is answered");
+        Console.WriteLine("PASS camera: a frame interval outside 0.5 to 60 is refused at save; a camera built from nodes runs with its own, and the frame flow its graph gives runs before a request is answered, one at a time also past the limit");
     }
 
     static async Task WithoutTheLibrary(HassSharpManager api, EntityTestHome home)

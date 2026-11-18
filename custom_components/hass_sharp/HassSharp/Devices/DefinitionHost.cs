@@ -559,8 +559,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     // Begins making a frame of the camera, which the requests share (CameraFrames.Share, which calls this under the
     // camera's lock, so it never blocks): the code runs on the pool, counted among what stopping waits for until it has
-    // ended, also after its outcome is known.
-    Task<CameraFrames.Outcome> Make(SharpCamera camera, Func<Task<SharpImage?>> make, string what)
+    // ended, also after its outcome is known; until then no other frame of the camera starts, a graph's frame flow's too.
+    CameraFrames.Making Make(SharpCamera camera, Func<Task<SharpImage?>> make, string what)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (gate)
@@ -576,7 +576,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             lock (gate) running.Remove(done.Task);
             done.TrySetResult();
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        return Ended(camera, made, what);
+        return new(Ended(camera, made, what), made);
     }
 
     // How making the frame ended, within CameraFrames.MakeLimit: a picture becomes the current frame (a copy, as Show

@@ -6,7 +6,9 @@ namespace HassSharp;
 /// One camera's current frame, and how the requests for its picture share the frames made (decision 4 of the camera's
 /// design). The current frame is set by <see cref="Show"/>. A camera that makes its frames when they are needed makes one
 /// at a time: a request while one is being made shares it, and one within 0.8 of the camera's interval of the start of
-/// the last one gets that one again (<see cref="Share"/>). When making one failed, the current frame is still the answer
+/// the last one gets that one again (<see cref="Share"/>). A frame that passed its time limit and still runs is still the
+/// one being made: no other starts beside it, however long it hangs, and the requests get its timed-out outcome until it
+/// has ended. When making one failed, the current frame is still the answer
 /// for <see cref="GoodFor"/> after it was last made or confirmed; after that, and when there has never been one, the
 /// request fails (<see cref="Picture"/>). Each frame is encoded once, on a pool thread, whoever asks. Thread-safe.
 /// </summary>
@@ -34,7 +36,11 @@ internal sealed class CameraFrames
         public Task<byte[]> Jpeg => jpeg.Value;
     }
 
-    sealed record Attempt(long Started, Task<Outcome> Done);
+    /// <summary>The making of one frame: how it ended for the requests (<paramref name="Done"/>), and the code making it
+    /// (<paramref name="Made"/>), which may run on after a timeout.</summary>
+    internal sealed record Making(Task<Outcome> Done, Task Made);
+
+    sealed record Attempt(long Started, Making Making);
 
     readonly object gate = new();
     Frame? current;
@@ -63,20 +69,21 @@ internal sealed class CameraFrames
     }
 
     /// <summary>
-    /// The making of a frame a request shares: the one in flight, or the last one when it was begun less than 0.8 of
-    /// <paramref name="interval"/> ago; otherwise the one <paramref name="begin"/> begins now, which must not block (it is
-    /// called under the lock).
+    /// The making of a frame a request shares: the one in flight (also one past its time limit whose code still runs), or
+    /// the last one when it was begun less than 0.8 of <paramref name="interval"/> ago; otherwise the one
+    /// <paramref name="begin"/> begins now, which must not block (it is called under the lock).
     /// </summary>
-    public Task<Outcome> Share(TimeSpan interval, Func<Task<Outcome>> begin)
+    public Task<Outcome> Share(TimeSpan interval, Func<Making> begin)
     {
         lock (gate)
         {
             var now = Stopwatch.GetTimestamp();
-            if (last is { } shared && (!shared.Done.IsCompleted || Stopwatch.GetElapsedTime(shared.Started, now) < interval * Reuse)) return shared.Done;
-            var done = begin();
+            if (last is { Making: var shared } && (!shared.Done.IsCompleted || !shared.Made.IsCompleted || Stopwatch.GetElapsedTime(last.Started, now) < interval * Reuse))
+                return shared.Done;
+            var making = begin();
             Interlocked.Increment(ref begun);
-            last = new(now, done);
-            return done;
+            last = new(now, making);
+            return making.Done;
         }
     }
 
