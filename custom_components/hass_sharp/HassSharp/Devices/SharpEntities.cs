@@ -167,7 +167,7 @@ internal static class SharpDomains
     {
         ["binary_sensor"] = new(
             d => new SharpBinarySensor(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
-            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff((entity, on) => ((SharpBinarySensor)entity).IsOn = on) }),
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff(entity => ((SharpBinarySensor)entity).IsOn, (entity, on) => ((SharpBinarySensor)entity).IsOn = on) }),
         ["sensor"] = new(
             d => new SharpSensor(d.Key, d.Name)
             {
@@ -175,15 +175,15 @@ internal static class SharpDomains
                 Unit = EntityDescription.Text(d.Options?["unit"]), StateClass = EntityDescription.Text(d.Options?["stateClass"]),
                 Options = d.Options?["options"] is JsonArray values ? values.Select(EntityDescription.Text).OfType<string>().ToArray() : null,
             },
-            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(SensorRefuses, (entity, value) => ((SharpSensor)entity).Value = value) }),
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(SensorRefuses, (entity, value) => ((SharpSensor)entity).Value = value, entity => ((SharpSensor)entity).Value) }),
         ["switch"] = new(
             d => new SharpSwitch(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
-            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff((entity, on) => ((SharpSwitch)entity).IsOn = on) }),
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff(entity => ((SharpSwitch)entity).IsOn, (entity, on) => ((SharpSwitch)entity).IsOn = on) }),
     };
 
     // A state that is on, off or unknown.
-    static GraphState OnOff(Action<SharpEntity, bool?> keep) =>
-        new((_, value) => value is null or bool ? null : "is neither true nor false", (entity, value) => keep(entity, (bool?)value));
+    static GraphState OnOff(Func<SharpEntity, bool?> read, Action<SharpEntity, bool?> keep) =>
+        new((_, value) => value is null or bool ? null : "is neither true nor false", (entity, value) => keep(entity, (bool?)value), entity => read(entity));
 
     // A sensor's reading as Home Assistant takes it. With options: one of them as text (an enum sensor), or unknown.
     // With a unit or a state class: a number, or text that reads as a finite number in the invariant culture, kept as
@@ -223,7 +223,7 @@ internal sealed record GraphDomain(Func<EntityDescription, SharpEntity> Create, 
 /// <summary>
 /// One state key of a <see cref="GraphDomain"/>: <paramref name="Refuses"/> says why the entity does not take a value
 /// (worded to follow "The value 5 of Power (power)", such as "is neither true nor false"), or null when it does;
-/// <paramref name="Keep"/> sets a value it takes on the entity.
+/// <paramref name="Keep"/> sets a value it takes on the entity; <paramref name="Read"/> gives the value the entity has.
 /// </summary>
-internal sealed record GraphState(Func<SharpEntity, object?, string?> Refuses, Action<SharpEntity, object?> Keep);
+internal sealed record GraphState(Func<SharpEntity, object?, string?> Refuses, Action<SharpEntity, object?> Keep, Func<SharpEntity, object?> Read);
 

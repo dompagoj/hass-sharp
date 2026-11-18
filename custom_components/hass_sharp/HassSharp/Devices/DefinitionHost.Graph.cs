@@ -25,18 +25,23 @@ internal sealed partial class DefinitionHost
     /// <summary>
     /// A definition built from nodes: creates the entities its document describes, then runs its When started flow, if it
     /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
-    /// succeed fails the prepare with its error.
+    /// succeed fails the prepare with its error. When this revision replaces one that runs, each entity no State works
+    /// out starts with the state and availability its namesake of the same domain has there (<see cref="Carry"/>), unless
+    /// it refuses that state; the When started flow may still set another.
     /// </summary>
     async Task<SharpEntity[]> PrepareGraph(JsonArray described)
     {
         graphSettings = GraphSettings(definition.Settings);
         var all = described.OfType<JsonObject>().Select(entity => SharpDomains.Create(VisualNodeCatalog.Text(entity, "domain"), entity)).ToArray();
         CheckKeys(all);
+        // Read before the lock: the running revision's lock is taken alone, never inside this one.
+        var carried = Replaced();
         lock (gate)
         {
             graphEntities = all.ToDictionary(entity => entity.Key, StringComparer.Ordinal);
             // Each entity a State works out is published first by its State, once a run worked it out (see StartAsync).
             awaiting.UnionWith((definition.Roots?.StateEntities.Values ?? []).Where(graphEntities.ContainsKey));
+            Carry(carried);
         }
         entities = all;
         if (definition.Roots?.Setup is not { } setup) return all;
@@ -53,6 +58,58 @@ internal sealed partial class DefinitionHost
                 _ => $"{definition.Name} does not start: its When started flow did not run",
             });
         return all;
+    }
+
+    /// <summary>A graph's entity as it is now, in plain values: its state values by key and its availability.</summary>
+    internal sealed record GraphEntityState(string Key, string Domain, bool Available, KeyValuePair<string, object?>[] Values);
+
+    /// <summary>
+    /// The state of each of a graph's entities as it is now, for the revision that replaces this one; none unless running
+    /// and not yet replaced. Only plain values (true or false, a number, text or none), so that nothing of this revision's
+    /// code is held by what reads them; a value of any other kind is left out, and so is its entity. Read under the lock,
+    /// where no user code runs: a graph's entities are HassSharp's own. Never throws.
+    /// </summary>
+    internal GraphEntityState[] GraphStates()
+    {
+        try
+        {
+            lock (gate)
+            {
+                if (status != Running || Ignoring) return [];
+                var states = new List<GraphEntityState>();
+                foreach (var entity in graphEntities.Values)
+                {
+                    if (!SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) continue;
+                    var values = domain.State.Select(state => KeyValuePair.Create(state.Key, state.Value.Read(entity))).ToArray();
+                    if (values.All(value => value.Value is null or bool or double or string)) states.Add(new(entity.Key, entity.Domain, entity.Available, values));
+                }
+                return [.. states];
+            }
+        }
+        catch (Exception) { return []; }
+    }
+
+    // What the revision of this definition that runs now shows, when this host replaces it: none for a first start, one
+    // turned off, failed or stopping, or a class's. Never throws.
+    GraphEntityState[] Replaced()
+    {
+        try { return Manager.Entities.Host(definition.Id) is { } running && running != this ? running.GraphStates() : []; }
+        catch (Exception) { return []; }
+    }
+
+    // Under the gate, as the entities are created: each entity no State works out takes the state and availability of its
+    // namesake of the same domain in the revision this one replaces, all or nothing, when it takes every value.
+    void Carry(GraphEntityState[] carried)
+    {
+        foreach (var was in carried)
+        {
+            if (awaiting.Contains(was.Key) || !graphEntities.TryGetValue(was.Key, out var entity) || entity.Domain != was.Domain
+                || !SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) continue;
+            if (was.Values.Any(value => !domain.State.TryGetValue(value.Key, out var state) || state.Refuses(entity, value.Value) != null)) continue;
+            // A graph's entity has no host of its own, so this publishes nothing by itself.
+            foreach (var (key, value) in was.Values) domain.State[key].Keep(entity, value);
+            entity.Available = was.Available;
+        }
     }
 
     /// <summary>

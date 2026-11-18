@@ -50,7 +50,13 @@ static class EntityGraphTests
             (nameof(AnUnknownSourceIsWarnedOfInPreviewAndSave), AnUnknownSourceIsWarnedOfInPreviewAndSave),
             (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried),
             (nameof(AnAutomationSentWithADefinitionStaysAnAutomation), AnAutomationSentWithADefinitionStaysAnAutomation),
-            (nameof(ALibrarySaveAnswersNoSecretSettingValues), ALibrarySaveAnswersNoSecretSettingValues) })
+            (nameof(ALibrarySaveAnswersNoSecretSettingValues), ALibrarySaveAnswersNoSecretSettingValues),
+            (nameof(ASwitchKeepsItsStateThroughANewRevision), ASwitchKeepsItsStateThroughANewRevision),
+            (nameof(ALibraryRebuildKeepsASwitchsState), ALibraryRebuildKeepsASwitchsState),
+            (nameof(AWhenStartedFlowOverridesTheStateCarriedOver), AWhenStartedFlowOverridesTheStateCarriedOver),
+            (nameof(AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown), AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown),
+            (nameof(AValueTheNewRevisionRefusesIsNotCarriedOver), AValueTheNewRevisionRefusesIsNotCarriedOver),
+            (nameof(AnUnavailableEntityStaysUnavailableThroughANewRevision), AnUnavailableEntityStaysUnavailableThroughANewRevision) })
         {
             try
             {
@@ -964,5 +970,143 @@ static class EntityGraphTests
         // The stored documents keep the values.
         Check((await rig.Read("plug"))["settings"]!.ToJsonString().Contains("class-hunter2", StringComparison.Ordinal), "the class definition still has its value");
         Check((await rig.Read("level"))["settings"]!.ToJsonString().Contains("graph-hunter2", StringComparison.Ordinal), "the graph definition still has its value");
+    }
+
+    // ---- A new revision carries the states its flows set over ----
+
+    /// <summary>The definition with a field of its first entity changed, which makes a new revision of it.</summary>
+    static JsonObject Touched(JsonObject definition, string icon = "mdi:power")
+    {
+        var touched = definition.DeepClone().AsObject();
+        touched["entities"]![0]!["icon"] = icon;
+        return touched;
+    }
+
+    /// <summary>
+    /// A switch a command turned on stays on through a save of a new revision: every push after the save is on, never
+    /// unknown; and its commands reach the new revision.
+    /// </summary>
+    static async Task ASwitchKeepsItsStateThroughANewRevision()
+    {
+        await using var rig = await Rig.Start("carry");
+        await rig.Save("relay", Relay());
+        await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", null), "the switch starts unknown");
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        var batches = rig.Batches;
+        var saved = await rig.Save("relay", Touched(Relay()), 1);
+        Check(saved["active"]!.GetValue<bool>() && rig.Home.Syncs("relay").Length == 2, "the new revision runs: " + saved.ToJsonString());
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true)), "every push after the save is on: " + Lines(after.Select(s => s.ToJsonString())));
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "the new revision takes the command", batches);
+    }
+
+    /// <summary>A library save that rebuilds a definition keeps the state its switch's command flow set.</summary>
+    static async Task ALibraryRebuildKeepsASwitchsState()
+    {
+        await using var rig = await Rig.Start("carry-library");
+        await rig.Library("maths", 0, EntityStoreTests.Maths);
+        var half = await rig.LibraryNode("Half");
+        var definition = Relay();
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Add(N("k", "setting", new { key = "offset" }));
+        graph["nodes"]!.AsArray().Add(N("h", half, new { arguments = new { } }));
+        graph["nodes"]!.AsArray().Add(State("s", "level"));
+        graph["edges"]!.AsArray().Add(Data("k", "h", "value"));
+        graph["edges"]!.AsArray().Add(Data("h", "s", "value", "result"));
+        definition["entities"]!.AsArray().Add(Entity("level", "sensor"));
+        definition["settings"] = new JsonArray(new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 });
+        await rig.Save("relay", definition);
+        await rig.Until("relay:level", s => Is(s, "value", 2.0), "half the setting");
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        var batches = rig.Batches;
+        var rebuilt = await rig.Library("maths", 1, EntityStoreTests.Maths.Replace("value / 2", "value / 4"));
+        Check(rebuilt["result"]?["definitions"]?.AsArray().SingleOrDefault()?["active"]?.GetValue<bool>() == true, "the rebuilt definition runs: " + rebuilt.ToJsonString());
+        await rig.Until("relay:level", s => Is(s, "value", 1.0), "the new code works out the level", batches);
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true)), "every push after the rebuild is on: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>The state a new revision's When started flow sets is its first, not the state carried over.</summary>
+    static async Task AWhenStartedFlowOverridesTheStateCarriedOver()
+    {
+        await using var rig = await Rig.Start("carry-setup");
+        var definition = Relay();
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Add(N("start", "entity_setup"));
+        graph["nodes"]!.AsArray().Add(SetState("first", "relay", On(false)));
+        graph["edges"]!.AsArray().Add(Next("start", "first"));
+        await rig.Save("relay", definition);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "the When started flow turns it off");
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        var batches = rig.Batches;
+        await rig.Save("relay", Touched(definition), 1);
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", false)), "the new revision starts with the state its flow set: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>An entity whose key the new revision gives to another domain starts unknown, though the two take the same state.</summary>
+    static async Task AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown()
+    {
+        await using var rig = await Rig.Start("carry-domain");
+        await rig.Save("relay", Relay());
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        var batches = rig.Batches;
+        var saved = await rig.Save("relay", Definition("Relay", Graph("Relay", []), [Entity("relay", "binary_sensor", new { name = "Relay" })]), 1);
+        Check(saved["active"]!.GetValue<bool>(), "the new revision runs: " + saved.ToJsonString());
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", null)), "the binary sensor starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// A sensor's value a trigger flow set is carried over by a new revision that takes it, and not by one that refuses
+    /// it (its options changed): that one starts unknown.
+    /// </summary>
+    static async Task AValueTheNewRevisionRefusesIsNotCarriedOver()
+    {
+        await using var rig = await Rig.Start("carry-refused", ("sensor.button", "idle"));
+        var graph = Graph("Button", [N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("t", "set"));
+        JsonObject Button(object? options = null) => Definition("Button", graph, [Entity("last", "sensor", options == null ? new { name = "Last" } : new { name = "Last", options })]);
+        await rig.Save("button", Button());
+        await rig.Change("sensor.button", "pressed");
+        await rig.Until("button:last", s => Is(s, "value", "pressed"), "the trigger flow set the value");
+        var batches = rig.Batches;
+        await rig.Save("button", Touched(Button()), 1);
+        await rig.Started("button");
+        var kept = rig.Pushed("button:last", batches);
+        Check(kept.Length > 0 && kept.All(s => Available(s) && Is(s, "value", "pressed")), "a revision that takes the value keeps it: " + Lines(kept.Select(s => s.ToJsonString())));
+        batches = rig.Batches;
+        await rig.Save("button", Button(new { options = new[] { "low", "high" } }), 2);
+        await rig.Started("button");
+        var refused = rig.Pushed("button:last", batches);
+        Check(refused.Length > 0 && refused.All(s => Available(s) && Is(s, "value", null)), "a revision whose sensor refuses the value starts unknown: " + Lines(refused.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>An entity a flow made unavailable stays unavailable through a new revision, with its state.</summary>
+    static async Task AnUnavailableEntityStaysUnavailableThroughANewRevision()
+    {
+        await using var rig = await Rig.Start("carry-unavailable");
+        var definition = Relay(turnOff: false);
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Add(Command("off", "relay", "turn_off"));
+        graph["nodes"]!.AsArray().Add(N("gone", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", false) }));
+        graph["edges"]!.AsArray().Add(Next("off", "gone"));
+        await rig.Save("relay", definition);
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => !Available(s) && Is(s, "is_on", true), "the switch is on and unavailable");
+        var batches = rig.Batches;
+        await rig.Save("relay", Touched(definition), 1);
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => !Available(s) && Is(s, "is_on", true)), "the new revision keeps it unavailable and on: " + Lines(after.Select(s => s.ToJsonString())));
     }
 }
