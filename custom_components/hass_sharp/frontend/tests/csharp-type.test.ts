@@ -107,6 +107,8 @@ const linked: Record<string, string[][]> = {
   // An entity id: the handle class node code takes it as.
   entity_id: [['Entity', 'global::HassSharp.Entities.Entity']],
   'global::HassSharp.EntityStateSnapshot': [['EntityStateSnapshot', 'global::HassSharp.EntityStateSnapshot']],
+  // A built-in type of HassSharp's own, asked for by its catalog id.
+  image: [['SharpImage', 'image']],
   'global::NodeLib.Reading': [['NodeLib.Reading', 'global::NodeLib.Reading']],
   'global::NodeLib.IReading': [['NodeLib.IReading', 'global::NodeLib.IReading']],
   'global::NodeLib.Mode': [['NodeLib.Mode', 'global::NodeLib.Mode']],

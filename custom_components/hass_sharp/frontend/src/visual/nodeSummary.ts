@@ -281,6 +281,10 @@ function kindText(ctx: Context): string | undefined {
       try { file = decodeURIComponent(last) } catch { /* not a name */ }
       return file ? `Download ${file}` : undefined
     }
+    case 'camera_snapshot': { const camera = homeEntity(ctx); return camera ? `Take a picture · ${camera}` : undefined }
+    // The colour chosen, else the step's own default.
+    case 'image_draw_rect': return `Draw rectangle · ${text(config.color) || 'Red'}`
+    case 'image_draw_text': return `Draw text · ${text(config.color) || 'White'}`
   }
 }
 /** Whether a value is connected to the step's input. */

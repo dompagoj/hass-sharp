@@ -194,7 +194,8 @@ public sealed class VisualRuntime
     /// <summary>
     /// By output, the Setting nodes whose value it carries, worked out once from the graph: a value worked out from a
     /// secret is secret. A Setting's own output carries its setting; every output of a value node (one with no flow of its
-    /// own) carries what its wired inputs carry, except one of true or false; so do a For each's item, of its list, and a
+    /// own) carries what its wired inputs carry, except one of true or false or a picture (a text drawn on one is not in
+    /// what a run shows of it); so do a For each's item, of its list, and a
     /// loop's kept and exported values, of what the Loop result steps of its body give them, as these hand a value on.
     /// A step's own outputs carry none (a service's response, a node method's results), except the body and headers of an
     /// HTTP request that keeps its response out of run history, which carry that request as a secret setting's value
@@ -229,8 +230,8 @@ public sealed class VisualRuntime
         do {
             changed=false;
             void Add((string Node,string Port) output,IEnumerable<string> from) {
-                var settings=from.ToArray();
-                if(settings.Length==0 || TrueOrFalse(TraceOutputType(output.Node,output.Port)))return;
+                var settings=from.ToArray();var type=TraceOutputType(output.Node,output.Port);
+                if(settings.Length==0 || TrueOrFalse(type) || type=="image")return;
                 if(!settingSources.TryGetValue(output,out var carried))settingSources[output]=carried=new(StringComparer.Ordinal);
                 foreach(var setting in settings)changed|=carried.Add(setting);
             }
@@ -507,8 +508,8 @@ public sealed class VisualRuntime
         !HassSharp.Entities.EntityText.Marked(enumType)?null:HassSharp.Entities.EntityText.Parse(enumType,text)??throw new InvalidOperationException($"{label}: {text} is not a value of {type}");
     /// <summary>What a member of an entity enum is written as: its Home Assistant text, <c>"other"</c> for the catch-all; null for an enum without texts.</summary>
     internal static string? EnumText(Enum value)=>HassSharp.Entities.EntityText.Of(value)??(HassSharp.Entities.EntityText.Marked(value.GetType())?"other":null);
-    /// <summary>A value as a Log writes it: an entity enum as its text, anything else as <see cref="Convert.ToString(object, IFormatProvider)"/> gives it.</summary>
-    static string LogText(object? value)=>value is Enum member&&EnumText(member) is {} text?text:Convert.ToString(value,CultureInfo.InvariantCulture)??"null";
+    /// <summary>A value as a Log writes it: an entity enum as its text, a picture as a run's trace shows it (never its bytes), anything else as <see cref="Convert.ToString(object, IFormatProvider)"/> gives it.</summary>
+    static string LogText(object? value)=>value is Enum member&&EnumText(member) is {} text?text:value is SharpImage image?TraceJson.ImageText(image):Convert.ToString(value,CultureInfo.InvariantCulture)??"null";
     public void Output(VisualScope scope,string node,object? value,string port="value") {
         var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
@@ -640,6 +641,10 @@ public sealed class VisualRuntime
                         // A name taken from a secret address would put part of it in the path: the file is called "file" then.
                         var fileName=Text(cfg,"name") is {Length:>0} name?name:SecretInput(id,"url",address)?"file":null;
                         Output(scope,id,await Waiting(scope,definition!.Files.Download(address,checksum,fileName,scope.CancellationToken)),"path");break;
+                    // A picture of a Home Assistant camera, asked for under the definition's id, so that one of its own cameras
+                    // (which would wait for itself) is refused at once; Home Assistant's failure is the step's.
+                    case "camera_snapshot":var camera=Input<string>(scope,id,"entity");
+                        Output(scope,id,await Waiting(scope,HassCameras.SnapshotAsync(definition!.DefinitionId,camera,scope.CancellationToken)),"image");break;
                     // A secret is not written to the log: the line is *** (true or false worked out from one is written).
                     case "log":var said=Get("value");PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},SecretInput(id,"value",said)?TraceJson.Redacted:LogText(said));break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
@@ -752,6 +757,15 @@ public sealed class VisualRuntime
             // Exactly that state, as Home Assistant stores it: an entity it does not have has none.
             case "entity_is":var checkedEntity=Input<string>(scope,id,"entity");var wanted=Input<string>(scope,id,"state");Output(scope,id,HomeAssistantState(checkedEntity)?.State is {} has&&string.Equals(has,wanted,StringComparison.Ordinal));break;
             case "entity_current":Output(scope,id,EntityOf(id,"entity",Input<string>(scope,id,"entity")));break;
+            // A drawing goes on a copy of the picture wired in, which other steps may read too (and which this node reads
+            // again each time a step uses it); drawing only adds to the copy's list, so nothing is decoded or encoded here.
+            // The picture's own limits (a line 1 to 50 pixels, a text of at most 200 characters, ...) fail in its words.
+            case "image_draw_rect":
+                var framed=Input<SharpImage>(scope,id,"image").Copy();
+                Output(scope,id,framed.DrawRect(Pixels(scope,id,"x"),Pixels(scope,id,"y"),Pixels(scope,id,"width"),Pixels(scope,id,"height"),Colour(cfg,"Red"),Whole(cfg,"thickness",2)),"image");break;
+            case "image_draw_text":
+                var captioned=Input<SharpImage>(scope,id,"image").Copy();var caption=Input<string>(scope,id,"text");
+                Output(scope,id,captioned.DrawText(caption,Pixels(scope,id,"x"),Pixels(scope,id,"y"),Colour(cfg,"White"),Whole(cfg,"size",16),Flag(cfg,"background",true)),"image");break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
@@ -789,10 +803,25 @@ public sealed class VisualRuntime
         return Guarded(()=>ReadEntity(entity,fresh),error=>error is InvalidOperationException&&SecretInput(node,port,entity),
             ()=>new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because {Because(node,port)}"));
     }
+    /// <summary>
+    /// A drawing step's position or size in pixels: a value that is not a whole number fails the step, naming the input
+    /// (and not quoting a secret); a whole one beyond what a position can be is outside the picture, as far as it can be.
+    /// </summary>
+    int Pixels(VisualScope scope,string node,string port) {
+        var value=Input<double>(scope,node,port);
+        if(!double.IsFinite(value)||Math.Truncate(value)!=value)
+            throw new InvalidOperationException($"{VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port)} must be a whole number of pixels, not {(SecretInput(node,port,value)?HiddenValue(node,port):Convert.ToString(value,CultureInfo.InvariantCulture))}");
+        return (int)Math.Clamp(value,int.MinValue,int.MaxValue);
+    }
+    /// <summary>The colour a drawing step's Colour names; <paramref name="fallback"/> when none is chosen.</summary>
+    static SharpColor Colour(JsonNode cfg,string fallback)=>SharpColor.TryParse(Text(cfg,"color",fallback),out var colour)?colour
+        :throw new InvalidOperationException($"{Text(cfg,"color")} is not a colour to draw in; choose Red, Green, Blue, Yellow, Orange, White or Black");
+    /// <summary>A whole number a step's configuration gives; <paramref name="fallback"/> when it gives none.</summary>
+    static int Whole(JsonNode cfg,string key,int fallback)=>cfg[key] is JsonValue value&&value.TryGetValue<double>(out var number)&&double.IsFinite(number)?(int)Math.Clamp(Math.Truncate(number),int.MinValue,int.MaxValue):fallback;
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
-    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file"],StringComparer.Ordinal);
+    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot"],StringComparer.Ordinal);
     /// <summary>
     /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
     /// entity's domain) that is required or given a value (<see cref="Supplied"/>), as <see cref="EntityStateValue"/>

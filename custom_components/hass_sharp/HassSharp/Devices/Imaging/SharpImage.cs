@@ -82,6 +82,9 @@ public sealed class SharpImage : IVisualSnapshot
     /// <summary>How many drawings the image carries.</summary>
     public int Drawings => drawings.Count;
 
+    /// <summary>The size in bytes of the JPEG it was loaded from, without decoding anything; 0 for a blank picture.</summary>
+    internal int SourceBytes => jpeg?.Length ?? 0;
+
     /// <summary>Adds the outline of a rectangle; returns this image.</summary>
     /// <param name="x">Its left edge, in pixels from the left of the picture.</param>
     /// <param name="y">Its top edge, in pixels from the top of the picture.</param>

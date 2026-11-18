@@ -129,8 +129,20 @@ static class TraceJson
         JsonArray => "array",
         JsonValue v => v.GetValueKind() switch { JsonValueKind.String => "string", JsonValueKind.Number => "number", JsonValueKind.True or JsonValueKind.False => "boolean", _ => "null" },
         _ when Number(value) => "number",
+        SharpImage => "image",
         _ => ShapeOf(value.GetType()).Name,
     };
+
+    /// <summary>
+    /// A picture as a trace and a log show it: "Image · 12 KB · 2 drawings", the size of the JPEG it came as (rounded
+    /// up; a blank picture's is 0) and how many drawings it carries. Never its bytes; nothing is decoded or encoded.
+    /// </summary>
+    internal static string ImageText(SharpImage image)
+    {
+        var kilobytes = ((long)image.SourceBytes + 1023) / 1024;
+        var drawings = image.Drawings;
+        return $"Image · {kilobytes.ToString(CultureInfo.InvariantCulture)} KB · {drawings.ToString(CultureInfo.InvariantCulture)} drawing{(drawings == 1 ? "" : "s")}";
+    }
 
     static readonly Dictionary<Type, string> aliases = new()
     {
@@ -332,6 +344,8 @@ static class TraceJson
                 case TimeSpan span: String(span.ToString("c", CultureInfo.InvariantCulture)); return;
                 case Guid guid: String(guid.ToString()); return;
             }
+            // A picture is its short text, at any depth: its properties are never read (its size would decode it).
+            if (value is SharpImage image) { String(ImageText(image)); return; }
             var type = value.GetType();
             var shape = ShapeOf(type);
             var special = value is EntityStateSnapshot or HassSharp.Entities.Entity or Exception;

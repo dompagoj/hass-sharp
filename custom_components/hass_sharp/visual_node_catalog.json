@@ -92,6 +92,17 @@
       "category": "Object",
       "description": "The entities, devices, areas, floors or labels a service acts on."
     },
+    "image": {
+      "description": "A picture, such as one a camera took, with the rectangles and text drawn on it.",
+      "clrType": "HassSharp.SharpImage",
+      "nullable": false,
+      "category": "Object",
+      "assignableTo": [
+        "image"
+      ],
+      "label": "Image",
+      "listed": false
+    },
     "global::HassSharp.EntityStateSnapshot": {
       "description": "An entity's state and attributes as they were when read.",
       "clrType": "HassSharp.EntityStateSnapshot",
@@ -2155,6 +2166,233 @@
         "firmware",
         "cache",
         "checksum"
+      ]
+    },
+    "camera_snapshot": {
+      "label": "Take a picture",
+      "category": "Entity",
+      "description": "Take the current picture of a Home Assistant camera.",
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {},
+      "inputs": {
+        "entity": {
+          "types": [
+            "entity_id:camera"
+          ],
+          "required": true,
+          "label": "Camera",
+          "description": "The camera to take the picture of, such as camera.front_door."
+        }
+      },
+      "outputs": {
+        "image": {
+          "type": "image",
+          "label": "Image",
+          "description": "The picture, as the camera took it."
+        }
+      },
+      "execution": [
+        "next",
+        "error"
+      ],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "camera",
+        "snapshot",
+        "photo",
+        "image",
+        "frame"
+      ]
+    },
+    "image_draw_rect": {
+      "label": "Draw rectangle",
+      "category": "Entity",
+      "description": "Draw the outline of a rectangle on a picture, such as around something seen in it. Drawing outside the picture is left out.",
+      "pure": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "color": {
+          "type": "string",
+          "enum": [
+            "Red",
+            "Green",
+            "Blue",
+            "Yellow",
+            "Orange",
+            "White",
+            "Black"
+          ],
+          "default": "Red",
+          "label": "Colour",
+          "description": "The colour of the rectangle's line."
+        },
+        "thickness": {
+          "type": "integer",
+          "min": 1,
+          "max": 50,
+          "default": 2,
+          "label": "Thickness",
+          "description": "How wide the line is, from 1 to 50 pixels, drawn inside the rectangle's edges."
+        }
+      },
+      "inputs": {
+        "image": {
+          "types": [
+            "image"
+          ],
+          "required": true,
+          "label": "Image",
+          "description": "The picture to draw on. The rectangle goes on a copy: the picture itself stays as it was for the other steps that use it."
+        },
+        "x": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "label": "X",
+          "description": "The rectangle's left edge, in whole pixels from the left of the picture."
+        },
+        "y": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "label": "Y",
+          "description": "The rectangle's top edge, in whole pixels from the top of the picture."
+        },
+        "width": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "label": "Width",
+          "description": "How wide the rectangle is, in whole pixels."
+        },
+        "height": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "label": "Height",
+          "description": "How tall the rectangle is, in whole pixels."
+        }
+      },
+      "outputs": {
+        "image": {
+          "type": "image",
+          "label": "Image",
+          "description": "The picture with the rectangle on it."
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "box",
+        "outline",
+        "frame",
+        "mark",
+        "picture"
+      ]
+    },
+    "image_draw_text": {
+      "label": "Draw text",
+      "category": "Entity",
+      "description": "Write a line of text on a picture, such as a name or the time. Text outside the picture is left out.",
+      "pure": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "color": {
+          "type": "string",
+          "enum": [
+            "Red",
+            "Green",
+            "Blue",
+            "Yellow",
+            "Orange",
+            "White",
+            "Black"
+          ],
+          "default": "White",
+          "label": "Colour",
+          "description": "The colour of the text."
+        },
+        "size": {
+          "type": "integer",
+          "min": 8,
+          "max": 200,
+          "default": 16,
+          "label": "Size",
+          "description": "How tall the text is, from 8 to 200 pixels."
+        },
+        "background": {
+          "type": "boolean",
+          "default": true,
+          "label": "Background",
+          "description": "Put a dark box behind the text, so that it can be read on any picture."
+        }
+      },
+      "inputs": {
+        "image": {
+          "types": [
+            "image"
+          ],
+          "required": true,
+          "label": "Image",
+          "description": "The picture to write on. The text goes on a copy: the picture itself stays as it was for the other steps that use it."
+        },
+        "text": {
+          "types": [
+            "string"
+          ],
+          "required": true,
+          "label": "Text",
+          "description": "What to write, on one line, at most 200 characters."
+        },
+        "x": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "label": "X",
+          "description": "The left of the text, in whole pixels from the left of the picture."
+        },
+        "y": {
+          "types": [
+            "number"
+          ],
+          "required": true,
+          "label": "Y",
+          "description": "The top of the text, in whole pixels from the top of the picture."
+        }
+      },
+      "outputs": {
+        "image": {
+          "type": "image",
+          "label": "Image",
+          "description": "The picture with the text on it."
+        }
+      },
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "label",
+        "caption",
+        "write",
+        "annotate",
+        "picture"
       ]
     }
   },

@@ -41,6 +41,8 @@ static class EntityGraphRuntimeTests
         /// <summary>The downloads a test gives the definition; without, a run here makes none (see EntityToolsTests).</summary>
         public SharpFiles? Downloads;
         public SharpFiles Files => Downloads ?? throw new InvalidOperationException("This definition downloads nothing");
+        /// <summary>The definition's id, which a picture is taken under.</summary>
+        public string DefinitionId { get; init; } = "fake";
     }
     /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
     sealed class TraceSink : IRunTraceSink
@@ -141,7 +143,7 @@ static class EntityGraphRuntimeTests
     [RuntimeSuite("--entity-graph-runtime", Order = 11)]
     public static async Task Run()
     {
-        var entity = PyInterop.Entity; var log = PyInterop.Log; var trigger = UserScriptManager.CurrentTrigger.Value;
+        var entity = PyInterop.Entity; var log = PyInterop.Log; var trigger = UserScriptManager.CurrentTrigger.Value; var cameras = PyInterop.BeginCameraSnapshot;
         PyInterop.Entity = id => States.TryGetValue(id, out var state) ? new() { EntityId = id, State = state } : null;
         var failures = new List<string>();
         try
@@ -181,17 +183,22 @@ static class EntityGraphRuntimeTests
                 (nameof(HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost), HttpRequestFollowsRedirectsWithoutHandingHeadersToAnotherHost),
                 (nameof(HttpRequestRefusesAHeaderBeforeSending), HttpRequestRefusesAHeaderBeforeSending),
                 (nameof(HttpRequestReadsAnEmptyOrCompressedAnswer), HttpRequestReadsAnEmptyOrCompressedAnswer),
-                (nameof(NothingKeepsACookie), NothingKeepsACookie) })
+                (nameof(NothingKeepsACookie), NothingKeepsACookie),
+                (nameof(DrawingStepsDrawOnACopyOfThePicture), DrawingStepsDrawOnACopyOfThePicture),
+                (nameof(TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun), TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun),
+                (nameof(ADrawingStepRefusesAPositionThatIsNotWhole), ADrawingStepRefusesAPositionThatIsNotWhole),
+                (nameof(APictureIsTracedAndLoggedAsAShortText), APictureIsTracedAndLoggedAsAShortText) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
                 catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
             }
         }
-        finally { PyInterop.Entity = entity; PyInterop.Log = log; UserScriptManager.CurrentTrigger.Value = trigger; States.Clear(); }
+        finally { PyInterop.Entity = entity; PyInterop.Log = log; PyInterop.BeginCameraSnapshot = cameras; UserScriptManager.CurrentTrigger.Value = trigger; States.Clear(); }
         if (failures.Count > 0) throw new Exception($"Entity graph runtime: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS entity graph runtime: State sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
+        Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy, refuse a position that is not whole, and a picture is traced and logged as a short text, never its bytes");
         Console.WriteLine("PASS entity graph runtime: HTTP request names a host it cannot connect to, gives no body for a HEAD, follows redirects itself without handing its headers to another host, refuses a header before sending, and reads an empty or compressed answer; Download file hides a secret's address and checksum");
     }
 
@@ -488,8 +495,10 @@ static class EntityGraphRuntimeTests
              N("setup", "entity_setup"), N("setup_up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
              Manual("t1"), Setting("k", "name"), N("show", "log", new { value = Unset }),
              Manual("t2"), Said("before_set", "before set"), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
-             Manual("t3"), Said("before_up", "before available"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) })],
-            [E("on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up")],
+             Manual("t3"), Said("before_up", "before available"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
+             Manual("t4"), Said("before_picture", "before picture"), Snapshot("picture", "camera.porch")],
+            [E("on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up"),
+             E("t4", "before_picture"), E("before_picture", "picture")],
             [("door", "binary_sensor"), ("relay", "switch")],
             ("name", "string"));
         using var compiled = await Compiled.Of(graph, "entity nodes of every kind");
@@ -500,7 +509,7 @@ static class EntityGraphRuntimeTests
         }
         var setting = await Fails(() => compiled.Run("t1", null), "a Setting without a definition");
         Check(setting is InvalidOperationException && setting.Message == "Setting (used by Log): " + Message, "the Setting fails itself, named with the step reading it: " + setting.Message);
-        foreach (var (root, said, step) in new[] { ("t2", "before set", "Set state"), ("t3", "before available", "Set available") })
+        foreach (var (root, said, step) in new[] { ("t2", "before set", "Set state"), ("t3", "before available", "Set available"), ("t4", "before picture", "Take a picture") })
         {
             while (messages.TryDequeue(out _)) { }
             var error = await Fails(() => compiled.Run(root, null), $"{step} without a definition");
@@ -1162,5 +1171,146 @@ static class EntityGraphRuntimeTests
         using var bomb = await Compiled.Of(Started([Request("get", server.Url("/bomb"))], []), "a compressed answer larger than the limit");
         var tooLarge = await Fails(() => bomb.Run("setup", new FakeDefinition()), "a compressed answer larger than the limit");
         Check(tooLarge.Message == $"The answer from {host} is larger than 4 MiB" && Gzip(big).Length < 64 * 1024, "the decompressed size counts: " + tooLarge.Message);
+    }
+
+    // ---- Pictures ----
+
+    /// <summary>A small JPEG, as a camera gives one.</summary>
+    static byte[] Picture() => SharpImage.Blank(48, 32, SharpColor.Blue).ToJpeg();
+    /// <summary>Home Assistant's cameras: each picture asked for is recorded as "definition camera" and answered by <paramref name="answer"/>.</summary>
+    static List<string> Cameras(Action<Action<byte[]>, Action<string>> answer)
+    {
+        var asked = new List<string>();
+        PyInterop.BeginCameraSnapshot = (definition, camera, ok, fail) => { lock (asked) asked.Add(definition + " " + camera); answer(ok, fail); };
+        return asked;
+    }
+    static JsonObject Snapshot(string id, string camera) => N(id, "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", camera) });
+    static JsonObject Rect(string id, object? x = null) => N(id, "image_draw_rect", new JsonObject
+    {
+        ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", x ?? 2), ["y"] = Lit("number", 2), ["width"] = Lit("number", 20), ["height"] = Lit("number", 10),
+    });
+    static JsonObject Label(string id, JsonNode? text = null) => N(id, "image_draw_text", new JsonObject
+    {
+        ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = text ?? Lit("string", "Porch"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1),
+    });
+    /// <summary>The size a trace gives a picture of <paramref name="bytes"/>: its kilobytes, rounded up.</summary>
+    static string Kilobytes(byte[] bytes) => ((bytes.Length + 1023) / 1024).ToString(CultureInfo.InvariantCulture) + " KB";
+    /// <summary>Whether the image has read its picture's header or encoded itself: neither is needed to draw.</summary>
+    static bool Untouched(SharpImage image)
+    {
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        return (int)typeof(SharpImage).GetField("width", flags)!.GetValue(image)! == 0 && typeof(SharpImage).GetField("encoded", flags)!.GetValue(image) == null;
+    }
+
+    /// <summary>
+    /// Take a picture asks Home Assistant for the camera's picture under its definition's id; Draw rectangle and Draw text
+    /// each draw on a copy of the picture wired to them, so the picture itself and every other step's copy stay as they
+    /// were: two steps drawing on one picture give two images of one drawing each. Drawing reads and encodes nothing; the
+    /// picture with its drawings is a JPEG of its own.
+    /// </summary>
+    static async Task DrawingStepsDrawOnACopyOfThePicture()
+    {
+        var picture = Picture();
+        var asked = Cameras((ok, _) => ok(picture));
+        var graph = new JsonObject
+        {
+            ["version"] = 5, ["name"] = "Porch",
+            ["nodes"] = new JsonArray(N("t", "trigger", new { type = "manual" }), Snapshot("snap", "camera.porch"), Rect("rect"), Label("label"), Rect("other"), N("keep", "keep")),
+            ["edges"] = new JsonArray(E("t", "snap"), E("snap", "keep"), D("snap", "rect", "image", "image"), D("rect", "label", "image", "image"), D("snap", "other", "image", "image"),
+                D("snap", "keep", "source", "image"), D("rect", "keep", "rect", "image"), D("label", "keep", "label", "image"), D("other", "keep", "other", "image")),
+        };
+        // The step "keep" stands for one that takes a picture (Task 6's Show frame): it keeps what is wired to it.
+        var kept = new Dictionary<string, SharpImage>(StringComparer.Ordinal);
+        var types = new Dictionary<string, Type> { ["boolean"] = typeof(bool), ["number"] = typeof(double), ["string"] = typeof(string), ["image"] = typeof(SharpImage) };
+        var runtime = new VisualRuntime(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), types, TriggerPayload.Manual(), default, (id, scope, run) =>
+        {
+            if (id == "keep") foreach (var port in new[] { "source", "rect", "label", "other" }) kept[port] = (SharpImage)run.Input(scope, id, port)!;
+            return Task.CompletedTask;
+        });
+        var prior = InvocationContext.Current;
+        try
+        {
+            InvocationContext.Current = new InvocationContext("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, TriggerPayload.Manual()) { Definition = new FakeDefinition { DefinitionId = "porch" } };
+            await runtime.RunAsync("t").WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { InvocationContext.Current = prior; }
+        Same(asked, ["porch camera.porch"], "the picture is asked for under the definition's id");
+        Check(kept.Count == 4, "the step kept every image: " + string.Join(", ", kept.Keys));
+        Check(kept["source"].Drawings == 0 && kept["rect"].Drawings == 1 && kept["label"].Drawings == 2 && kept["other"].Drawings == 1,
+            $"drawings: source {kept["source"].Drawings}, rectangle {kept["rect"].Drawings}, text on it {kept["label"].Drawings}, the other rectangle {kept["other"].Drawings}");
+        Check(kept.Values.Distinct(ReferenceEqualityComparer.Instance).Count() == 4, "each step's image is one of its own");
+        Check(kept.Values.All(Untouched), "drawing neither reads the picture nor encodes it");
+        Check(ReferenceEquals(kept["source"].ToJpeg(), picture), "the picture taken is passed on as it came");
+        var drawn = kept["label"].ToJpeg();
+        Check(drawn is [0xFF, 0xD8, ..] && !drawn.AsSpan().SequenceEqual(picture) && !drawn.AsSpan().SequenceEqual(kept["rect"].ToJpeg()), "the picture with its drawings is a JPEG of its own");
+    }
+
+    /// <summary>
+    /// A camera Home Assistant gives no picture of fails Take a picture with Home Assistant's message, which its On error
+    /// wire takes; a camera that does not answer is waited for until the run is cancelled, which ends it at once.
+    /// </summary>
+    static async Task TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun()
+    {
+        var asked = Cameras((_, fail) => fail("Camera is off"));
+        using var off = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), N("why", "last_error"), SetState("said", "reading")],
+            [E("snap", "said", "error"), D("why", "said", "value", "message")]), "a picture of a camera that is off");
+        var definition = new FakeDefinition { DefinitionId = "porch" };
+        await off.Run("setup", definition);
+        Same(definition.Calls, ["state reading value=string:Camera is off"], "the On error wire is taken with Home Assistant's message");
+        Same(asked, ["porch camera.porch"], "the picture is asked for under the definition's id");
+
+        asked = Cameras((_, _) => { });
+        using var silent = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), SetState("set", "reading", new JsonObject { ["value"] = Lit("string", "taken") })], []), "a picture of a camera that does not answer");
+        using var cancel = new CancellationTokenSource();
+        definition = new FakeDefinition();
+        var run = silent.Run("setup", definition, cancel.Token);
+        await EntityTestHome.Until(() => { lock (asked) return asked.Count == 1; }, "the picture is asked for");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        cancel.Cancel();
+        var cancelled = await Fails(() => run, "a run cancelled while it waits for a picture");
+        Check(cancelled is OperationCanceledException && clock.Elapsed < TimeSpan.FromSeconds(1), $"the run ends cancelled at once: {cancelled.GetType().Name} after {clock.Elapsed.TotalMilliseconds} ms");
+        Same(definition.Calls, [], "a cancelled picture sets nothing");
+    }
+
+    /// <summary>A position or size that is not a whole number fails the drawing step, naming it and the input, and the step that uses it.</summary>
+    static async Task ADrawingStepRefusesAPositionThatIsNotWhole()
+    {
+        var picture = Picture();
+        Cameras((ok, _) => ok(picture));
+        using var compiled = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), Rect("rect", 2.5), N("say", "log", new { value = Unset })],
+            [D("snap", "rect", "image", "image"), D("rect", "say", "value", "image")]), "a rectangle at 2.5");
+        var error = await Fails(() => compiled.Run("setup", new FakeDefinition()), "a rectangle at 2.5");
+        Check(error.Message == "Draw rectangle (used by Log): X must be a whole number of pixels, not 2.5", "the message: " + error.Message);
+    }
+
+    /// <summary>
+    /// A run's trace shows a picture as a short text, its size and how many drawings it carries, never its bytes, and
+    /// stays within its limits; a Log step writes the same text. A picture is never secret: one with a secret drawn on it
+    /// is shown, while the secret text going into the step is hidden.
+    /// </summary>
+    static async Task APictureIsTracedAndLoggedAsAShortText()
+    {
+        var picture = Picture();
+        Cameras((ok, _) => ok(picture));
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        using var compiled = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), Setting("caption", "caption"), Rect("rect"), Label("label", JsonSerializer.SerializeToNode(Unset)), N("say", "log", new { value = Unset })],
+            [D("snap", "rect", "image", "image"), D("rect", "label", "image", "image"), D("caption", "label", "text"), D("label", "say", "value", "image")], ("caption", "string")), "a picture traced");
+        var definition = new FakeDefinition { Settings = { ["caption"] = "hunter2" }, Secrets = { "caption" } };
+        var sink = new TraceSink();
+        await compiled.Run("setup", definition, sink: sink);
+        var size = Kilobytes(picture);
+        var taken = sink.Event("snap")["outputs"]!["image"]!;
+        Check(taken["type"]?.GetValue<string>() == "image" && taken["v"]?.GetValue<string>() == $"Image · {size} · 0 drawings" && taken["trunc"] == null, "the picture taken: " + taken.ToJsonString());
+        Check(sink.Event("rect")["outputs"]!["image"]!["v"]?.GetValue<string>() == $"Image · {size} · 1 drawing", "one drawing: " + sink.Event("rect")["outputs"]!.ToJsonString());
+        var labelled = sink.Event("label");
+        Check(labelled["outputs"]!["image"]!["v"]?.GetValue<string>() == $"Image · {size} · 2 drawings" && labelled["outputs"]!["image"]!["redacted"] == null, "a picture with a secret drawn on it is shown: " + labelled["outputs"]!.ToJsonString());
+        Check(labelled["inputs"]!["text"]!["redacted"]?.GetValue<bool>() == true && labelled["inputs"]!["image"]!["v"]?.GetValue<string>() == $"Image · {size} · 1 drawing", "the secret going in is hidden: " + labelled["inputs"]!.ToJsonString());
+        Check(messages.Contains($"Image · {size} · 2 drawings"), "the Log step writes the short text: " + string.Join(" | ", messages));
+        var text = sink.Final.ToJsonString();
+        var base64 = Convert.ToBase64String(picture);
+        Check(!text.Contains("hunter2", StringComparison.Ordinal) && !text.Contains(base64[..40], StringComparison.Ordinal) && !text.Contains("[255,216", StringComparison.Ordinal) && !text.Contains("255, 216", StringComparison.Ordinal),
+            "the trace has no bytes and no secret: " + text);
+        Check(sink.Final["truncated"]?.GetValue<bool>() == false && !text.Contains("\"trunc\"", StringComparison.Ordinal) && System.Text.Encoding.UTF8.GetByteCount(text) < VisualTrace.MaxEventBytes,
+            $"the trace stays within its limits: {System.Text.Encoding.UTF8.GetByteCount(text)} bytes");
     }
 }

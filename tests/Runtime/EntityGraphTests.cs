@@ -97,7 +97,8 @@ static class EntityGraphTests
             (nameof(ALightThatCannotBeDimmedGetsNoBrightness), ALightThatCannotBeDimmedGetsNoBrightness),
             (nameof(AButtonRunsItsFlow), AButtonRunsItsFlow),
             (nameof(ACommandsDataIsCheckedAsAClassChecksIt), ACommandsDataIsCheckedAsAClassChecksIt),
-            (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted) })
+            (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted),
+            (nameof(ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot), ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot) })
         {
             try
             {
@@ -2397,5 +2398,33 @@ static class EntityGraphTests
         var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("code:code", "set_value", """{"value":"1234"}"""), "a password text given a text it refuses");
         Check(refused.Message == "The hidden value given for Code (code) is not a text that matches ^[0-9]+$", "the refusal does not quote the password: " + refused.Message);
         Check(!string.Join("\n", rig.Home.Logs()).Contains("abcd", StringComparison.Ordinal), "the log quotes the password");
+    }
+
+    /// <summary>
+    /// A definition's Take a picture asks Home Assistant under the definition's own id (so Home Assistant can refuse a
+    /// picture of the definition's own camera), and its drawing steps draw on what it gave; an automation cannot take
+    /// one: the three steps are refused in its save.
+    /// </summary>
+    static async Task ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot()
+    {
+        await using var rig = await Rig.Start("picture");
+        var picture = SharpImage.Blank(16, 16, SharpColor.Blue).ToJpeg();
+        rig.Home.AnswerPictures = (_, camera, ok, fail) => { if (camera == "camera.porch") ok(picture); else fail("Camera is off"); };
+        JsonObject[] Steps() => [N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") }),
+            N("rect", "image_draw_rect", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1), ["width"] = Lit("number", 8), ["height"] = Lit("number", 8) }),
+            N("label", "image_draw_text", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = Lit("string", "Porch"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1) }),
+            N("say", "log", new { value = Unset })];
+        JsonObject[] Wires() => [Next("snap", "say"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "say", "value", "image")];
+        var graph = Graph("Porch", [N("setup", "entity_setup"), .. Steps(), SetState("set", "seen", new JsonObject { ["value"] = Lit("string", "taken") })], [Next("setup", "snap"), .. Wires(), Next("say", "set")]);
+        await rig.Save("porch", Definition("Porch", graph, [Entity("seen", "sensor")]));
+        await rig.Until("porch:seen", s => Is(s, "value", "taken"), "the When started flow takes the picture");
+        Check(rig.Home.Pictures().SequenceEqual([("porch", "camera.porch")]), "the picture is asked for under the definition's id: " + string.Join(", ", rig.Home.Pictures()));
+        Check(rig.Home.Logs().Contains("Image · 1 KB · 2 drawings"), "the drawings are on the picture: " + Lines(rig.Home.Logs()));
+
+        var automation = Graph("Pictures", [N("t", "trigger", new { type = "manual" }), .. Steps()], [Next("t", "snap"), .. Wires()]);
+        var refused = JsonNode.Parse(await rig.Api.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "pictures", expectedRevision = 0, graph = automation })))!;
+        var problems = refused["error"]?["detail"]?["diagnostics"]?.AsArray().Where(d => d!["code"]?.GetValue<string>() == "node.document").Select(d => d!["nodeId"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray() ?? [];
+        Check(!refused["ok"]!.GetValue<bool>() && problems.SequenceEqual(["label", "rect", "snap"]), "an automation cannot take a picture or draw on one: " + refused.ToJsonString());
+        Check(rig.Home.Pictures().Length == 1, "the refused automation took no picture");
     }
 }

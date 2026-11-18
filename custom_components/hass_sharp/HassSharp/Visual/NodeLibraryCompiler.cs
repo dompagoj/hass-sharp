@@ -226,10 +226,17 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     if (!Unsupported(baseType) && !TooDeep(baseType) && EntityPin(baseType) == null && compilation.IsSymbolAccessibleWithin(baseType, compilation.Assembly)) into.TryAdd(TypeIdentity(baseType), baseType);
             }
         }
+        // A built-in type left out of the type lists (the picture a camera takes) stays as the catalog describes it: it
+        // joins the snapshot's types last, for the runtime, and is never compared with the others, nor are its class, what
+        // that implements and its members' types added; they would join every automation's embedded catalog (a Custom C#
+        // node's object pin would list it too) and change the source of existing automations.
+        var unlistedBuiltIn = new List<(string Id, ITypeSymbol Symbol)>();
         foreach (var (id, descriptor) in root["types"]!.AsObject())
         {
             var metadataName = VisualNodeCatalog.Text(descriptor, "clrType");
-            if (compilation.GetTypeByMetadataName(metadataName) is { } symbol) { Register(typeSymbols, symbol); typeSymbols[id] = symbol; }
+            if (compilation.GetTypeByMetadataName(metadataName) is not { } symbol) continue;
+            if (descriptor?["listed"] is JsonValue shown && shown.TryGetValue<bool>(out var listedType) && !listedType) unlistedBuiltIn.Add((id, symbol));
+            else { Register(typeSymbols, symbol); typeSymbols[id] = symbol; }
         }
         // The types of the static catalog, which every generation has and the editor knows before the server's catalog
         // arrives: a custom node lists every type it uses beyond them, so its pins validate against the static catalog too.
@@ -518,6 +525,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             customs.Add(new(custom.NodeId, signature == null ? null : descriptor, signature, own.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)).ToImmutableArray(), customErrors[custom.NodeId].ToImmutableArray()));
         }
         var entityTypes = EntityTypes(compilation, frameworkAssembly, trees, (location, message) => Report(location, message), cancellationToken);
+        foreach (var (id, symbol) in unlistedBuiltIn) typeSymbols.TryAdd(id, symbol);
         var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs, entityTypes);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }

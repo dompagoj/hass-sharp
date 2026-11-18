@@ -36036,5 +36036,912 @@
     "codes": [
       "http.body"
     ]
+  },
+  {
+    "name": "entity graph: Take a picture, then Draw rectangle and Draw text on it",
+    "graph": {
+      "version": 5,
+      "name": "Porch camera",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            },
+            "color": "Green",
+            "thickness": 4
+          }
+        },
+        {
+          "id": "label",
+          "kind": "image_draw_text",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "text": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Front door"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 80
+            },
+            "color": "White",
+            "size": 24,
+            "background": false
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:snap",
+          "source": "setup",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:say",
+          "source": "snap",
+          "target": "say",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:rect.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "rect",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:label.image",
+          "kind": "data",
+          "source": "rect",
+          "target": "label",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "label.image:say.value",
+          "kind": "data",
+          "source": "label",
+          "target": "say",
+          "sourcePort": "image",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code node.document: Take a picture, Draw rectangle and Draw text in an automation",
+    "graph": {
+      "version": 5,
+      "name": "Automation",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            }
+          }
+        },
+        {
+          "id": "label",
+          "kind": "image_draw_text",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "text": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Front door"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 80
+            }
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:snap",
+          "source": "t",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:say",
+          "source": "snap",
+          "target": "say",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:rect.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "rect",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:label.image",
+          "kind": "data",
+          "source": "rect",
+          "target": "label",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "label.image:say.value",
+          "kind": "data",
+          "source": "label",
+          "target": "say",
+          "sourcePort": "image",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "snap",
+    "messages": [
+      "Draw rectangle only works in the graph of an entity definition; delete it from this automation",
+      "Draw text only works in the graph of an entity definition; delete it from this automation",
+      "Take a picture only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "node.document",
+      "node.document",
+      "node.document"
+    ]
+  },
+  {
+    "name": "image steps: a rectangle's line and a text's size outside their ranges, a line that is not whole and a colour that is not one of the seven",
+    "graph": {
+      "version": 5,
+      "name": "Porch camera",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "thin",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            },
+            "thickness": 0
+          }
+        },
+        {
+          "id": "thick",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            },
+            "thickness": 51
+          }
+        },
+        {
+          "id": "half",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            },
+            "thickness": 2.5
+          }
+        },
+        {
+          "id": "purple",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            },
+            "color": "Purple"
+          }
+        },
+        {
+          "id": "small",
+          "kind": "image_draw_text",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "text": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Front door"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 80
+            },
+            "size": 7
+          }
+        },
+        {
+          "id": "large",
+          "kind": "image_draw_text",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "text": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Front door"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 80
+            },
+            "size": 201
+          }
+        },
+        {
+          "id": "s1",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s2",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s3",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s4",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s5",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "s6",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:snap",
+          "source": "setup",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:s1",
+          "source": "snap",
+          "target": "s1",
+          "port": "next"
+        },
+        {
+          "id": "s1:next:s2",
+          "source": "s1",
+          "target": "s2",
+          "port": "next"
+        },
+        {
+          "id": "s2:next:s3",
+          "source": "s2",
+          "target": "s3",
+          "port": "next"
+        },
+        {
+          "id": "s3:next:s4",
+          "source": "s3",
+          "target": "s4",
+          "port": "next"
+        },
+        {
+          "id": "s4:next:s5",
+          "source": "s4",
+          "target": "s5",
+          "port": "next"
+        },
+        {
+          "id": "s5:next:s6",
+          "source": "s5",
+          "target": "s6",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:thin.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "thin",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "snap.image:thick.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "thick",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "snap.image:half.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "half",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "snap.image:purple.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "purple",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "snap.image:small.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "small",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "snap.image:large.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "large",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "thin.image:s1.value",
+          "kind": "data",
+          "source": "thin",
+          "target": "s1",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "thick.image:s2.value",
+          "kind": "data",
+          "source": "thick",
+          "target": "s2",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "half.image:s3.value",
+          "kind": "data",
+          "source": "half",
+          "target": "s3",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "purple.image:s4.value",
+          "kind": "data",
+          "source": "purple",
+          "target": "s4",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "small.image:s5.value",
+          "kind": "data",
+          "source": "small",
+          "target": "s5",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "large.image:s6.value",
+          "kind": "data",
+          "source": "large",
+          "target": "s6",
+          "sourcePort": "image",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "thin",
+    "inputId": "thickness",
+    "messages": [
+      "Colour must be one of the listed options",
+      "Size must be between 8 and 200",
+      "Size must be between 8 and 200",
+      "Thickness must be a whole number",
+      "Thickness must be between 1 and 50",
+      "Thickness must be between 1 and 50"
+    ],
+    "codes": []
+  },
+  {
+    "name": "image steps: a picture wired into a number and a number wired into a picture are refused by their types",
+    "graph": {
+      "version": 5,
+      "name": "Porch camera",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "snap",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "number",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 3
+            }
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 100
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 50
+            }
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "porch",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:snap",
+          "source": "setup",
+          "target": "snap",
+          "port": "next"
+        },
+        {
+          "id": "snap:next:set",
+          "source": "snap",
+          "target": "set",
+          "port": "next"
+        },
+        {
+          "id": "set:next:say",
+          "source": "set",
+          "target": "say",
+          "port": "next"
+        },
+        {
+          "id": "snap.image:set.value",
+          "kind": "data",
+          "source": "snap",
+          "target": "set",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "number.value:rect.image",
+          "kind": "data",
+          "source": "number",
+          "target": "rect",
+          "sourcePort": "value",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:say.value",
+          "kind": "data",
+          "source": "rect",
+          "target": "say",
+          "sourcePort": "image",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "set",
+    "inputId": "value",
+    "messages": [
+      "Image accepts Image, not Number",
+      "Value accepts Number or Text, not Image"
+    ],
+    "codes": []
+  },
+  {
+    "name": "image steps: Take a picture takes only a camera",
+    "graph": {
+      "version": 5,
+      "name": "Porch camera",
+      "nodes": [
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "light",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.kitchen"
+            }
+          }
+        },
+        {
+          "id": "typed",
+          "kind": "camera_snapshot",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:light",
+              "value": "light.kitchen"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:light",
+          "source": "setup",
+          "target": "light",
+          "port": "next"
+        },
+        {
+          "id": "light:next:typed",
+          "source": "light",
+          "target": "typed",
+          "port": "next"
+        }
+      ],
+      "definition": {
+        "entities": [
+          {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        ],
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "light",
+    "inputId": "entity",
+    "messages": [
+      "Camera accepts Camera entity, not Entity",
+      "Camera accepts Camera entity, not Light entity"
+    ],
+    "codes": []
   }
 ]

@@ -51,7 +51,7 @@ public static class VisualGraphValidator
         static readonly Dictionary<string, string> BuiltIn = new(StringComparer.Ordinal)
         {
             ["string"] = "Text", ["number"] = "Number", ["boolean"] = "True/False", ["object"] = "Object", ["array"] = "List",
-            ["entity_id"] = "Entity", ["target"] = "Target", ["global::HassSharp.EntityStateSnapshot"] = "Entity state",
+            ["entity_id"] = "Entity", ["target"] = "Target", ["global::HassSharp.EntityStateSnapshot"] = "Entity state", ["image"] = "Image",
         };
         static readonly Dictionary<string, string> Primitive = new(StringComparer.Ordinal)
         { ["boolean"] = "True/False", ["number"] = "Number", ["integer"] = "Number", ["string"] = "Text", ["object"] = "Object", ["array"] = "List" };

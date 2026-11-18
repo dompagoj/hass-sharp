@@ -7,7 +7,7 @@ import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { nodeCatalog } from '../src/visual/contract'
 
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
-const entityOnly = ['entity_state', 'entity_command', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file']
+const entityOnly = ['entity_state', 'entity_command', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text']
 
 let dispose: (() => void) | undefined
 afterEach(() => {

@@ -55,6 +55,11 @@ namespace HassSharp;
 internal interface IDefinitionRuntime
 {
     /// <summary>
+    /// The definition's id, which a Take a picture step asks Home Assistant under, so that a picture of one of the
+    /// definition's own cameras (which would wait for itself) is refused at once.
+    /// </summary>
+    string DefinitionId { get; }
+    /// <summary>
     /// Sets the state of the definition's entity <paramref name="entityKey"/>. <paramref name="values"/> has one entry for
     /// each state key of the entity's domain (<c>entityDomains[domain].state</c>), in that order, each a plain value: a
     /// <see cref="bool"/> for true or false, a <see cref="double"/> for a number, a <see cref="string"/> for text, or null for

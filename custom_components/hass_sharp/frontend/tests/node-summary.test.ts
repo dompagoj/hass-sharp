@@ -113,3 +113,17 @@ describe('HTTP request and Download file', () => {
     expect(nodeSummary(node('download_file', { url: { kind: 'unset' }, sha256: sha }), nodeCatalog, undefined, settingWire)).toBe(nodeCatalog.nodes.download_file.description)
   })
 })
+
+describe('Take a picture, Draw rectangle and Draw text', () => {
+  it('name the camera and the colour', () => {
+    expect(both(node('camera_snapshot', { entity: lit('entity_id:camera', 'camera.front') }))).toBe('Take a picture · camera.front')
+    expect(nodeSummary(node('camera_snapshot', { entity: lit('entity_id:camera', 'camera.front') }), nodeCatalog, { entities: [{ entity_id: 'camera.front', name: 'Front door' }] })).toBe('Take a picture · Front door')
+    expect(both(node('image_draw_rect', { image: { kind: 'unset' } }))).toBe('Draw rectangle · Red')
+    expect(both(node('image_draw_rect', { image: { kind: 'unset' }, color: 'Green' }))).toBe('Draw rectangle · Green')
+    expect(both(node('image_draw_text', { image: { kind: 'unset' }, text: lit('string', 'Front door') }))).toBe('Draw text · White')
+    expect(both(node('image_draw_text', { image: { kind: 'unset' }, color: 'Yellow' }))).toBe('Draw text · Yellow')
+  })
+  it('fall back to the description for a camera not chosen', () => {
+    expect(nodeSummary(node('camera_snapshot', {}))).toBe(nodeCatalog.nodes.camera_snapshot.description)
+  })
+})

@@ -400,7 +400,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # schema still answers, and the server's catalog itself is left as it was.
         self.service.node_library.side_effect=self.library
         entity_only={kind for kind,node in self.CATALOG['nodes'].items() if 'automation' not in node.get('documents',['automation'])}
-        self.assertEqual(entity_only,{'entity_state','entity_command','entity_setup','set_entity_state','set_entity_available','setting','download_file'})
+        self.assertEqual(entity_only,{'entity_state','entity_command','entity_setup','set_entity_state','set_entity_available','setting','download_file','camera_snapshot','image_draw_rect','image_draw_text'})
         capabilities=(await self.call('get_capabilities',{})).data['result']['catalog']
         whole=(await self.call('get_node_schema',{})).data['result']['catalog']
         for catalog in (capabilities,whole):

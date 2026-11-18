@@ -6,7 +6,8 @@ import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
 import { constantTypes } from '../src/visual/constant'
-import { distinctTypeLabels, labelDepth, typeLabel } from '../src/visual/typeLabels'
+import { readFileSync } from 'node:fs'
+import { distinctTypeLabels, labelDepth, typeColor, typeLabel } from '../src/visual/typeLabels'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
@@ -213,7 +214,37 @@ describe('the members of an entity id and the enums of the entity classes (serve
     expect(entities(constantTypes(richCatalog))).toEqual([])
     expect(entities(contract.listedTypes(richCatalog))).toEqual([])
     expect(contract.listedTypes(richCatalog)).toEqual(expect.arrayContaining(['global::NodeLib.Mode', 'entity_id', 'string']))
-    expect(contract.listedTypes(contract.nodeCatalog)).toEqual(Object.keys(contract.nodeCatalog.types))
+    expect(contract.listedTypes(contract.nodeCatalog)).toEqual(Object.keys(contract.nodeCatalog.types).filter(id => id !== 'image'))
+  })
+})
+describe('the image type', () => {
+  it('is a picture: named Image, in a colour of its own, in no type list, never typed in and going into nothing else', () => {
+    expect(contract.nodeCatalog.types.image).toMatchObject({ label: 'Image', clrType: 'HassSharp.SharpImage', listed: false })
+    expect(contract.nodeCatalog.types.image.literalKind).toBeUndefined()
+    expect(typeLabel('image')).toBe('Image')
+    expect(typeColor('image')).toBe('var(--hs-port-image)')
+    expect(contract.listedTypes(contract.nodeCatalog)).not.toContain('image')
+    expect(constantTypes(contract.nodeCatalog)).not.toContain('image')
+    expect(contract.validLiteral('image', 'picture', contract.nodeCatalog)).toBe(false)
+    for (const other of Object.keys(contract.nodeCatalog.types).filter(id => id !== 'image')) {
+      expect(contract.isAssignable('image', other, contract.nodeCatalog), other).toBe(false)
+      expect(contract.isAssignable(other, 'image', contract.nodeCatalog), other).toBe(false)
+    }
+  })
+  it('has its pin colour beside the other type colours, mixed toward the text colour in both colour schemes', () => {
+    const tokens = readFileSync('src/styles/tokens.css', 'utf8')
+    expect(tokens).toMatch(/--hs-port-target: [^;]+;\n\s*--hs-port-image: color-mix\(in oklab, #[0-9a-f]{6} var\(--hs-hue-mix\), var\(--hs-text, #202535\)\);/)
+  })
+  it('is taken and drawn on only in an entity definition, by steps that draw on a copy', () => {
+    const { camera_snapshot: take, image_draw_rect: rect, image_draw_text: text } = contract.nodeCatalog.nodes
+    for (const spec of [take, rect, text]) expect(spec.documents).toEqual(['entity'])
+    expect(take).toMatchObject({ label: 'Take a picture', category: 'Entity', execution: ['next', 'error'] })
+    expect(take.inputs.entity.types).toEqual(['entity_id:camera'])
+    expect(take.outputs.image.type).toBe('image')
+    for (const spec of [rect, text]) expect(spec).toMatchObject({ pure: true, inputs: { image: { types: ['image'], required: true } }, outputs: { image: { type: 'image' } } })
+    expect(rect.config).toMatchObject({ color: { default: 'Red' }, thickness: { min: 1, max: 50, default: 2 } })
+    expect(text.config).toMatchObject({ color: { default: 'White' }, size: { min: 8, max: 200, default: 16 }, background: { default: true } })
+    for (const spec of [rect, text]) expect(spec.config.color.enum).toEqual(['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'White', 'Black'])
   })
 })
 it('any number goes into any numeric pin, except a nullable one into a pin that cannot hold null', () => {
