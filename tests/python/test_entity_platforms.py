@@ -6,6 +6,7 @@ registries do the rest. Nothing here touches a running instance. Run it inside t
 (AGENTS.md, "Tests and verification").
 """
 import asyncio
+import functools
 import importlib
 import importlib.util
 import json
@@ -20,7 +21,7 @@ import unittest
 import warnings
 from unittest.mock import patch
 
-from test_entity_bridge import DotNetError, definition, description, device, snapshot
+from test_entity_bridge import JPEG, SYSTEM, DotNetBytes, DotNetError, definition, description, device, snapshot
 
 ROOT = pathlib.Path(os.environ.get('HASS_SHARP_TEST_ROOT', pathlib.Path(__file__).resolve().parents[2]))
 PACKAGE = 'custom_components.hass_sharp'
@@ -41,10 +42,10 @@ def load_package():
 
 
 class DotNetTask:
-    """A finished .NET Task as Python.NET hands it over: GetResult returns or raises the task's exception, and the
-    continuation runs on another thread, as on a .NET pool thread."""
-    def __init__(self, error=None):
-        self.error = error
+    """A finished .NET Task as Python.NET hands it over: GetResult returns its value or raises the task's exception,
+    and the continuation runs on another thread, as on a .NET pool thread."""
+    def __init__(self, error=None, result=None):
+        self.error, self.result = error, result
 
     def GetAwaiter(self):
         return self
@@ -52,20 +53,26 @@ class DotNetTask:
     def GetResult(self):
         if self.error is not None:
             raise self.error
+        return self.result
 
     def OnCompleted(self, continuation):
         threading.Thread(target=continuation).start()
 
 
 class Manager:
-    """The part of HassSharpManager the bridge calls: EntityCommand(unique id, command, data JSON) -> Task."""
+    """The part of HassSharpManager the bridge calls: EntityCommand(unique id, command, data JSON) -> Task, and
+    CameraImage(unique id) -> Task of a System.Byte[]."""
     def __init__(self):
-        self.commands = []
+        self.commands, self.pictures = [], []
         self.error = None
 
     def EntityCommand(self, unique_id, command, data_json):
         self.commands.append((unique_id, command, json.loads(data_json), threading.current_thread()))
         return DotNetTask(self.error)
+
+    def CameraImage(self, unique_id):
+        self.pictures.append((unique_id, threading.current_thread()))
+        return DotNetTask(self.error, DotNetBytes(JPEG))
 
 
 class Records(logging.Handler):
@@ -131,9 +138,11 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.temp.cleanup)
         self.hass = hass = HomeAssistant(self.temp.name)
         # The platforms' integration depends on http, which would open Home Assistant's port: count it as set up. The
-        # camera component registers its picture and stream views with it, which nothing serves here.
+        # camera component registers its picture and stream views with it, which nothing serves here: a test calls
+        # a view's handler itself.
         hass.config.components.add('http')
-        hass.http = types.SimpleNamespace(register_view=lambda view: None)
+        self.views = []
+        hass.http = types.SimpleNamespace(register_view=self.views.append)
         hass.config.skip_pip = True
         with warnings.catch_warnings():
             # Home Assistant's http module, which its entity components import, warns about aiohttp on import.
@@ -143,8 +152,9 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
             # stream support loads NumPy) when the test ends, and NumPy warns when it is imported a second time.
             importlib.import_module('homeassistant.components.camera')
         self.bridge_module, self.const, self.switch = load_package()
-        # .NET's Action wraps the continuation; there is no .NET runtime here.
-        self.system = patch.dict(sys.modules, {'System': types.SimpleNamespace(Action=lambda f: f)})
+        # .NET's Action wraps the continuation, and a picture is a System.Byte[]; there is no .NET runtime here.
+        self.system = patch.dict(sys.modules, {'System': types.SimpleNamespace(Action=lambda f: f, Array=SYSTEM.Array,
+                                                                               Byte=SYSTEM.Byte)})
         self.system.start()
         self.addCleanup(self.system.stop)
         hass.config_entries = config_entries.ConfigEntries(hass, {})
@@ -286,19 +296,102 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         await self.push(snapshot('plug1:relay', available=False))
         self.assertEqual('unavailable', self.state('switch.plug_one_relay').state)
 
-    async def test_camera_is_a_camera_that_gives_no_picture_yet(self):
+    # The camera
+
+    async def camera(self, frame_interval=2):
+        """The plug's camera View, synced and shown available; its Home Assistant entity."""
         from homeassistant.components.camera import DATA_COMPONENT
-        ids = await self.sync(definition(description('view', 'camera', 'View', options={'frame_interval': 2})))
+        ids = await self.sync(definition(description('view', 'camera', 'View',
+                                                     options={'frame_interval': frame_interval})))
         self.assertEqual({'plug1:view': 'camera.plug_one_view'}, ids)
         await self.push(snapshot('plug1:view', values={}))
+        return self.hass.data[DATA_COMPONENT].get_entity('camera.plug_one_view')
+
+    def picture_view(self):
+        """The view Home Assistant serves /api/camera_proxy/<entity id> with."""
+        return next(view for view in self.views if view.url == '/api/camera_proxy/{entity_id}')
+
+    async def proxy(self, entity_id):
+        """GET /api/camera_proxy/<entity id> with the picture's token, as a dashboard asks, through the real view."""
+        from aiohttp.test_utils import make_mocked_request
+        from homeassistant.components.http import KEY_AUTHENTICATED
+        token = self.state(entity_id).attributes['access_token']
+        request = make_mocked_request('GET', f'/api/camera_proxy/{entity_id}?token={token}')
+        with warnings.catch_warnings():
+            # Home Assistant's key is a string, which aiohttp warns of; its auth middleware sets it the same way.
+            warnings.simplefilter('ignore')
+            request[KEY_AUTHENTICATED] = False
+        return await self.picture_view().get(request, entity_id)
+
+    async def test_camera_serves_the_frame_dotnet_gives(self):
+        from homeassistant.components import camera as cameras
+        camera = await self.camera()
         view = self.state('camera.plug_one_view')
-        # Camera's initialiser ran: the entity has the access token its picture's URL carries.
-        self.assertEqual('idle', view.state)
+        # Camera's initialiser ran: the entity has the access token its picture's URL carries; nothing streams.
+        self.assertEqual(('idle', 0), (view.state, view.attributes['supported_features']))
         self.assertTrue(view.attributes['access_token'])
         self.assertIn('/api/camera_proxy/camera.plug_one_view?token=', view.attributes['entity_picture'])
-        camera = self.hass.data[DATA_COMPONENT].get_entity('camera.plug_one_view')
-        self.assertIsNone(await camera.async_camera_image())
+        self.assertEqual((2, 'image/jpeg'), (camera.frame_interval, camera.content_type))
+        image = await cameras.async_get_image(self.hass, 'camera.plug_one_view')
+        self.assertEqual(('image/jpeg', JPEG), (image.content_type, image.content))
+        self.assertIs(bytes, type(image.content))
+        response = await self.proxy('camera.plug_one_view')
+        self.assertEqual((200, JPEG, 'image/jpeg'), (response.status, response.body, response.content_type))
+        # .NET is asked in the executor, never on the loop, and a frame is not a command.
+        self.assertEqual(['plug1:view'] * 2, [unique_id for unique_id, _ in self.manager.pictures])
+        self.assertNotIn(threading.main_thread(), [thread for _, thread in self.manager.pictures])
         self.assertEqual([], self.manager.commands)
+
+    async def test_camera_without_a_frame_gives_no_picture(self):
+        from aiohttp import web
+        from homeassistant.components import camera as cameras
+        from homeassistant.exceptions import HomeAssistantError
+        await self.camera()
+        self.manager.error = DotNetError('View has shown no frame')
+        with self.assertRaises(HomeAssistantError) as raised:
+            await cameras.async_get_image(self.hass, 'camera.plug_one_view')
+        self.assertEqual('Unable to get image', str(raised.exception))
+        with self.assertRaises(web.HTTPInternalServerError) as served:
+            await self.proxy('camera.plug_one_view')
+        self.assertEqual('Unable to get image', str(served.exception.__cause__))
+        # .NET logged why; Home Assistant's log gets nothing more from Python (tearDown).
+
+    async def test_camera_of_a_definition_that_is_off_is_unavailable(self):
+        await self.camera()
+        self.assertEqual('idle', self.state('camera.plug_one_view').state)
+        await self.push(snapshot('plug1:view', available=False, values={}))
+        self.assertEqual('unavailable', self.state('camera.plug_one_view').state)
+
+    async def test_camera_takes_a_new_frame_interval_live(self):
+        camera = await self.camera(frame_interval=2)
+        await self.sync(definition(description('view', 'camera', 'View', options={'frame_interval': 5})))
+        # The same entity, and Home Assistant's cached interval follows.
+        self.assertIs(camera, self.bridge._live['plug1:view'])
+        self.assertEqual(5, camera.frame_interval)
+        await self.sync(definition(description('view', 'camera', 'View', options={})))
+        self.assertEqual(1, camera.frame_interval)
+
+    async def snapshot(self, definition_id, entity_id):
+        """The one answer of a picture request, asked as .NET asks: from its own thread."""
+        return await self.answer(functools.partial(self.bridge.begin_camera_snapshot, definition_id), entity_id)
+
+    async def test_snapshot_takes_a_picture_of_a_real_camera(self):
+        camera = await self.camera()
+        answer = await self.snapshot('other', 'camera.plug_one_view')
+        self.assertEqual(('success', DotNetBytes(JPEG)), answer)
+        self.assertEqual(['plug1:view'], [unique_id for unique_id, _ in self.manager.pictures])
+        # Not one of the asking definition's own cameras, which would wait for itself.
+        self.assertEqual(('error', 'camera.plug_one_view is a camera of this definition; a definition cannot take a '
+                                   'picture of its own camera'), await self.snapshot('plug1', 'camera.plug_one_view'))
+        self.assertEqual(1, len(self.manager.pictures))
+        # Home Assistant's own refusals, as one sentence each.
+        self.assertEqual(('error', 'Camera not found'), await self.snapshot('other', 'camera.missing'))
+        self.manager.error = DotNetError('View has shown no frame')
+        self.assertEqual(('error', 'Unable to get image'), await self.snapshot('other', 'camera.plug_one_view'))
+        self.manager.error = None
+        camera.content_type = 'image/png'
+        self.assertEqual(('error', 'camera.plug_one_view gives image/png pictures; only JPEG pictures can be used'),
+                         await self.snapshot('other', 'camera.plug_one_view'))
 
     async def test_switch_turn_on_reaches_the_manager(self):
         await self.sync(plug())

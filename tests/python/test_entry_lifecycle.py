@@ -205,7 +205,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
         def track_state(h,entity_id,action):
             tracked.append((entity_id,threading.current_thread()));return Mock()
         pyinterop=types.SimpleNamespace()
-        env=dict(json=json,EVENT_HOMEASSISTANT_STOP='homeassistant_stop',Action=Delegate,Func=Delegate,Int32=int,String=str,Task=object,
+        env=dict(json=json,EVENT_HOMEASSISTANT_STOP='homeassistant_stop',Action=Delegate,Func=Delegate,Int32=int,String=str,Task=object,Array=Delegate,Byte=bytes,
                  HasEntityState=object,PyInterop=pyinterop,Event=Delegate,EventStateChangedData=object,
                  callback=lambda f:f,logger=Mock(),python_log=Mock(),unsubs={},PANEL_URL='hass-sharp',UNLOAD_COMMAND_WAIT=30,
                  async_track_state_change_event=track_state,
@@ -215,7 +215,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                  frontend=types.SimpleNamespace(async_register_built_in_panel=panel,async_remove_panel=unpanel,DATA_PANELS='frontend_panels'),
                  llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None,
                  services=services,entities=entities,memory_report=types.SimpleNamespace(enabled=lambda:False),
-                 PLATFORMS=PLATFORMS,EntityBridge=lambda h,e,m:types.SimpleNamespace(begin_sync=Mock(),begin_remove=Mock(),begin_prune=Mock(),push=Mock(),close=Mock(),async_wait_closed=AsyncMock()))
+                 PLATFORMS=PLATFORMS,EntityBridge=lambda h,e,m:types.SimpleNamespace(begin_sync=Mock(),begin_remove=Mock(),begin_prune=Mock(),push=Mock(),begin_camera_snapshot=Mock(),close=Mock(),async_wait_closed=AsyncMock()))
         exec(compile(tree,'<entry>','exec'),env)
         entry=types.SimpleNamespace(entry_id='test',disabled_by=None)
         self.assertTrue(await env['async_setup_entry'](hass,entry))
@@ -327,10 +327,12 @@ class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
         self.made = []
         Action = type('Action', (TypedDelegate,), {'made': self.made})
         Func = type('Func', (TypedDelegate,), {'made': self.made})
+        Array = type('Array', (TypedDelegate,), {'made': self.made})  # Array[Byte] is the type System.Byte[]
         self.bridges = []
 
         def make_bridge(hass, entry, manager):
             bridge = types.SimpleNamespace(begin_sync=Mock(), begin_remove=Mock(), begin_prune=Mock(), push=Mock(),
+                                           begin_camera_snapshot=Mock(),
                                            close=Mock(side_effect=lambda: order.append('close bridge')),
                                            async_wait_closed=AsyncMock(side_effect=lambda: order.append('wait closed')),
                                            made_with=(hass, entry, manager))
@@ -365,8 +367,8 @@ class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
         self.platforms = list(PLATFORMS)
         native = types.SimpleNamespace(close=Mock(), begin_remove=Mock(), async_shutdown=AsyncMock())
         self.env = dict(
-            json=None, EVENT_HOMEASSISTANT_STOP='homeassistant_stop', Action=Action, Func=Func,
-            Int32=type('Int32', (), {}), String=type('String', (), {}), Task=type('Task', (), {}),
+            json=None, EVENT_HOMEASSISTANT_STOP='homeassistant_stop', Action=Action, Func=Func, Array=Array,
+            Byte=type('Byte', (), {}), Int32=type('Int32', (), {}), String=type('String', (), {}), Task=type('Task', (), {}),
             HasEntityState=type('HasEntityState', (), {}), PyInterop=self.pyinterop, Event=object,
             EventStateChangedData=object, callback=lambda f: f, logger=Mock(), python_log=Mock(), unsubs={},
             PANEL_URL='hass-sharp', UNLOAD_COMMAND_WAIT=30, async_track_state_change_event=Mock(),
@@ -398,19 +400,22 @@ class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('"sensor"', pathlib.Path('custom_components/hass_sharp/__init__.py').read_text())
 
     async def test_entity_delegates_are_assigned_before_init(self):
-        delegates = ('BeginSyncEntities', 'BeginRemoveEntities', 'BeginPruneEntities', 'PushEntityStates')
+        delegates = ('BeginSyncEntities', 'BeginRemoveEntities', 'BeginPruneEntities', 'PushEntityStates',
+                     'BeginCameraSnapshot')
         at_init = {}
         self.init.side_effect = lambda: at_init.update({name: getattr(self.pyinterop, name, None) for name in delegates})
         self.assertTrue(await self.env['async_setup_entry'](self.hass, self.entry))
         bridge, = self.bridges
         self.assertEqual(bridge.made_with, (self.hass, self.entry, self.manager))
         self.assertEqual(at_init, {'BeginSyncEntities': bridge.begin_sync, 'BeginRemoveEntities': bridge.begin_remove,
-                                   'BeginPruneEntities': bridge.begin_prune, 'PushEntityStates': bridge.push})
+                                   'BeginPruneEntities': bridge.begin_prune, 'PushEntityStates': bridge.push,
+                                   'BeginCameraSnapshot': bridge.begin_camera_snapshot})
         # With the delegate types .NET declares.
         for made in (('Action[String, Action[String], Action[String]]', bridge.begin_sync),
                      ('Action[String, Action, Action[String]]', bridge.begin_remove),
                      ('Action[String, Action, Action[String]]', bridge.begin_prune),
-                     ('Action[String]', bridge.push)):
+                     ('Action[String]', bridge.push),
+                     ('Action[String, String, Action[Array[Byte]], Action[String]]', bridge.begin_camera_snapshot)):
             self.assertIn(made, self.made)
         # The platforms find the bridge when they set up, and a sync during Init finds them attached.
         self.assertIs(self.bridge_at_forward, bridge)

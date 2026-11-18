@@ -13,8 +13,13 @@ PyInterop.Entity, asked with a str on .NET's threads, and changed through the ma
 that it subscribes to that source with a str and unsubscribes from it on delete, that a switch's turn on and turn off
 flows set its state, that the save warns of the one command no flow handles, naming its entity, that a command no flow
 handles fails naming the entity and the command, and that nothing logged at warning or above names the graph.
+For pictures, which cross as bytes both ways: a class camera shows a blank picture, which comes out of CameraImage as a
+System.Byte[]; another, whose frames take a picture of the first through BeginCameraSnapshot (answered as the bridge
+answers, with a System.Byte[] the bridge's own code builds) and draw a rectangle and a label on it, gives a JPEG that
+differs from its source, which takes libjpeg-turbo and the embedded font.
 Exits non-zero with a message on the first mismatch.
 """
+import ast
 import json
 import os
 from pathlib import Path
@@ -32,12 +37,15 @@ load('coreclr', runtime_config=str(root / 'dotnet.runtimeconfig.json'), **kwargs
 sys.path.insert(0, str(root / 'out'))
 import clr
 clr.AddReference('HassSharp')
-from HassSharp import HasEntityState, HassSharpManager, PyInterop
-from System import Action, Func, Int32, Object, String
+from HassSharp import HasEntityState, HassSharpManager, PyInterop, SharpImage
+from System import Action, Array, Byte, Func, Int32, Object, String
 from System.Collections.Generic import Dictionary
 from System.Threading.Tasks import Task
 
 DEFINITION = 'smoke_plug'
+# The cameras' definitions, and the entity id the smoke's sync answers for the still one.
+STILL, LENS = 'smoke_still', 'smoke_lens'
+STILL_CAMERA = f'camera.{STILL}_main'
 TYPE = 'library:smoke:NodeLib.SmokePlug'
 REFUSAL = 'the smoke plug refuses to turn on'
 LIBRARY = '''
@@ -60,6 +68,15 @@ public class SmokePlug : SharpDevice
         Every(TimeSpan.FromSeconds(30), () => { power.Value = 42.5; return Task.CompletedTask; });
         return Task.CompletedTask;
     }
+}
+public class SmokeStill : SharpCamera
+{
+    protected override Task Start() { Show(SharpImage.Blank(64, 48, SharpColor.Blue)); return Task.CompletedTask; }
+}
+public class SmokeLens : SharpCamera
+{
+    protected override async Task<SharpImage?> Frame() =>
+        (await CameraSnapshot("''' + STILL_CAMERA + '''")).DrawRect(4, 4, 40, 24, SharpColor.Yellow, 3).DrawText("Smoke", 6, 30, SharpColor.White, 14);
 }
 '''
 EXPECTED = [('relay', 'switch'), ('power', 'sensor'), ('problem', 'binary_sensor'), ('guard', 'switch'), ('target', 'number')]
@@ -112,7 +129,7 @@ lock = threading.Lock()
 # Every thread Python started: a delegate called on one of these is a mismatch. Kept as thread objects, not idents: a
 # thread that ended leaves its ident free for a thread .NET starts, which Python sees as a thread of its own (a dummy).
 python_threads = {threading.current_thread()}
-calls = {'sync': [], 'push': [], 'remove': [], 'prune': [], 'subscribe': [], 'unsubscribe': [], 'entity': []}  # each: (thread, argument)
+calls = {'sync': [], 'push': [], 'remove': [], 'prune': [], 'subscribe': [], 'unsubscribe': [], 'entity': [], 'snapshot': []}  # each: (thread, argument)
 logs, others = [], []
 # The manager's configuration directory: a failure exits at once, so it removes the directory itself.
 config = tempfile.mkdtemp(prefix='entity-bridge-smoke-')
@@ -217,6 +234,37 @@ def entity(entity_id):
 
 
 PyInterop.Entity = Func[String, HasEntityState](entity)
+
+
+def bridge_function(name):
+    """A function of the entity bridge, compiled from its source: the bridge itself imports Home Assistant."""
+    tree = ast.parse((root / 'entity_bridge.py').read_text())
+    found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
+    check(len(found) == 1, f'entity_bridge.py has no function {name}')
+    env = {}
+    exec(compile(ast.Module(body=found, type_ignores=[]), str(root / 'entity_bridge.py'), 'exec'), env)
+    return env[name]
+
+
+dotnet_bytes = bridge_function('_dotnet_bytes')
+
+
+def camera_snapshot(definition_id, entity_id, on_bytes, on_error):
+    """As the bridge answers: from another thread, with the picture Home Assistant's camera gives; here that is the
+    still camera's frame, as CameraImage gives it to Home Assistant."""
+    record('snapshot', definition_id)
+    record('snapshot', entity_id)
+
+    def answer():
+        if entity_id != STILL_CAMERA:
+            on_error('Camera not found')
+            return
+        picture = call(lambda: manager.CameraImage(f'{STILL}:main'), "the still camera's frame for the snapshot")
+        on_bytes(dotnet_bytes(bytes(picture)))
+    later(answer)
+
+
+PyInterop.BeginCameraSnapshot = Action[String, String, Action[Array[Byte]], Action[String]](camera_snapshot)
 # Harmless stand-ins for the rest: a library and a definition use none of them, and Init and unload need them set.
 PyInterop.CallService = Action[String, String, String, Action, Action[String]](other('CallService'))
 PyInterop.CallServiceWithResponse = Action[String, String, String, Action[String], Action[String]](other('CallServiceWithResponse'))
@@ -443,6 +491,41 @@ try:
         else:
             fail('a graph command after delete succeeded')
         check(len(recorded('sync')) == 2, f"syncs after the graph save: {recorded('sync')}")
+
+        # ---- Pictures: bytes from .NET to Python and back ----
+        for definition_id, type_ in ((STILL, 'SmokeStill'), (LENS, 'SmokeLens')):
+            saved = request(manager.EntityRequest, {'operation': 'save', 'id': definition_id, 'expectedRevision': 0, 'definition': {
+                'name': definition_id, 'settings': [], 'logic': {'kind': 'class', 'type': f'library:smoke:NodeLib.{type_}'}}},
+                f'the {definition_id} save')
+            check(saved.get('active') is True and saved['document']['status'] == 'running', f'{definition_id} does not run: {saved}')
+        live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
+        check(live == {f'{LENS}:main': f'camera.{LENS}_main'}, f"the lens's live entities: {saved['document']['liveEntities']}")
+
+        def frame(unique_id, what):
+            """A camera's frame through CameraImage, as bytes; retried while its Start has not shown one yet."""
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    picture = call(lambda: manager.CameraImage(unique_id), what)
+                    break
+                except Exception as error:
+                    if time.monotonic() > deadline:
+                        fail(f'{what} failed: {getattr(error, "Message", error)}')
+                    time.sleep(0.05)
+            check(picture.GetType().FullName == 'System.Byte[]', f'{what} is a {picture.GetType().FullName}, not System.Byte[]')
+            return bytes(picture)
+        still = frame(f'{STILL}:main', "the still camera's frame")
+        check(still[:2] == b'\xff\xd8', f"the still camera's frame is not a JPEG: it starts {still[:4].hex()}")
+        check(arguments('snapshot') == [], f"the still camera took a picture: {arguments('snapshot')}")
+        lens = frame(f'{LENS}:main', "the lens's frame")
+        check(arguments('snapshot') == [LENS, STILL_CAMERA], f"the lens asked for {arguments('snapshot')}, not a picture of {STILL_CAMERA} for {LENS}")
+        check(lens[:2] == b'\xff\xd8' and lens[-2:] == b'\xff\xd9', f"the lens's frame is not a JPEG: it starts {lens[:4].hex()}, ends {lens[-2:].hex()}")
+        check(lens != still, "the lens's frame is its source unchanged: nothing was drawn")
+        drawn = SharpImage.Load(dotnet_bytes(lens))
+        check((drawn.Width, drawn.Height) == (64, 48), f"the lens's frame is {drawn.Width}x{drawn.Height}, not 64x48")
+        for definition_id in (STILL, LENS):
+            deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': definition_id, 'expectedRevision': 1}, f'the {definition_id} delete')
+            check(deleted == {'deleted': True}, f'the {definition_id} delete answered {deleted}')
     finally:
         call(lambda: manager.UnloadAsync(False), 'unload')
     errors = [line for level, line in logs if level >= 40]
@@ -456,4 +539,5 @@ try:
 finally:
     shutil.rmtree(config, ignore_errors=True)
 
-print(f"entity bridge smoke OK ({len(recorded('push'))} pushes; other delegates called: {sorted(set(others)) or 'none'})")
+print(f"entity bridge smoke OK ({len(recorded('push'))} pushes; {len(recorded('snapshot')) // 2} picture taken; "
+      f"other delegates called: {sorted(set(others)) or 'none'})")

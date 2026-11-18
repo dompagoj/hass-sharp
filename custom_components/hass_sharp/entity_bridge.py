@@ -2,8 +2,10 @@
 """Home Assistant's side of the custom entities: the entities and device of each .NET definition.
 
 .NET asks, with JSON text, to sync a definition's entities, remove a definition, prune the definitions that no
-longer exist, and write a batch of states; Home Assistant's commands go back through `EntityCommand`. The rules
-come from the spike findings (docs/superpowers/plans/2026-11-17-custom-entities-phase-1-spike.md).
+longer exist, and write a batch of states; Home Assistant's commands go back through `EntityCommand`, and its
+requests for a camera's picture through `CameraImage`. .NET also asks for pictures of Home Assistant's cameras
+(`begin_camera_snapshot`). The rules come from the spike findings
+(docs/superpowers/plans/2026-11-17-custom-entities-phase-1-spike.md).
 
 Every Home Assistant call runs on the event loop (spike rule 1): .NET's calls arrive on its own threads and are
 marshalled there without waiting. Sync, remove and prune run one at a time in the order .NET asked for them, and
@@ -32,6 +34,11 @@ WRITE_FAILURES_LOGGED = 5
 # In an entity's record of failures once that line was logged.
 _SILENCED = object()
 
+# How long, in seconds, Home Assistant has to give a picture .NET asked for, as its own snapshot gives it.
+SNAPSHOT_TIMEOUT = 10
+SNAPSHOT_STOPPED = "Home Assistant is stopping, so no picture was taken"
+SNAPSHOT_CLOSED = "HassSharp is stopping, so no picture was taken"
+
 # The device fields of a sync request by the keyword Home Assistant's device registry takes; a null clears one.
 DEVICE_FIELDS = {"name": "name", "manufacturer": "manufacturer", "model": "model", "swVersion": "sw_version",
                  "hwVersion": "hw_version", "configurationUrl": "configuration_url"}
@@ -59,6 +66,23 @@ class _Operation:
             callback(*args)
         except Exception:
             logger.exception("Cannot answer .NET after the request to %s", self.action)
+
+
+def _camera():
+    """Home Assistant's camera component, imported when a picture is first asked for: by then HassSharp's own camera
+    platform has loaded it, and importing it with this module would block the event loop."""
+    from homeassistant.components import camera
+    return camera
+
+
+def _dotnet_bytes(data):
+    """A System.Byte[] holding `data`: allocated by .NET and filled through a memoryview, which copies at once; the
+    implicit conversion of `bytes` copies element by element (spike rule 16)."""
+    from System import Array, Byte
+
+    array = Array.CreateInstance(Byte, len(data))
+    memoryview(array)[:] = data
+    return array
 
 
 def _message(error):
@@ -122,6 +146,32 @@ class EntityBridge:
         except Exception as error:
             # Only HomeAssistantError keeps its message in the service call's answer (spike rule 12).
             raise HomeAssistantError(_message(error)) from error
+
+    async def async_camera_image(self, unique_id: str) -> bytes | None:
+        """The current frame of a camera of a definition, as JPEG, for Home Assistant; None when there is none.
+
+        .NET has logged why it gave none. A viewer that leaves cancels only this wait: the frame being made is shared
+        with the other viewers, and .NET finishes it.
+        """
+        try:
+            picture = await dotnet_tasks.async_run_dotnet_task(self.hass, self.manager.CameraImage, unique_id)
+            return bytes(picture)
+        except Exception as error:
+            logger.debug("No picture from %s: %s", unique_id, _message(error))
+            return None
+
+    def begin_camera_snapshot(self, definition_id, entity_id, on_bytes, on_error) -> None:
+        """From a .NET thread: take a picture with one of Home Assistant's cameras, for the definition `definition_id`
+        (empty for none). Answers exactly once, on the loop: `on_bytes` with the JPEG as a System.Byte[], or
+        `on_error` with one sentence. A camera of the asking definition itself is refused at once, as it would wait for
+        itself. Never raises.
+        """
+        operation = _Operation(f"take a picture with {entity_id}", None, on_bytes, on_error)
+        try:
+            self.hass.loop.call_soon_threadsafe(self._start_snapshot, definition_id, entity_id, operation)
+        except Exception:
+            # The loop has closed, so nothing on it will answer.
+            operation.answer(operation.error, SNAPSHOT_STOPPED)
 
     def close(self) -> None:
         """On the loop, before the platforms unload. Later calls are dropped and pending ones answer error("closed").
@@ -208,6 +258,46 @@ class EntityBridge:
     def _check_open(self):
         if self._closed:
             raise _Closed
+
+    # Pictures
+
+    def _start_snapshot(self, definition_id, entity_id, operation):
+        if self._closed:
+            operation.answer(operation.error, SNAPSHOT_CLOSED)
+            return
+        prefix = definition_id + ":"
+        if definition_id and entity_id.startswith("camera.") and any(
+                unique_id.startswith(prefix) and entity.entity_id == entity_id
+                for unique_id, entity in self._live.items()):
+            operation.answer(operation.error, f"{entity_id} is a camera of this definition; a definition cannot take a "
+                                              "picture of its own camera")
+            return
+        snapshot = self._async_snapshot(entity_id, operation)
+        try:
+            # Not waited for by Home Assistant's startup; cancelled when it stops.
+            self.hass.async_create_background_task(snapshot, f"HassSharp picture of {entity_id}")
+        except Exception as error:
+            snapshot.close()
+            operation.answer(operation.error, _message(error))
+
+    async def _async_snapshot(self, entity_id, operation):
+        try:
+            image = await _camera().async_get_image(self.hass, entity_id, timeout=SNAPSHOT_TIMEOUT)
+            content_type = image.content_type or ""
+            # As Home Assistant tells a JPEG it can scale.
+            if "jpeg" not in content_type and "jpg" not in content_type:
+                operation.answer(operation.error, f"{entity_id} gives {image.content_type} pictures; only JPEG "
+                                                  "pictures can be used")
+                return
+            picture = _dotnet_bytes(image.content)
+        except Exception as error:
+            # Home Assistant's message for a camera that is missing, off or gives nothing.
+            operation.answer(operation.error, _message(error))
+        except BaseException:
+            operation.answer(operation.error, SNAPSHOT_STOPPED)
+            raise
+        else:
+            operation.answer(operation.success, picture)
 
     # Operations
 

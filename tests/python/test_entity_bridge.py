@@ -9,11 +9,12 @@ import asyncio
 import enum
 import itertools
 import json
+import sys
 import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 DOMAIN = 'hass_sharp'
 ENTRY = 'entry1'
@@ -226,9 +227,31 @@ class CoverEntityFeature(enum.IntFlag):
     STOP = 8
 
 
-PLATFORM_BASES = {name: type(name, (Entity,), {}) for name in (
+class Camera(Entity):
+    """As Home Assistant's Camera: its initialiser must run (it sets the content type and the access token of the
+    picture's URL), and its frames come every 0.5 s unless the entity says otherwise."""
+    _attr_frame_interval = 0.5
+
+    def __init__(self):
+        super().__init__()
+        self.content_type = 'image/jpeg'
+        self.access_tokens = ['token']
+
+
+PLATFORM_BASES = {**{name: type(name, (Entity,), {}) for name in (
     'BinarySensorEntity', 'SensorEntity', 'SwitchEntity', 'ButtonEntity', 'NumberEntity', 'SelectEntity', 'TextEntity',
-    'LightEntity', 'CoverEntity', 'Camera')}
+    'LightEntity', 'CoverEntity')}, 'Camera': Camera}
+
+JPEG = b'\xff\xd8\xff\xe0 a frame \xff\xd9'
+
+
+class DotNetBytes(bytearray):
+    """A System.Byte[] as Python.NET hands it over: a buffer of a fixed length that Python fills through a memoryview."""
+
+
+# The part of .NET's System the bridge uses to build a picture's bytes (spike rule 16).
+SYSTEM = NS(Byte='System.Byte', Array=NS(CreateInstance=lambda type_, length: DotNetBytes(length)
+                                         if type_ == 'System.Byte' else TypeError(type_)))
 
 
 def platform_class(domain):
@@ -281,8 +304,14 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.entities = EntityRegistry()
         self.devices = DeviceRegistry(self.entities)
         loop = self.loop
+        self.background = []  # the tasks begun with async_create_background_task
+
+        def background(coro, name, eager_start=True):
+            self.background.append(asyncio.Task(coro, loop=loop, name=name, eager_start=eager_start))
+            return self.background[-1]
         self.hass = NS(loop=loop, data={}, async_create_task=lambda coro, name=None, eager_start=True:
-                       asyncio.Task(coro, loop=loop, name=name, eager_start=eager_start))
+                       asyncio.Task(coro, loop=loop, name=name, eager_start=eager_start),
+                       async_create_background_task=background)
         base = load('entity_base', {'Entity': Entity, 'EntityCategory': EntityCategory})['HassSharpEntity']
 
         class Switch(base):
@@ -304,8 +333,21 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
             def apply_values(self, values):
                 self._attr_native_value = values.get('value')
 
-        self.manager = NS(EntityCommand=Mock(return_value='task'))
+        self.manager = NS(EntityCommand=Mock(return_value='task'), CameraImage=Mock(return_value=DotNetBytes(JPEG)))
         self.dotnet_calls = []
+        # Home Assistant's cameras, by entity id: the picture each gives, or the error it raises.
+        self.cameras, self.camera_calls = {}, []
+
+        async def get_image(hass, entity_id, **kwargs):
+            self.camera_calls.append((entity_id, kwargs, threading.get_ident()))
+            assert hass is self.hass
+            found = self.cameras.get(entity_id, HomeAssistantError('Camera not found'))
+            if isinstance(found, BaseException):
+                raise found
+            if isinstance(found, asyncio.Event):  # A camera that does not answer until the event is set.
+                await found.wait()
+                found = NS(content_type='image/jpeg', content=JPEG)
+            return found
 
         async def run_dotnet_task(hass, target, *args):
             self.dotnet_calls.append((target, args))
@@ -321,6 +363,11 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
                          [d for d in registry.devices.values() if d.config_entry_id == entry_id]),
             'dotnet_tasks': NS(async_run_dotnet_task=run_dotnet_task),
             'HomeAssistantError': HomeAssistantError, 'DOMAIN': DOMAIN, 'logger': self.logger})
+        # The bridge imports Home Assistant's camera component when it first needs it.
+        env['_camera'] = lambda: NS(async_get_image=get_image)
+        system = patch.dict(sys.modules, {'System': SYSTEM})
+        system.start()
+        self.addCleanup(system.stop)
         self.bridge = env['EntityBridge'](self.hass, NS(entry_id=ENTRY), self.manager)
         self.platforms = {}
         for domain, factory in (('switch', Switch), ('sensor', Sensor)):
@@ -901,17 +948,149 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         # The message only: not the .NET type or stack (spike rule 12).
         self.assertEqual(str(raised.exception), 'The entity is not running')
 
+    # Cameras
+
+    def attach_cameras(self):
+        self.platforms['camera'] = Platform('camera', self.hass, self.entities, self.devices)
+        self.bridge.attach_platform('camera', self.platforms['camera'], platform_class('camera'))
+
+    async def test_camera_image_is_the_frame_as_bytes(self):
+        frame = await self.bridge.async_camera_image('plug1:view')
+        self.assertEqual((type(frame), frame), (bytes, JPEG))
+        self.assertEqual(self.dotnet_calls, [(self.manager.CameraImage, ('plug1:view',))])
+
+    async def test_camera_image_is_none_when_dotnet_gives_none(self):
+        # .NET logged what the user needs; Python adds a debug line and nothing more.
+        self.manager.CameraImage.side_effect = DotNetError('View has shown no frame')
+        self.assertIsNone(await self.bridge.async_camera_image('plug1:view'))
+        self.logger.debug.assert_called_once()
+        message, *args = self.logger.debug.call_args.args
+        self.assertIn('View has shown no frame', message % tuple(args))
+        for level in (self.logger.info, self.logger.warning, self.logger.error, self.logger.exception):
+            level.assert_not_called()
+
+    async def test_camera_takes_a_new_frame_interval_live(self):
+        self.attach_cameras()
+        await self.sync(definition(description('view', 'camera', 'View', options={'frame_interval': 2})))
+        view = self.live('plug1:view')
+        self.assertEqual(view._attr_frame_interval, 2)
+        await self.sync(definition(description('view', 'camera', 'View', options={'frame_interval': 5})))
+        self.assertIs(self.live('plug1:view'), view)
+        self.assertEqual(view._attr_frame_interval, 5)
+        await self.sync(definition(description('view', 'camera', 'View', options={})))
+        self.assertEqual(view._attr_frame_interval, 1)
+        self.assertEqual(await view.async_camera_image(), JPEG)
+        self.assertEqual(self.dotnet_calls[-1], (self.manager.CameraImage, ('plug1:view',)))
+
+    async def snapshot(self, definition_id, entity_id, success=None):
+        """Every answer a picture request gives, asked as .NET asks: from its own thread."""
+        answers, first = [], self.loop.create_future()
+
+        def answer(kind, callback=None):
+            def call(*args):
+                answers.append((kind, *args, threading.get_ident()))
+                self.loop.call_soon_threadsafe(lambda: first.done() or first.set_result(None))
+                if callback is not None:
+                    callback(*args)
+            return call
+        thread = threading.Thread(target=self.bridge.begin_camera_snapshot,
+                                  args=(definition_id, entity_id, answer('success', success), answer('error')))
+        thread.start()
+        thread.join()
+        await asyncio.wait_for(asyncio.shield(first), 2)
+        await self.settle()
+        loop_thread = threading.get_ident()
+        self.assertEqual({a[-1] for a in answers}, {loop_thread}, 'answered off the loop')
+        return [a[:-1] for a in answers]
+
+    async def test_snapshot_answers_with_the_pictures_bytes_once(self):
+        self.cameras['camera.porch'] = NS(content_type='image/jpeg', content=JPEG)
+        answers = await self.snapshot('front', 'camera.porch')
+        self.assertEqual(answers, [('success', DotNetBytes(JPEG))])
+        self.assertIs(type(answers[0][1]), DotNetBytes)  # Built as a System.Byte[], not converted implicitly.
+        self.assertEqual([c[:2] for c in self.camera_calls], [('camera.porch', {'timeout': 10})])
+        self.assertEqual({c[2] for c in self.camera_calls}, {threading.get_ident()})
+        # An automation's step asks without a definition.
+        self.assertEqual(await self.snapshot('', 'camera.porch'), [('success', DotNetBytes(JPEG))])
+
+    async def test_snapshot_answers_home_assistants_error_once(self):
+        for message in ('Camera not found', 'Camera is off', 'Unable to get image'):
+            with self.subTest(message):
+                self.cameras['camera.porch'] = HomeAssistantError(message)
+                self.assertEqual(await self.snapshot('front', 'camera.porch'), [('error', message)])
+        self.cameras['camera.porch'] = RuntimeError('the camera broke')
+        self.assertEqual(await self.snapshot('front', 'camera.porch'), [('error', 'the camera broke')])
+        self.logger.error.assert_not_called()
+
+    async def test_snapshot_refuses_a_picture_that_is_not_a_jpeg(self):
+        self.cameras['camera.porch'] = NS(content_type='image/png', content=b'\x89PNG')
+        self.assertEqual(await self.snapshot('front', 'camera.porch'),
+                         [('error', 'camera.porch gives image/png pictures; only JPEG pictures can be used')])
+        self.cameras['camera.porch'] = NS(content_type='image/jpg', content=JPEG)
+        self.assertEqual(await self.snapshot('front', 'camera.porch'), [('success', DotNetBytes(JPEG))])
+
+    async def test_snapshot_refuses_a_camera_of_the_asking_definition(self):
+        self.attach_cameras()
+        await self.sync(definition(description('view', 'camera', 'View'), description('relay')))
+        self.cameras['camera.plug1_view'] = NS(content_type='image/jpeg', content=JPEG)
+        self.assertEqual(await self.snapshot('plug1', 'camera.plug1_view'),
+                         [('error', 'camera.plug1_view is a camera of this definition; a definition cannot take a '
+                                    'picture of its own camera')])
+        self.assertEqual(self.camera_calls, [])  # Refused at once: it would wait for itself.
+        # Another definition, or none, takes it; so does this one of a camera that is not its own.
+        self.assertEqual(await self.snapshot('other', 'camera.plug1_view'), [('success', DotNetBytes(JPEG))])
+        self.assertEqual(await self.snapshot('', 'camera.plug1_view'), [('success', DotNetBytes(JPEG))])
+        self.cameras['camera.porch'] = NS(content_type='image/jpeg', content=JPEG)
+        self.assertEqual(await self.snapshot('plug1', 'camera.porch'), [('success', DotNetBytes(JPEG))])
+        # Its entities that are not cameras are Home Assistant's to refuse.
+        self.assertEqual(await self.snapshot('plug1', 'switch.plug1_relay'), [('error', 'Camera not found')])
+
+    async def test_snapshot_whose_callback_raises_stays_off_the_loop(self):
+        self.cameras['camera.porch'] = NS(content_type='image/jpeg', content=JPEG)
+
+        def fail(_):
+            raise RuntimeError('.NET delegate failed')
+        self.assertEqual(await self.snapshot('front', 'camera.porch', fail), [('success', DotNetBytes(JPEG))])
+        self.logger.exception.assert_called_once()  # And nothing reached the loop (tearDown).
+
+    async def test_snapshot_cancelled_or_closed_answers_once(self):
+        # Home Assistant cancels the background tasks when it stops.
+        self.cameras['camera.porch'] = asyncio.Event()
+        answers = []
+        self.bridge.begin_camera_snapshot('front', 'camera.porch', lambda b: answers.append(('success', b)),
+                                          lambda m: answers.append(('error', m)))
+        await self.settle()
+        self.assertEqual(answers, [])
+        self.background[-1].cancel()
+        await self.settle()
+        self.assertEqual(answers, [('error', 'Home Assistant is stopping, so no picture was taken')])
+        # After close, while HassSharp unloads.
+        self.bridge.close()
+        self.assertEqual(await self.snapshot('front', 'camera.porch'),
+                         [('error', 'HassSharp is stopping, so no picture was taken')])
+        # After the loop closed.
+        loop = asyncio.new_event_loop()
+        loop.close()
+        self.bridge.hass = NS(loop=loop)
+        answers.clear()
+        self.bridge.begin_camera_snapshot('front', 'camera.porch', answers.append, answers.append)
+        self.assertEqual(answers, ['Home Assistant is stopping, so no picture was taken'])
+
 
 class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):
     """Each platform module over fake base classes: what it takes from a description's options and a snapshot's
     values, and the command and data each of its methods sends."""
 
     def entity(self, domain, **options):
-        self.commands = []
+        self.commands, self.frames, self.frame = [], [], None
 
         async def command(unique_id, name, data):
             self.commands.append((name, data))
-        bridge = NS(async_command=command)
+
+        async def camera_image(unique_id):
+            self.frames.append(unique_id)
+            return self.frame
+        bridge = NS(async_command=command, async_camera_image=camera_image)
         return platform_class(domain)(bridge, description('main', domain, 'Main', options=options), None, 'Def')
 
     def values(self, entity, **values):
@@ -999,11 +1178,23 @@ class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):
         await blind.async_set_cover_position(position=40)
         self.assertEqual(self.commands, [('open', {}), ('close', {}), ('stop', {}), ('set_position', {'position': 40})])
 
-    async def test_camera_gives_no_picture_yet(self):
+    async def test_camera_asks_the_bridge_for_its_frame(self):
         camera = self.values(self.entity('camera', frame_interval=2))
+        # Both initialisers ran: the entity's and the camera's.
+        self.assertEqual((camera.unique_id, camera.written, camera.content_type), ('plug1:main', [], 'image/jpeg'))
+        self.assertEqual(camera._attr_frame_interval, 2)
+        self.assertFalse(hasattr(camera, '_attr_supported_features'))
+        self.frame = JPEG
+        self.assertEqual(await camera.async_camera_image(), JPEG)
+        # A size is Home Assistant's to scale to.
+        self.assertEqual(await camera.async_camera_image(width=320, height=240), JPEG)
+        self.frame = None
         self.assertIsNone(await camera.async_camera_image())
-        self.assertIsNone(await camera.async_camera_image(width=320, height=240))
-        self.assertEqual(self.commands, [])
+        self.assertEqual((self.frames, self.commands), (['plug1:main'] * 3, []))
+        # Synced again, a live camera takes the new interval; 1 s when the option is left empty.
+        for options, interval in (({'frame_interval': 0.5}, 0.5), ({'frame_interval': None}, 1), ({}, 1)):
+            camera.apply(description('main', 'camera', 'Main', options=options), None, 'Def')
+            self.assertEqual(camera._attr_frame_interval, interval, options)
 
 
 if __name__ == '__main__':

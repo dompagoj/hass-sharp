@@ -146,7 +146,7 @@ unsubs: dict[str, callable] = {}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    from System import Action, Func, Int32, String
+    from System import Action, Array, Byte, Func, Int32, String
 
     from HassSharp import HasEntityState, PyInterop
 
@@ -286,6 +286,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         PyInterop.BeginRemoveEntities = Action[String, Action, Action[String]](entity_bridge.begin_remove)
         PyInterop.BeginPruneEntities = Action[String, Action, Action[String]](entity_bridge.begin_prune)
         PyInterop.PushEntityStates = Action[String](entity_bridge.push)
+        PyInterop.BeginCameraSnapshot = Action[String, String, Action[Array[Byte]], Action[String]](
+            entity_bridge.begin_camera_snapshot
+        )
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = await services.async_start(hass, hass_sharp)
