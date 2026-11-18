@@ -85,7 +85,8 @@ public partial class HassSharpManager
     /// entities of every other one. Waits no longer than <see cref="RemovalTimeout"/>; a failure is logged, never thrown,
     /// and when the files cannot be listed nothing is pruned. Without the definitions' directory nothing is pruned either:
     /// a fresh install has nothing to prune, and a partly restored <c>.storage</c> must not lose every entity's registry
-    /// entry (an empty directory still prunes them all: its definitions were deleted).
+    /// entry (an empty directory still prunes them all: its definitions were deleted). The last states remembered for the
+    /// entities of every other definition are dropped alike (<see cref="EntityStateStore"/>).
     /// </summary>
     async Task PruneEntities()
     {
@@ -97,7 +98,14 @@ public partial class HassSharpManager
                 try { Logger.Info("No entity definitions directory: nothing is pruned from Home Assistant"); } catch { }
                 return;
             }
-            await PyInterop.PruneEntitiesAsync(JsonSerializer.Serialize(store.Ids())).WaitAsync(RemovalTimeout);
+            var ids = store.Ids();
+            // The last states of entities no definition has are dropped too; a unique id is "<definition id>:<key>".
+            if (_userScriptManager.States is { } states)
+            {
+                var known = ids.ToHashSet(StringComparer.Ordinal);
+                states.Forget(states.Ids().Where(unique => !known.Contains(unique[..Math.Max(unique.IndexOf(':'), 0)])));
+            }
+            await PyInterop.PruneEntitiesAsync(JsonSerializer.Serialize(ids)).WaitAsync(RemovalTimeout);
         }
         catch (Exception ex)
         {

@@ -24,6 +24,7 @@ public class SharpBinarySensor : SharpEntity
 
     internal override string Domain => "binary_sensor";
     internal override JsonObject Values() => new() { ["is_on"] = IsOn };
+    internal override string[] Restore(JsonObject values) => Restoring(values, ("is_on", node => IsOn = StoredFlag(node)));
 }
 
 /// <summary>A sensor: a reading such as a temperature, a power draw or a status text, that Home Assistant only reads.</summary>
@@ -57,6 +58,7 @@ public class SharpSensor : SharpEntity
 
     internal override string Domain => "sensor";
     internal override JsonObject Values() => new() { ["value"] = ValueJson(Value) };
+    internal override string[] Restore(JsonObject values) => Restoring(values, ("value", node => Value = node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? StoredText(node) : StoredNumber(node)));
     internal override JsonObject DomainOptions() => new()
     {
         ["unit"] = Unit,
@@ -99,6 +101,7 @@ public class SharpSwitch : SharpEntity
     protected virtual Task TurnOff() => OnTurnOff?.Invoke() ?? throw new NotSupportedException($"Switch '{Key}' cannot be turned off.");
 
     internal override string Domain => "switch";
+    internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => SwitchCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -107,6 +110,7 @@ public class SharpSwitch : SharpEntity
         _ => base.Command(name, data),
     };
     internal override JsonObject Values() => new() { ["is_on"] = IsOn };
+    internal override string[] Restore(JsonObject values) => Restoring(values, ("is_on", node => IsOn = StoredFlag(node)));
 }
 
 /// <summary>The Home Assistant domain of a custom entity type.</summary>

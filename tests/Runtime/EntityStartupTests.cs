@@ -65,6 +65,48 @@ static class EntityStartupTests
         await LibraryRebuild();
         await Retry();
         await EditedOnDisk();
+        await ForgetsTheStatesOfDefinitionsGone();
+    }
+
+    /// <summary>
+    /// At startup the last states of entities no definition has are dropped, with the prune; those of a definition that
+    /// exists, on or off, are kept, and a class's switch comes back with its own.
+    /// </summary>
+    static async Task ForgetsTheStatesOfDefinitionsGone()
+    {
+        await using var home = new EntityTestHome("entity-startup-states");
+        static EntityStateStore States(HassSharpManager api) =>
+            ((UserScriptManager)typeof(HassSharpManager).GetField("_userScriptManager", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(api)!).States!;
+        var first = new HassSharpManager(home.Root);
+        try
+        {
+            await first.Init();
+            await SaveLibrary(first, "shelly", 0, EntityApiTests.Library);
+            await SaveDefinition(first, "plug1", "Plug one", "10.0.2.1");
+            await SaveDefinition(first, "plug2", "Plug two", "10.0.2.2", enabled: false);
+            await first.EntityCommand("plug1:relay", "turn_on", null);
+            await EntityTestHome.Until(() => States(first).Ids().Contains("plug1:relay"), "the switch remembered");
+            // A definition deleted while Home Assistant was not running, as a restored backup may leave it, and one that is off.
+            States(first).Remember("gone:relay", new JsonObject { ["is_on"] = true });
+            States(first).Remember("plug2:relay", new JsonObject { ["is_on"] = true });
+        }
+        finally { await first.UnloadAsync(); }
+
+        var batches = home.Pushes().Length;
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            var ids = States(api).Ids().Order(StringComparer.Ordinal).ToArray();
+            Check(ids.SequenceEqual(["plug1:relay", "plug2:relay"]), "the states kept at startup: " + string.Join(", ", ids));
+            await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>() == "plug1:relay"), "plug1 starts");
+            var relay = home.Snapshots(batches).First(s => s["uniqueId"]!.GetValue<string>() == "plug1:relay");
+            Check(relay["values"]!["is_on"]?.GetValue<bool>() == true, "the class's switch comes back on: " + relay.ToJsonString());
+            await States(api).FlushAsync();
+            Check(!File.ReadAllText(Storage(home, "entity_states.json")).Contains("gone:"), "the file keeps the states of a definition gone");
+            Console.WriteLine("PASS entity startup: the last states of definitions gone are dropped at startup, and a class's switch comes back with its own");
+        }
+        finally { await api.UnloadAsync(); }
     }
 
     // A restart runs the saved definitions again; an unreadable file is skipped, a disabled definition stays off, and the

@@ -130,6 +130,7 @@ static class EntityHostTests
             await LateAdd();
             await UserLog();
             await MissingJsonCacheHandler();
+            await RestoredState();
         }
         finally
         {
@@ -770,6 +771,62 @@ static class EntityHostTests
     }
 
     // Without System.Text.Json's hot-reload handler a stop cannot empty its caches: that is logged once.
+    /// <summary>
+    /// A class's entities come back with the state they last showed while running: those whose RestoreState is true (a
+    /// switch and a number unless set, a sensor when set) take it before any Setup(), which sees it, and publish it first;
+    /// a sensor by default does not, and a value the entity no longer takes (a number beyond its new maximum) is left out,
+    /// which the debug log says, and the definition runs.
+    /// </summary>
+    static async Task RestoredState()
+    {
+        Reset();
+        var directory = Path.Combine(Path.GetTempPath(), "entity-host-restore-" + Guid.NewGuid());
+        var file = Path.Combine(directory, "entity_states.json");
+        try
+        {
+            UserScriptManager Kept() => new() { Pump = new EntityStatePump(TimeSpan.FromMilliseconds(5)), States = new EntityStateStore(file) };
+            HostKept.Narrow = false;
+            var manager = Kept();
+            HostKept? first = null;
+            await Load(manager, Compiled("kept", "Kept", () => first = new HostKept()));
+            await Until(() => PushedAvailable("kept:dial", true), "started");
+            Check(HostKept.SeenInSetup == null, "a first start has nothing to restore: " + HostKept.SeenInSetup);
+            first!.Dial.Value = 12;
+            first.Limit.Value = 50;
+            first.Reading.Value = 5.0;
+            first.Total.Value = 7.0;
+            first.Relay.IsOn = true;
+            await manager.Pump.FlushAsync();
+            await manager.UnloadUserScriptsAsync();
+            await manager.States!.FlushAsync();
+
+            Reset();
+            HostKept.Narrow = true;
+            manager = Kept();
+            HostKept? second = null;
+            await Load(manager, Compiled("kept", "Kept", () => second = new HostKept()));
+            await Until(() => PushedAvailable("kept:dial", true), "started again");
+            Check(HostKept.SeenInSetup == 12, "Setup() sees the restored number: " + HostKept.SeenInSetup);
+            JsonNode? First(string key) => Snapshots().First(s => s["uniqueId"]!.GetValue<string>() == "kept:" + key)["values"];
+            var shown = string.Join(" ", new[] { "dial", "limit", "reading", "total", "relay" }.Select(key => First(key)!.ToJsonString()));
+            Check(shown == """{"value":12} {"value":null} {"value":null} {"value":7} {"is_on":true}""", "the first states after the restart: " + shown);
+            Check(second!.Reading.RestoreState == false && second.Total.RestoreState && second.Dial.RestoreState && second.Relay.RestoreState, "RestoreState by type, unless set");
+            Check(Logs().Any(m => m == "Kept: Limit (limit) starts without its last value: Limit (limit) takes a number from 0 to 10, not 50"),
+                "the value left out is logged: " + string.Join(" | ", Logs()));
+            Check(manager.Entities.Host("kept")!.Status == "running", "the definition runs");
+            await manager.UnloadUserScriptsAsync();
+            // Written now, so no write behind comes after the directory is gone.
+            await manager.States!.FlushAsync();
+            Console.WriteLine("PASS entity host: a class's switch and number come back with their state before Setup(), a sensor only when it asks to, and a value the entity no longer takes is left out");
+        }
+        finally
+        {
+            HostKept.Narrow = false;
+            HostKept.SeenInSetup = null;
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     static async Task MissingJsonCacheHandler()
     {
         var (handler, logged) = (DefinitionHost.JsonCacheHandler, DefinitionHost.JsonCacheHandlerMissingLogged);
@@ -912,6 +969,33 @@ public class HostControls : SharpDevice
     public SharpText Message { get; }
     public SharpLight Lamp { get; }
     public SharpCover Blind { get; }
+}
+
+/// <summary>
+/// A device whose number, switch and second sensor come back with their state, and whose first sensor does not; its
+/// Setup() records the number it sees. <see cref="Narrow"/> gives its second number a maximum of 10.
+/// </summary>
+public class HostKept : SharpDevice
+{
+    public static bool Narrow;
+    public static double? SeenInSetup;
+
+    public HostKept()
+    {
+        Dial = Add(new SharpNumber("dial", "Dial"));
+        Limit = Add(new SharpNumber("limit", "Limit") { Max = Narrow ? 10 : 100 });
+        Reading = Add(new SharpSensor("reading", "Reading"));
+        Total = Add(new SharpSensor("total", "Total") { RestoreState = true });
+        Relay = Add(new SharpSwitch("relay", "Relay"));
+    }
+
+    public SharpNumber Dial { get; }
+    public SharpNumber Limit { get; }
+    public SharpSensor Reading { get; }
+    public SharpSensor Total { get; }
+    public SharpSwitch Relay { get; }
+
+    protected internal override Task Setup() { SeenInSetup = Dial.Value; return Task.CompletedTask; }
 }
 
 /// <summary>A switch that is its definition's only entity.</summary>

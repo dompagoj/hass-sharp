@@ -111,6 +111,15 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         DefinitionSettings.Apply(definition.Name, definition.Settings, (SharpComponent)root);
         device = root as SharpDevice;
         SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
+        // Each entity takes the state it last showed before any Setup() that may see it: those of the constructor before
+        // the device's, one added in a Setup() before its own.
+        var restored = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
+        void RestoreNew()
+        {
+            foreach (var entity in Collect())
+                if (restored.Add(entity)) RestoreClass(entity);
+        }
+        RestoreNew();
         // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
         // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
         // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
@@ -129,6 +138,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             device.Host = this;
             await SetUp(device);
+            RestoreNew();
         }
         // An entity added during a Setup() is set up too.
         var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
@@ -137,6 +147,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             setUp.Add(next);
             next.Host = this;
             await SetUp(next);
+            RestoreNew();
         }
         // From now on the host would not see an entity added, so the device refuses one.
         if (device != null) device.Sealed = true;
@@ -187,9 +198,21 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     async Task StartAsync()
     {
         var (root, all) = (device, entities);
+        // The revision this one replaced has stopped by now.
+        ReleasePredecessor();
         // A replaced revision may have sent the same states: they are sent again, as the new entities' first.
         try { Manager.Pump.Forget(all.Select(UniqueId)); }
         catch (Exception failure) { Report("forgetting the states of the replaced revision failed", failure, PyLogLevel.Warn); }
+        // The states remembered for an entity this revision no longer has, or no longer brings back, are dropped.
+        try
+        {
+            if (Manager.States is { } states)
+            {
+                var kept = all.Where(Restorable).Select(UniqueId).ToHashSet(StringComparer.Ordinal);
+                states.Forget(states.Ids().Where(id => id.StartsWith(definition.Id + ":", StringComparison.Ordinal) && !kept.Contains(id)));
+            }
+        }
+        catch (Exception failure) { Report("forgetting the states of entities the definition no longer has failed", failure, PyLogLevel.Warn); }
         using var started = CancellationTokenSource.CreateLinkedTokenSource(Stopping);
         _ = WarnSlowStart(started.Token);
         try
@@ -246,6 +269,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         Task? start;
         Repeating[] ticking;
         IDisposable[] following;
+        DefinitionHost? next;
+        GraphEntityState[] final;
         lock (gate)
         {
             if (stopped != null) return stopped.Task;
@@ -256,7 +281,11 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             following = [.. tracks];
             timers.Clear();
             tracks.Clear();
+            (next, successor) = (successor, null);
+            final = next != null ? CurrentStates() : [];
         }
+        // The revision replacing this one gets what changed while it was prepared; outside the lock, as it takes its own.
+        next?.Inherit(this, final);
         _ = StopCoreAsync(completion, start, ticking, following);
         return completion.Task;
     }
@@ -307,6 +336,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         finally
         {
             Manager.Entities.Leave(this);
+            // A revision this one was to replace keeps nothing of it, nor it of that one.
+            ReleasePredecessor();
             // Nothing of the user's code stays reachable from the host once stopped.
             device = null;
             entities = [];
@@ -316,6 +347,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                 unpublishable.Clear();
                 graphEntities = new(StringComparer.Ordinal);
                 awaiting.Clear();
+                handed = [];
+                own.Clear();
+                successor = null;
             }
             try { calls.Cancel(); } catch { }
             ClearJsonCaches();
@@ -398,8 +432,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     internal SharpEntity? Entity(string uniqueId) => entities.FirstOrDefault(entity => UniqueId(entity) == uniqueId);
 
     /// <summary>
-    /// Sends the entity's snapshot towards Home Assistant. Never throws: a snapshot that fails, such as an attribute
-    /// that changes while it is read, is logged once for the entity and nothing is sent for it.
+    /// Sends the entity's snapshot towards Home Assistant, and, while the definition runs and the entity is available,
+    /// remembers its state values for it to come back with (<see cref="Restorable"/>). Never throws: a snapshot that
+    /// fails, such as an attribute that changes while it is read, is logged once for the entity and nothing is sent for it.
     /// </summary>
     public void Publish(SharpEntity entity)
     {
@@ -409,11 +444,33 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             // Only once started, and never after stopping: a replaced revision must not show its entities unavailable.
             if (status is not (Running or Failed)) return;
             var id = UniqueId(entity);
-            try { Manager.Pump.Post(id, entity.Snapshot(id, running: status == Running)); }
+            try
+            {
+                var snapshot = entity.Snapshot(id, running: status == Running);
+                Manager.Pump.Post(id, snapshot);
+                // What it shows while running and available is what it comes back with (see Restorable).
+                if (status == Running && entity.Available && Restorable(entity) && snapshot["values"] is JsonObject { Count: > 0 } values)
+                    Manager.States?.Remember(id, values);
+            }
             catch (Exception failure) { if (unpublishable.Add(entity)) failed = failure; }
         }
         // Outside the lock: logging calls into Python.
         if (failed != null) Report($"publishing the state of entity '{entity.Key}' failed", failed, PyLogLevel.Error);
+    }
+
+    /// <summary>
+    /// Whether the entity comes back with the state it last showed, and so has it remembered: in a graph, each entity no
+    /// State works out (one that does is worked out again as it starts); in a class, each whose
+    /// <see cref="SharpEntity.RestoreState"/> is true.
+    /// </summary>
+    bool Restorable(SharpEntity entity) => definition.Entities != null ? !stateKeys.Contains(entity.Key) : entity.RestoreState;
+
+    // A class's entity takes the values remembered for it, before its Setup(), through its own setters: nothing is
+    // published before the start. A value it no longer takes is left out, which the debug log says.
+    void RestoreClass(SharpEntity entity)
+    {
+        if (!entity.RestoreState || Manager.States is not { } states || !states.TryGet(UniqueId(entity), out var values)) return;
+        foreach (var dropped in entity.Restore(values)) Report($"{entity.Called} starts without its last {dropped}", PyLogLevel.Debug);
     }
 
     /// <inheritdoc/>

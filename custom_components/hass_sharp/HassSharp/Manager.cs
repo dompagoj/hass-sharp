@@ -45,8 +45,8 @@ public partial class HassSharpManager
         _history = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "runs.db"));
         _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
         _entitySchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "entity_schema.json"), "entity");
-        // One state pump carries every entity definition's states to Home Assistant.
-        _userScriptManager = new() { History = _history, Pump = new() };
+        // One state pump carries every entity definition's states to Home Assistant; one store keeps those they come back with.
+        _userScriptManager = new() { History = _history, Pump = new(), States = new(EntityStatesPath) };
     }
 
     public async Task Init()
@@ -90,6 +90,8 @@ public partial class HassSharpManager
                 }
             }
             var definitions = await CompileSavedDefinitions(libraries.Preview.Snapshot, libraries.Generation);
+            // Read before any definition prepares, so that none waits for the disk.
+            _userScriptManager.States?.Load();
 
             await _userScriptManager.UnloadUserScriptsAsync(CancelReasons.Reloaded); // Just in case, shouldnt be needed
 
@@ -442,20 +444,39 @@ public partial class HassSharpManager
 
     // An entry unload is a reload or removal unless Home Assistant is stopping; runs it cancels record which.
     static string UnloadReason(bool stopping) => stopping ? CancelReasons.Stopping : CancelReasons.Reloaded;
-    // The entity states pending or remembered as sent are dropped with the scripts: after a reload every state is sent anew.
-    public void Unload(bool stopping = false) { _languageLifetime.Cancel(); _userScriptManager.UnloadUserScripts(UnloadReason(stopping)); _userScriptManager.Pump.Reset(); }
+    // The entity states pending or remembered as sent are dropped with the scripts: after a reload every state is sent
+    // anew. The states the entities come back with are written now (a flush never throws).
+    public void Unload(bool stopping = false)
+    {
+        _languageLifetime.Cancel();
+        try { _userScriptManager.UnloadUserScripts(UnloadReason(stopping)); }
+        finally
+        {
+            _userScriptManager.Pump.Reset();
+            _userScriptManager.States?.FlushAsync().GetAwaiter().GetResult();
+        }
+    }
     public async Task UnloadAsync(bool stopping = false)
     {
         _languageLifetime.Cancel();
         try { await _userScriptManager.UnloadUserScriptsAsync(UnloadReason(stopping)); }
-        finally { _userScriptManager.Pump.Reset(); }
+        finally
+        {
+            _userScriptManager.Pump.Reset();
+            if (_userScriptManager.States is { } states) await states.FlushAsync();
+        }
     }
 
     /// <summary>
     /// Home Assistant is stopping (it does not unload config entries then): cancel every running and later
-    /// run with that reason. Scripts stay loaded; a later unload still cleans them up.
+    /// run with that reason, and write the states the entities come back with. Scripts stay loaded; a later unload
+    /// still cleans them up.
     /// </summary>
-    public void CancelRunsForShutdown() => _userScriptManager.CancelRuns(CancelReasons.Stopping);
+    public void CancelRunsForShutdown()
+    {
+        try { _userScriptManager.CancelRuns(CancelReasons.Stopping); }
+        finally { _userScriptManager.States?.FlushAsync().GetAwaiter().GetResult(); }
+    }
 
     public Task OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)
     {

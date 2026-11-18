@@ -24,6 +24,7 @@ public enum EntityCategory
 public abstract partial class SharpEntity : SharpComponent
 {
     bool available = true;
+    bool? restoreState;
     readonly ConcurrentDictionary<string, object?> attributes = new();
 
     /// <summary>An entity whose key is <c>main</c>: the one entity of a definition without a device.</summary>
@@ -54,6 +55,67 @@ public abstract partial class SharpEntity : SharpComponent
     public EntityCategory? Category { get; init; }
     /// <summary>Whether Home Assistant enables the entity when it first registers it; true unless set.</summary>
     public bool EnabledByDefault { get; init; } = true;
+
+    /// <summary>
+    /// Whether the entity comes back, after Home Assistant restarts or the definition is turned off and on, with the state
+    /// it last showed while its definition ran: those values are set, without publishing, before its <c>Setup()</c> runs,
+    /// which sees them and may change them, as <c>Start()</c> may. A value it no longer takes, such as an option no longer
+    /// in its list, is left out. Its availability and attributes are not kept. True unless set for a switch, number,
+    /// select, text, light and cover, whose state Home Assistant sets; false for a binary sensor, sensor and button.
+    /// </summary>
+    public bool RestoreState
+    {
+        get => restoreState ?? RestoresByDefault;
+        init => restoreState = value;
+    }
+
+    /// <summary>Whether <see cref="RestoreState"/> is true unless set.</summary>
+    internal virtual bool RestoresByDefault => false;
+
+    /// <summary>
+    /// Takes the state values the entity last showed, as stored (its <see cref="Values"/>), through its own setters
+    /// before the definition runs, so nothing is published: each value it does not take now (of another kind, or one its
+    /// setter refuses) is left out, and a value not stored is left as it is.
+    /// </summary>
+    /// <returns>Why each value left out was, as "brightness: Lamp (lamp) cannot be dimmed…"; none when every one was taken.</returns>
+    internal virtual string[] Restore(JsonObject values) => [];
+
+    /// <summary>For <see cref="Restore"/>: takes each stored value given through its setter, gathering the refusals.</summary>
+    internal static string[] Restoring(JsonObject values, params (string Key, Action<JsonNode?> Keep)[] keys)
+    {
+        List<string> dropped = [];
+        foreach (var (key, keep) in keys)
+        {
+            if (!values.TryGetPropertyValue(key, out var node)) continue;
+            try { keep(node); }
+            catch (ArgumentException refused) { dropped.Add($"{key}: {refused.Message}"); }
+        }
+        return [.. dropped];
+    }
+
+    /// <summary>A stored value as true, false or null.</summary>
+    /// <exception cref="ArgumentException">It is something else.</exception>
+    internal static bool? StoredFlag(JsonNode? node) =>
+        node == null ? null : node is JsonValue value && value.GetValueKind() is JsonValueKind.True or JsonValueKind.False ? value.GetValue<bool>()
+        : throw new ArgumentException($"{node.ToJsonString()} is neither true nor false");
+
+    /// <summary>A stored value as a finite number or null.</summary>
+    /// <exception cref="ArgumentException">It is something else.</exception>
+    internal static double? StoredNumber(JsonNode? node) =>
+        node == null ? null : node is JsonValue value && value.GetValueKind() == JsonValueKind.Number && value.TryGetValue<double>(out var number) && double.IsFinite(number) ? number
+        : throw new ArgumentException($"{node.ToJsonString()} is not a number");
+
+    /// <summary>A stored value as a whole number within an <c>int</c>, or null.</summary>
+    /// <exception cref="ArgumentException">It is something else.</exception>
+    internal static int? StoredWhole(JsonNode? node) =>
+        StoredNumber(node) is not { } number ? null : number == Math.Floor(number) && number is >= int.MinValue and <= int.MaxValue ? (int)number
+        : throw new ArgumentException($"{node!.ToJsonString()} is not a whole number");
+
+    /// <summary>A stored value as a text or null.</summary>
+    /// <exception cref="ArgumentException">It is something else.</exception>
+    internal static string? StoredText(JsonNode? node) =>
+        node == null ? null : node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>()
+        : throw new ArgumentException($"{node.ToJsonString()} is not text");
 
     /// <summary>Whether the entity has a state to show; true unless set. Setting it publishes.</summary>
     public bool Available

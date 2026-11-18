@@ -55,6 +55,8 @@ class UserScriptManager
     public EntityDirectory Entities { get; } = new();
     /// <summary>Carries the entity definitions' states to Home Assistant.</summary>
     public EntityStatePump Pump { get; init; } = new();
+    /// <summary>The state values the entity definitions' entities come back with; null for none to be kept.</summary>
+    public EntityStateStore? States { get; init; }
     public ScriptSyncRunner SyncRunner { get; } = new();
 
     public List<UserScript> GetUserScripts() { lock (ActivationGate) return _userScripts.ToList(); }

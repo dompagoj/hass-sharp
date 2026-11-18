@@ -123,6 +123,7 @@ public class SharpNumber : SharpEntity
     internal string Range => $"a number from {CommandData.Shown(Min)} to {CommandData.Shown(Max)}";
 
     internal override string Domain => "number";
+    internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => NumberCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -131,6 +132,7 @@ public class SharpNumber : SharpEntity
     };
     internal override void CheckData(string name, JsonElement data) { if (name == "set_value") _ = Given(data); }
     internal override JsonObject Values() => new() { ["value"] = Value };
+    internal override string[] Restore(JsonObject values) => Restoring(values, ("value", node => Value = StoredNumber(node)));
     internal override JsonObject DomainOptions() => new()
     {
         ["min"] = Min,
@@ -199,6 +201,7 @@ public class SharpSelect : SharpEntity
     internal string Choices => Options.Count == 0 ? "one of its options, and it has none" : "one of " + VisualGraphValidator.Words.Or(Options);
 
     internal override string Domain => "select";
+    internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => SelectCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -207,6 +210,7 @@ public class SharpSelect : SharpEntity
     };
     internal override void CheckData(string name, JsonElement data) { if (name == "select_option") _ = Given(data); }
     internal override JsonObject Values() => new() { ["option"] = Option };
+    internal override string[] Restore(JsonObject values) => Restoring(values, ("option", node => Option = StoredText(node)));
     internal override JsonObject DomainOptions() => new() { ["options"] = new JsonArray(Options.Select(o => (JsonNode?)o).ToArray()) };
 
     string Given(JsonElement data)
@@ -345,6 +349,7 @@ public class SharpText : SharpEntity
     };
 
     internal override string Domain => "text";
+    internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => TextCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -353,6 +358,7 @@ public class SharpText : SharpEntity
     };
     internal override void CheckData(string name, JsonElement data) { if (name == "set_value") _ = Given(data); }
     internal override JsonObject Values() => new() { ["value"] = Value };
+    internal override string[] Restore(JsonObject values) => Restoring(values, ("value", node => Value = StoredText(node)));
     internal override JsonObject DomainOptions() => new()
     {
         ["min"] = Min,
@@ -439,6 +445,7 @@ public class SharpLight : SharpEntity
     ArgumentException NoBrightness(string given) => new($"{Called} cannot be dimmed, so it takes no brightness, not {given}");
 
     internal override string Domain => "light";
+    internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => LightCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -448,6 +455,8 @@ public class SharpLight : SharpEntity
     };
     internal override void CheckData(string name, JsonElement data) { if (name == "turn_on") _ = Given(data); }
     internal override JsonObject Values() => new() { ["is_on"] = IsOn, ["brightness"] = Brightness };
+    internal override string[] Restore(JsonObject values) =>
+        Restoring(values, ("is_on", node => IsOn = StoredFlag(node)), ("brightness", node => Brightness = StoredWhole(node)));
     internal override JsonObject DomainOptions() => new() { ["dimmable"] = Dimmable };
 
     int? Given(JsonElement data)
@@ -542,6 +551,7 @@ public class SharpCover : SharpEntity
         : $"{Called} has no position, so it takes none, not {given}");
 
     internal override string Domain => "cover";
+    internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => CoverCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -553,6 +563,8 @@ public class SharpCover : SharpEntity
     };
     internal override void CheckData(string name, JsonElement data) { if (name == "set_position") _ = Given(data); }
     internal override JsonObject Values() => new() { ["is_closed"] = IsClosed, ["position"] = Position };
+    internal override string[] Restore(JsonObject values) =>
+        Restoring(values, ("is_closed", node => IsClosed = StoredFlag(node)), ("position", node => Position = StoredWhole(node)));
     internal override JsonObject DomainOptions() => new() { ["positionable"] = Positionable };
 
     int Given(JsonElement data)

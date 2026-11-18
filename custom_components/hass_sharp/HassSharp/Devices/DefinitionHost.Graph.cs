@@ -21,13 +21,24 @@ internal sealed partial class DefinitionHost
     readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
     // A graph's settings by key, as its Setting nodes read them; read from the definition as it prepares, before any run.
     volatile IReadOnlyDictionary<string, (object? Value, bool Secret)> graphSettings = new Dictionary<string, (object?, bool)>();
+    // The keys of a graph's entities a State works out; none for a class.
+    readonly HashSet<string> stateKeys = new(definition.Roots?.StateEntities.Values ?? [], StringComparer.Ordinal);
+    // The revision preparing to replace this running one, which gets what changes meanwhile when this one stops.
+    DefinitionHost? successor;
+    // The revision this one prepares to replace, until it has stopped; read and written under this host's gate only.
+    DefinitionHost? predecessor;
+    // What that revision showed as this one was created, and the state values this one's runs set since: what changes
+    // there meanwhile reaches this one unless it set that value itself (see Inherit).
+    GraphEntityState[] handed = [];
+    readonly HashSet<(string Entity, string State)> own = [];
 
     /// <summary>
     /// A definition built from nodes: creates the entities its document describes, then runs its When started flow, if it
     /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
     /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
-    /// entity no State works out starts with the state and availability its namesake of the same domain has there
-    /// (<see cref="Carry"/>), unless it refuses that state; the When started flow may still set another.
+    /// entity no State works out starts with the state, and availability, its namesake of the same domain has there
+    /// (<see cref="Carry"/>), less each value it refuses; one that gets nothing from there takes the state values it last
+    /// showed (<see cref="EntityStateStore"/>), less each it refuses. The When started flow may still set another.
     /// </summary>
     async Task<SharpEntity[]> PrepareGraph(JsonArray described)
     {
@@ -36,13 +47,25 @@ internal sealed partial class DefinitionHost
         CheckKeys(all);
         // Read before the lock: the running revision's lock is taken alone, never inside this one.
         var carried = Replaced();
+        var stored = Manager.States is { } states
+            ? all.Where(Restorable).Select(entity => (Entity: entity, Found: states.TryGet(UniqueId(entity), out var values), Values: values)).Where(s => s.Found).ToArray()
+            : [];
+        List<string> dropped = [];
         lock (gate)
         {
             graphEntities = all.ToDictionary(entity => entity.Key, StringComparer.Ordinal);
             // Each entity a State works out is published first by its State, once a run worked it out (see StartAsync).
-            awaiting.UnionWith((definition.Roots?.StateEntities.Values ?? []).Where(graphEntities.ContainsKey));
-            Carry(carried);
+            awaiting.UnionWith(stateKeys.Where(graphEntities.ContainsKey));
+            handed = carried;
+            var taken = Carry(carried, dropped);
+            // An entity whose key the running revision gives another domain is another entity, which has no last state here.
+            taken.UnionWith(carried.Where(was => graphEntities.TryGetValue(was.Key, out var entity) && entity.Domain != was.Domain).Select(was => was.Key));
+            foreach (var (entity, _, values) in stored)
+                if (!taken.Contains(entity.Key))
+                    Take(entity, values.Select(value => KeyValuePair.Create(value.Key, Plain(value.Value))), "its last state", dropped);
         }
+        // Outside the lock: logging calls into Python.
+        foreach (var line in dropped) Report(line, PyLogLevel.Debug);
         entities = all;
         if (definition.Roots?.Setup is not { } setup) return all;
         var run = FlowClass(setup).RunToEnd(setup, InvocationCause.Setup, TriggerPayload.Setup());
@@ -60,57 +83,152 @@ internal sealed partial class DefinitionHost
         return all;
     }
 
-    /// <summary>A graph's entity as it is now, in plain values: its state values by key and its availability.</summary>
-    internal sealed record GraphEntityState(string Key, string Domain, bool Available, KeyValuePair<string, object?>[] Values);
+    /// <summary>
+    /// A graph's entity as it is now, in plain values: its state values by key and its availability, and whether a State
+    /// of its revision works it out (its availability is then that State's, which the next revision does not take).
+    /// </summary>
+    internal sealed record GraphEntityState(string Key, string Domain, bool Available, KeyValuePair<string, object?>[] Values, bool Worked = false);
 
     /// <summary>
-    /// The state of each of a graph's entities as it is now, for the revision that replaces this one; none unless running
-    /// and not yet replaced. Only plain values (true or false, a number, text or none), so that nothing of this revision's
-    /// code is held by what reads them; a value of any other kind is left out, and so is its entity. Read under the lock,
-    /// where no user code runs: a graph's entities are HassSharp's own. Never throws.
+    /// The state of each of a graph's entities as it is now, for <paramref name="next"/>, the revision that replaces this
+    /// one, which from now on also gets what changes here until this one stops (<see cref="Inherit"/>); none unless
+    /// running and not yet replaced. Never throws.
     /// </summary>
-    internal GraphEntityState[] GraphStates()
+    internal GraphEntityState[] HandOver(DefinitionHost next)
     {
         try
         {
             lock (gate)
             {
                 if (status != Running || Ignoring) return [];
-                var states = new List<GraphEntityState>();
-                foreach (var entity in graphEntities.Values)
-                {
-                    if (!SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) continue;
-                    var values = domain.State.Select(state => KeyValuePair.Create(state.Key, state.Value.Read(entity))).ToArray();
-                    if (values.All(value => value.Value is null or bool or double or string)) states.Add(new(entity.Key, entity.Domain, entity.Available, values));
-                }
-                return [.. states];
+                successor = next;
+                return CurrentStates();
             }
         }
         catch (Exception) { return []; }
+    }
+
+    // Under the gate: each of a graph's entities as it is now. Only plain values (true or false, a number, text or none),
+    // so that nothing of this revision's code is held by what reads them; a value of any other kind is left out, and so
+    // is its entity. No user code runs here: a graph's entities are HassSharp's own.
+    GraphEntityState[] CurrentStates()
+    {
+        var states = new List<GraphEntityState>();
+        foreach (var entity in graphEntities.Values)
+        {
+            if (!SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) continue;
+            var values = domain.State.Select(state => KeyValuePair.Create(state.Key, state.Value.Read(entity))).ToArray();
+            if (values.All(value => value.Value is null or bool or double or string))
+                states.Add(new(entity.Key, entity.Domain, entity.Available, values, stateKeys.Contains(entity.Key)));
+        }
+        return [.. states];
     }
 
     // What the revision of this definition that runs now shows, when this host replaces it: none for a first start, one
     // turned off, failed or stopping, or a class's. Never throws.
     GraphEntityState[] Replaced()
     {
-        try { return Manager.Entities.Host(definition.Id) is { } running && running != this ? running.GraphStates() : []; }
+        try
+        {
+            if (Manager.Entities.Host(definition.Id) is not { } running || running == this) return [];
+            var handed = running.HandOver(this);
+            lock (gate) predecessor = running;
+            return handed;
+        }
         catch (Exception) { return []; }
     }
 
-    // Under the gate, as the entities are created: each entity no State works out takes the state and availability of its
-    // namesake of the same domain in the revision this one replaces, all or nothing, when it takes every value.
-    void Carry(GraphEntityState[] carried)
+    /// <summary>
+    /// The revision this one was to replace stops, with <paramref name="final"/> its entities' last states: each value that
+    /// changed there since <see cref="HandOver"/> reaches the entity here that took that revision's state
+    /// (<see cref="Carry"/>), unless a run here has set that value itself; a value the entity here refuses is left out.
+    /// Nothing once this one stops. Never throws.
+    /// </summary>
+    internal void Inherit(DefinitionHost from, GraphEntityState[] final)
     {
+        List<string> dropped = [];
+        try
+        {
+            lock (gate)
+            {
+                if (predecessor == from) predecessor = null;
+                if (stopped != null) return;
+                foreach (var was in final)
+                {
+                    var first = handed.FirstOrDefault(state => state.Key == was.Key && state.Domain == was.Domain);
+                    var changed = was.Values.Where(value => !own.Contains((was.Key, value.Key))
+                        && !(first?.Values.Any(known => known.Key == value.Key && Equals(known.Value, value.Value)) ?? false)).ToArray();
+                    if (changed.Length > 0 && Heir(was) is { } entity) Take(entity, changed, "the state the replaced revision set", dropped);
+                }
+            }
+        }
+        catch (Exception) { }
+        foreach (var line in dropped) Report(line, PyLogLevel.Debug);
+    }
+
+    // Lets go of the revision this one was to replace, which no longer hands anything over to it. Never under the gate.
+    void ReleasePredecessor()
+    {
+        DefinitionHost? before;
+        lock (gate) (before, predecessor) = (predecessor, null);
+        if (before == null) return;
+        try { lock (before.gate) if (before.successor == this) before.successor = null; }
+        catch (Exception) { }
+    }
+
+    // Under the gate: this revision's entity that takes the state of the replaced revision's: same key and domain, and no
+    // State works it out here.
+    SharpEntity? Heir(GraphEntityState was) =>
+        !stateKeys.Contains(was.Key) && graphEntities.TryGetValue(was.Key, out var entity) && entity.Domain == was.Domain && SharpDomains.Graph.ContainsKey(entity.Domain) ? entity : null;
+
+    // Under the gate, as the entities are created: each entity no State works out takes the state, value by value, and the
+    // availability of its namesake of the same domain in the revision this one replaces; a value it refuses is left out
+    // (see Take). Not the availability a State of that revision worked out: none works it out here. The keys of the
+    // entities that took a value.
+    HashSet<string> Carry(GraphEntityState[] carried, List<string> dropped)
+    {
+        var taken = new HashSet<string>(StringComparer.Ordinal);
         foreach (var was in carried)
         {
-            if (awaiting.Contains(was.Key) || !graphEntities.TryGetValue(was.Key, out var entity) || entity.Domain != was.Domain
-                || !SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) continue;
-            if (was.Values.Any(value => !domain.State.TryGetValue(value.Key, out var state) || state.Refuses(entity, value.Value) != null)) continue;
+            if (Heir(was) is not { } entity) continue;
+            if (Take(entity, was.Values, "the state carried over from the running revision", dropped) > 0) taken.Add(entity.Key);
             // A graph's entity has no host of its own, so this publishes nothing by itself.
-            foreach (var (key, value) in was.Values) domain.State[key].Keep(entity, value);
-            entity.Available = was.Available;
+            if (!was.Worked) entity.Available = was.Available;
         }
+        return taken;
     }
+
+    // Under the gate: the entity takes each value its domain has a state for and takes (GraphState.Refuses), as a run's
+    // would be; each other is left out, with why in dropped, for the debug log. How many it took.
+    int Take(SharpEntity entity, IEnumerable<KeyValuePair<string, object?>> values, string from, List<string> dropped)
+    {
+        if (!SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) return 0;
+        var count = 0;
+        foreach (var (key, value) in values)
+        {
+            if (!domain.State.TryGetValue(key, out var state)) dropped.Add($"{Named(entity.Key)} has no state {key}; it is left out of {from}");
+            else if (state.Refuses(entity, value) is { } refused) dropped.Add($"{Refusal(entity, key, value, refused, hidden: false)}; it is left out of {from}");
+            else
+            {
+                // A graph's entity has no host of its own, so this publishes nothing by itself.
+                state.Keep(entity, value);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // A stored state value as a run would give it: true or false, a number, text, or none; any other JSON as it is, which
+    // every state refuses.
+    // (Each arm is an object: JsonNode converts from a bool, a text and a number, and would otherwise be the type of all.)
+    static object? Plain(JsonNode? node) => node is JsonValue value ? value.GetValueKind() switch
+    {
+        JsonValueKind.True => (object)true,
+        JsonValueKind.False => (object)false,
+        JsonValueKind.String => (object)value.GetValue<string>(),
+        JsonValueKind.Number when value.TryGetValue<double>(out var number) && double.IsFinite(number) => (object)number,
+        _ => (object)node,
+    } : node;
 
     /// <summary>
     /// Runs the graph's When commanded flow for the entity's command and waits for it, no longer than
@@ -227,11 +345,12 @@ internal sealed partial class DefinitionHost
             foreach (var (key, value) in values)
                 if (!known.TryGetValue(key, out var state)) throw new InvalidOperationException($"{definition.Name}: a {entity.Domain} has no state {key}, so entity {entityKey} cannot take it");
                 else if (state.Refuses(entity, value) is { } refused)
-                    throw new InvalidOperationException(hidden.Contains(key)
-                        ? $"The {key} of {Named(entityKey)} {refused}; the value is hidden because it comes from a secret setting"
-                        : entity is SharpText { Mode: SharpTextMode.Password } ? $"The hidden value given for {Named(entityKey)} {refused}"
-                        : $"The {key} {Shown(value)} of {Named(entityKey)} {refused}");
-            foreach (var (key, value) in values) known[key].Keep(entity, value);
+                    throw new InvalidOperationException(Refusal(entity, key, value, refused, hidden.Contains(key)));
+            foreach (var (key, value) in values)
+            {
+                known[key].Keep(entity, value);
+                own.Add((entityKey, key));
+            }
             awaiting.Remove(entityKey);
         }
         // Outside the lock: a publish that fails is logged, which calls into Python.
@@ -382,6 +501,13 @@ internal sealed partial class DefinitionHost
         var cause = First(shown.GetBaseException());
         return cause.Length == 0 || outer.Contains(cause, StringComparison.Ordinal) ? outer : $"{outer} ({cause})";
     }
+
+    // Why the entity does not take a value, naming the entity and the value: a secret value is not quoted, nor is a
+    // password text's, as its class words it.
+    string Refusal(SharpEntity entity, string key, object? value, string refused, bool hidden) =>
+        hidden ? $"The {key} of {Named(entity.Key)} {refused}; the value is hidden because it comes from a secret setting"
+        : entity is SharpText { Mode: SharpTextMode.Password } ? $"The hidden value given for {Named(entity.Key)} {refused}"
+        : $"The {key} {Shown(value)} of {Named(entity.Key)} {refused}";
 
     // A value as a refusal names it.
     static string Shown(object? value) => value switch

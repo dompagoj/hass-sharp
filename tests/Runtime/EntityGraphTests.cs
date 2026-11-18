@@ -64,6 +64,20 @@ static class EntityGraphTests
             (nameof(AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown), AnEntityOfAnotherDomainUnderTheSameKeyStartsUnknown),
             (nameof(AValueTheNewRevisionRefusesIsNotCarriedOver), AValueTheNewRevisionRefusesIsNotCarriedOver),
             (nameof(AnUnavailableEntityStaysUnavailableThroughANewRevision), AnUnavailableEntityStaysUnavailableThroughANewRevision),
+            (nameof(AValueSetWhileTheNewRevisionPreparesReachesIt), AValueSetWhileTheNewRevisionPreparesReachesIt),
+            (nameof(AValueTheNewRevisionSetsItselfWinsOverOneSetMeanwhile), AValueTheNewRevisionSetsItselfWinsOverOneSetMeanwhile),
+            (nameof(AnAvailabilityAStateWorkedOutIsNotCarriedOver), AnAvailabilityAStateWorkedOutIsNotCarriedOver),
+            (nameof(ALightThatCanNoLongerBeDimmedLosesItsBrightness), ALightThatCanNoLongerBeDimmedLosesItsBrightness),
+            (nameof(ASelectWhoseOptionWasRemovedStartsUnknown), ASelectWhoseOptionWasRemovedStartsUnknown),
+            (nameof(AGraphSwitchComesBackOn), AGraphSwitchComesBackOn),
+            (nameof(ANumberSurvivesARestart), ANumberSurvivesARestart),
+            (nameof(ALightComesBackWithItsBrightness), ALightComesBackWithItsBrightness),
+            (nameof(WhenStartedOverridesARestoredState), WhenStartedOverridesARestoredState),
+            (nameof(ARefusedStoredValueIsDropped), ARefusedStoredValueIsDropped),
+            (nameof(AStateStepsEntityIsNotRestored), AStateStepsEntityIsNotRestored),
+            (nameof(DeleteForgetsTheLastStates), DeleteForgetsTheLastStates),
+            (nameof(AnEntityLeavingTheDefinitionIsForgotten), AnEntityLeavingTheDefinitionIsForgotten),
+            (nameof(AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther), AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther),
             (nameof(ACommandFlowThatEndsAtAStopStepSucceeds), ACommandFlowThatEndsAtAStopStepSucceeds),
             (nameof(FailingSetupAndTriggerFlowsAreLoggedByName), FailingSetupAndTriggerFlowsAreLoggedByName),
             (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore),
@@ -1487,6 +1501,330 @@ static class EntityGraphTests
         await rig.Started("relay");
         var after = rig.Pushed("relay:relay", batches);
         Check(after.Length > 0 && after.All(s => !Available(s) && Is(s, "is_on", true)), "the new revision keeps it unavailable and on: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// While a new revision is prepared (here: Home Assistant has not yet answered its sync), the running one still takes
+    /// commands: the state such a command sets is the new revision's first, not the one it was handed as it began.
+    /// </summary>
+    static async Task AValueSetWhileTheNewRevisionPreparesReachesIt()
+    {
+        await using var rig = await Rig.Start("carry-meanwhile");
+        await rig.Save("relay", Relay());
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "the switch is off");
+        var first = await Meanwhile(rig, Touched(Relay()), async () =>
+        {
+            await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+            await rig.Until("relay:relay", s => Is(s, "is_on", true), "the running revision turns it on while the new one is prepared");
+        });
+        Check(first.Length > 0 && first.All(s => Available(s) && Is(s, "is_on", true)), "the new revision starts on: " + Lines(first.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>A value the new revision's When started flow set is its own: one the running revision sets meanwhile does not replace it.</summary>
+    static async Task AValueTheNewRevisionSetsItselfWinsOverOneSetMeanwhile()
+    {
+        await using var rig = await Rig.Start("carry-own");
+        var definition = Relay();
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Add(N("start", "entity_setup"));
+        graph["nodes"]!.AsArray().Add(SetState("first", "relay", On(false)));
+        graph["edges"]!.AsArray().Add(Next("start", "first"));
+        await rig.Save("relay", definition);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "the When started flow turns it off");
+        var first = await Meanwhile(rig, Touched(definition), async () =>
+        {
+            await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+            await rig.Until("relay:relay", s => Is(s, "is_on", true), "the running revision turns it on while the new one is prepared");
+        });
+        Check(first.Length > 0 && first.All(s => Available(s) && Is(s, "is_on", false)), "the new revision starts with the state its flow set: " + Lines(first.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// Saves <paramref name="next"/> as relay's next revision, holding Home Assistant's answer to its sync while
+    /// <paramref name="during"/> runs against the revision still running; then every push for the switch once the new
+    /// revision has started.
+    /// </summary>
+    static async Task<JsonObject[]> Meanwhile(Rig rig, JsonObject next, Func<Task> during)
+    {
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = PyInterop.BeginSyncEntities;
+        PyInterop.BeginSyncEntities = (json, ok, fail) => { held.TrySetResult(); _ = release.Task.ContinueWith(_ => sync(json, ok, fail), TaskScheduler.Default); };
+        try
+        {
+            var saving = rig.Save("relay", next, 1);
+            await held.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await during();
+            await rig.Flush();
+            var batches = rig.Batches;
+            release.SetResult();
+            var saved = await saving;
+            Check(saved["active"]!.GetValue<bool>(), "the new revision runs: " + saved.ToJsonString());
+            await rig.Started("relay");
+            return rig.Pushed("relay:relay", batches);
+        }
+        finally
+        {
+            release.TrySetResult();
+            PyInterop.BeginSyncEntities = sync;
+        }
+    }
+
+    /// <summary>
+    /// A sensor a State worked out, and left unavailable as its source failed, keeps its value through a revision that no
+    /// longer works it out, but not that availability: no State of the new revision says it is unavailable.
+    /// </summary>
+    static async Task AnAvailabilityAStateWorkedOutIsNotCarriedOver()
+    {
+        await using var rig = await Rig.Start("carry-worked", ("sensor.outside", "20"));
+        await rig.Save("outside", Copy());
+        await rig.Until("outside:outside", s => Available(s) && Is(s, "value", 20.0), "the State works out the value");
+        await rig.Change("sensor.outside", "warm");
+        await rig.Until("outside:outside", s => !Available(s), "a source that is not a number leaves it unavailable");
+        var batches = rig.Batches;
+        await rig.Save("outside", Definition("Outside", Graph("Outside", []), [Entity("outside", "sensor", new { name = "Outside" })]), 1);
+        await rig.Started("outside");
+        var after = rig.Pushed("outside:outside", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "value", 20.0)), "the new revision keeps the value, available: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// A dimmable light on at 120, saved as one that cannot be dimmed: after the swap it is still on, without a
+    /// brightness, which the debug log says, and a plain turn on gives its flow no brightness.
+    /// </summary>
+    static async Task ALightThatCanNoLongerBeDimmedLosesItsBrightness()
+    {
+        await using var rig = await Rig.Start("carry-dimmable");
+        await rig.Save("lamp", Lamp());
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":120}""");
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 120), "on at 120");
+        var batches = rig.Batches;
+        var plain = Definition("Lamp", Graph("Lamp", [Command("on", "lamp", "turn_on"), SetState("bright", "lamp", On(true)), Command("off", "lamp", "turn_off"), SetState("dark", "lamp", On(false))],
+            Next("on", "bright"), Next("off", "dark")), [Entity("lamp", "light", new { name = "Lamp" })]);
+        var automationId = AutomationId(await rig.Save("lamp", plain, 1));
+        await rig.Started("lamp");
+        var after = rig.Pushed("lamp:lamp", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true) && Is(s, "brightness", null)), "on, without its brightness: " + Lines(after.Select(s => s.ToJsonString())));
+        Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l == "Lamp: The brightness 120 of Lamp (lamp) is given, and a light that cannot be dimmed has none; it is left out of the state carried over from the running revision"),
+            "the value left out is logged: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", null);
+        var trace = JsonNode.Parse(rig.Api.GetRunTrace(CommandRuns(rig, automationId)[0]["runId"]!.GetValue<string>()))!;
+        Check(Step(trace, "on")["outputs"]?["brightness"] == null, "the flow got a brightness: " + Step(trace, "on").ToJsonString());
+    }
+
+    /// <summary>A select whose option the new revision no longer lists starts unknown after the swap, and runs.</summary>
+    static async Task ASelectWhoseOptionWasRemovedStartsUnknown()
+    {
+        await using var rig = await Rig.Start("carry-option");
+        await rig.Save("fan", Fan("low", "high"));
+        await rig.Api.EntityCommand("fan:speed", "select_option", """{"option":"high"}""");
+        await rig.Until("fan:speed", s => Is(s, "option", "high"), "high");
+        var batches = rig.Batches;
+        var saved = await rig.Save("fan", Fan("low", "medium"), 1);
+        Check(saved["active"]!.GetValue<bool>() && Status(saved["document"]!.AsObject()) == "running", "the new revision runs: " + saved.ToJsonString());
+        await rig.Started("fan");
+        var after = rig.Pushed("fan:speed", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "option", null)), "unknown after the swap: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>A fan's speed: a select whose option is the one chosen.</summary>
+    static JsonObject Fan(params string[] options) => Definition("Fan", Graph("Fan", [Command("pick", "speed", "select_option"), SetState("show", "speed", new JsonObject())],
+        Next("pick", "show"), Data("pick", "show", "option", "option")), [Entity("speed", "select", new { name = "Speed", options = new { options } })]);
+
+    /// <summary>A number its set_value flow sets to the value given, from 0 to 100.</summary>
+    static JsonObject Dial() => Definition("Dial", Graph("Dial", [Command("set", "dial", "set_value"), SetState("show", "dial", new JsonObject())],
+        Next("set", "show"), Data("set", "show", "value", "value")), [Entity("dial", "number", new { name = "Dial", options = new { min = 0, max = 100 } })]);
+
+    // ---- An entity comes back with the state it last showed ----
+
+    /// <summary>A graph's switch a command turned on comes back on after a restart: its first push is on, before any command.</summary>
+    static async Task AGraphSwitchComesBackOn()
+    {
+        await using var rig = await Rig.Start("restore-switch");
+        await rig.Save("relay", Relay());
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true)), "the switch comes back on: " + Lines(after.Select(s => s.ToJsonString())));
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "it takes commands", batches);
+    }
+
+    /// <summary>A number set by a command comes back with that value after a restart: its first push, before any command.</summary>
+    static async Task ANumberSurvivesARestart()
+    {
+        await using var rig = await Rig.Start("restore-number");
+        await rig.Save("dial", Dial());
+        await rig.Api.EntityCommand("dial:dial", "set_value", """{"value":42}""");
+        await rig.Until("dial:dial", s => Is(s, "value", 42), "the number is 42");
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("dial");
+        var after = rig.Pushed("dial:dial", batches);
+        Check(after.Length > 0 && Available(after[0]) && Is(after[0], "value", 42), "the number comes back at 42: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>A light set to 120 comes back with it after a restart, and a plain turn on then reads 120, not full.</summary>
+    static async Task ALightComesBackWithItsBrightness()
+    {
+        await using var rig = await Rig.Start("restore-light");
+        await rig.Save("lamp", Lamp());
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":120}""");
+        await rig.Api.EntityCommand("lamp:lamp", "turn_off", null);
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", false) && Is(s, "brightness", 120), "off, at 120");
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("lamp");
+        var after = rig.Pushed("lamp:lamp", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", false) && Is(s, "brightness", 120)), "the light comes back off at 120: " + Lines(after.Select(s => s.ToJsonString())));
+        var automationId = (await rig.Read("lamp"))["automationId"]!.GetValue<string>();
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", null);
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 120), "on at its brightness", batches);
+        Check(Clear(ReadBrightness(rig, automationId), 120), "the flow read the restored brightness: " + ReadBrightness(rig, automationId)?.ToJsonString());
+    }
+
+    /// <summary>The state the When started flow sets is the entity's first after a restart, not the one it comes back with.</summary>
+    static async Task WhenStartedOverridesARestoredState()
+    {
+        await using var rig = await Rig.Start("restore-setup");
+        var definition = Relay();
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Add(N("start", "entity_setup"));
+        graph["nodes"]!.AsArray().Add(SetState("first", "relay", On(false)));
+        graph["edges"]!.AsArray().Add(Next("start", "first"));
+        await rig.Save("relay", definition);
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", false)), "the When started flow's state comes first: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// A select whose stored option the definition no longer lists (changed while it was off) starts unknown, which the
+    /// debug log says, and the definition runs.
+    /// </summary>
+    static async Task ARefusedStoredValueIsDropped()
+    {
+        await using var rig = await Rig.Start("restore-refused");
+        await rig.Save("fan", Fan("low", "high"));
+        await rig.Api.EntityCommand("fan:speed", "select_option", """{"option":"high"}""");
+        await rig.Until("fan:speed", s => Is(s, "option", "high"), "high");
+        await rig.Ok(new { operation = "set_enabled", id = "fan", enabled = false });
+        await rig.Save("fan", Fan("low", "medium"), 1);
+        await rig.Flush();
+        var batches = rig.Batches;
+        var on = await rig.Ok(new { operation = "set_enabled", id = "fan", enabled = true });
+        Check(on["active"]!.GetValue<bool>() && on["activationError"] == null, "the definition runs: " + on.ToJsonString());
+        await rig.Started("fan");
+        var after = rig.Pushed("fan:speed", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "option", null)), "the select starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
+        Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l == "Fan: The option \"high\" of Speed (speed) is not one of low or medium; it is left out of its last state"),
+            "the value left out is logged: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
+        await rig.Api.EntityCommand("fan:speed", "select_option", """{"option":"medium"}""");
+        await rig.Until("fan:speed", s => Is(s, "option", "medium"), "it takes commands", batches);
+    }
+
+    /// <summary>
+    /// An entity a State works out is neither remembered nor brought back: its State works it out again as it starts (a
+    /// value stored for it is forgotten).
+    /// </summary>
+    static async Task AStateStepsEntityIsNotRestored()
+    {
+        await using var rig = await Rig.Start("restore-state", ("sensor.outside", "20"));
+        await rig.Save("outside", Copy());
+        await rig.Until("outside:outside", s => Is(s, "value", 20.0), "the State works out the value");
+        var states = rig.Scripts.States!;
+        Check(!states.Ids().Contains("outside:outside"), "a State's entity was remembered");
+        states.Remember("outside:outside", new JsonObject { ["value"] = 99.0 });
+        await states.FlushAsync();
+        rig.States["sensor.outside"] = "21";
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("outside");
+        await rig.Until("outside:outside", s => Is(s, "value", 21.0), "the State works it out again", batches);
+        var after = rig.Pushed("outside:outside", batches);
+        Check(after.All(s => Available(s) && Is(s, "value", 21.0)), "it starts with what its State works out: " + Lines(after.Select(s => s.ToJsonString())));
+        Check(!rig.Scripts.States!.Ids().Contains("outside:outside"), "the value stored for it is kept");
+    }
+
+    /// <summary>Deleting a definition forgets its entities' last states: one saved later under its id starts unknown.</summary>
+    static async Task DeleteForgetsTheLastStates()
+    {
+        await using var rig = await Rig.Start("restore-delete");
+        await rig.Save("relay", Relay());
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        Check(rig.Scripts.States!.Ids().Contains("relay:relay"), "the switch is remembered");
+        await rig.Ok(new { operation = "delete", id = "relay", expectedRevision = 1 });
+        Check(!rig.Scripts.States!.Ids().Any(id => id.StartsWith("relay:", StringComparison.Ordinal)), "the deleted definition's states are kept: " + string.Join(", ", rig.Scripts.States!.Ids()));
+        var batches = rig.Batches;
+        await rig.Save("relay", Relay());
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Is(s, "is_on", null)), "a definition saved again under the id starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>An entity a new revision no longer has is forgotten: added back later, it starts unknown.</summary>
+    static async Task AnEntityLeavingTheDefinitionIsForgotten()
+    {
+        await using var rig = await Rig.Start("restore-left");
+        JsonObject Pair(bool spare)
+        {
+            var definition = Relay();
+            if (spare)
+            {
+                var graph = definition["logic"]!["graph"]!.AsObject();
+                graph["nodes"]!.AsArray().Add(Command("spare_on", "spare", "turn_on"));
+                graph["nodes"]!.AsArray().Add(SetState("spare_set", "spare", On(true)));
+                graph["edges"]!.AsArray().Add(Next("spare_on", "spare_set"));
+                definition["entities"]!.AsArray().Add(Entity("spare", "switch", new { name = "Spare" }));
+            }
+            return definition;
+        }
+        await rig.Save("relay", Pair(spare: true));
+        await rig.Api.EntityCommand("relay:spare", "turn_on", null);
+        await rig.Until("relay:spare", s => Is(s, "is_on", true), "the spare is on");
+        await rig.Save("relay", Pair(spare: false), 1);
+        await rig.Started("relay");
+        Check(!rig.Scripts.States!.Ids().Contains("relay:spare") && rig.Scripts.States!.Ids().Contains("relay:relay"),
+            "the entity that left is forgotten, the other kept: " + string.Join(", ", rig.Scripts.States!.Ids()));
+        var batches = rig.Batches;
+        await rig.Save("relay", Pair(spare: true), 2);
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:spare", batches);
+        Check(after.Length > 0 && after.All(s => Is(s, "is_on", null)), "the entity added back starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
+    }
+
+    /// <summary>
+    /// A switch saved, while its definition is off, as a binary sensor under the same key is another entity: turned on
+    /// again, it starts unknown, not with the switch's last state.
+    /// </summary>
+    static async Task AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther()
+    {
+        await using var rig = await Rig.Start("restore-domain");
+        await rig.Save("relay", Relay());
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        await rig.Ok(new { operation = "set_enabled", id = "relay", enabled = false });
+        await rig.Save("relay", Definition("Relay", Graph("Relay", []), [Entity("relay", "binary_sensor", new { name = "Relay" })]), 1);
+        Check(!rig.Scripts.States!.Ids().Contains("relay:relay"), "the switch's state is kept for the binary sensor");
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Ok(new { operation = "set_enabled", id = "relay", enabled = true });
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", null)), "the binary sensor starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
     }
 
     // ---- How a definition's flows end ----

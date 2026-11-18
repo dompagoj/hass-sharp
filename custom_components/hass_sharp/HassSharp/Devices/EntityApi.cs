@@ -252,6 +252,20 @@ public partial class HassSharpManager
         }
     }
 
+    /// <summary>
+    /// A graph's entity a save gives another domain under the same key is another entity: the last state the one before
+    /// showed is forgotten, so that it does not come back as this one's. (An entity a save removes is forgotten as its
+    /// definition next starts.)
+    /// </summary>
+    void ForgetRetyped(EntityDefinitionDocument? before, EntityDefinitionDocument after)
+    {
+        if (_userScriptManager.States is not { } states || before?.Entities is not { } old) return;
+        static IEnumerable<(string Key, string Domain)> Described(JsonArray entities) =>
+            entities.OfType<JsonObject>().Select(e => (VisualNodeCatalog.Text(e, "key"), VisualNodeCatalog.Text(e, "domain")));
+        var now = Described(after.Entities ?? []).GroupBy(e => e.Key, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Domain, StringComparer.Ordinal);
+        states.Forget(Described(old).Where(e => now.TryGetValue(e.Key, out var domain) && domain != e.Domain).Select(e => $"{after.Id}:{e.Key}"));
+    }
+
     static object PreviewJson(DefinitionPreview preview) => new { valid = preview.Valid, diagnostics = preview.Diagnostics, source = preview.Source, sourceMap = preview.SourceMap };
 
     /// <summary>
@@ -336,7 +350,10 @@ public partial class HassSharpManager
                     var revision = ApiRequest.Long(request, "expectedRevision", "the revision this replaces, 0 for a new definition");
                     if (operation == "save")
                     {
+                        EntityDefinitionDocument? before = null;
+                        try { before = store.Read(id); } catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { }
                         var document = store.Save(id, DefinitionBody(request), revision, authoring, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"), out var preview);
+                        ForgetRetyped(before, document);
                         // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation;
                         // so are a graph's entity ids that Home Assistant does not have (EntityWarnings never throws).
                         result = await ActivateDefinition(document, services, preview.Graph == null ? preview.Diagnostics : [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)], snapshot);
@@ -348,6 +365,8 @@ public partial class HassSharpManager
                         // this id starts a history of its own.
                         await _userScriptManager.DeleteScriptAsync(EntityRuntimePath(id));
                         ClearLoadError(EntityRuntimePath(id));
+                        // Its entities' last states go with it, so a definition saved later under this id starts afresh.
+                        if (_userScriptManager.States is { } states) states.Forget(states.Ids().Where(unique => unique.StartsWith(id + ":", StringComparison.Ordinal)));
                         // Whether it ran or not: Home Assistant may still have its entities from an earlier run. Its last
                         // states go out first, so none arrives after the entities are gone.
                         await _userScriptManager.Pump.FlushAsync();

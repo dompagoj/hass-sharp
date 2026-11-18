@@ -173,12 +173,13 @@ static class EntityApiTests
         var resaved = await Ok(new { operation = "save", id = "plug1", expectedRevision = 1, definition = Definition("Plug one", "10.0.0.11") });
         Check(resaved["active"]!.GetValue<bool>() && resaved["document"]!["revision"]!.GetValue<long>() == 2 && Status(resaved["document"]!.AsObject()) == "running"
             && home.Syncs("plug1").Length == 2, "the resave runs and syncs again: " + resaved.ToJsonString());
-        // The old instance was on; the new one starts unknown, until the command turns it on.
-        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", null)), "the new instance pushes its first state");
+        // The old instance was on; the new one comes back on, as the switch last showed, until the command turns it off.
+        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", true)), "the new instance pushes its first state, on");
+        Check(!home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", null)), "the new instance pushed unknown");
         batches = home.Pushes().Length;
-        await api.EntityCommand("plug1:relay", "turn_on", null);
-        Check(EntityTestHome.Commands().Contains("turn_on 10.0.0.11"), "the new instance has the new Host");
-        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", true)), "the new instance pushes on");
+        await api.EntityCommand("plug1:relay", "turn_off", null);
+        Check(EntityTestHome.Commands().Contains("turn_off 10.0.0.11"), "the new instance has the new Host");
+        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", false)), "the new instance pushes off");
         var automationId = resaved["document"]!["automationId"]!.GetValue<string>();
         var runNow = Thrown(() => api.RunNow(automationId, "VisualAutomation", "Startup"));
         Check(runNow is InvalidOperationException { Message: "Automation is not active" }, "RunNow refuses a definition: " + runNow);
