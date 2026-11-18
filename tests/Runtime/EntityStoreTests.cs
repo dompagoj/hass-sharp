@@ -245,6 +245,23 @@ static class EntityStoreTests
         Only(One("select", new { options = Array.Empty<string>() }), "definition.entityOption", "e", "Option options of entity e is an empty list; give it at least one text");
         Check(!generator.Preview(One("select", new { options = Array.Empty<string>() }), snapshot).Diagnostics[0].Message.Contains("leave it out", StringComparison.Ordinal), "a list an entity needs is not one to leave out");
         Only(One("select", new { options = new object[] { "a", 1 } }), "definition.entityOption", "e", "Option options of entity e takes a list of texts");
+        // What Home Assistant takes: a step above 0, a text of 0 to 255 characters, a length a whole number.
+        var limits = new List<string>();
+        void Limit(DefinitionBody body, params string[] messages)
+        {
+            var got = generator.Preview(body, snapshot).Diagnostics.Where(d => d.Severity == 3).Select(d => $"{d.Code} {d.InputId} {d.Message}").ToList();
+            var want = messages.Select(m => $"definition.entityOption e {m}").ToList();
+            if (!got.SequenceEqual(want)) limits.Add($"expected [{string.Join(" | ", want)}], got [{string.Join(" | ", got)}]");
+        }
+        Limit(One("number", new { step = 0 }), "Option step of entity e takes a number above 0, not 0");
+        Limit(One("number", new { step = -0.5 }), "Option step of entity e takes a number above 0, not -0.5");
+        Limit(One("text", new { max = 300 }), "Option max of entity e takes 255 or less, as Home Assistant keeps at most 255 characters, not 300");
+        Limit(One("text", new { min = -1 }), "Option min of entity e takes 0 or more, not -1");
+        Limit(One("text", new { min = 0.5 }), "Option min of entity e takes a whole number, not 0.5");
+        Limit(One("text", new { min = 0.5, max = 0.9 }), "Option min of entity e takes a whole number, not 0.5", "Option max of entity e takes a whole number, not 0.9");
+        Limit(One("text", new { min = 0, max = 255 }));
+        Limit(One("number", new { min = -0.5, max = 0.5, step = 0.25 }));
+        if (limits.Count > 0) throw new Exception($"option limits: {limits.Count} failing:\n" + string.Join("\n", limits));
         Only(One("light", new { dimmable = "yes" }), "definition.entityOption", "e", "Option dimmable of entity e takes true or false");
         Only(One("cover", new { positionable = 1 }), "definition.entityOption", "e", "Option positionable of entity e takes true or false");
         Only(Level(new { name = 5 }), "definition.entityField", "level", "level", "name");

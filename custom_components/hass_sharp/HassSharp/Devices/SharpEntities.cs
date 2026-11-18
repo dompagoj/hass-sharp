@@ -273,7 +273,7 @@ internal static class SharpDomains
     {
         if (value is null) return null;
         if (value is not string text) return "is not text";
-        return ((SharpText)entity).Takes(text) is { } takes ? $"is not {takes}" : null;
+        return ((SharpText)entity).Refuses(text);
     }
 
     // A brightness or a position: a number the entity takes, or unknown.

@@ -87,6 +87,7 @@ static class SharpEntityTests
         await Lights();
         await Covers();
         GraphRows();
+        await Limits();
     }
 
     static void Publishing()
@@ -574,5 +575,58 @@ static class SharpEntityTests
             Check(Refused(Create("sensor", "{}", $$""","deviceClass":"{{deviceClass}}" """), "value", "2026-11-18") == null, $"a sensor of the device class {deviceClass} takes text");
         Check(Refused(Create("sensor", """{"options":["a","b"]}""", ""","deviceClass":"power" """), "value", "a") == null, "a sensor with options takes one of them whatever its device class");
         Console.WriteLine("PASS sharp entities: each new domain's graph row reads its options and takes, keeps and reads the values its class does; a numeric device class needs a number");
+    }
+
+    // The options Home Assistant would not take, refused as the class is made; a pattern that takes too long to match,
+    // refused as an ArgumentException; a password text's value never quoted. Every failure is reported.
+    static async Task Limits()
+    {
+        var failures = new List<string>();
+        void Refused(Func<object?> make, string message, string what)
+        {
+            try { make(); failures.Add($"{what}: not refused"); }
+            catch (ArgumentException error) { if (error.Message != message) failures.Add($"{what}: the message is \"{error.Message}\", not \"{message}\""); }
+            catch (Exception error) { failures.Add($"{what}: threw {error.GetType().Name}: {error.Message}"); }
+        }
+        async Task CommandRefused(SharpEntity entity, string data, string message, string what)
+        {
+            try { await entity.Command("set_value", Data(data)); failures.Add($"{what}: not refused"); }
+            catch (ArgumentException error) { if (error.Message != message) failures.Add($"{what}: the message is \"{error.Message}\", not \"{message}\""); }
+            catch (Exception error) { failures.Add($"{what}: threw {error.GetType().Name}: {error.Message}"); }
+        }
+        // A1: a step above 0.
+        foreach (var step in new[] { 0, -0.5, double.NaN, double.PositiveInfinity })
+            Refused(() => new SharpNumber("target", "Target") { Step = step }, $"Target (target) takes a step above 0, not {CommandData.Shown(step)}", $"a number's step {step}");
+        if (new SharpNumber("target") { Step = 0.001 }.Step != 0.001) failures.Add("a small step is taken");
+        // A2, A3: a text of 0 to 255 characters.
+        Refused(() => new SharpText("code", "Code") { Max = 256 }, "Code (code) takes a longest length of 255 or less, as Home Assistant keeps at most 255 characters, not 256", "a text's max above 255");
+        Refused(() => new SharpText("code", "Code") { Min = -1 }, "Code (code) takes a shortest length of 0 or more, not -1", "a text's min below 0");
+        if (new SharpText("code") { Min = 0, Max = 255 } is not { Min: 0, Max: 255 }) failures.Add("a text of 0 to 255 characters is taken");
+        // B4: a pattern that takes too long is a refusal naming the entity, its value never quoted.
+        var slow = new SharpText("code", "Code") { Pattern = "^(a+)+$", Mode = SharpTextMode.Password };
+        var text = new string('a', 40) + "!";
+        const string tooLong = "Code (code) cannot take the text: matching it to its pattern ^(a+)+$ took longer than 1 s";
+        Refused(() => slow.Value = text, tooLong, "a state whose pattern takes too long");
+        await CommandRefused(slow, $$"""{"value":"{{text}}"}""", tooLong, "a command whose pattern takes too long");
+        if (slow.Value != null) failures.Add("a text refused for a slow pattern is unchanged");
+        // Matched from the start, as Python's re.match: alternatives and a verbose pattern's comment keep their meaning.
+        var either = new SharpText("code") { Pattern = "a|b" };
+        Refused(() => either.Value = "xb", "code takes a text that matches a|b, not \"xb\"", "an alternative matched later in the text");
+        either.Value = "bx";
+        var verbose = new SharpText("code") { Pattern = "(?x)[0-9]+ # digits" };
+        verbose.Value = "12ab";
+        Refused(() => verbose.Value = "ab12", "code takes a text that matches (?x)[0-9]+ # digits, not \"ab12\"", "a verbose pattern matched later in the text");
+        // B5: a password text given something other than a text does not quote it.
+        await CommandRefused(new Keypad(SharpTextMode.Password), """{"value":12}""", "Code (code) takes a text of 2 to 4 characters, not the hidden value given", "a password text given a number");
+        // In a graph, a pattern that takes too long is a refusal too.
+        var graph = SharpDomains.Create("text", JsonNode.Parse("""{"key":"code","options":{"pattern":"^(a+)+$"}}""")!.AsObject());
+        try
+        {
+            var reason = SharpDomains.Graph["text"].State["value"].Refuses(graph, text);
+            if (reason != "took longer than 1 s to match the pattern ^(a+)+$") failures.Add("a graph's text with a slow pattern: " + reason);
+        }
+        catch (Exception error) { failures.Add($"a graph's text with a slow pattern threw {error.GetType().Name}"); }
+        if (failures.Count > 0) throw new Exception($"Limits: {failures.Count} failing:\n" + string.Join("\n", failures));
+        Console.WriteLine("PASS sharp entities: a number's step above 0 and a text of 0 to 255 characters; a pattern that takes too long is a refusal, matched from the start, and a password text's value is never quoted");
     }
 }

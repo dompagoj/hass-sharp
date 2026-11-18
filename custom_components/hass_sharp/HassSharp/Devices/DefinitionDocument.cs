@@ -79,14 +79,15 @@ internal static class DefinitionDocument
     /// <summary>
     /// The problems of an entity's options: each must be one its domain takes, of that option's type (a list of texts
     /// for an array, which is not empty) and, with an enum, one of its values; each option the domain marks required is
-    /// given; a <c>min</c> is below the <c>max</c>, either given or its class's own; and a <c>pattern</c> is a regular
-    /// expression.
+    /// given; a number option is one Home Assistant takes (<see cref="Limit"/>); a <c>min</c> is below the <c>max</c>,
+    /// either given or its class's own; and a <c>pattern</c> is a regular expression.
     /// </summary>
     static void Options(string key, string name, JsonObject domain, JsonNode? given, Action<string, string, string?> error)
     {
         var known = domain["options"] as JsonObject ?? [];
         var label = VisualNodeCatalog.Text(domain, "label", key);
         var options = given as JsonObject ?? [];
+        var bounded = false;
         if (given != null && given.GetValueKind() != JsonValueKind.Null && given is not JsonObject)
         { error("definition.entityOption", $"The options of entity {key} are not a set of named values; give them as an object, such as {{\"unit\": \"W\"}}", key); return; }
         foreach (var (option, value) in options)
@@ -110,6 +111,12 @@ internal static class DefinitionDocument
                 error("definition.entityOption", $"Option {option} of entity {key} takes {(type == "array" ? "a list of texts" : allowed != null ? "one of " + string.Join(", ", allowed) : Phrase(type))}", key);
             else if (value is JsonArray { Count: 0 })
                 error("definition.entityOption", $"Option {option} of entity {key} is an empty list; give it at least one text{(Required(rule) ? "" : ", or leave it out")}", key);
+            else if (Number(value) is { } number && Limit(name, option, number) is { } limit)
+            {
+                error("definition.entityOption", $"Option {option} of entity {key} takes {limit}, not {Shown(number)}", key);
+                // A min or max refused here is not compared with the other one too.
+                bounded |= option is "min" or "max";
+            }
             else if (option == "pattern" && type == "string" && IsText(value, out var pattern))
                 try { _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(1)); }
                 catch (ArgumentException problem) { error("definition.entityOption", $"Option pattern of entity {key} is not a regular expression: {problem.Message}", key); }
@@ -117,13 +124,28 @@ internal static class DefinitionDocument
         foreach (var (option, rule) in known)
             if (rule is JsonObject required && Required(required) && (options[option] is not { } value || value.GetValueKind() == JsonValueKind.Null))
                 error("definition.entityOption", $"Give entity {key} the option {option}: {Article(label)} {label.ToLowerInvariant()} needs it", key);
-        if (known.ContainsKey("min") && known.ContainsKey("max") && (options.ContainsKey("min") || options.ContainsKey("max")))
+        if (!bounded && known.ContainsKey("min") && known.ContainsKey("max") && (options.ContainsKey("min") || options.ContainsKey("max")))
         {
             var defaults = SharpDomains.DefaultOptions(name);
             if ((Number(options["min"]) ?? Number(defaults["min"])) is { } min && (Number(options["max"]) ?? Number(defaults["max"])) is { } max && !(min < max))
                 error("definition.entityOption", $"Entity {key} has a min of {Shown(min)}, which is not below its max of {Shown(max)}; give a min below the max", key);
         }
     }
+
+    /// <summary>
+    /// What Home Assistant takes of a domain's number option beyond its type, when <paramref name="number"/> is not that;
+    /// null when it is: a number's step above 0, and a text's lengths whole numbers from 0 to 255 (the most characters
+    /// Home Assistant keeps in a state), as <see cref="SharpNumber.Step"/>, <see cref="SharpText.Min"/> and
+    /// <see cref="SharpText.Max"/> take them.
+    /// </summary>
+    static string? Limit(string domain, string option, double number) => (domain, option) switch
+    {
+        ("number", "step") when !(number > 0) => "a number above 0",
+        ("text", "min" or "max") when number != Math.Floor(number) => "a whole number",
+        ("text", "min") when number < 0 => "0 or more",
+        ("text", "max") when number > 255 => "255 or less, as Home Assistant keeps at most 255 characters",
+        _ => null,
+    };
 
     static bool Required(JsonObject rule) => rule["required"] is JsonValue flag && flag.GetValueKind() == JsonValueKind.True;
     // Read through its JSON text, as Fits reads it: a class's default may be held as an int.

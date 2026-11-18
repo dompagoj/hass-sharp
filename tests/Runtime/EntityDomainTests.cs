@@ -40,6 +40,11 @@ static class EntityDomainTests
         {
             var entity = (SharpEntity)Activator.CreateInstance(type)!;
             var entry = domains![domain]!;
+            // Commands are probed on the graph row's entity with every flag option on (a light that dims, a cover with a
+            // position), so that no flag refuses the data before the class reads it.
+            var flags = new JsonObject();
+            foreach (var (option, rule) in entry["options"]!.AsObject()) if (rule?["type"]?.GetValue<string>() == "boolean") flags[option] = true;
+            var probe = SharpDomains.Create(domain, new JsonObject { ["key"] = "main", ["options"] = flags });
             Check(Keys(entry["state"]) == Keys(entity.Values()), $"{domain}: state keys {Keys(entry["state"])} are those of {type.Name}.Values(), {Keys(entity.Values())}");
             Check(Keys(entry["commands"]) == string.Join(", ", entity.Commands), $"{domain}: commands {Keys(entry["commands"])} are those of {type.Name}.Commands, {string.Join(", ", entity.Commands)}");
             Check(Keys(entry["options"]) == Keys(entity.DomainOptions()), $"{domain}: option keys {Keys(entry["options"])} are those of {type.Name}.DomainOptions(), {Keys(entity.DomainOptions())}");
@@ -60,11 +65,13 @@ static class EntityDomainTests
                 foreach (var (name, value) in data)
                 {
                     Check(value?["types"] is JsonArray { Count: > 0 } types && types.All(t => VisualTypes.Chain(VisualNodeCatalog.Root, t!.GetValue<string>()).Count > 0) && value["label"] is JsonValue, $"{domain}.{command}.{name}: a label and catalog types");
-                    // The class reads the value: one of the wrong type is refused, and one not given is refused unless it is optional.
+                    // The class reads the value by this name: one of the wrong type is refused quoting it (not as missing), and
+                    // one not given is refused, naming it, unless it is optional.
                     var wrong = ((JsonArray)value!["types"]!).Any(t => t!.GetValue<string>() == "number") ? "\"x\"" : "5";
-                    Check(await Refusal(entity, command, $$"""{"{{name}}":{{wrong}}}""") != null, $"{domain}.{command}: {type.Name} reads {name}, refusing {wrong}");
-                    var missing = await Refusal(entity, command, "{}");
-                    Check(Optional(value) ? missing == null : missing != null && missing.Message.Contains(name, StringComparison.Ordinal),
+                    var refused = await Refusal(probe, command, $$"""{"{{name}}":{{wrong}}}""");
+                    Check(refused != null && refused.Message.EndsWith(", not " + wrong, StringComparison.Ordinal), $"{domain}.{command}: {type.Name} reads {name}, refusing {wrong}: {refused?.Message}");
+                    var missing = await Refusal(probe, command, "{}");
+                    Check(Optional(value) ? missing == null : missing != null && missing.Message.Contains($" {name}: it takes ", StringComparison.Ordinal),
                         $"{domain}.{command}: {type.Name} {(Optional(value) ? "runs without" : "refuses a command without")} {name}: {missing?.Message}");
                 }
                 // The delegate that handles it takes the data in order, a value that may be left out as a nullable one.

@@ -67,6 +67,7 @@ public class SharpNumber : SharpEntity
 {
     static readonly IReadOnlyList<string> NumberCommands = ["set_value"];
     double? value;
+    double step = 1;
 
     /// <summary>A number whose key is <c>main</c>.</summary>
     public SharpNumber() { }
@@ -95,8 +96,13 @@ public class SharpNumber : SharpEntity
     public double Min { get; init; } = 0;
     /// <summary>The highest value; 100 unless set.</summary>
     public double Max { get; init; } = 100;
-    /// <summary>How far apart the values Home Assistant offers are; 1 unless set.</summary>
-    public double Step { get; init; } = 1;
+    /// <summary>How far apart the values Home Assistant offers are, above 0; 1 unless set.</summary>
+    /// <exception cref="ArgumentException">The step is not a number above 0.</exception>
+    public double Step
+    {
+        get => step;
+        init => step = double.IsFinite(value) && value > 0 ? value : throw Refused("a step above 0", CommandData.Shown(value));
+    }
     /// <summary>Whether Home Assistant shows a box or a slider; it chooses unless set.</summary>
     public SharpNumberMode Mode { get; init; }
     /// <summary>The unit of the number, such as <c>°C</c> or <c>%</c>; null for none.</summary>
@@ -217,7 +223,12 @@ public class SharpText : SharpEntity
 {
     static readonly IReadOnlyList<string> TextCommands = ["set_value"];
     static readonly TimeSpan MatchTimeout = TimeSpan.FromSeconds(1);
+    /// <summary>The most characters Home Assistant keeps in a state.</summary>
+    const int Longest = 255;
+    // A password's value given as something other than a text, in a message.
+    const string Hidden = "the hidden value given";
     string? value, pattern;
+    int min, max = 100;
     Regex? matcher;
 
     /// <summary>A text whose key is <c>main</c>.</summary>
@@ -237,16 +248,27 @@ public class SharpText : SharpEntity
         get => value;
         set
         {
-            if (value != null && Takes(value) is { } takes) throw Refused(takes, Shown(value, takes));
+            if (value != null && Refusal(value) is { } refused) throw refused;
             this.value = value;
             Publish();
         }
     }
 
-    /// <summary>The fewest characters the text has; 0 unless set.</summary>
-    public int Min { get; init; } = 0;
-    /// <summary>The most characters the text has; 100 unless set.</summary>
-    public int Max { get; init; } = 100;
+    /// <summary>The fewest characters the text has, 0 or more; 0 unless set.</summary>
+    /// <exception cref="ArgumentException">The length is below 0.</exception>
+    public int Min
+    {
+        get => min;
+        init => min = value >= 0 ? value : throw Refused("a shortest length of 0 or more", value.ToString(CultureInfo.InvariantCulture));
+    }
+    /// <summary>The most characters the text has, at most 255 (as many as Home Assistant keeps); 100 unless set.</summary>
+    /// <exception cref="ArgumentException">The length is above 255.</exception>
+    public int Max
+    {
+        get => max;
+        init => max = value <= Longest ? value
+            : throw Refused($"a longest length of {Longest} or less, as Home Assistant keeps at most {Longest} characters", value.ToString(CultureInfo.InvariantCulture));
+    }
     /// <summary>
     /// A regular expression the text matches, from its start as Home Assistant matches it (end it with <c>$</c> to match
     /// the whole text); null for any text.
@@ -255,7 +277,13 @@ public class SharpText : SharpEntity
     public string? Pattern
     {
         get => pattern;
-        init { matcher = value == null ? null : new Regex(value, RegexOptions.None, MatchTimeout); pattern = value; }
+        init
+        {
+            // Checked as written, so that anchoring it never makes a pattern of what is not one.
+            if (value != null) _ = new Regex(value, RegexOptions.None, MatchTimeout);
+            matcher = value == null ? null : Anchored(value);
+            pattern = value;
+        }
     }
     /// <summary>Whether Home Assistant shows the text or hides it, as a password; shown unless set.</summary>
     public SharpTextMode Mode { get; init; }
@@ -269,19 +297,50 @@ public class SharpText : SharpEntity
     /// </summary>
     protected virtual Task SetValue(string value) => OnSetValue?.Invoke(value) ?? throw new NotSupportedException($"Text '{Key}' cannot be set.");
 
-    /// <summary>What the text takes, in a message, when <paramref name="text"/> does not fit; null when it does.</summary>
-    internal string? Takes(string text)
+    // The pattern matched only at the start of the text, as Python's re.match matches it, so that a text it does not fit
+    // is not searched on to its end: \G(?:…), which reads as the same pattern. A pattern it does not read as one (a
+    // verbose pattern ending in a comment, which would take in the closing parenthesis) is matched as written, and its
+    // match must then start at the start.
+    static Regex Anchored(string pattern)
+    {
+        try { return new Regex($@"\G(?:{pattern})", RegexOptions.None, MatchTimeout); }
+        catch (ArgumentException) { return new Regex(pattern, RegexOptions.None, MatchTimeout); }
+    }
+
+    enum Fit { Fits, Length, Pattern, Slow }
+
+    // Whether the text fits; a match that takes longer than MatchTimeout does not.
+    Fit Check(string text)
     {
         // Counted as Home Assistant counts them, in Unicode characters rather than UTF-16 units.
         var length = text.EnumerateRunes().Count();
-        if (length < Min || length > Max) return Length;
-        if (matcher != null && matcher.Match(text) is not { Success: true, Index: 0 }) return $"a text that matches {pattern}";
-        return null;
+        if (length < Min || length > Max) return Fit.Length;
+        try { return matcher == null || matcher.Match(text) is { Success: true, Index: 0 } ? Fit.Fits : Fit.Pattern; }
+        catch (RegexMatchTimeoutException) { return Fit.Slow; }
     }
+
     string Length => $"a text of {Min} to {Max} characters";
-    // A text in a message: its length when that is what is wrong, else the text itself unless it is a password's.
-    string Shown(string text, string takes) =>
-        takes == Length ? $"one of {text.EnumerateRunes().Count()}" : Mode == SharpTextMode.Password ? "the hidden text given" : $"\"{text}\"";
+    string Matching => $"a text that matches {pattern}";
+    string Seconds => CommandData.Shown(MatchTimeout.TotalSeconds);
+
+    /// <summary>Why the text does not fit, worded to follow "The value "ab" of Code (code)"; null when it does.</summary>
+    internal string? Refuses(string text) => Check(text) switch
+    {
+        Fit.Length => $"is not {Length}",
+        Fit.Pattern => $"is not {Matching}",
+        Fit.Slow => $"took longer than {Seconds} s to match the pattern {pattern}",
+        _ => null,
+    };
+
+    // The refusal of a text that does not fit, naming the entity: its length when that is what is wrong, else the text
+    // itself unless it is a password's; null when it fits.
+    ArgumentException? Refusal(string text) => Check(text) switch
+    {
+        Fit.Length => Refused(Length, $"one of {text.EnumerateRunes().Count()}"),
+        Fit.Pattern => Refused(Matching, Mode == SharpTextMode.Password ? "the hidden text given" : $"\"{text}\""),
+        Fit.Slow => new ArgumentException($"{Called} cannot take the text: matching it to its pattern {pattern} took longer than {Seconds} s"),
+        _ => null,
+    };
 
     internal override string Domain => "text";
     internal override IReadOnlyList<string> Commands => TextCommands;
@@ -302,8 +361,8 @@ public class SharpText : SharpEntity
     string Given(JsonElement data)
     {
         var given = CommandData.Required(this, data, "value", Length);
-        if (CommandData.Text(given) is not { } text) throw Refused(Length, CommandData.Shown(given));
-        return Takes(text) is { } takes ? throw Refused(takes, Shown(text, takes)) : text;
+        if (CommandData.Text(given) is not { } text) throw Refused(Length, Mode == SharpTextMode.Password ? Hidden : CommandData.Shown(given));
+        return Refusal(text) is { } refused ? throw refused : text;
     }
 }
 
