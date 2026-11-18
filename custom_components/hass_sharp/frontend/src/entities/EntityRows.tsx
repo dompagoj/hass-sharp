@@ -6,7 +6,7 @@ import type { VisualDiagnostic } from '../visual/api'
 import { Glyph } from '../visual/Glyph'
 import type { VisualGraph } from '../visual/graph'
 import { icons } from '../visual/icons'
-import { addEntity, definitionOf, keyProblem, keyRule, problemOption, readOptionNumber, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
+import { addEntity, definitionOf, keyProblem, keyRule, problemOption, readNumber, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
 import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey, type DefinitionEntity } from './model'
 import { retypeEntity } from './NodePickers'
@@ -108,9 +108,15 @@ function EntityRow(props: {
   const messages = () => (rows.problems.get(key()) ?? []).map(d => d.message)
   const optionKeys = () => Object.keys(spec()?.options ?? {})
   const onOption = (message: string) => { const option = problemOption(message); return option !== undefined && optionKeys().includes(option) ? option : undefined }
-  const problems = messages
   const rowProblems = () => messages().filter(message => onOption(message) === undefined)
-  const optionErrors = (option: string) => messages().filter(message => onOption(message) === option)
+  // A required option left empty says so on its field once the field has been left, or the row was opened from the
+  // Problems tab (the class page's rule): not in red the moment the type is chosen. Save waits for it all the same, and
+  // the Problems tab counts it.
+  const [left, setLeft] = createSignal<ReadonlySet<string>>(new Set())
+  const leave = (option: string) => { if (!left().has(option)) setLeft(new Set([...left(), option])) }
+  createEffect(on(() => rows.located, located => { if (located?.target === `entity:${key()}`) setLeft(new Set(optionKeys())) }))
+  const told = (message: string, option: string) => !/^Give entity \S+ the option /.test(message) || left().has(option)
+  const optionErrors = (option: string) => messages().filter(message => onOption(message) === option && told(message, option))
   const typeLabel = () => entityTypeLabel(rows.catalog, props.entity.domain)
   const spec = () => { const domains = rows.catalog.entityDomains; return domains && Object.hasOwn(domains, props.entity.domain) ? domains[props.entity.domain] : undefined }
   const set = (changes: Partial<Record<keyof DefinitionEntity, unknown>>) => rows.commit(updateEntity(rows.graph, key(), changes))
@@ -128,14 +134,14 @@ function EntityRow(props: {
   const showInHomeAssistant = (event: MouseEvent, entityId: string) =>
     (event.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true }))
   return (
-    <li class="hs-def-row" data-entity-key={key()} classList={{ 'hs-def-row--problem': problems().length > 0 }}>
+    <li class="hs-def-row" data-entity-key={key()} classList={{ 'hs-def-row--problem': messages().length > 0 }}>
       <button type="button" class="hs-def-row__head" aria-expanded={props.open} aria-controls={props.open ? `${id}-body` : undefined} onClick={() => props.onToggle()}>
         <span class="hs-def-row__icon" aria-hidden="true"><Glyph paths={icons.entity} /></span>
         <span class="hs-def-row__title">
           <strong>{text(props.entity.name) || key()}</strong>
           <small>{typeLabel()} · {key()}</small>
         </span>
-        <Show when={problems().length}>
+        <Show when={messages().length}>
           {count => <span class="hs-def-row__mark" role="img" aria-label={`${count()} ${count() === 1 ? 'problem' : 'problems'}`}><Glyph paths={icons.problem} /></span>}
         </Show>
       </button>
@@ -149,7 +155,10 @@ function EntityRow(props: {
         )}
       </Show>
       <Show when={props.open}>
-        <div id={`${id}-body`} class="hs-def-row__body">
+        <div id={`${id}-body`} class="hs-def-row__body" onFocusOut={event => {
+          const option = (event.target as Element).closest<HTMLElement>('[data-field^="option:"]')?.dataset.field?.slice('option:'.length)
+          if (option) leave(option)
+        }}>
           <FieldErrors list={rowProblems()} />
           <TextField name="name" label="Name" text={text(props.entity.name)} placeholder="Not set"
             hint="The name Home Assistant shows for it." commit={value => set({ name: value.trim() || undefined })} />
@@ -216,9 +225,9 @@ function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; 
           commit={value => { const items = value.split('\n').map(item => item.trim()).filter(Boolean); props.onChange(items.length ? items : undefined) }} />
       </Match>
       <Match when={props.rule.type === 'number'}>
-        <TextField name={name()} label={label()} hint={hint()} placeholder={placeholder()} required={required()} errors={props.errors} inputmode="decimal"
+        <TextField name={name()} label={label()} hint={hint()} placeholder={placeholder()} required={required()} errors={props.errors}
           text={typeof props.value === 'number' ? String(props.value) : text(props.value)}
-          commit={value => { const trimmed = value.trim(); props.onChange(trimmed === '' ? undefined : readOptionNumber(trimmed) ?? value) }} />
+          commit={value => { const read = readNumber(value); props.onChange(read === null ? undefined : read ?? value) }} />
       </Match>
       <Match when={props.rule.type === 'boolean'}>
         <SwitchField name={name()} label={label()} hint={hint()} checked={props.value === true} errors={props.errors} onChange={on => props.onChange(on || undefined)} />

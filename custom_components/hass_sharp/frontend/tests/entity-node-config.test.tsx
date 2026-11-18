@@ -4,7 +4,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Inspector } from '../src/visual/Inspector'
-import { addGraphNode, connectData, nodeCatalog, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addGraphNode, connectData, nodeCatalog, validateGraph, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { icons, nodeIdentity } from '../src/visual/icons'
 import { chooseEntity } from '../src/entities/NodePickers'
@@ -244,24 +244,95 @@ describe('inputs follow the entity', () => {
 })
 
 describe('the state values of State and Set state', () => {
-  const things = entityGraph({ entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'lamp', domain: 'light', name: 'Lamp' }, { key: 'blind', domain: 'cover', name: 'Blind' }] })
+  // What is drawn is what is saved (ruling R13): a value with no value is never drawn as a switch.
+  const things = entityGraph({ entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'lamp', domain: 'light', name: 'Lamp' },
+    { key: 'blind', domain: 'cover', name: 'Blind' }, { key: 'power', domain: 'sensor', name: 'Power' }, { key: 'level', domain: 'number', name: 'Level' },
+    { key: 'bell', domain: 'button', name: 'Bell' }] })
+  const kept = 'Leave empty to keep it as it is.'
   const row = (el: Element, port: string) => ({
     unset: !!field(el, port).querySelector('.hs-insp-unset'),
     hint: field(el, port).querySelector('.hs-field-hint')?.textContent ?? null,
   })
-  it('opens a new Set state with its only value ready to fill', () => {
-    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'relay' }), 'set')
-    expect(row(el, 'is_on')).toEqual({ unset: false, hint: null })
+  const toggle = (el: Element, port: string) => field(el, port).querySelector<HTMLInputElement>('input[role="switch"]')
+  /** A new Set state, its entity then chosen in the picker. */
+  const chosen = async (key: string) => {
+    const mounted = mount(step(things, 'set_entity_state', 'set', {}), 'set')
+    await choose(mounted.el, 'entity', key)
+    return mounted
+  }
+  it('opens a new switch step On, as saved, which one click turns Off', async () => {
+    const { el, node, history } = await chosen('Relay')
+    expect(node().config).toEqual({ entity: 'relay', is_on: lit('boolean', true) })
+    expect(toggle(el, 'is_on')?.checked).toBe(true)
+    toggle(el, 'is_on')!.click()
+    expect(node().config.is_on).toEqual(lit('boolean', false))
+    // Choosing the entity and its On were one change.
+    history.undo()
+    history.undo()
+    expect(node().config).toEqual({})
   })
-  it('opens a light\'s first value ready, and says the others are kept when left empty', () => {
-    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'lamp' }), 'set')
-    expect(row(el, 'is_on')).toEqual({ unset: false, hint: null })
-    expect(row(el, 'brightness')).toEqual({ unset: true, hint: 'Leave empty to keep it as it is.' })
+  it('opens a step added with a switch or light as the only entity On too', () => {
+    const one = entityGraph({ entities: [{ key: 'lamp', domain: 'light', name: 'Lamp' }] })
+    expect(addGraphNode(one, 'set_entity_state', 'set', nodeCatalog).nodes.at(-1)!.config).toMatchObject({ entity: 'lamp', is_on: lit('boolean', true) })
+    expect(addGraphNode(one, 'entity_state', 'state', nodeCatalog).nodes.at(-1)!.config).not.toHaveProperty('is_on')
   })
-  it('opens a cover\'s first value ready, though none is required', () => {
-    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'blind' }), 'set')
-    expect(row(el, 'is_closed')).toEqual({ unset: false, hint: null })
-    expect(row(el, 'position')).toEqual({ unset: true, hint: 'Leave empty to keep it as it is.' })
+  it('undoes the entity and its value together', async () => {
+    const { node, history } = await chosen('Lamp')
+    expect(node().config).toEqual({ entity: 'lamp', is_on: lit('boolean', true) })
+    history.undo()
+    expect(node().config).toEqual({})
+  })
+  it('opens a new light step On, its brightness not set and kept when left so', async () => {
+    const { el } = await chosen('Lamp')
+    expect(toggle(el, 'is_on')?.checked).toBe(true)
+    expect(row(el, 'brightness')).toEqual({ unset: true, hint: kept })
+  })
+  it('changes nothing else when the entity of a step that sets values changes, and leaves a button alone', async () => {
+    const { node } = mount(step(things, 'set_entity_state', 'set', { entity: 'lamp', brightness: lit('number', 40) }), 'set')
+    expect(chooseEntity(step(things, 'set_entity_state', 'set', { entity: 'lamp', brightness: lit('number', 40) }), 'set', 'relay', nodeCatalog).graph.nodes[0].config)
+      .toEqual({ entity: 'relay' })
+    expect(node().config.is_on).toBeUndefined()
+    expect(chooseEntity(step(things, 'set_entity_state', 'set', {}), 'set', 'bell', nodeCatalog).graph.nodes[0].config).toEqual({ entity: 'bell' })
+    expect(chooseEntity(step(things, 'entity_state', 'state', {}), 'state', 'relay', nodeCatalog).graph.nodes[0].config).toEqual({ entity: 'relay' })
+  })
+  it('shows a saved light step that sets only its brightness with On not set, kept, and not as a switch', () => {
+    const { el } = mount(step(things, 'set_entity_state', 'set', { entity: 'lamp', brightness: lit('number', 40) }), 'set')
+    expect(row(el, 'is_on')).toEqual({ unset: true, hint: kept })
+    expect(toggle(el, 'is_on')).toBeNull()
+  })
+  it('shows a saved cover step that sets only its position with Closed not set, and the same for one that sets nothing', () => {
+    const cover = mount(step(things, 'set_entity_state', 'set', { entity: 'blind', position: lit('number', 40) }), 'set')
+    expect(row(cover.el, 'is_closed')).toEqual({ unset: true, hint: kept })
+    expect(toggle(cover.el, 'is_closed')).toBeNull()
+    dispose?.()
+    document.body.innerHTML = ''
+    const bare = mount(step(things, 'set_entity_state', 'set', { entity: 'relay' }), 'set')
+    expect(row(bare.el, 'is_on').unset).toBe(true)
+    expect(toggle(bare.el, 'is_on')).toBeNull()
+  })
+  it('sets a boolean to true with Set value, so the switch it then shows is what is saved, and ties the hint to that button', () => {
+    const { el, node } = mount(step(things, 'set_entity_state', 'set', { entity: 'blind', position: lit('number', 40) }), 'set')
+    const button = field(el, 'is_closed').querySelector<HTMLButtonElement>('.hs-insp-unset button')!
+    const hint = field(el, 'is_closed').querySelector<HTMLElement>('.hs-field-hint')!
+    expect(button.getAttribute('aria-describedby')).toBe(hint.id)
+    button.click()
+    expect(node().config.is_closed).toEqual(lit('boolean', true))
+    expect(toggle(el, 'is_closed')?.checked).toBe(true)
+  })
+  it('opens a new sensor or number step with its field ready and empty', async () => {
+    for (const name of ['Power', 'Level']) {
+      const { el, node, history } = await chosen(name)
+      expect(node().config, name).toEqual({ entity: name.toLowerCase() })
+      expect(row(el, 'value').unset, name).toBe(false)
+      expect(field(el, 'value').querySelector<HTMLInputElement>('input:not([role])')?.value, name).toBe('')
+      // Nothing set yet: the validator says so until the value is filled.
+      const problems = () => validateGraph(history.graph(), nodeCatalog).filter(d => d.nodeId === 'set').map(d => d.message)
+      expect(problems().some(message => message.endsWith('needs at least one value')), name).toBe(true)
+      history.commit(updateNode(history.graph(), 'set', { config: { ...node().config, value: lit('number', 4) } }))
+      expect(problems().some(message => message.endsWith('needs at least one value')), name).toBe(false)
+      dispose?.()
+      document.body.innerHTML = ''
+    }
   })
   it('says a State\'s optional values are optional', () => {
     const { el } = mount(step(things, 'entity_state', 'state', { entity: 'lamp' }), 'state')

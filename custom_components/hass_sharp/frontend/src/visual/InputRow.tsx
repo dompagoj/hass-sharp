@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from 'solid-js'
+import { createSignal, createUniqueId, For, Show } from 'solid-js'
 import { InputEditor } from './InputEditor'
 import { Glyph } from './Glyph'
 import type { InputView } from './flow/flowModel'
@@ -101,6 +101,11 @@ export interface FieldRow {
   context?: { targetEntityIds?: string[] }
   /** An optional input that shows its editor while it has no value, as a required one does (a Set state's first value). */
   ready?: boolean
+  /**
+   * What "Set value" gives the input, instead of showing its editor empty: true for a value that is true or false, so
+   * the switch then drawn is what is saved.
+   */
+  setValue?: Operand
 }
 
 /** The node an input row belongs to, read through accessors so the row survives edits of that node. */
@@ -126,6 +131,8 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
   const operand = () => row.value ?? (inputValue(ctx.node(), row.port, ctx.catalog()) as Operand | undefined)
   const wired = () => input()?.mode === 'connected'
   const [setting, setSetting] = createSignal(false)
+  const hintId = `${createUniqueId()}-hint`
+  const unsetHint = () => row.description ?? inputSpec()?.description
   // A service's target and the fields added on purpose always show their editor.
   const muted = () => !wired() && !setting() && !row.ready && input()?.mode === 'muted' && !(ctx.node().kind === 'service' && (row.port === 'target' || row.port.startsWith('field:')))
   const errors = () => input()?.errors ?? []
@@ -187,10 +194,10 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
       <Show when={muted()}>
         <div class="hs-insp-unset">
           <span class="hs-muted">Not set</span>
-          <button type="button" class="hs-button hs-button--ghost" aria-label={`Set ${label()}`}
-            onClick={() => { setSetting(true); ctx.focus(row.port) }}>Set value</button>
+          <button type="button" class="hs-button hs-button--ghost" aria-label={`Set ${label()}`} aria-describedby={unsetHint() ? hintId : undefined}
+            onClick={() => { if (row.setValue) change(structuredClone(row.setValue)); else setSetting(true); ctx.focus(row.port) }}>Set value</button>
         </div>
-        <Show when={row.description ?? inputSpec()?.description}>{hint => <small class="hs-field-hint">{hint()}</small>}</Show>
+        <Show when={unsetHint()}>{hint => <small id={hintId} class="hs-field-hint">{hint()}</small>}</Show>
         <Errors list={errors()} />
       </Show>
     </div>

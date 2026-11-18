@@ -263,6 +263,30 @@ export function withEntityCommand(kind: string, config: Record<string, unknown>,
   const commands = entityCommands(catalog, text(config.entity))
   return commands.length && !commands.includes(text(config.command)) ? { ...config, command: commands.find(c => !handled.includes(c)) ?? commands[0] } : config
 }
+/**
+ * The value a Set state is for, of the state values of its entity's type: the first its row does not mark optional, else
+ * its first (a cover's Closed); undefined for a type with no state (a button).
+ */
+export function firstStateValue(state: Record<string, EntityValueSpec> | undefined): string | undefined {
+  const entries = record(state) ? Object.entries(state) : []
+  return (entries.find(([, value]) => !(record(value) && value.required === false)) ?? entries[0])?.[0]
+}
+/** Whether a state value takes only true or false (a switch's On, a cover's Closed). */
+export const booleanStateValue = (value: EntityValueSpec | undefined) =>
+  record(value) && Array.isArray(value.types) && value.types.length > 0 && value.types.every(type => type === 'boolean')
+/**
+ * The config of a Set state that sets no value yet once its entity is set (ruling R13): when the value it is for
+ * ({@link firstStateValue}) is true or false, it is set to true, so a new switch's or light's step turns it on, as its
+ * switch shows, and one click turns that off. Any other step, and one whose entity's first value is not true or false,
+ * as it is. The caller says whether the step set a value before (`setsValues`): one that did changes nothing else.
+ */
+export function withFirstStateValue(kind: string, config: Record<string, unknown>, catalog: VisualCatalogSnapshot, setsValues = false): Record<string, unknown> {
+  if (kind !== 'set_entity_state' || setsValues) return config
+  const state = entityDomain(catalog, text(config.entity))?.state
+  const first = firstStateValue(state)
+  if (!first || !booleanStateValue(state![first]) || Object.hasOwn(config, first)) return config
+  return { ...config, [first]: { kind: 'literal', type: 'boolean', value: true } }
+}
 /** The type of the definition's setting with this key, when it is one a setting can have. */
 export function settingType(catalog: VisualCatalogSnapshot, key: string): string | undefined {
   const type = text(definitionItems(catalog, 'settings').find(s => s.key === key)?.type)
@@ -1555,7 +1579,7 @@ function prefilled(graph: Graph, kind: string, spec: NodeSpec, catalog: VisualCa
   if (entities.length === 1) {
     const entity = entities[0].key
     const handled = graph.nodes.filter(n => n.kind === 'entity_command' && n.config.entity === entity).map(n => text(n.config.command))
-    return withEntityCommand(kind, { entity }, catalog, handled)
+    return withFirstStateValue(kind, withEntityCommand(kind, { entity }, catalog, handled), catalog)
   }
   const settings = Object.hasOwn(spec.config, 'key') ? definitionSettings(catalog) : []
   return settings.length === 1 ? { key: settings[0].key } : {}

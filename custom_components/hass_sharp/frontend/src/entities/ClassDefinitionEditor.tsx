@@ -16,9 +16,9 @@ import { describedBy } from '../visual/widgets/common'
 import { entityTexts } from './adapter'
 import { definitionsQueryKey, entityApi, entityError, entityTypesQueryKey } from './api'
 import { createClassSession, type ClassSession } from './classSession'
-import { cardEntities, cardStateText, definitionStatus } from './DefinitionCard'
+import { cardEntities, cardStateText, definitionStatus, StateText } from './DefinitionCard'
 import { DeleteDefinition } from './DeleteDefinition'
-import { problemRow } from './definitionEdits'
+import { problemRow, readNumber } from './definitionEdits'
 import { deviceMemory, DeviceSection } from './DeviceForm'
 import { FieldErrors } from './formFields'
 import { liveState } from './liveState'
@@ -291,9 +291,7 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
                       <Show when={!entity.disabled && cardStateText(entity, states(), now())}>
                         {state => (
                           <span class="hs-cdef-entity__state" classList={{ 'hs-cdef-entity__state--quiet': !!state().quiet || !!state().none }}>
-                            <Show when={state().none} fallback={state().text}>
-                              <span aria-hidden="true">{state().text}</span><span class="hs-visually-hidden">No state</span>
-                            </Show>
+                            <StateText state={state()} />
                           </span>
                         )}
                       </Show>
@@ -518,16 +516,6 @@ function SettingField(props: { setting: EntityTypeSetting; session: ClassSession
       </div>
     </Show>
   )
-}
-
-/** A number as typed: digits, a sign, a fraction and an exponent, whole; `undefined` for an unfinished or other text. */
-function readNumber(typed: string, whole: boolean): number | null | undefined {
-  const trimmed = typed.trim()
-  if (!trimmed) return null
-  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed)) return
-  const parsed = Number(trimmed)
-  if (!Number.isFinite(parsed) || (whole && !Number.isSafeInteger(parsed))) return
-  return parsed
 }
 
 /**

@@ -105,14 +105,17 @@ export function optionFits(rule: ConfigSpec, value: unknown): boolean {
 }
 
 /**
- * A number option's text as a number: digits, a sign, a fraction and an exponent, with a point; undefined for a text
- * that is not one (a comma, a unit, an unfinished number), as the class page's number fields read theirs.
+ * A number as typed: digits, a sign, a fraction and an exponent, with a point; `null` for an empty text, `undefined`
+ * for one that is not a number (a comma, a unit, an unfinished number), or not a whole one when `whole`. How the class
+ * page's number settings and the entity form's number options read what is typed.
  */
-export function readOptionNumber(text: string): number | undefined {
-  const trimmed = text.trim()
+export function readNumber(typed: string, whole = false): number | null | undefined {
+  const trimmed = typed.trim()
+  if (!trimmed) return null
   if (!/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed)) return
   const parsed = Number(trimmed)
-  return Number.isFinite(parsed) ? parsed : undefined
+  if (!Number.isFinite(parsed) || (whole && !Number.isSafeInteger(parsed))) return
+  return parsed
 }
 
 const optionProblem = (key: string, message: string): VisualDiagnostic =>

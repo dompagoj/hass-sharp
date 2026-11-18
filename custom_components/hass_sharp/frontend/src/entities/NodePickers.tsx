@@ -1,5 +1,5 @@
 import { createMemo, createUniqueId, Show, type Component, type JSX } from 'solid-js'
-import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityCommandLabel, entityCommands, entityTypeLabel, isAssignable, withEntityCommand, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
+import { dataInputs, dataOutputs, definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityCommandLabel, entityCommands, entityTypeLabel, firstStateValue, booleanStateValue, isAssignable, withEntityCommand, withFirstStateValue, words, type GraphNode, type Operand, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { entityStateContext } from '../visual/entityStateContext'
 import { removeEdge, updateNode, type VisualGraph } from '../visual/graph'
@@ -29,8 +29,20 @@ function hasState(catalog: VisualCatalogSnapshot, domain: string): boolean {
 const entityName = (entity: Record<string, unknown>) => text(entity.name) || text(entity.key)
 
 /**
+ * Whether a State's or Set state's step sets (or reads) a value of its entity: a value given in its config, or a wire
+ * into it. Its entity and its own settings are not values.
+ */
+export function setsStateValues(graph: VisualGraph, node: GraphNode, catalog: VisualCatalogSnapshot): boolean {
+  const spec = nodeSpec(node.kind, catalog)
+  const given = Object.entries(node.config).some(([port, value]) => port !== 'entity' && !Object.hasOwn(spec?.config ?? {}, port)
+    && !Object.hasOwn(spec?.inputs ?? {}, port) && !(record(value) && value.kind === 'unset'))
+  return given || graph.edges.some(edge => edge.kind === 'data' && edge.target === node.id)
+}
+
+/**
  * The graph with the step's entity set to `key`, as one change. A When commanded's command follows the entity (ruling
- * R12). A State or Set state takes its inputs from the entity's type: the values and wires of inputs the new type does
+ * R12); a Set state that set no value yet sets its new entity's first value to true when that is true or false (ruling
+ * R13). A State or Set state takes its inputs from the entity's type: the values and wires of inputs the new type does
  * not have, or whose new type does not take them, are removed and named in the notice, as applying a Custom C# node's
  * code does. A wire that already went nowhere stays, for the validator to name.
  */
@@ -39,7 +51,8 @@ export function chooseEntity(graph: VisualGraph, nodeId: string, key: string, ca
   if (!node || node.config.entity === key) return { graph }
   // The definition is the graph's and does not change here, so one lifted catalog serves before and after.
   const types = graphTypes(graph, catalog)
-  const config = withEntityCommand(node.kind, { ...node.config, entity: key }, types)
+  // A Set state that set no value yet sets its new entity's On (or Closed) to true in the same change (ruling R13).
+  const config = withFirstStateValue(node.kind, withEntityCommand(node.kind, { ...node.config, entity: key }, types), types, setsStateValues(graph, node, types))
   const fitted = refit(graph, node, config, types, types)
   return { graph: fitted.graph, notice: refitNotice(fitted.removed, fitted.cleared) }
 }
@@ -252,26 +265,32 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   setting: { keys: ['key'], Section: SettingSection },
 }
 
-/** Under a Set state's value other than its first: what leaving it empty does. */
+/** Under a Set state's value, when its type has more than one: what leaving it empty does. */
 const keptHint = 'Leave empty to keep it as it is.'
 /** Under a State's value its type does not need. */
 const optionalHint = 'Optional.'
+/** What "Set value" gives a value that is true or false: the switch then drawn is what is saved. */
+const setTrue: Operand = { kind: 'literal', type: 'boolean', value: true }
 
 /**
- * How the inspector shows a state value of a State or Set state, by its entity's row: undefined for any other input.
- * A Set state's first value (the first its row does not mark optional, else its first) is `ready`: its editor shows
- * while it has no value, as it is what a new step is for (a switch's On, a light's On, a cover's Closed); the others
- * say that left empty they are kept. A State's values its row marks optional say they are optional.
+ * How the inspector shows a state value of a State or Set state, by its entity's row; undefined for any other input.
+ * What is drawn is what is saved (ruling R13):
+ * - A Set state that sets no value yet shows the editor of the value it is for ({@link firstStateValue}) while it has
+ *   none (`ready`), when that is a number, a text or an option, where an empty field reads as empty. A value that is
+ *   true or false is never drawn as a switch while it has no value: it shows "Not set", and "Set value" sets it to true
+ *   (`setValue`). Every value of a type with more than one says that left empty it is kept as it is.
+ * - A State's values its row marks optional say they are optional.
  */
-export function stateValueRow(node: GraphNode, port: string, catalog: VisualCatalogSnapshot): { ready?: boolean; description?: string } | undefined {
+export function stateValueRow(node: GraphNode, port: string, catalog: VisualCatalogSnapshot, graph: VisualGraph):
+  { ready?: boolean; description?: string; setValue?: Operand } | undefined {
   if (!stateKinds.includes(node.kind)) return
   const state = entityDomain(catalog, text(node.config.entity))?.state
   if (!record(state) || !Object.hasOwn(state, port)) return
-  const entries = Object.entries(state)
-  const optional = ([, value]: (typeof entries)[number]) => record(value) && value.required === false
-  if (node.kind === 'entity_state') return optional([port, state[port]]) ? { description: optionalHint } : undefined
-  const first = (entries.find(entry => !optional(entry)) ?? entries[0])[0]
-  return port === first ? { ready: true } : { description: keptHint }
+  const value = state[port], toggle = booleanStateValue(value)
+  const set = toggle ? { setValue: setTrue } : {}
+  if (node.kind === 'entity_state') return { ...set, ...(value.required === false ? { description: optionalHint } : {}) }
+  const ready = !toggle && port === firstStateValue(state) && !setsStateValues(graph, node, catalog)
+  return { ...set, ...(ready ? { ready } : {}), ...(Object.keys(state).length > 1 ? { description: keptHint } : {}) }
 }
 
 /**

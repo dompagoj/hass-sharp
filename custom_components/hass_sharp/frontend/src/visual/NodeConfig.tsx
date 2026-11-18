@@ -130,8 +130,8 @@ export function NodeConfig(props: NodeConfigProps) {
     const row = own(stepInputRows, kind())
     if (!row || !Object.hasOwn(row, port)) {
       // A State's or Set state's value, as its entity's type has it: ready to fill, or said to be optional.
-      const state = createMemo(() => stateValueRow(props.node, port, types()))
-      return { get ready() { return state()?.ready }, get description() { return state()?.description } }
+      const state = createMemo(() => stateValueRow(props.node, port, types(), props.graph))
+      return { get ready() { return state()?.ready }, get description() { return state()?.description }, get setValue() { return state()?.setValue } }
     }
     const edit = createMemo(() => row[port](props.node, props.graph, types()))
     return { get widget() { return edit().widget }, get context() { return edit().context } }

@@ -277,8 +277,8 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
     button(root, 'Add Set state').click()
     const set = lastStep(root)
     await pickOption(root, 'entity', 'Relay')
-    const on = inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
-    on.click()
+    // A new Set state of a switch opens On, as it is saved; Off is one click.
+    expect(inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.checked).toBe(true)
     if (command === 'Turn off') inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
     flow(root, when, set)
   }
@@ -618,7 +618,7 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
     label(root, '')
     await pickOption(root, 'entity', 'Relay')
     const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
-    toggle().click()
+    expect(toggle().checked).toBe(true)
     if (!on) toggle().click()
     flow(root, when, set)
   }
@@ -1020,7 +1020,10 @@ it('offers all nine types, and saves a button, number, select, text, light and c
     ['Minimum', 'The smallest value it takes; 0 when left empty.'], ['Maximum', 'The largest value it takes; 100 when left empty.'],
     ['Step', 'How far apart the values Home Assistant offers are, above 0; 1 when left empty.'],
     ['Shown as', 'Whether Home Assistant shows a box or a slider; it chooses when left empty.'], ['Unit', 'The unit of its value, for example °C or %.']])
-  expect(control(row, 'option:min').inputMode).toBe('decimal')
+  // No decimal keypad: a minimum can be negative, and some phones' decimal keypad has no minus sign.
+  expect(control(row, 'option:min').hasAttribute('inputmode')).toBe(false)
+  type(control(row, 'option:min'), '-20')
+  expect(json(root).definition.entities.find((e: any) => e.key === 'level').options).toMatchObject({ min: -20 })
   type(control(row, 'option:min'), '5')
   type(control(row, 'option:max'), ' 40 ')
   type(control(row, 'option:step'), '0.5')
@@ -1069,11 +1072,21 @@ it('blocks Save while a required option is empty or a number option is not a num
   expect([...options().querySelectorAll('.hs-field-hint')].map(h => h.textContent)).toEqual(['Ctrl+Enter to apply', 'One per line: every option it offers. Required.'])
   expect(control(row, 'option:options').getAttribute('aria-required')).toBe('true')
   const required = 'Give entity mode the option options: a select needs it'
-  await vi.waitFor(() => expect(options().textContent).toContain(required))
-  expect(button(root, 'Save').disabled).toBe(true)
+  // Not in red the moment the type is chosen: Save waits, the Problems tab has it, and the field says it once left.
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(true))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(options().textContent).not.toContain(required)
+  expect(control(row, 'option:options').hasAttribute('aria-invalid')).toBe(false)
+  expect(json(root).definition.entities[0]).not.toHaveProperty('options')
   button(root, 'Save').click()
   await new Promise(resolve => setTimeout(resolve, 20))
   expect(saves(fixture)).toEqual([])
+  // Chosen in the Problems tab, it shows on its field.
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
+  await vi.waitFor(() => expect([...root.querySelectorAll('.hs-problem__message')].map(b => b.textContent)).toContain(required))
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === required)!.click()
+  await vi.waitFor(() => expect(options().textContent).toContain(required))
+
   type(control(row, 'option:options'), 'Eco\nComfort')
   await vi.waitFor(() => expect(options().textContent).not.toContain(required))
   // A number option that does not read: kept as typed, said on its field, and Save waits; unsaved work all the while.
@@ -1097,6 +1110,19 @@ it('blocks Save while a required option is empty or a number option is not a num
   await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
   expect(saves(fixture)[0].definition.entities).toEqual([
     { key: 'mode', domain: 'select', name: 'Mode', options: { options: ['Eco', 'Comfort'] } }, { key: 'level', domain: 'number', options: { min: 5.5 } }])
+})
+
+it('says a required option is missing on its field once the field is left without one', async () => {
+  const { root } = setup('/entities/new?name=Mode')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  choose(control(expand(entityRow(root, 'mode')), 'domain'), 'select')
+  const options = () => fieldOf(entityRow(root, 'mode'), 'option:options')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(true))
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(options().querySelector('.hs-error')).toBeNull()
+  control(entityRow(root, 'mode'), 'option:options').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+  await vi.waitFor(() => expect(options().querySelector('.hs-error')?.textContent).toBe('Give entity mode the option options: a select needs it'))
+  expect(control(entityRow(root, 'mode'), 'option:options').getAttribute('aria-invalid')).toBe('true')
 })
 
 it('drops the options a new type does not have, or whose value it does not take, in one undo step', async () => {
@@ -1168,7 +1194,7 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   expect(inspector(root).querySelector('[data-input-id="value"] .hs-insp-unset')).toBeNull()
   wire(root, set, 'value', setLevel, 'value')
   flow(root, set, setLevel)
-  // The light's Turn on: its brightness an output, into Set state's optional Brightness; On ready, and set.
+  // The light's Turn on: its brightness an output, into Set state's optional Brightness; On set when the light was chosen.
   deselect(root)
   button(root, 'Add When commanded').click()
   const on = lastStep(root)
@@ -1181,7 +1207,7 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   const brightness = inspector(root).querySelector('[data-input-id="brightness"]')!
   expect(brightness.querySelector('.hs-insp-unset')!.textContent).toContain('Not set')
   expect(brightness.textContent).toContain('Leave empty to keep it as it is.')
-  inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
+  expect(inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.checked).toBe(true)
   wire(root, on, 'brightness', setOn, 'brightness')
   flow(root, on, setOn)
   // Turn off sets On alone.
@@ -1195,7 +1221,7 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   await pickOption(root, 'entity', 'Lamp')
   const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
   toggle().click()
-  toggle().click()
+  expect(toggle().checked).toBe(false)
   flow(root, off, setOff)
   const graph = json(root)
   expect(graph.edges.filter((e: any) => e.kind === 'data').map((e: any) => [e.source, e.sourcePort, e.target, e.targetPort])).toEqual([

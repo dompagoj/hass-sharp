@@ -67,6 +67,20 @@ export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liv
 export const watchedEntityIds = (item: HomeDefinition) =>
   cardEntities(item).slice(0, shownEntities).flatMap(e => (e.entityId && !e.disabled ? [e.entityId] : []))
 
+/**
+ * An entity's state as shown: its text, and what is read out instead when the text says nothing aloud (a password's
+ * dots, the dash of no state yet). `none`: no state yet; `quiet`: drawn muted.
+ */
+export interface StateWords { text: string; spoken?: string; none?: boolean; quiet?: boolean }
+/** An entity's state text, read out as its `spoken` words when it has them. */
+export function StateText(props: { state: StateWords }) {
+  return (
+    <Show when={props.state.spoken} fallback={props.state.text}>
+      {spoken => <><span aria-hidden="true">{props.state.text}</span><span class="hs-visually-hidden">{spoken()}</span></>}
+    </Show>
+  )
+}
+
 /** A brightness of 0–255 as a percentage of full brightness. */
 const percent = (brightness: number) => `${Math.round((Math.min(Math.max(brightness, 0), 255) / 255) * 100)} %`
 /** What a password-mode text shows instead of its value: always as long, so its length does not show either. */
@@ -79,7 +93,7 @@ const coverWords: Record<string, string> = { open: 'Open', closed: 'Closed', ope
  * button "Pressed 5 minutes ago" or "Never pressed"; any other as Home Assistant has it (a number with its unit).
  * Unavailable and Unknown are quiet.
  */
-export function entityStateText(domain: string, state: LiveState, now: number): { text: string; quiet?: boolean } {
+export function entityStateText(domain: string, state: LiveState, now: number): StateWords {
   if (state.state === 'unavailable') return { text: 'Unavailable', quiet: true }
   if (domain === 'button') {
     const pressed = Date.parse(state.state)
@@ -90,16 +104,16 @@ export function entityStateText(domain: string, state: LiveState, now: number): 
     return { text: state.state === 'off' ? 'Off' : state.brightness === undefined ? 'On' : `On · ${percent(state.brightness)}` }
   if (domain === 'cover' && Object.hasOwn(coverWords, state.state))
     return { text: state.state === 'open' && state.position !== undefined ? `Open · ${Math.round(state.position)} %` : coverWords[state.state] }
-  if (domain === 'text') return state.mode === 'password' ? { text: hidden } : state.state === '' ? { text: 'Empty', quiet: true } : { text: state.state }
+  if (domain === 'text') return state.mode === 'password' ? { text: hidden, spoken: 'Hidden' } : state.state === '' ? { text: 'Empty', quiet: true } : { text: state.state }
   const number = state.state.trim() !== '' && Number.isFinite(Number(state.state))
   return { text: number && state.unit ? `${state.state} ${state.unit}` : state.state }
 }
 
 /** An entity's state on its card: Disabled in Home Assistant, none yet, or its state in words ({@link entityStateText}). */
-export function cardStateText(entity: CardEntity, states: LiveStates, now: number): { text: string; none?: boolean; quiet?: boolean } {
+export function cardStateText(entity: CardEntity, states: LiveStates, now: number): StateWords {
   if (entity.disabled) return { text: 'Disabled in Home Assistant', quiet: true }
   const state = entity.entityId ? states[entity.entityId] : undefined
-  if (!state) return { text: '—', none: true }
+  if (!state) return { text: '—', spoken: 'No state', none: true }
   return entityStateText(entity.domain, state, now)
 }
 
@@ -207,9 +221,7 @@ export function DefinitionCard(props: {
                   <li class="hs-ent-row">
                     <span class="hs-ent-row__name">{entity.name}</span>
                     <span class="hs-ent-row__state" classList={{ 'hs-ent-row__state--quiet': !!state().quiet || !!state().none }}>
-                      <Show when={state().none} fallback={state().text}>
-                        <span aria-hidden="true">{state().text}</span><span class="hs-visually-hidden">No state</span>
-                      </Show>
+                      <StateText state={state()} />
                     </span>
                     <span class="hs-ent-row__meta">
                       <span class="hs-ent-row__type">{entityTypeLabel(nodeCatalog, entity.domain)}</span>

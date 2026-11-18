@@ -305,6 +305,10 @@ it('shows each type\'s state in words: a light\'s brightness, a cover\'s positio
   } })
   await vi.waitFor(() => expect(states()).toEqual(['On · 60 %', 'Open · 40 %', '21.5 °C', 'Eco', '••••••••', 'Pressed 5 minutes ago']))
   expect(card(root, 'things').textContent).not.toContain('1234')
+  // The dots are not read out as eight bullets: a screen reader hears "Hidden".
+  const code = card(root, 'things').querySelectorAll('.hs-ent-row__state')[4]
+  expect(code.querySelector('[aria-hidden="true"]')?.textContent).toBe('••••••••')
+  expect(code.querySelector('.hs-visually-hidden')?.textContent).toBe('Hidden')
   // A light that cannot dim, or is off; a cover closed or moving; a text shown as it is; a button never pressed.
   subscriptions[0].push({ c: {
     'light.things_lamp': { '-': { a: ['brightness'] } }, 'cover.things_blind': { '+': { s: 'closing' } },
