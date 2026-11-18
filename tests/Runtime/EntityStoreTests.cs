@@ -218,7 +218,7 @@ static class EntityStoreTests
         Only(With(new JsonObject { ["domain"] = "binary_sensor" }), "definition.entityKey", null);
         Only(GraphBody(MotionGraph(), [JsonValue.Create("any_motion"), Entity("any_motion", "binary_sensor")]), "definition.entityKey", null);
         Only(With(Entity("any_motion", "binary_sensor")), "definition.duplicateEntity", "any_motion", "any_motion");
-        Only(With(Entity("lamp", "light")), "definition.entityDomain", "lamp", "lamp", "light", "binary_sensor", "sensor", "switch");
+        Only(With(Entity("heater", "climate")), "definition.entityDomain", "heater", "heater", "climate", "binary_sensor", "sensor", "switch", "button", "number", "select", "text", "light", "cover");
         Only(With(new JsonObject { ["key"] = "lamp" }), "definition.entityDomain", "lamp", "lamp");
         Only(With(Entity("door", "binary_sensor", new { options = new { unit = "W" } })), "definition.entityOption", "door", "door", "unit");
         Only(Level(new { options = new { stateClass = "sometimes" } }), "definition.entityOption", "level", "level", "stateClass", "measurement");
@@ -226,6 +226,27 @@ static class EntityStoreTests
         Only(Level(new { options = new { options = new object[] { "low", 1 } } }), "definition.entityOption", "level", "level", "options");
         Only(Level(new { options = new { options = "low" } }), "definition.entityOption", "level", "level", "options");
         Only(Level(new { options = new[] { "unit" } }), "definition.entityOption", "level", "level");
+        Only(Level(new { options = new { options = Array.Empty<string>() } }), "definition.entityOption", "level", "Option options of entity level is an empty list; give it at least one text, or leave it out");
+        // The options of the other domains: numbers, true or false, those a domain needs, a min below the max, a pattern.
+        DefinitionBody One(string domain, object? options) => GraphBody(Graph("All", []), [Entity("e", domain, new { options })]);
+        Only(One("button", new { unit = "W" }), "definition.entityOption", "e", "Entity e has the option unit, but a button takes no options; remove it");
+        Only(One("number", new { min = "5" }), "definition.entityOption", "e", "Option min of entity e takes a number");
+        Only(One("number", new { step = true }), "definition.entityOption", "e", "Option step of entity e takes a number");
+        Only(One("number", new { mode = "dial" }), "definition.entityOption", "e", "Option mode of entity e takes one of auto, box, slider");
+        Only(One("number", new { min = 10, max = 5 }), "definition.entityOption", "e", "Entity e has a min of 10, which is not below its max of 5; give a min below the max");
+        Only(One("number", new { min = 2.5, max = 2.5 }), "definition.entityOption", "e", "Entity e has a min of 2.5, which is not below its max of 2.5");
+        Only(One("text", new { min = 8, max = 4 }), "definition.entityOption", "e", "Entity e has a min of 8, which is not below its max of 4");
+        Only(One("number", new { min = 500 }), "definition.entityOption", "e", "Entity e has a min of 500, which is not below its max of 100");
+        Only(One("text", new { max = -1 }), "definition.entityOption", "e", "Entity e has a min of 0, which is not below its max of -1");
+        Only(One("text", new { mode = "secret" }), "definition.entityOption", "e", "Option mode of entity e takes one of text, password");
+        Only(One("text", new { pattern = "([" }), "definition.entityOption", "e", "Option pattern of entity e is not a regular expression");
+        Only(One("select", null), "definition.entityOption", "e", "Give entity e the option options: a select needs it");
+        Only(One("select", new { options = (string[]?)null }), "definition.entityOption", "e", "Give entity e the option options: a select needs it");
+        Only(One("select", new { options = Array.Empty<string>() }), "definition.entityOption", "e", "Option options of entity e is an empty list; give it at least one text");
+        Check(!generator.Preview(One("select", new { options = Array.Empty<string>() }), snapshot).Diagnostics[0].Message.Contains("leave it out", StringComparison.Ordinal), "a list an entity needs is not one to leave out");
+        Only(One("select", new { options = new object[] { "a", 1 } }), "definition.entityOption", "e", "Option options of entity e takes a list of texts");
+        Only(One("light", new { dimmable = "yes" }), "definition.entityOption", "e", "Option dimmable of entity e takes true or false");
+        Only(One("cover", new { positionable = 1 }), "definition.entityOption", "e", "Option positionable of entity e takes true or false");
         Only(Level(new { name = 5 }), "definition.entityField", "level", "level", "name");
         Only(Level(new { icon = true }), "definition.entityField", "level", "level", "icon");
         Only(Level(new { deviceClass = new { kind = "power" } }), "definition.entityField", "level", "level", "deviceClass");
@@ -252,7 +273,7 @@ static class EntityStoreTests
         // The document's problems come first: the graph is not checked against a definition that would only repeat them.
         var both = generator.Preview(GraphBody(MotionGraph(), [Entity("door", "binary_sensor"), Entity("door", "binary_sensor")]), snapshot);
         Check(both.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.duplicateEntity"]), "only the document's problem is reported: " + Codes(both));
-        var many = generator.Preview(GraphBody(MotionGraph(), [Entity("Bad", "light"), Entity("a", "sensor", new { options = new { color = "red" } })], [Typed("t", "date", "1"), Typed("t", "number")], name: ""), snapshot);
+        var many = generator.Preview(GraphBody(MotionGraph(), [Entity("Bad", "climate"), Entity("a", "sensor", new { options = new { color = "red" } })], [Typed("t", "date", "1"), Typed("t", "number")], name: ""), snapshot);
         Check(many.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entityKey", "definition.entityDomain", "definition.entityOption", "definition.settingType", "definition.duplicateSetting"]),
             "every problem of the document is reported, in a fixed order: " + Codes(many));
         Console.WriteLine("PASS entity store: a document with problems gets those alone, every one in a fixed order");
@@ -273,6 +294,16 @@ static class EntityStoreTests
                 options = new { unit = "W", stateClass = "total_increasing", options = new[] { "low", "high" } } })])),
             ("options left null", GraphBody(Graph("All", []), [Entity("a", "sensor", new { options = new { unit = (string?)null } })])),
             ("no options", GraphBody(Graph("All", []), [Entity("a", "switch", new { options = (object?)null })])),
+            ("one entity of each type, every option", GraphBody(Graph("All", []), [
+                Entity("bell", "button", new { options = new { } }),
+                Entity("target", "number", new { options = new { min = 5, max = 30.5, step = 0.5, mode = "slider", unit = "C" } }),
+                Entity("mode", "select", new { options = new { options = new[] { "low", "high" } } }),
+                Entity("code", "text", new { options = new { min = 0, max = 8, pattern = "^[0-9]*$", mode = "password" } }),
+                Entity("lamp", "light", new { options = new { dimmable = true } }),
+                Entity("blind", "cover", new { options = new { positionable = false } })])),
+            ("one entity of each type, no options but those needed", GraphBody(Graph("All", []), [Entity("bell", "button"), Entity("target", "number"),
+                Entity("mode", "select", new { options = new { options = new[] { "low" } } }), Entity("code", "text"), Entity("lamp", "light"), Entity("blind", "cover")])),
+            ("a min alone, a max alone", GraphBody(Graph("All", []), [Entity("low", "number", new { options = new { min = 99.5 } }), Entity("high", "text", new { options = new { max = 1, min = (int?)null } })])),
             ("every setting type", GraphBody(LevelGraph(), LevelEntities(), [Typed("offset", "number", "1.5"), Typed("host", "string", "\"a\"", label: "Host", secret: true), Typed("eco", "boolean", "false"), Typed("blank", "string", "null")], "Level")),
             ("a key of 40 characters", GraphBody(Graph("All", []), [Entity("a" + new string('_', 39), "binary_sensor")])),
             ("an entity and a setting of one key", GraphBody(LevelGraph(), LevelEntities(), [Typed("offset", "number"), Typed("level", "string")], "Level")),

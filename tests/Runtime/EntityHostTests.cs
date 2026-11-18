@@ -114,6 +114,7 @@ static class EntityHostTests
             await BadKeys();
             await HotReplace();
             await Commands();
+            await Controls();
             await TimersAndTracks();
             await Stopping();
             await Unloading();
@@ -318,6 +319,53 @@ static class EntityHostTests
         Check(error.Message == "The entity is not running", "not running message: " + error.Message);
         Check(manager.Entities.Host("plug8") == null, "a stopped host leaves the directory");
         Console.WriteLine("PASS entity host: a command through the directory reaches the instance and its state is pushed; after stop it is refused");
+        await manager.UnloadUserScriptsAsync();
+    }
+
+    // A device with an entity of each type that takes commands with data, run through the host as Home Assistant runs it.
+    static async Task Controls()
+    {
+        Reset();
+        var manager = Manager();
+        HostControls? device = null;
+        var host = await Load(manager, Compiled("panel", "Panel", () => device = new HostControls()));
+        await Until(() => PushedAvailable("panel:target", true), "started");
+        var synced = JsonNode.Parse(Syncs().Single())!["entities"]!.AsArray().Select(e => $"{e!["domain"]} {e["commands"]!.ToJsonString()} {e["options"]!.ToJsonString()}");
+        string[] described = [
+            """button ["press"] {}""",
+            """number ["set_value"] {"min":5,"max":30,"step":0.5,"mode":"box","unit":"C"}""",
+            """select ["select_option"] {"options":["eco","comfort"]}""",
+            """text ["set_value"] {"min":1,"max":20,"pattern":null,"mode":"text"}""",
+            """light ["turn_on","turn_off"] {"dimmable":true}""",
+            """cover ["open","close","stop","set_position"] {"positionable":true}"""];
+        Check(synced.SequenceEqual(described), "each entity is synced with its domain, commands and options: " + string.Join(" | ", synced));
+        SharpEntity Entity(string key) => manager.Entities.TryGet("panel:" + key, out _, out var entity) ? entity : throw new Exception("the directory finds " + key);
+        JsonElement Data(string json) => JsonDocument.Parse(json).RootElement.Clone();
+        foreach (var (key, command, data) in new[] {
+            ("bell", "press", "{}"), ("target", "set_value", """{"value":21.5}"""), ("mode", "select_option", """{"option":"comfort"}"""),
+            ("message", "set_value", """{"value":"Hello"}"""), ("lamp", "turn_on", """{"brightness":128.0}"""), ("lamp", "turn_on", "{}"),
+            ("blind", "set_position", """{"position":40}"""), ("blind", "stop", "{}") })
+            await host.Command(Entity(key), command, Data(data));
+        Check(Recorded().Where(c => c.StartsWith("panel ", StringComparison.Ordinal)).SequenceEqual(["panel bell pressed", "panel lamp on 128", "panel lamp on none", "panel blind stopped"]),
+            "each command reached its delegate with its data: " + string.Join(", ", Recorded()));
+        JsonNode? Last(string key) => Snapshots().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "panel:" + key)?["values"];
+        string Shown() => string.Join(" ", new[] { "target", "mode", "message", "lamp", "blind" }.Select(k => Last(k)?.ToJsonString()));
+        const string set = """{"value":21.5} {"option":"comfort"} {"value":"Hello"} {"is_on":true,"brightness":128} {"is_closed":false,"position":40}""";
+        await Until(() => Shown() == set, "each new state pushed: " + Shown());
+        // A value an entity does not take is refused with a message naming the entity and the value, and nothing changes.
+        foreach (var (key, command, data, message) in new[] {
+            ("target", "set_value", """{"value":45}""", "Target temperature (target) takes a number from 5 to 30, not 45"),
+            ("mode", "select_option", """{"option":"boost"}""", "Heating mode (mode) takes one of eco or comfort, not \"boost\""),
+            ("message", "set_value", """{"value":""}""", "Message (message) takes a text of 1 to 20 characters, not one of 0"),
+            ("lamp", "turn_on", """{"brightness":300}""", "Lamp (lamp) takes a brightness from 0 to 255, in whole numbers, not 300"),
+            ("blind", "set_position", """{"value":40}""", "Blind (blind) needs a position: it takes a position from 0 (closed) to 100 (open), in whole numbers") })
+        {
+            var refused = await Throws<ArgumentException>(() => host.Command(Entity(key), command, Data(data)), $"{key} {command} {data}");
+            Check(refused.Message == message, $"{key} {command} {data}: {refused.Message}");
+        }
+        await manager.Pump.FlushAsync();
+        Check(Shown() == set && device!.Target.Value == 21.5 && device.Lamp.Brightness == 128 && host.Status == "running", "a refused command changes nothing: " + Shown());
+        Console.WriteLine("PASS entity host: a button, number, select, text, light and cover sync their options, take commands with data through the host, and refuse a value they do not take by message, changing nothing");
         await manager.UnloadUserScriptsAsync();
     }
 
@@ -832,6 +880,38 @@ public class HostPower : SharpSensor
     protected internal override Task Setup() { EntityHostTests.Record("power.Setup"); Value = 0; return Task.CompletedTask; }
     protected internal override Task Start() { EntityHostTests.Record("power.Start"); return Task.CompletedTask; }
     protected internal override Task Stop() { EntityHostTests.Record("power.Stop"); return Task.CompletedTask; }
+}
+
+/// <summary>A device with an entity of each type that takes commands with data, each handled by a delegate that sets its state.</summary>
+public class HostControls : SharpDevice
+{
+    public HostControls()
+    {
+        Bell = Add(new SharpButton("bell", "Bell") { OnPress = () => Did("bell pressed") });
+        Target = Add(new SharpNumber("target", "Target temperature") { Min = 5, Max = 30, Step = 0.5, Mode = SharpNumberMode.Box, Unit = "C", OnSetValue = value => { Target!.Value = value; return Task.CompletedTask; } });
+        Mode = Add(new SharpSelect("mode", "Heating mode") { Options = ["eco", "comfort"], OnSelectOption = option => { Mode!.Option = option; return Task.CompletedTask; } });
+        Message = Add(new SharpText("message", "Message") { Min = 1, Max = 20, OnSetValue = text => { Message!.Value = text; return Task.CompletedTask; } });
+        Lamp = Add(new SharpLight("lamp", "Lamp")
+        {
+            Dimmable = true,
+            OnTurnOn = brightness => { Lamp!.IsOn = true; if (brightness != null) Lamp.Brightness = brightness; return Did($"lamp on {brightness?.ToString() ?? "none"}"); },
+        });
+        Blind = Add(new SharpCover("blind", "Blind")
+        {
+            Positionable = true,
+            OnSetPosition = position => { Blind!.Position = position; Blind.IsClosed = position == 0; return Task.CompletedTask; },
+            OnStopMoving = () => Did("blind stopped"),
+        });
+    }
+
+    static Task Did(string what) { EntityHostTests.Record("panel " + what); return Task.CompletedTask; }
+
+    public SharpButton Bell { get; }
+    public SharpNumber Target { get; }
+    public SharpSelect Mode { get; }
+    public SharpText Message { get; }
+    public SharpLight Lamp { get; }
+    public SharpCover Blind { get; }
 }
 
 /// <summary>A switch that is its definition's only entity.</summary>

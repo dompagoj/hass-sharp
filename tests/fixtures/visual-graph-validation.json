@@ -33131,14 +33131,14 @@
     "name": "code definition.invalid: unknown domain",
     "graph": {
       "version": 5,
-      "name": "Lamp",
+      "name": "Heater",
       "nodes": [],
       "edges": [],
       "definition": {
         "entities": [
           {
-            "key": "lamp",
-            "domain": "light"
+            "key": "heater",
+            "domain": "climate"
           }
         ],
         "settings": []
@@ -33146,7 +33146,7 @@
     },
     "valid": false,
     "messages": [
-      "Entity lamp has the domain light, which a graph cannot define; choose Binary sensor, Sensor or Switch"
+      "Entity heater has the domain climate, which a graph cannot define; choose Binary sensor, Sensor, Switch, Button, Number, Select, Text, Light or Cover"
     ],
     "codes": [
       "definition.invalid"
@@ -33756,7 +33756,7 @@
     "nodeId": "c",
     "inputId": "command",
     "messages": [
-      "Entity door takes no commands; choose a switch entity instead"
+      "Entity door takes no commands; choose a switch, button, number, select, text, light or cover entity instead"
     ],
     "codes": [
       "definition.unknownCommand"

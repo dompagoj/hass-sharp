@@ -118,6 +118,12 @@ internal static class SharpDomains
         (typeof(SharpBinarySensor), "binary_sensor"),
         (typeof(SharpSensor), "sensor"),
         (typeof(SharpSwitch), "switch"),
+        (typeof(SharpButton), "button"),
+        (typeof(SharpNumber), "number"),
+        (typeof(SharpSelect), "select"),
+        (typeof(SharpText), "text"),
+        (typeof(SharpLight), "light"),
+        (typeof(SharpCover), "cover"),
     ];
 
     /// <summary>Each typed entity base and its domain, as the catalog's <c>entityDomains</c> describes them.</summary>
@@ -143,14 +149,19 @@ internal static class SharpDomains
         return null;
     }
 
+    /// <summary>The options of a domain's entity left as its class has them, such as a number's <c>min</c> of 0; none for a domain not typed here.</summary>
+    internal static JsonObject DefaultOptions(string domain) =>
+        Typed.FirstOrDefault(typed => typed.Domain == domain).Type is { } type ? ((SharpEntity)Activator.CreateInstance(type)!).DomainOptions() : [];
+
     /// <summary>
     /// The typed entity a graph definition's document describes: its <c>key</c>, and its <c>name</c>, <c>icon</c>,
-    /// <c>deviceClass</c>, <c>entityCategory</c>, <c>enabledByDefault</c> and <c>options</c> (a sensor's <c>unit</c>,
-    /// <c>stateClass</c> and <c>options</c>), each absent or null for none. The document was checked when it was saved
-    /// (<see cref="DefinitionDocument.Check"/>); a field of another type is read as absent.
+    /// <c>deviceClass</c>, <c>entityCategory</c>, <c>enabledByDefault</c> and <c>options</c> (those its domain's
+    /// <c>entityDomains</c> entry lists, such as a sensor's <c>unit</c>), each absent or null for none (the class's
+    /// default). The document was checked when it was saved (<see cref="DefinitionDocument.Check"/>); a field of another
+    /// type is read as absent.
     /// </summary>
     /// <exception cref="InvalidOperationException">The domain is not one a definition built from nodes creates.</exception>
-    /// <exception cref="ArgumentException">The key is not an entity key.</exception>
+    /// <exception cref="ArgumentException">The key is not an entity key, or a text's pattern is not a regular expression.</exception>
     internal static SharpEntity Create(string domain, JsonObject description)
     {
         var described = new EntityDescription(description);
@@ -172,13 +183,48 @@ internal static class SharpDomains
             d => new SharpSensor(d.Key, d.Name)
             {
                 Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
-                Unit = EntityDescription.Text(d.Options?["unit"]), StateClass = EntityDescription.Text(d.Options?["stateClass"]),
-                Options = d.Options?["options"] is JsonArray values ? values.Select(EntityDescription.Text).OfType<string>().ToArray() : null,
+                Unit = d.Text("unit"), StateClass = d.Text("stateClass"), Options = d.Texts("options"),
             },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(SensorRefuses, (entity, value) => ((SharpSensor)entity).Value = value, entity => ((SharpSensor)entity).Value) }),
         ["switch"] = new(
             d => new SharpSwitch(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff(entity => ((SharpSwitch)entity).IsOn, (entity, on) => ((SharpSwitch)entity).IsOn = on) }),
+        ["button"] = new(
+            d => new SharpButton(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal)),
+        ["number"] = new(
+            d => new SharpNumber(d.Key, d.Name)
+            {
+                Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
+                Min = d.Number("min") ?? 0, Max = d.Number("max") ?? 100, Step = d.Number("step") ?? 1, Unit = d.Text("unit"),
+                Mode = d.Text("mode") switch { "box" => SharpNumberMode.Box, "slider" => SharpNumberMode.Slider, _ => SharpNumberMode.Auto },
+            },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(NumberRefuses, (entity, value) => ((SharpNumber)entity).Value = (double?)value, entity => ((SharpNumber)entity).Value) }),
+        ["select"] = new(
+            d => new SharpSelect(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault, Options = d.Texts("options") ?? [] },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["option"] = new(SelectRefuses, (entity, value) => ((SharpSelect)entity).Option = (string?)value, entity => ((SharpSelect)entity).Option) }),
+        ["text"] = new(
+            d => new SharpText(d.Key, d.Name)
+            {
+                Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
+                Min = d.Whole("min") ?? 0, Max = d.Whole("max") ?? 100, Pattern = d.Text("pattern"), Mode = d.Text("mode") == "password" ? SharpTextMode.Password : SharpTextMode.Text,
+            },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(TextRefuses, (entity, value) => ((SharpText)entity).Value = (string?)value, entity => ((SharpText)entity).Value) }),
+        // A brightness and a position are whole numbers on the class, and plain numbers (double) in a graph.
+        ["light"] = new(
+            d => new SharpLight(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault, Dimmable = d.Flag("dimmable") ?? false },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal)
+            {
+                ["is_on"] = OnOff(entity => ((SharpLight)entity).IsOn, (entity, on) => ((SharpLight)entity).IsOn = on),
+                ["brightness"] = new((entity, value) => WholeRefuses(value, ((SharpLight)entity).Refuses), (entity, value) => ((SharpLight)entity).Brightness = (int?)(double?)value, entity => (double?)((SharpLight)entity).Brightness),
+            }),
+        ["cover"] = new(
+            d => new SharpCover(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault, Positionable = d.Flag("positionable") ?? false },
+            new Dictionary<string, GraphState>(StringComparer.Ordinal)
+            {
+                ["is_closed"] = OnOff(entity => ((SharpCover)entity).IsClosed, (entity, closed) => ((SharpCover)entity).IsClosed = closed),
+                ["position"] = new((entity, value) => WholeRefuses(value, ((SharpCover)entity).Refuses), (entity, value) => ((SharpCover)entity).Position = (int?)(double?)value, entity => (double?)((SharpCover)entity).Position),
+            }),
     };
 
     // A state that is on, off or unknown.
@@ -186,9 +232,9 @@ internal static class SharpDomains
         new((_, value) => value is null or bool ? null : "is neither true nor false", (entity, value) => keep(entity, (bool?)value), entity => read(entity));
 
     // A sensor's reading as Home Assistant takes it. With options: one of them as text (an enum sensor), or unknown.
-    // With a unit or a state class: a number, or text that reads as a finite number in the invariant culture, kept as
-    // given; other text Home Assistant refuses as it writes the state. Otherwise: any number or text. Unknown is always
-    // taken, and a number that is not finite shows as unknown.
+    // With a unit, a state class or a device class other than date, timestamp or enum: a number, or text that reads as
+    // a finite number in the invariant culture, kept as given; other text Home Assistant refuses as it writes the
+    // state. Otherwise: any number or text. Unknown is always taken, and a number that is not finite shows as unknown.
     static string? SensorRefuses(SharpEntity entity, object? value)
     {
         var sensor = (SharpSensor)entity;
@@ -196,11 +242,43 @@ internal static class SharpDomains
         if (value is not (double or string)) return "is neither a number nor text";
         if (sensor.Options is { } options)
             return value is string option && options.Contains(option, StringComparer.Ordinal) ? null : $"is not one of its options: {string.Join(", ", options)}";
-        if (value is string text && (sensor.Unit != null || sensor.StateClass != null)
+        var numeric = sensor.Unit != null ? "a unit" : sensor.StateClass != null ? "a state class"
+            : sensor.DeviceClass is { } deviceClass and not ("date" or "timestamp" or "enum") ? $"the device class {deviceClass}" : null;
+        if (value is string text && numeric != null
             && !(double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)))
-            return $"is text, and a sensor with {(sensor.Unit != null ? "a unit" : "a state class")} needs a number";
+            return $"is text, and a sensor with {numeric} needs a number";
         return null;
     }
+
+    // A number within the entity's range, or unknown.
+    static string? NumberRefuses(SharpEntity entity, object? value)
+    {
+        var number = (SharpNumber)entity;
+        if (value is null) return null;
+        if (value is not double given) return "is not a number";
+        return number.Within(given) ? null : $"is not {number.Range}";
+    }
+
+    // One of the select's options, or unknown.
+    static string? SelectRefuses(SharpEntity entity, object? value)
+    {
+        var select = (SharpSelect)entity;
+        if (value is null) return null;
+        if (value is not string option) return "is not text";
+        return select.Offers(option) ? null : $"is not {select.Choices}";
+    }
+
+    // A text that fits the entity's lengths and pattern, or unknown.
+    static string? TextRefuses(SharpEntity entity, object? value)
+    {
+        if (value is null) return null;
+        if (value is not string text) return "is not text";
+        return ((SharpText)entity).Takes(text) is { } takes ? $"is not {takes}" : null;
+    }
+
+    // A brightness or a position: a number the entity takes, or unknown.
+    static string? WholeRefuses(object? value, Func<double, string?> refuses) =>
+        value is null ? null : value is double number ? refuses(number) : "is not a number";
 }
 
 /// <summary>The fields every entity of a graph definition's document has, read as <see cref="SharpDomains.Create"/> reads them.</summary>
@@ -215,6 +293,19 @@ internal sealed class EntityDescription(JsonObject description)
     public bool EnabledByDefault { get; } = description["enabledByDefault"] is not JsonValue flag || flag.GetValueKind() != JsonValueKind.False;
     /// <summary>The domain's own options, such as a sensor's unit; null for none.</summary>
     public JsonObject? Options { get; } = description["options"] as JsonObject;
+
+    /// <summary>The option as a text; null when absent or of another type.</summary>
+    public string? Text(string option) => Text(Options?[option]);
+    /// <summary>The option as a finite number; null when absent or of another type.</summary>
+    public double? Number(string option) =>
+        Options?[option] is JsonValue value && value.GetValueKind() == JsonValueKind.Number
+        && double.TryParse(value.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
+    /// <summary>The option as a whole number, its fraction dropped and kept within the range of an <c>int</c>; null when absent or of another type.</summary>
+    public int? Whole(string option) => Number(option) is { } number ? (int)Math.Clamp(Math.Truncate(number), int.MinValue, int.MaxValue) : null;
+    /// <summary>The option as true or false; null when absent or of another type.</summary>
+    public bool? Flag(string option) => Options?[option] is JsonValue value && value.GetValueKind() is JsonValueKind.True or JsonValueKind.False ? value.GetValue<bool>() : null;
+    /// <summary>The option as a list of texts, any other item left out; null when absent or of another type.</summary>
+    public string[]? Texts(string option) => Options?[option] is JsonArray values ? values.Select(Text).OfType<string>().ToArray() : null;
 }
 
 /// <summary>A domain a definition built from nodes creates: its entity from a description, and its state keys.</summary>

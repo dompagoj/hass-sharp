@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using HassSharp;
 
@@ -5,15 +7,31 @@ using HassSharp;
 /// The catalog's <c>entityDomains</c> table, which an entity definition's graph is checked against: it describes the
 /// typed entity classes exactly (their state values, commands and options) and the domains a graph creates
 /// (<see cref="SharpDomains.Graph"/>), and only entity graphs embed it, so an automation's generated source never changes
-/// with it.
+/// with it. A state value marked <c>"required": false</c> is one the class may leave unknown, and each value a command's
+/// <c>data</c> lists is one the class reads, refused when it is required and not given.
 /// </summary>
 static class EntityDomainTests
 {
     static void Check(bool value, string message) { if (!value) throw new Exception(message); }
     static string Keys(JsonNode? table) => string.Join(", ", (table as JsonObject ?? []).Select(p => p.Key));
 
+    static readonly NullabilityInfoContext Nullability = new();
+    static bool Optional(JsonNode? spec) => spec?["required"] is JsonValue flag && flag.GetValueKind() == JsonValueKind.False;
+    static string Pascal(string key) => string.Concat(key.Split('_').Select(word => char.ToUpperInvariant(word[0]) + word[1..]));
+    static bool Nullable(NullabilityInfo info) => info.ReadState == NullabilityState.Nullable;
+
+    // What a command does with this data on a class with no handler: the refusal of a value, else none (it got past
+    // reading the data to the missing handler).
+    static async Task<ArgumentException?> Refusal(SharpEntity entity, string command, string data)
+    {
+        try { await entity.Command(command, JsonDocument.Parse(data).RootElement.Clone()); }
+        catch (ArgumentException refused) { return refused; }
+        catch (NotSupportedException) { return null; }
+        throw new Exception($"{entity.GetType().Name}.{command} with {data} ran without a handler");
+    }
+
     [RuntimeSuite("--entity-domains", Order = 11)]
-    public static Task EntityDomainsMatchTheSharpClasses()
+    public static async Task EntityDomainsMatchTheSharpClasses()
     {
         var domains = VisualNodeCatalog.Root["entityDomains"] as JsonObject;
         Check(domains != null, "the catalog has an entityDomains table");
@@ -27,15 +45,48 @@ static class EntityDomainTests
             Check(Keys(entry["options"]) == Keys(entity.DomainOptions()), $"{domain}: option keys {Keys(entry["options"])} are those of {type.Name}.DomainOptions(), {Keys(entity.DomainOptions())}");
             Check(entry["label"] is JsonValue label && label.TryGetValue<string>(out var text) && text.Length > 0, $"{domain} has a label");
             foreach (var (key, state) in entry["state"]!.AsObject())
+            {
                 Check(state?["types"] is JsonArray { Count: > 0 } types && types.All(t => VisualTypes.Chain(VisualNodeCatalog.Root, t!.GetValue<string>()).Count > 0), $"{domain}.{key}: its types are catalog types");
+                // Each state value is a public property the class's code sets; one a graph's State may leave out is one the class may leave unknown.
+                var property = type.GetProperty(Pascal(key), BindingFlags.Public | BindingFlags.Instance);
+                Check(property is { CanRead: true, CanWrite: true }, $"{domain}.{key}: {type.Name} has a public property {Pascal(key)} to set");
+                if (Optional(state))
+                    Check(Nullable(Nullability.Create(property!)) && entity.Values()[key] == null, $"{domain}.{key}: a state value that is not required is one {type.Name} may leave unknown, a nullable {Pascal(key)} null until set");
+            }
+            foreach (var (command, spec) in entry["commands"]!.AsObject())
+            {
+                Check(spec?["label"] is JsonValue commandLabel && commandLabel.TryGetValue<string>(out var words) && words.Length > 0, $"{domain}.{command} has a label");
+                var data = spec?["data"] as JsonObject ?? [];
+                foreach (var (name, value) in data)
+                {
+                    Check(value?["types"] is JsonArray { Count: > 0 } types && types.All(t => VisualTypes.Chain(VisualNodeCatalog.Root, t!.GetValue<string>()).Count > 0) && value["label"] is JsonValue, $"{domain}.{command}.{name}: a label and catalog types");
+                    // The class reads the value: one of the wrong type is refused, and one not given is refused unless it is optional.
+                    var wrong = ((JsonArray)value!["types"]!).Any(t => t!.GetValue<string>() == "number") ? "\"x\"" : "5";
+                    Check(await Refusal(entity, command, $$"""{"{{name}}":{{wrong}}}""") != null, $"{domain}.{command}: {type.Name} reads {name}, refusing {wrong}");
+                    var missing = await Refusal(entity, command, "{}");
+                    Check(Optional(value) ? missing == null : missing != null && missing.Message.Contains(name, StringComparison.Ordinal),
+                        $"{domain}.{command}: {type.Name} {(Optional(value) ? "runs without" : "refuses a command without")} {name}: {missing?.Message}");
+                }
+                // The delegate that handles it takes the data in order, a value that may be left out as a nullable one.
+                if (data.Count > 0)
+                {
+                    var handler = type.GetProperty("On" + Pascal(command), BindingFlags.Public | BindingFlags.Instance);
+                    var arguments = handler?.PropertyType.IsGenericType == true ? handler.PropertyType.GetGenericArguments() : [];
+                    Check(handler != null && arguments.Length == data.Count + 1 && arguments[^1] == typeof(Task), $"{domain}.{command}: {type.Name}.On{Pascal(command)} is a Func of its {data.Count} data values to a Task");
+                    var nullable = Nullability.Create(handler!).GenericTypeArguments;
+                    foreach (var (value, index) in data.Select((d, i) => (d.Value, i)))
+                        Check(Nullable(nullable[index]) == Optional(value), $"{domain}.{command}: the delegate's value {index + 1} is {(Optional(value) ? "" : "not ")}nullable, as its data value is {(Optional(value) ? "not " : "")}required");
+                }
+            }
+            foreach (var (option, spec) in entry["options"]!.AsObject())
+                Check(spec?["type"] is JsonValue optionType && optionType.GetValue<string>() is "string" or "number" or "boolean" or "array" && spec["label"] is JsonValue, $"{domain}: option {option} has a type the document checks read and a label");
         }
         // The domains a graph defines are the catalog's, each with the catalog's state keys in its order.
         Check(string.Join(", ", SharpDomains.Graph.Keys.Order(StringComparer.Ordinal)) == string.Join(", ", domains!.Select(p => p.Key).Order(StringComparer.Ordinal)),
             $"the domains a graph creates are entityDomains': {string.Join(", ", SharpDomains.Graph.Keys)}, {Keys(domains)}");
         foreach (var (domain, graph) in SharpDomains.Graph)
             Check(string.Join(", ", graph.State.Keys) == Keys(domains![domain]?["state"]), $"{domain}: the graph's state keys {string.Join(", ", graph.State.Keys)} are entityDomains', {Keys(domains![domain]?["state"])}");
-        Console.WriteLine($"PASS entity domains: {domains!.Count} domains match the state values, commands and options of their entity classes and the domains a graph creates");
-        return Task.CompletedTask;
+        Console.WriteLine($"PASS entity domains: {domains!.Count} domains match the state values, commands with their data, and options of their entity classes and the domains a graph creates");
     }
 
     [RuntimeSuite("--entity-domains-embedded", Order = 11)]

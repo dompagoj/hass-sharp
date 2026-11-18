@@ -76,6 +76,15 @@ public abstract partial class SharpEntity : SharpComponent
     /// </summary>
     public void Publish() => Host?.Publish(this);
 
+    /// <summary>The entity in a message: its name and key, such as <c>Power (power)</c>, or its key alone when it has no name.</summary>
+    internal string Called => Name is { Length: > 0 } name ? $"{name} ({Key})" : Key;
+
+    /// <summary>
+    /// A value the entity does not take, from a command or a state its code sets, naming the entity, what it takes and
+    /// the value: "Target (target) takes a number from 5 to 30, not 45".
+    /// </summary>
+    internal ArgumentException Refused(string takes, string given) => new($"{Called} takes {takes}, not {given}");
+
     /// <summary>The Home Assistant domain, such as <c>sensor</c>.</summary>
     internal abstract string Domain { get; }
 

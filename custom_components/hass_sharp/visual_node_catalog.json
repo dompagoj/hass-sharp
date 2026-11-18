@@ -2047,6 +2047,232 @@
         }
       },
       "options": {}
+    },
+    "button": {
+      "label": "Button",
+      "state": {},
+      "commands": {
+        "press": {
+          "label": "Press"
+        }
+      },
+      "options": {}
+    },
+    "number": {
+      "label": "Number",
+      "state": {
+        "value": {
+          "types": [
+            "number"
+          ],
+          "label": "Value"
+        }
+      },
+      "commands": {
+        "set_value": {
+          "label": "Set value",
+          "data": {
+            "value": {
+              "types": [
+                "number"
+              ],
+              "label": "Value"
+            }
+          }
+        }
+      },
+      "options": {
+        "min": {
+          "type": "number",
+          "label": "Minimum"
+        },
+        "max": {
+          "type": "number",
+          "label": "Maximum"
+        },
+        "step": {
+          "type": "number",
+          "label": "Step"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "box",
+            "slider"
+          ],
+          "label": "Shown as"
+        },
+        "unit": {
+          "type": "string",
+          "label": "Unit"
+        }
+      }
+    },
+    "select": {
+      "label": "Select",
+      "state": {
+        "option": {
+          "types": [
+            "string"
+          ],
+          "label": "Option"
+        }
+      },
+      "commands": {
+        "select_option": {
+          "label": "Select option",
+          "data": {
+            "option": {
+              "types": [
+                "string"
+              ],
+              "label": "Option"
+            }
+          }
+        }
+      },
+      "options": {
+        "options": {
+          "type": "array",
+          "label": "Options",
+          "required": true
+        }
+      }
+    },
+    "text": {
+      "label": "Text",
+      "state": {
+        "value": {
+          "types": [
+            "string"
+          ],
+          "label": "Text"
+        }
+      },
+      "commands": {
+        "set_value": {
+          "label": "Set text",
+          "data": {
+            "value": {
+              "types": [
+                "string"
+              ],
+              "label": "Text"
+            }
+          }
+        }
+      },
+      "options": {
+        "min": {
+          "type": "number",
+          "label": "Shortest length"
+        },
+        "max": {
+          "type": "number",
+          "label": "Longest length"
+        },
+        "pattern": {
+          "type": "string",
+          "label": "Pattern"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "text",
+            "password"
+          ],
+          "label": "Shown as"
+        }
+      }
+    },
+    "light": {
+      "label": "Light",
+      "state": {
+        "is_on": {
+          "types": [
+            "boolean"
+          ],
+          "label": "On"
+        },
+        "brightness": {
+          "types": [
+            "number"
+          ],
+          "label": "Brightness",
+          "required": false
+        }
+      },
+      "commands": {
+        "turn_on": {
+          "label": "Turn on",
+          "data": {
+            "brightness": {
+              "types": [
+                "number"
+              ],
+              "label": "Brightness",
+              "required": false
+            }
+          }
+        },
+        "turn_off": {
+          "label": "Turn off"
+        }
+      },
+      "options": {
+        "dimmable": {
+          "type": "boolean",
+          "label": "Can be dimmed"
+        }
+      }
+    },
+    "cover": {
+      "label": "Cover",
+      "state": {
+        "is_closed": {
+          "types": [
+            "boolean"
+          ],
+          "label": "Closed",
+          "required": false
+        },
+        "position": {
+          "types": [
+            "number"
+          ],
+          "label": "Position",
+          "required": false
+        }
+      },
+      "commands": {
+        "open": {
+          "label": "Open"
+        },
+        "close": {
+          "label": "Close"
+        },
+        "stop": {
+          "label": "Stop"
+        },
+        "set_position": {
+          "label": "Set position",
+          "data": {
+            "position": {
+              "types": [
+                "number"
+              ],
+              "label": "Position"
+            }
+          }
+        }
+      },
+      "options": {
+        "positionable": {
+          "type": "boolean",
+          "label": "Has a position"
+        }
+      }
     }
   },
   "triggerOutputs": {

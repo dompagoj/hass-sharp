@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace HassSharp;
 
@@ -19,9 +20,9 @@ internal static class DefinitionDocument
     /// <summary>
     /// Every problem of the document, in a fixed order: it has a graph and at least one entity; each entity has a key of
     /// its own of the form entity keys take, its description fields of their types, a domain the catalog's
-    /// <c>entityDomains</c> describes and only options that domain takes, each of its type; each setting has a key of
-    /// its own and a type a graph reads, and a value of that type or none. An entity member none of these name is kept
-    /// as given.
+    /// <c>entityDomains</c> describes and only options that domain takes, each of its type, and every option it needs
+    /// (<see cref="Options"/>); each setting has a key of its own and a type a graph reads, and a value of that type or
+    /// none. An entity member none of these name is kept as given.
     /// </summary>
     /// <param name="error">Called with each problem's code, message and the key of the entity or setting it is about.</param>
     internal static void Check(DefinitionBody body, JsonObject catalog, Action<string, string, string?> error)
@@ -44,7 +45,7 @@ internal static class DefinitionDocument
             Fields(key, entity, error);
             if (!IsText(entity["domain"], out var domain)) { error("definition.entityDomain", $"Choose a domain for entity {key}: {Or(domains.Select(d => d.Key))}", key); continue; }
             if (domains[domain] is not JsonObject spec) { error("definition.entityDomain", $"Entity {key} has the domain {domain}, which a definition built from nodes cannot create; choose {Or(domains.Select(d => d.Key))}", key); continue; }
-            Options(key, spec, entity["options"], error);
+            Options(key, domain, spec, entity["options"], error);
         }
         var settings = body.Settings ?? [];
         var settingKeys = new HashSet<string>(StringComparer.Ordinal); var repeatedSettings = new HashSet<string>(StringComparer.Ordinal);
@@ -75,13 +76,19 @@ internal static class DefinitionDocument
             error("definition.entityField", $"The enabledByDefault of entity {key} is not true or false; give true or false, or leave it out", key);
     }
 
-    /// <summary>The problems of an entity's options: each must be one its domain takes, of that option's type and, with an enum, one of its values.</summary>
-    static void Options(string key, JsonObject domain, JsonNode? given, Action<string, string, string?> error)
+    /// <summary>
+    /// The problems of an entity's options: each must be one its domain takes, of that option's type (a list of texts
+    /// for an array, which is not empty) and, with an enum, one of its values; each option the domain marks required is
+    /// given; a <c>min</c> is below the <c>max</c>, either given or its class's own; and a <c>pattern</c> is a regular
+    /// expression.
+    /// </summary>
+    static void Options(string key, string name, JsonObject domain, JsonNode? given, Action<string, string, string?> error)
     {
-        if (given == null || given.GetValueKind() == JsonValueKind.Null) return;
         var known = domain["options"] as JsonObject ?? [];
         var label = VisualNodeCatalog.Text(domain, "label", key);
-        if (given is not JsonObject options) { error("definition.entityOption", $"The options of entity {key} are not a set of named values; give them as an object, such as {{\"unit\": \"W\"}}", key); return; }
+        var options = given as JsonObject ?? [];
+        if (given != null && given.GetValueKind() != JsonValueKind.Null && given is not JsonObject)
+        { error("definition.entityOption", $"The options of entity {key} are not a set of named values; give them as an object, such as {{\"unit\": \"W\"}}", key); return; }
         foreach (var (option, value) in options)
         {
             if (known[option] is not JsonObject rule)
@@ -101,8 +108,28 @@ internal static class DefinitionDocument
                 : Fits(type, value) && Allowed(value);
             if (!fits)
                 error("definition.entityOption", $"Option {option} of entity {key} takes {(type == "array" ? "a list of texts" : allowed != null ? "one of " + string.Join(", ", allowed) : Phrase(type))}", key);
+            else if (value is JsonArray { Count: 0 })
+                error("definition.entityOption", $"Option {option} of entity {key} is an empty list; give it at least one text{(Required(rule) ? "" : ", or leave it out")}", key);
+            else if (option == "pattern" && type == "string" && IsText(value, out var pattern))
+                try { _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(1)); }
+                catch (ArgumentException problem) { error("definition.entityOption", $"Option pattern of entity {key} is not a regular expression: {problem.Message}", key); }
+        }
+        foreach (var (option, rule) in known)
+            if (rule is JsonObject required && Required(required) && (options[option] is not { } value || value.GetValueKind() == JsonValueKind.Null))
+                error("definition.entityOption", $"Give entity {key} the option {option}: {Article(label)} {label.ToLowerInvariant()} needs it", key);
+        if (known.ContainsKey("min") && known.ContainsKey("max") && (options.ContainsKey("min") || options.ContainsKey("max")))
+        {
+            var defaults = SharpDomains.DefaultOptions(name);
+            if ((Number(options["min"]) ?? Number(defaults["min"])) is { } min && (Number(options["max"]) ?? Number(defaults["max"])) is { } max && !(min < max))
+                error("definition.entityOption", $"Entity {key} has a min of {Shown(min)}, which is not below its max of {Shown(max)}; give a min below the max", key);
         }
     }
+
+    static bool Required(JsonObject rule) => rule["required"] is JsonValue flag && flag.GetValueKind() == JsonValueKind.True;
+    // Read through its JSON text, as Fits reads it: a class's default may be held as an int.
+    static double? Number(JsonNode? node) =>
+        node is JsonValue value && value.GetValueKind() == JsonValueKind.Number && double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
+    static string Shown(double number) => number.ToString(CultureInfo.InvariantCulture);
 
     static bool IsText(JsonNode? node, out string text)
     {
