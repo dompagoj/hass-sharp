@@ -379,3 +379,26 @@ it.each([['automation', true], ['entity', false]] as const)('in an %s, a trigger
   setConfig({ ...config(), trackHistory: shown })
   expect(toggle!.checked).toBe(shown)
 })
+
+it.each([
+  ['automation', 'Record automatic runs and their traces. Run now is always recorded.'],
+  ['entity', 'Record automatic runs and their traces.'],
+] as const)('in an %s, the run history hint says only what is true there', (document, hint) => {
+  const host = window.document.createElement('div')
+  host.className = 'hs-app'
+  window.document.body.append(host)
+  client = new QueryClient()
+  const value = { callWS: async () => ({ entities: [], areas: [], devices: [], floors: [], labels: [] }) }
+  dispose = render(
+    () => (
+      <QueryClientProvider client={client!}>
+        <HassCtx.Provider value={value as any}>
+          <TriggerConfig document={document} node={{ id: 'poll', kind: 'trigger', config: { type: 'time_pattern', minutes: '/1' } }} onChange={() => {}} />
+        </HassCtx.Provider>
+      </QueryClientProvider>
+    ),
+    host,
+  )
+  const label = [...host.querySelectorAll<HTMLLabelElement>('.hs-insp-trigger label')].find(l => l.querySelector('strong')?.textContent === 'Track in run history')
+  expect(label?.querySelector('.hs-field-hint')?.textContent).toBe(hint)
+})

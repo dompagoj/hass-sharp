@@ -1,6 +1,7 @@
 import { For, Show } from 'solid-js'
 import { HelpDialog } from '../components/HelpDialog'
 import { setAutomationEnabled } from '../automations/enabled'
+import { enabledTitles } from '../automations/EnabledSwitch'
 import type { HomeAssistant } from '../types'
 import type { EditorAdapter, EditorContext, EditorTexts } from './adapter'
 import { visualApi, VisualApiError, type VisualDocument } from './api'
@@ -23,6 +24,8 @@ export const automationTexts: EditorTexts = {
   problemsHeading: 'This automation',
   runsEmpty: 'Save this automation to see its runs here.',
   exportFileName: 'automation.graph.json',
+  enabledOn: enabledTitles.on,
+  enabledOff: enabledTitles.off,
   conflictMessage: 'This automation changed elsewhere while you had unsaved changes here.',
   conflictSaveTitle: 'The saved automation changed elsewhere: choose what to keep',
   conflictTitle: 'This automation changed elsewhere',

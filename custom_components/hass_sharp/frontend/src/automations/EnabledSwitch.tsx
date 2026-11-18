@@ -1,11 +1,19 @@
+/** An automation's switch tooltips. */
+export const enabledTitles = { on: 'On: its triggers start it', off: 'Off: nothing starts it by itself; Run now still works' }
+
 /**
  * The automation's on/off switch, named "<name> on" for screen readers, with "On" or "Off" beside it. The checkbox
  * shows `enabled` only: a change asks the owner, which updates `enabled` (optimistically) or leaves it as it is.
  * While its own request is in flight it is `busy`: it keeps focus (it is not disabled) and ignores further presses.
  */
-export function EnabledSwitch(props: { name: string; enabled: boolean; disabled?: boolean; busy?: boolean; class?: string; onChange(enabled: boolean): void }) {
+export function EnabledSwitch(props: {
+  name: string; enabled: boolean; disabled?: boolean; busy?: boolean; class?: string
+  /** The tooltip when on and when off (default: an automation's). */
+  titles?: { on: string; off: string }
+  onChange(enabled: boolean): void
+}) {
   return (
-    <label class={`hs-enabled ${props.class ?? ''}`} title={props.enabled ? 'On: its triggers start it' : 'Off: nothing starts it by itself; Run now still works'}>
+    <label class={`hs-enabled ${props.class ?? ''}`} title={props.enabled ? (props.titles?.on ?? enabledTitles.on) : (props.titles?.off ?? enabledTitles.off)}>
       <input
         type="checkbox"
         role="switch"

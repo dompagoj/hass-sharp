@@ -411,7 +411,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   onCleanup(() => editor.removeEventListener('keydown', cardEnter, true))
 
   const download = () => {
-    const url = URL.createObjectURL(new Blob([serializeGraph(graph())], { type: 'application/json' }))
+    const url = URL.createObjectURL(new Blob([serializeGraph(adapter.draft ? adapter.draft(graph()) : graph())], { type: 'application/json' }))
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = texts.exportFileName
@@ -470,7 +470,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           admin() ? (
             <div class="hs-topbar__run-group">
               <Show when={session.document()}>
-                <EnabledSwitch class="hs-topbar__enabled" name={graph().name} enabled={enabled() ?? true} disabled={busy()} busy={switching()} onChange={wanted => void toggleEnabled(wanted)} />
+                <EnabledSwitch class="hs-topbar__enabled" name={graph().name} enabled={enabled() ?? true} disabled={busy()} busy={switching()}
+                  titles={{ on: texts.enabledOn, off: texts.enabledOff }} onChange={wanted => void toggleEnabled(wanted)} />
               </Show>
               {adapter.runGroup && untrack(() => adapter.runGroup!(context(choose)))}
             </div>

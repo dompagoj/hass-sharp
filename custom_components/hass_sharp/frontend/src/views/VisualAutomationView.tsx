@@ -8,7 +8,8 @@ import { automationAdapter, type EditorAdapter, type EditorDocument } from '../v
 import { libraryHref } from '../visual/library-api'
 
 export function VisualAutomationView() {
-  return <EditorView adapter={automationAdapter(useHass())} />
+  const adapter = automationAdapter(useHass())
+  return <EditorView adapter={adapter} />
 }
 
 /**

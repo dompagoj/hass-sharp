@@ -60,8 +60,12 @@ export interface EditorTexts {
   problemsHeading: string
   /** The Runs tab before the first save. */
   runsEmpty: string
-  /** Export graph's file name. */
+  /** Export graph's file name (the graph is exported as `draft` gives it). */
   exportFileName: string
+  /** The on/off switch's tooltip when on ("On: its triggers start it"). */
+  enabledOn: string
+  /** The on/off switch's tooltip when off ("Off: nothing starts it by itself; Run now still works"). */
+  enabledOff: string
   /** The session's error when the saved revision changed elsewhere while there were unsaved changes here. */
   conflictMessage: string
   /** Save's title (and description) while that conflict is open. */
@@ -132,7 +136,7 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   starter(name: string): VisualGraph
   /** The step selected when the editor opens, if any. */
   initialSelection?: string
-  /** The graph as a draft keeps it in this browser (an entity definition drops its secret values). */
+  /** The graph as a draft keeps it in this browser, and as Export graph downloads it (an entity definition drops its secret values). */
   draft?(graph: VisualGraph): VisualGraph
   listHref: string
   editorHref(id: string): string

@@ -95,7 +95,7 @@ function widgetBackend() {
     texts: {
       editorLabel: 'Widget editor', canvasLabel: 'Widget canvas', untitled: 'Untitled widget', nameLabel: 'Widget name', back: 'Back to widgets',
       overviewLabel: 'Widget overview', problemsHeading: 'This widget', runsEmpty: 'Save this widget to see its spins here.',
-      exportFileName: 'widget.graph.json', conflictMessage: 'This widget changed elsewhere while you had unsaved widget changes here.',
+      exportFileName: 'widget.graph.json', enabledOn: 'On: the widget turns', enabledOff: 'Off: the widget stands still', conflictMessage: 'This widget changed elsewhere while you had unsaved widget changes here.',
       conflictSaveTitle: 'The saved widget changed elsewhere: choose what to keep', conflictTitle: 'This widget changed elsewhere',
       conflictElsewhere: 'Someone saved this widget again while you were changing it.',
       conflictDraft: time => `Your widget changes from ${time} came before the widget was saved again.`, copyNoun: 'a new widget',
@@ -216,12 +216,15 @@ it('starts from the adapter: its kind of graph, words, overview, run group and h
   expect(dialog(host)!.textContent).toContain('Widgets turn gears.')
   button(dialog(host)!, 'Close dialog').click()
   // Export graph names the file as the adapter says.
-  const named: string[] = []
-  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:widget')
+  const named: string[] = [], files: Blob[] = []
+  vi.spyOn(URL, 'createObjectURL').mockImplementation(file => { files.push(file as Blob); return 'blob:widget' })
   vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { named.push(this.download) })
   more(host, 'Export graph')
   expect(named).toEqual(['widget.graph.json'])
+  // The file holds the graph as the adapter's draft gives it: no secret value.
+  const exported = JSON.parse(await files[0]!.text())
+  expect(exported).toEqual(withoutSecrets(widgetGraph('Spinner')))
   expectClean(host)
   expect(automationCalls).toEqual([])
 })
@@ -238,6 +241,9 @@ it('edits through the overview\'s context with undo, saves through the adapter a
   expect(chip(host)).toBe('Saved')
   button(host, 'Redo').click()
   expect(gearsShown(host)).toBe('Gears: 2')
+  // The draft leaves the secret out; the graph being edited keeps it.
+  await vi.waitFor(() => expect(localStorage.getItem('hass-sharp:draft:u1/entity:spinner')).not.toBeNull(), { timeout: 2000 })
+  expect(localStorage.getItem('hass-sharp:draft:u1/entity:spinner')).not.toContain('hunter2')
   await vi.waitFor(() => expect(button(host, 'Save').disabled).toBe(false))
   button(host, 'Save').click()
   await saved(host, 3)
@@ -245,6 +251,7 @@ it('edits through the overview\'s context with undo, saves through the adapter a
   expect(save[1]).toBe('spinner')
   expect(gears(save[2] as VisualGraph)).toBe(2)
   expect(save[3]).toBe(2)
+  expect((save[2] as VisualGraph).definition!.settings).toEqual([{ key: 'token', type: 'string', value: 'hunter2', secret: true }])
   expect(invalidated.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([['widget-list'], ['widget-home', 'all']])
   // The saved document is the one the overview is given.
   expect(host.querySelector('.widget-saved')!.textContent).toBe('Saved with 30 spins')
@@ -273,8 +280,8 @@ it('gives a new widget the adapter\'s id, which may come later, and moves to its
   dispose!(); dispose = undefined; document.body.innerHTML = ''
   const untitled = setup('/widgets/new', backend)
   await vi.waitFor(() => expect(nameField(untitled.host)!.value).toBe('Untitled widget'))
-  expectClean(host)
-  expect(automationCalls).toEqual([])
+  expectClean(untitled.host)
+  expect(untitled.automationCalls).toEqual([])
 })
 
 /** The open widget with a local change, saved again elsewhere meanwhile: Save meets the conflict and its dialog opens. */
@@ -370,10 +377,13 @@ it('meets a draft made on an older revision as a conflict, in the adapter\'s wor
 it('turns the widget off through the adapter, and links its runs to the adapter\'s run pages', async () => {
   const { host, backend, automationCalls } = await openSpinner()
   const toggle = host.querySelector<HTMLInputElement>('input[role="switch"][aria-label="Spinner on"]')!
+  const tip = () => toggle.closest('label')!.getAttribute('title')
+  expect(tip()).toBe('On: the widget turns')
   toggle.checked = false
   toggle.dispatchEvent(new Event('change', { bubbles: true }))
   await vi.waitFor(() => expect(backend.calls).toContainEqual(['setEnabled', 'spinner', false, true]))
   await vi.waitFor(() => expect(host.querySelector('.widget-on')!.textContent).toBe('Still'))
+  expect(tip()).toBe('Off: the widget stands still')
   tab(host, 'Runs').click()
   await vi.waitFor(() => expect(host.querySelector('a.hs-run-trace')).not.toBeNull())
   expect(host.querySelector('a.hs-run-trace')!.getAttribute('href')).toBe('/widgets/spinner/runs/run-1')
