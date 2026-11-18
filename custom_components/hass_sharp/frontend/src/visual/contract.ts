@@ -74,7 +74,12 @@ export interface EntityValueSpec { types: string[]; label?: string; required?: b
  * One entity domain a definition's graph can define: its state values (inputs of State and Set state), its commands,
  * each with the values of its data (outputs of When commanded), and its options.
  */
-export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, EntityValueSpec> }>; options: Record<string, ConfigSpec> }
+export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; options: Record<string, ConfigSpec> }
+/**
+ * A data value of a command: `default` is what the host gives a flow when Home Assistant sends none and the entity has no
+ * state value of the same name, if the entity takes it (a light turned on at full). No validator reads it.
+ */
+export interface CommandValueSpec extends EntityValueSpec { default?: JsonValue }
 export interface VisualCatalogSnapshot { entityDomains?: Record<string, EntityDomainSpec>; /** Per graph (`withGraphTypes`): an entity graph's definition. */ definition?: GraphDefinition; services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; /** Per graph (`withGraphTypes`): the type of each `propertyOf` output, by node id and port. */ resolvedOutputs?: Record<string, Record<string, string>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot

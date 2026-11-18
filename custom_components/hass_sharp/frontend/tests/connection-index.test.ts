@@ -38,7 +38,7 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 417, PAIRS = 1704, ACCEPTED = 619, BY_VALIDATION = 1085, SERVICES_ACCEPTED = 556, SERVICES_BY_VALIDATION = 1148
+const GRAPHS = 417, PAIRS = 1743, ACCEPTED = 642, BY_VALIDATION = 1101, SERVICES_ACCEPTED = 579, SERVICES_BY_VALIDATION = 1164
 const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
@@ -62,8 +62,10 @@ function agree(name: string, value: unknown, catalog: VisualCatalogSnapshot, tot
   // A graph past the limit is answered with graph.limit alone, whatever is wired; its tens of thousands of pairs say nothing more.
   if (contract.overLimit(catalog, graph)) { totals.skipped.push(`${name}: past the graph limit`); return }
   totals.graphs++
-  for (const source of wellFormed) for (const sourcePort of Object.keys(contract.dataOutputs(source, catalog)))
-    for (const target of wellFormed) for (const targetPort of Object.keys(nodeInputs(graph, target, catalog))) {
+  // The ports as the graph's own catalog gives them: an entity graph's steps take theirs from its definition.
+  const types = contract.withGraphTypes(catalog, graph)
+  for (const source of wellFormed) for (const sourcePort of Object.keys(contract.dataOutputs(source, types)))
+    for (const target of wellFormed) for (const targetPort of Object.keys(nodeInputs(graph, target, types))) {
       const expected = fullCheck(graph, source.id, sourcePort, target.id, targetPort, catalog)
       const actual = dataConnectionError(graph, source.id, sourcePort, target.id, targetPort, catalog, { quick: true })
       const label = `${name}: ${source.id}.${sourcePort} -> ${target.id}.${targetPort}`

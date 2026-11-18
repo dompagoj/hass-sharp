@@ -11417,7 +11417,8 @@
                   "number"
                 ],
                 "label": "Brightness",
-                "required": false
+                "required": false,
+                "default": 255
               }
             }
           },

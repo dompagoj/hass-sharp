@@ -74,7 +74,8 @@ static class EntityGraphTests
             (nameof(ASecretThatFailsIsNotQuoted), ASecretThatFailsIsNotQuoted),
             (nameof(SetStateKeepsWhatItIsNotGiven), SetStateKeepsWhatItIsNotGiven),
             (nameof(ACommandHandsItsDataToTheFlow), ACommandHandsItsDataToTheFlow),
-            (nameof(AbsentBrightnessIsTheCurrentOne), AbsentBrightnessIsTheCurrentOne),
+            (nameof(ALightTurnedOnWithoutABrightnessHasItsLastOneOrFull), ALightTurnedOnWithoutABrightnessHasItsLastOneOrFull),
+            (nameof(ALightThatCannotBeDimmedGetsNoBrightness), ALightThatCannotBeDimmedGetsNoBrightness),
             (nameof(AButtonRunsItsFlow), AButtonRunsItsFlow),
             (nameof(ACommandsDataIsCheckedAsAClassChecksIt), ACommandsDataIsCheckedAsAClassChecksIt),
             (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted) })
@@ -1776,28 +1777,60 @@ static class EntityGraphTests
         await rig.Until("panel:blind", s => Is(s, "position", 40) && Is(s, "is_closed", null), "the cover shows the position it was moved to, and nothing else it was not given");
     }
 
+    /// <summary>The light's brightness as the latest command's flow read it: the input of its Set state step.</summary>
+    static JsonNode? ReadBrightness(Rig rig, string automationId) =>
+        Step(JsonNode.Parse(rig.Api.GetRunTrace(CommandRuns(rig, automationId)[0]["runId"]!.GetValue<string>()))!, "bright")["inputs"]?["brightness"];
+
     /// <summary>
-    /// A light turned on without a brightness is turned on at the one it has: the flow reads it as the command's. With none
-    /// yet, the step that reads it fails, naming the output, and so does the command; nothing is pushed.
+    /// A light turned on without a brightness (no data, empty data or a null brightness) is turned on at the one it has,
+    /// or at full when it has none yet: the flow reads that as the command's brightness, and pushes it.
     /// </summary>
-    static async Task AbsentBrightnessIsTheCurrentOne()
+    static async Task ALightTurnedOnWithoutABrightnessHasItsLastOneOrFull()
     {
         await using var rig = await Rig.Start("absent-brightness");
         var automationId = AutomationId(await rig.Save("lamp", Lamp()));
         await rig.Until("lamp:lamp", _ => true, "the light starts");
-        var batches = rig.Batches;
-        var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("lamp:lamp", "turn_on", null), "turned on without a brightness, having none");
-        Check(refused.Message == "Input bright.brightness: trigger output on.brightness is absent from this invocation's trigger payload.", "the step reading the brightness fails, naming it: " + refused.Message);
-        await rig.Flush();
-        Check(rig.Pushed("lamp:lamp", batches).Length == 0, "a refused command pushed: " + Lines(rig.Home.Pushes().Skip(batches)));
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", null);
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 255), "turned on at full, having no brightness yet");
+        Check(Clear(ReadBrightness(rig, automationId), 255), "the flow read full as the command's brightness: " + ReadBrightness(rig, automationId)?.ToJsonString());
         await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":80}""");
-        await rig.Api.EntityCommand("lamp:lamp", "turn_off", "{}");
-        await rig.Until("lamp:lamp", s => Is(s, "is_on", false) && Is(s, "brightness", 80), "turned off at 80");
-        batches = rig.Batches;
-        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":null}""");
-        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 80), "turned on again at the brightness it has", batches);
+        await rig.Until("lamp:lamp", s => Is(s, "brightness", 80), "turned on at the brightness asked for");
+        Check(CommandRuns(rig, automationId).Length == 2 && Clear(ReadBrightness(rig, automationId), 80), "the latest run is listed first and read 80");
+        foreach (var data in new string?[] { null, "{}", """{"brightness":null}""" })
+        {
+            var batches = rig.Batches;
+            await rig.Api.EntityCommand("lamp:lamp", "turn_off", null);
+            await rig.Until("lamp:lamp", s => Is(s, "is_on", false) && Is(s, "brightness", 80), "turned off, keeping its brightness", batches);
+            batches = rig.Batches;
+            await rig.Api.EntityCommand("lamp:lamp", "turn_on", data);
+            await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 80), $"turned on with {data ?? "no data"} at the brightness it has", batches);
+            Check(Clear(ReadBrightness(rig, automationId), 80), $"with {data ?? "no data"} the flow read the light's brightness as the command's: " + ReadBrightness(rig, automationId)?.ToJsonString());
+        }
+    }
+
+    /// <summary>
+    /// A light that cannot be dimmed is turned on without a brightness: none is filled in, as the light takes none, and its
+    /// flow runs. A flow that reads the brightness all the same fails in words, without ids, and nothing is pushed.
+    /// </summary>
+    static async Task ALightThatCannotBeDimmedGetsNoBrightness()
+    {
+        await using var rig = await Rig.Start("no-brightness");
+        var graph = Graph("Lamps",
+            [Command("on", "plain", "turn_on"), SetState("lit", "plain", On(true)), Command("off", "plain", "turn_off"), SetState("dark", "plain", On(false)),
+             Command("on2", "wired", "turn_on"), SetState("bright", "wired", On(true)), Command("off2", "wired", "turn_off"), SetState("dark2", "wired", On(false))],
+            Next("on", "lit"), Next("off", "dark"), Next("on2", "bright"), Next("off2", "dark2"), Data("on2", "bright", "brightness", "brightness"));
+        var automationId = AutomationId(await rig.Save("lamps", Definition("Lamps", graph, [Entity("plain", "light", new { name = "Plain" }), Entity("wired", "light", new { name = "Wired" })])));
+        await rig.Until("lamps:plain", _ => true, "the lights start");
+        await rig.Api.EntityCommand("lamps:plain", "turn_on", null);
+        await rig.Until("lamps:plain", s => Is(s, "is_on", true) && Is(s, "brightness", null), "the light that cannot be dimmed is turned on, with no brightness");
         var trace = JsonNode.Parse(rig.Api.GetRunTrace(CommandRuns(rig, automationId)[0]["runId"]!.GetValue<string>()))!;
-        Check(Clear(Step(trace, "bright")["inputs"]?["brightness"], 80), "the flow read the light's brightness as the command's: " + Step(trace, "bright")["inputs"]?.ToJsonString());
+        Check(Step(trace, "on")["outputs"]?["brightness"] == null, "no brightness was filled in for it: " + Step(trace, "on").ToJsonString());
+        await rig.Flush();
+        var batches = rig.Batches;
+        var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("lamps:wired", "turn_on", "{}"), "a flow reading a brightness its light cannot have");
+        Check(refused.Message == "Set state: Turn on came without a brightness, and Wired has none", "the step reading the brightness fails in words: " + refused.Message);
+        await rig.Flush();
+        Check(rig.Pushed("lamps:wired", batches).Length == 0, "a failed command pushed: " + Lines(rig.Home.Pushes().Skip(batches)));
     }
 
     /// <summary>A button takes its one command, press, and its flow runs; it has no state of its own.</summary>

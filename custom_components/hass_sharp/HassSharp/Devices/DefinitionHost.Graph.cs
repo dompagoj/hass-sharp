@@ -117,9 +117,9 @@ internal sealed partial class DefinitionHost
     /// <see cref="CommandTimeout"/> (the flow may wait on a command to this same entity, which waits behind it); a flow
     /// still running then is left to finish. The data is checked first, as a class's is (a value the entity does not take
     /// is refused, and no flow runs), and a value of it Home Assistant did not send is the entity's state value of the
-    /// same name, when it has one (<see cref="Filled"/>). Completes when the flow succeeded or ended at a Stop step;
-    /// otherwise throws, in words for the person who gave the command: the flow's own error when it failed (its first
-    /// line; the run's record has it whole, and <see cref="FlowFailed"/> logs it).
+    /// same name when it has one, else its row's default when the entity takes that (<see cref="Filled"/>). Completes
+    /// when the flow succeeded or ended at a Stop step; otherwise throws, in words for the person who gave the command: the
+    /// flow's own error when it failed (its first line; the run's record has it whole, and <see cref="FlowFailed"/> logs it).
     /// </summary>
     /// <exception cref="ArgumentException">The entity does not take the data (<see cref="SharpEntity.CheckData"/>).</exception>
     async Task RunFlow(DefinitionRoots roots, SharpEntity entity, string name, JsonElement data)
@@ -150,17 +150,35 @@ internal sealed partial class DefinitionHost
 
     /// <summary>
     /// The command's data with each value its <c>entityDomains</c> row names that Home Assistant did not send (absent or
-    /// null) taken from the entity's state value of the same name, when it has one: a light turned on without a brightness
-    /// is turned on at the one it has. The data as it was when nothing is taken. Read under the lock, as states are kept.
+    /// null) taken from the entity's state value of the same name, when it has one; else from the row's <c>default</c>,
+    /// when the entity takes that value as it takes the command's data (<see cref="SharpEntity.CheckData"/>). A light
+    /// turned on without a brightness is turned on at the one it has, or at full; one that cannot be dimmed gets none. A
+    /// value still not given stays absent, and a step reading it fails in words (see <c>VisualRuntime</c>). The data as
+    /// it was when nothing is taken. Read under the lock, as states are kept.
     /// </summary>
     JsonElement Filled(SharpEntity entity, string name, JsonElement data)
     {
-        if (!CommandValues.TryGetValue((entity.Domain, name), out var names) || !SharpDomains.Graph.TryGetValue(entity.Domain, out var domain)) return data;
+        // RunFlow checks the data, then fills it, then runs the flow, and that order must hold: CheckData has already
+        // refused a value the command needs that is not given, so only an optional value is ever filled here, and the data
+        // filled in is data the entity takes.
+        if (!CommandValues.TryGetValue((entity.Domain, name), out var values)) return data;
+        var state = SharpDomains.Graph.TryGetValue(entity.Domain, out var domain) ? domain.State : new Dictionary<string, GraphState>();
         JsonObject? filled = null;
+        JsonObject Copy() => data.ValueKind == JsonValueKind.Object ? JsonNode.Parse(data.GetRawText())!.AsObject() : new JsonObject();
         lock (gate)
-            foreach (var key in names)
-                if (CommandData.Given(data, key) == null && domain.State.TryGetValue(key, out var state) && state.Read(entity) is { } value)
-                    (filled ??= data.ValueKind == JsonValueKind.Object ? JsonNode.Parse(data.GetRawText())!.AsObject() : new JsonObject())[key] = JsonSerializer.SerializeToNode(value);
+            foreach (var (key, fallback) in values)
+            {
+                if (CommandData.Given(data, key) != null) continue;
+                var value = state.TryGetValue(key, out var kept) && kept.Read(entity) is { } current ? JsonSerializer.SerializeToNode(current) : null;
+                if (value == null && fallback != null)
+                {
+                    var tried = filled?.DeepClone().AsObject() ?? Copy();
+                    tried[key] = fallback.DeepClone();
+                    try { entity.CheckData(name, JsonSerializer.SerializeToElement(tried)); value = fallback.DeepClone(); }
+                    catch (ArgumentException) { }
+                }
+                if (value != null) (filled ??= Copy())[key] = value;
+            }
         return filled == null ? data : JsonSerializer.SerializeToElement(filled);
     }
 
@@ -387,11 +405,15 @@ internal sealed partial class DefinitionHost
     /// <summary>The command labels of each entity domain, as the catalog's <c>entityDomains</c> gives them.</summary>
     static readonly IReadOnlyDictionary<string, Dictionary<string, string>> CommandLabels = ReadCommandLabels();
 
-    /// <summary>The names of the data values of each domain's commands that have some, as the catalog's <c>entityDomains</c> gives them.</summary>
-    static readonly IReadOnlyDictionary<(string Domain, string Command), string[]> CommandValues =
+    /// <summary>
+    /// The data values of each domain's commands that have some, each with its <c>default</c> (null for none), as the
+    /// catalog's <c>entityDomains</c> gives them.
+    /// </summary>
+    static readonly IReadOnlyDictionary<(string Domain, string Command), (string Name, JsonNode? Default)[]> CommandValues =
         (VisualNodeCatalog.Root["entityDomains"] as JsonObject ?? []).SelectMany(domain => (domain.Value?["commands"] as JsonObject ?? [])
             .Where(command => command.Value?["data"] is JsonObject { Count: > 0 })
-            .Select(command => KeyValuePair.Create((domain.Key, command.Key), ((JsonObject)command.Value!["data"]!).Select(value => value.Key).ToArray())))
+            .Select(command => KeyValuePair.Create((domain.Key, command.Key),
+                ((JsonObject)command.Value!["data"]!).Select(value => (value.Key, value.Value?["default"]?.DeepClone())).ToArray())))
         .ToDictionary();
 
     static IReadOnlyDictionary<string, Dictionary<string, string>> ReadCommandLabels()

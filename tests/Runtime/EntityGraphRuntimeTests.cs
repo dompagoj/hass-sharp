@@ -162,7 +162,8 @@ static class EntityGraphRuntimeTests
                 (nameof(EmptyStateValueIsPassedThrough), () => { EmptyStateValueIsPassedThrough(); return Task.CompletedTask; }),
                 (nameof(EntityNodesFailWithoutADefinition), EntityNodesFailWithoutADefinition),
                 (nameof(EntityIsWorksInAnAutomation), EntityIsWorksInAnAutomation),
-                (nameof(SetStateHandsOverOnlyWhatItIsGiven), SetStateHandsOverOnlyWhatItIsGiven) })
+                (nameof(SetStateHandsOverOnlyWhatItIsGiven), SetStateHandsOverOnlyWhatItIsGiven),
+                (nameof(APasswordTextsValueOfAnotherTypeIsNotQuoted), APasswordTextsValueOfAnotherTypeIsNotQuoted) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -533,5 +534,27 @@ static class EntityGraphRuntimeTests
         definition.Calls.Clear();
         await compiled.Run("s", definition);
         Same(definition.Calls, ["state blind position=double:40", "available blind yes"], "a State hands over the optional values it is given");
+    }
+
+    /// <summary>
+    /// A password text's value of another type is refused without quoting it, as the class words its own refusals; a plain
+    /// text's refusal quotes it. The validator lets only text into a text's value (a wire from a number, an object, a JSON
+    /// value or an enum is refused), so no saved graph reaches this: the two parts are checked as the runtime joins them.
+    /// </summary>
+    static Task APasswordTextsValueOfAnotherTypeIsNotQuoted()
+    {
+        var catalog = new JsonObject { ["definition"] = new JsonObject { ["entities"] = new JsonArray(
+            new JsonObject { ["key"] = "pin", ["domain"] = "text", ["options"] = new JsonObject { ["mode"] = "password" } },
+            new JsonObject { ["key"] = "note", ["domain"] = "text", ["options"] = new JsonObject { ["mode"] = "text" } },
+            new JsonObject { ["key"] = "plain", ["domain"] = "text" },
+            new JsonObject { ["key"] = "power", ["domain"] = "sensor", ["options"] = new JsonObject { ["mode"] = "password" } }) } };
+        Check(VisualRuntime.PasswordText(catalog, "pin") && !VisualRuntime.PasswordText(catalog, "note") && !VisualRuntime.PasswordText(catalog, "plain")
+            && !VisualRuntime.PasswordText(catalog, "power") && !VisualRuntime.PasswordText(catalog, "missing"), "only a text shown as a password is one");
+        foreach (var (quote, want) in new[] { (false, "State · Value needs text, not the hidden value given"), (true, "State · Value needs text, not 1234") })
+        {
+            try { VisualRuntime.EntityStateValue(1234.0, ["string"], "State · Value", quote); throw new Exception("a number taken for text"); }
+            catch (InvalidOperationException error) { Check(error.Message == want, $"the refusal {(quote ? "quotes" : "does not quote")} the value: " + error.Message); }
+        }
+        return Task.CompletedTask;
     }
 }

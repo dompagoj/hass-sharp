@@ -395,7 +395,8 @@ public sealed class VisualRuntime
             object? value;
             // A value that cannot be copied into a loop or branch fails the step that reads it there, named as people see it.
             try {if(!scope.TryGetOutput(source,out value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
-                ? $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
+                ? Text(nodes[source.Item1],"kind")=="entity_command" ? AbsentCommandValue(node,source.Item1,source.Item2,reason)
+                : $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
                 : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");}
             catch(VisualCopyException error) {
                 throw new InvalidOperationException($"{Pin(node,port)} reads {Title(source.Item1)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(source.Item1)?[source.Item2],source.Item2)}, which cannot be copied into a loop or parallel branch; return a list or an array instead",error.InnerException);
@@ -403,6 +404,21 @@ public sealed class VisualRuntime
             return value;
         }
         return Operand(scope,OperandOf(node,port),$"{node}.{port}");
+    }
+    /// <summary>
+    /// A step reading a value of its command's data that the command came without, which its entity could not give
+    /// either (see <c>DefinitionHost.Filled</c>), in words for the person who gave the command, without ids: "Set state:
+    /// Turn on came without a brightness, and Lamp has none".
+    /// </summary>
+    string AbsentCommandValue(string reader,string command,string port,string? reason) {
+        var cfg=nodes[command]["config"];var key=Text(cfg,"entity");
+        var row=VisualNodeCatalog.EntityDomain(catalog,key);var entity=VisualNodeCatalog.DefinitionEntity(catalog,key);
+        var commandLabel=Text(row?["commands"]?[Text(cfg,"command")],"label",Text(cfg,"command"));
+        var value=VisualGraphValidator.Words.PortLabel(CommandOutputs(command)[port],port).ToLowerInvariant();
+        var name=Text(entity,"name") is {Length:>0} named?named:key;
+        return reason==null
+            ? $"{Title(reader)}: {commandLabel} came without {VisualGraphValidator.Words.Article(value)} {value}, and {name} has none"
+            : $"{Title(reader)}: {commandLabel} came with {VisualGraphValidator.Words.Article(value)} {value} that cannot be read";
     }
     JsonNode? OperandOf(string node,string port) {
         var n=nodes[node];var cfg=n["config"]!;JsonNode? operand;
@@ -758,7 +774,7 @@ public sealed class VisualRuntime
         foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
             if(!(spec?["required"] is JsonValue r&&r.TryGetValue<bool>(out var required)&&required) && !Supplied(id,port,nodes[id]["config"]?[port]))continue;
             var given=Input(scope,id,port);
-            try {values[port]=EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port));}
+            try {values[port]=EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,Text(nodes[id]["config"],"entity")));}
             catch(InvalidOperationException) when(SecretInput(id,port,given)) {throw Hidden(id,port);}
             if(SecretInput(id,port,values[port]))hidden.Add(port);
         }
@@ -767,9 +783,10 @@ public sealed class VisualRuntime
     /// <summary>
     /// A state value as a definition takes it: true or false as a <see cref="bool"/>, a number as a <see cref="double"/>,
     /// text as a <see cref="string"/>, each only where the pin's <paramref name="types"/> take it, and an empty value as null
-    /// (the entity's state is then unknown). A JSON value is the value it holds. Anything else fails, naming the <paramref name="pin"/>.
+    /// (the entity's state is then unknown). A JSON value is the value it holds. Anything else fails, naming the <paramref name="pin"/>
+    /// and, unless <paramref name="quote"/> is false (a password text's), the value.
     /// </summary>
-    internal static object? EntityStateValue(object? value,IReadOnlyCollection<string> types,string pin) {
+    internal static object? EntityStateValue(object? value,IReadOnlyCollection<string> types,string pin,bool quote=true) {
         if(value is JsonElement json)value=json.ValueKind switch{JsonValueKind.Null or JsonValueKind.Undefined=>null,JsonValueKind.True=>true,JsonValueKind.False=>false,JsonValueKind.String=>json.GetString(),JsonValueKind.Number when json.TryGetDouble(out var real)=>real,_=>value};
         switch(value) {
             case null:return null;
@@ -781,15 +798,22 @@ public sealed class VisualRuntime
                 break;
         }
         var wanted=string.Join(" or ",types.Select(t=>t switch{"boolean"=>"true or false","number"=>"a number","string"=>"text",_=>t}).Distinct());
-        throw new InvalidOperationException($"{pin} needs {wanted}, not {(value is bool given?(given?"true":"false"):LogText(value))}");
+        throw new InvalidOperationException($"{pin} needs {wanted}, not {(!quote?"the hidden value given":value is bool given?(given?"true":"false"):LogText(value))}");
     }
+    /// <summary>
+    /// Whether the definition's entity <paramref name="key"/> is a text shown as a password, whose value a refusal does not
+    /// quote, as its class words it. The validator lets only text into a text's value, so this guards a refusal no saved
+    /// graph is expected to reach.
+    /// </summary>
+    internal static bool PasswordText(JsonObject catalog,string key)=>VisualNodeCatalog.DefinitionEntity(catalog,key) is {} entity&&Text(entity,"domain")=="text"&&Text(entity["options"],"mode")=="password";
     // Contract C6: each typed output reads its pointer from the normalised payload. A pointer that finds
     // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.
     void Trigger(string id,VisualScope scope,JsonObject node) {
         foreach(var (port,spec) in VisualNodeCatalog.TriggerOutputs(node,catalog))TriggerOutput(id,port,spec,scope);
     }
     // A When commanded step's outputs are read from the command's data in the run's trigger as a trigger's are: a value
-    // the command was not given (and the host could not fill from the entity's state) is absent.
+    // the command was not given (and the host could fill neither from the entity's state nor from its row's default) is
+    // absent, and a step reading it fails in words (AbsentCommandValue).
     void Command(string id,VisualScope scope) {
         foreach(var (port,spec) in CommandOutputs(id))TriggerOutput(id,port,spec,scope);
     }

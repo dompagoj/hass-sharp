@@ -73,6 +73,15 @@ static class EntityDomainTests
                     var missing = await Refusal(probe, command, "{}");
                     Check(Optional(value) ? missing == null : missing != null && missing.Message.Contains($" {name}: it takes ", StringComparison.Ordinal),
                         $"{domain}.{command}: {type.Name} {(Optional(value) ? "runs without" : "refuses a command without")} {name}: {missing?.Message}");
+                    // A default, which a graph's command takes for a value not given, is one the class takes, on an entity
+                    // with every flag on (on one with a flag off, such as a light that cannot be dimmed, the host leaves it out).
+                    if (value["default"] is { } fallback)
+                    {
+                        Check(Optional(value), $"{domain}.{command}.{name}: only a value that may be left out has a default");
+                        var given = new JsonObject { [name] = fallback.DeepClone() }.ToJsonString();
+                        Check(await Refusal(probe, command, given) == null, $"{domain}.{command}.{name}: {type.Name} takes its default {fallback.ToJsonString()}");
+                        probe.CheckData(command, JsonDocument.Parse(given).RootElement.Clone());
+                    }
                 }
                 // The delegate that handles it takes the data in order, a value that may be left out as a nullable one.
                 if (data.Count > 0)
