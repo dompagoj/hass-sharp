@@ -189,7 +189,96 @@ public sealed class VisualRuntime
             void Visit(string node){foreach(var source in sources.GetValueOrDefault(node)??[])if(Pure(source)&&seen.Add(source)){Visit(source);order.Add(source);}}
             Visit(id);if(order.Count>0)pureInputs[id]=order.ToArray();
         }
+        FollowSettings();
     }
+    /// <summary>
+    /// By output, the Setting nodes whose value it carries, worked out once from the graph: a value worked out from a
+    /// secret is secret. A Setting's own output carries its setting; every output of a value node (one with no flow of its
+    /// own) carries what its wired inputs carry, except one of true or false; so do a For each's item, of its list, and a
+    /// loop's kept and exported values, of what the Loop result steps of its body give them, as these hand a value on.
+    /// A step's own outputs carry none (a service's response, a node method's results). Empty for a graph without a
+    /// Setting, as every automation's is. Whether a setting is secret is not in the graph (it must not change the source):
+    /// it is asked of the run's definition (<see cref="SecretSetting"/>).
+    /// </summary>
+    readonly Dictionary<(string Node,string Port),HashSet<string>> settingSources=[];
+    // Whether each Setting node's setting is secret, as the run's definition answered; asked once per run.
+    readonly Dictionary<string,bool> secretSettings=new(StringComparer.Ordinal);
+    void FollowSettings() {
+        foreach(var (id,node) in nodes)if(Text(node,"kind")=="setting")settingSources[(id,"value")]=new(StringComparer.Ordinal){id};
+        if(settingSources.Count==0)return;
+        var wired=data.GroupBy(p=>p.Key.Item1,StringComparer.Ordinal).ToDictionary(g=>g.Key,g=>g.Select(p=>(Port:p.Key.Item2,Source:p.Value)).ToArray(),StringComparer.Ordinal);
+        var steps=flow.GroupBy(p=>p.Key.Item1,StringComparer.Ordinal).ToDictionary(g=>g.Key,g=>g.Select(p=>p.Value).ToArray(),StringComparer.Ordinal);
+        // The Loop result steps a loop's body reaches; one of a loop nested in it too, which can only hide more.
+        var results=new Dictionary<string,string[]>(StringComparer.Ordinal);
+        foreach(var (id,node) in nodes) {
+            if(Text(node,"kind") is not ("repeat" or "while" or "until" or "foreach") || Next(id,"body") is not {} start)continue;
+            var seen=new HashSet<string>(StringComparer.Ordinal);var queue=new Queue<string>([start]);var found=new List<string>();
+            while(queue.TryDequeue(out var step)) {
+                if(!seen.Add(step))continue;
+                if(Text(nodes[step],"kind")=="loop_result")found.Add(step);
+                foreach(var next in steps.GetValueOrDefault(step)??[])queue.Enqueue(next);
+            }
+            results[id]=[.. found];
+        }
+        HashSet<string> Carried((string,string) output)=>settingSources.GetValueOrDefault(output)??[];
+        bool changed;
+        do {
+            changed=false;
+            void Add((string Node,string Port) output,IEnumerable<string> from) {
+                var settings=from.ToArray();
+                if(settings.Length==0 || TrueOrFalse(TraceOutputType(output.Node,output.Port)))return;
+                if(!settingSources.TryGetValue(output,out var carried))settingSources[output]=carried=new(StringComparer.Ordinal);
+                foreach(var setting in settings)changed|=carried.Add(setting);
+            }
+            foreach(var (id,node) in nodes) {
+                var kind=Text(node,"kind");var inputs=wired.GetValueOrDefault(id)??[];
+                if(kind=="setting")continue;
+                if(Pure(id)) {
+                    var from=inputs.SelectMany(w=>Carried(w.Source)).ToArray();
+                    if(from.Length>0)foreach(var (port,_) in OutputSpecs(id) as JsonObject??[])Add((id,port),from);
+                }
+                else if(results.TryGetValue(id,out var loopResults) || kind=="foreach") {
+                    if(kind=="foreach")Add((id,"item"),inputs.Where(w=>w.Port=="items").SelectMany(w=>Carried(w.Source)));
+                    foreach(var result in loopResults??[])
+                        foreach(var w in wired.GetValueOrDefault(result)??[])
+                            if(w.Port.StartsWith("carry:",StringComparison.Ordinal)||w.Port.StartsWith("export:",StringComparison.Ordinal))Add((id,w.Port),Carried(w.Source));
+                }
+            }
+        } while(changed);
+    }
+    /// <summary>Whether a declared type is true or false (<c>boolean</c>, or a type that is a <see cref="bool"/>).</summary>
+    bool TrueOrFalse(string? type)=>type=="boolean" || type!=null && types.TryGetValue(VisualTypes.RootId(catalog,type),out var clr) && (Nullable.GetUnderlyingType(clr)??clr)==typeof(bool);
+    /// <summary>
+    /// Whether the setting of the Setting node <paramref name="node"/> is secret, as the run's definition answers (once
+    /// per run); false without a definition, whose Setting fails before anything reads it. A definition that cannot
+    /// answer is taken to have said yes: nothing is shown that might be secret.
+    /// </summary>
+    bool SecretSetting(string node) {
+        lock(secretSettings)if(secretSettings.TryGetValue(node,out var known))return known;
+        bool secret;
+        try {secret=InvocationContext.Current?.Definition?.IsSecret(Text(nodes[node]["config"],"key"))??false;}
+        catch(Exception) {return true;}
+        lock(secretSettings)secretSettings[node]=secret;
+        return secret;
+    }
+    /// <summary>
+    /// Whether <paramref name="value"/>, on <paramref name="output"/>, is secret: it carries a secret setting
+    /// (<see cref="settingSources"/>). True or false worked out from a secret is not (one bit does not give a password
+    /// away, and a condition's trace stays readable); a Setting's own value is, whatever it is.
+    /// </summary>
+    bool Secret((string Node,string Port) output,object? value) {
+        if(settingSources.Count==0 || !settingSources.TryGetValue(output,out var settings))return false;
+        if(value is bool && Text(nodes[output.Node],"kind")!="setting")return false;
+        foreach(var setting in settings)if(SecretSetting(setting))return true;
+        return false;
+    }
+    /// <summary>Whether <paramref name="value"/>, read on the input <paramref name="port"/> of <paramref name="node"/>, came over a wire from a secret output (<see cref="Secret"/>).</summary>
+    bool SecretInput(string node,string port,object? value)=>settingSources.Count>0 && data.TryGetValue((node,port),out var source) && Secret(source,value);
+    /// <summary>What a message says in place of a value it would quote, when that value is secret.</summary>
+    const string HiddenValue="a value that is hidden because it comes from a secret setting";
+    /// <summary>The failure of a step that could not use a secret value: names the pin, never the value, and keeps no inner failure that might quote it.</summary>
+    InvalidOperationException Hidden(string node,string port)=>Hidden(Pin(node,port));
+    static InvalidOperationException Hidden(string where)=>new($"{where} cannot use the value it was given, which is hidden because it comes from a secret setting");
     /// <summary>
     /// Serializer options for one automation to hold (a static of its generated class, so in its own load context).
     /// System.Text.Json caches the metadata of every type it meets in the options it is given, and shares that cache
@@ -261,7 +350,13 @@ public sealed class VisualRuntime
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
     }
     // Values are traced as the node sees them: after conversion, with the wire they came from.
-    public T Input<T>(VisualScope scope,string node,string port) {var value=(T)Coerce(Read(scope,node,port),typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer,entities)!;if(scope.Trace!=null)Traced(scope,node,port,value is HassSharp.Entities.Entity handle?handle.EntityId:value);return value;}
+    public T Input<T>(VisualScope scope,string node,string port) {
+        var given=Read(scope,node,port);T value;
+        // A secret the pin cannot take is not quoted (a conversion's messages, and the failures under them, quote it).
+        try {value=(T)Coerce(given,typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer,entities)!;}
+        catch(Exception error) when(error is not OperationCanceledException && SecretInput(node,port,given)) {throw Hidden(node,port);}
+        if(scope.Trace!=null)Traced(scope,node,port,value is HassSharp.Entities.Entity handle?handle.EntityId:value);return value;
+    }
     /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
     public NodeContext Context(VisualScope scope,string node)=>new(this,scope,node,InvocationContext.Current?.RunId??"",trigger);
     /// <summary>What a node method's flow parameters call, for one run of the step <paramref name="node"/> in <paramref name="scope"/>.</summary>
@@ -281,7 +376,11 @@ public sealed class VisualRuntime
         return scope;
     }
     public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
-    void Traced(VisualScope scope,string node,string port,object? value)=>trace!.Input(scope.Trace!,node,port,value,data.TryGetValue((node,port),out var source)?source:null);
+    // A value from a secret output is written as ***, with the wire it came from (see Secret).
+    void Traced(VisualScope scope,string node,string port,object? value) {
+        if(!data.TryGetValue((node,port),out var source)){trace!.Input(scope.Trace!,node,port,value,null);return;}
+        trace!.Input(scope.Trace!,node,port,value,source,Secret(source,value));
+    }
     object? Read(VisualScope scope,string node,string port) {
         if(data.TryGetValue((node,port),out var source)) {
             object? value;
@@ -357,9 +456,14 @@ public sealed class VisualRuntime
     public void Output(VisualScope scope,string node,object? value,string port="value") {
         var declared=Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(nodes[node]["config"],declared[1..]);
-        if(declared!="")value=ConvertTo(value,declared,node+"."+port,false);
+        if(declared!="") {
+            try {value=ConvertTo(value,declared,node+"."+port,false);}
+            catch(Exception error) when(error is not OperationCanceledException && Secret((node,port),value)) {
+                throw new InvalidOperationException($"{Title(node)} · {VisualGraphValidator.Words.PortLabel(OutputSpecs(node)?[port],port)} cannot give the value it worked out, which is hidden because it comes from a secret setting");
+            }
+        }
         scope.SetOutput((node,port),value);
-        if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value);
+        if(scope.Trace!=null)trace!.Output(scope.Trace,node,port,value,Secret((node,port),value));
     }
     /// <param name="pin">The step and pin, as people see them, for a number that does not fit the pin's type.</param>
     /// <param name="json">The automation's serializer options (<see cref="JsonOptions"/>), for a value of its own types.</param>
@@ -455,10 +559,10 @@ public sealed class VisualRuntime
             try {
                 if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
                 // An entity node acts on the definition of the run in progress, which only an entity definition's run has.
-                var definition=EntityKinds.Contains(kind)?Definition():null;Dictionary<string,object?>? state=null;
+                var definition=EntityKinds.Contains(kind)?Definition():null;Dictionary<string,object?>? state=null;HashSet<string>? hidden=null;
                 if(kind=="entity_state") {
                     // A State whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
-                    try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id);}
+                    try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id,out hidden);}
                     catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {MarkUnavailable(definition!,Text(cfg,"entity"),id);throw;}
                 }
                 else {
@@ -466,25 +570,26 @@ public sealed class VisualRuntime
                     ev=Begin();
                 }
                 object? Get(string p)=>Input(scope,id,p);
-                double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"{Pin(id,p)} must be {(integer?"a whole number":"a number")} from {VisualGraphValidator.Words.Number(min)} to {VisualGraphValidator.Words.Number(max)}, not {Convert.ToString(v,CultureInfo.InvariantCulture)}");return v;}
+                double Number(string p,double min,double max,bool integer=false) {var v=Input<double>(scope,id,p);if(!double.IsFinite(v)||v<min||v>max||integer&&Math.Truncate(v)!=v)throw new InvalidOperationException($"{Pin(id,p)} must be {(integer?"a whole number":"a number")} from {VisualGraphValidator.Words.Number(min)} to {VisualGraphValidator.Words.Number(max)}, not {(SecretInput(id,p,v)?HiddenValue:Convert.ToString(v,CultureInfo.InvariantCulture))}");return v;}
                 switch(kind) {
                     case "trigger":Trigger(id,scope,n);break;
                     case "if":port=Input<bool>(scope,id,"value")?"true":"false";next=Next(id,port);break;
-                    case "condition":port=ReadEntity(Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false";next=Next(id,port);break;
-                    case "read_entity":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
+                    case "condition":port=EntityOf(id,"entity",Input<string>(scope,id,"entity")).State==Text(cfg,"state")?"true":"false";next=Next(id,port);break;
+                    case "read_entity":Output(scope,id,EntityOf(id,"entity",Input<string>(scope,id,"entity")));break;
                     case "delay":await Waiting(scope,Task.Delay(TimeSpan.FromSeconds(Number("seconds",0,4294967.294)),scope.CancellationToken));break;
-                    case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Compare(EntityField(ReadEntity(entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
+                    case "wait_until":var entity=Input<string>(scope,id,"entity");var expected=Get("right");await Waiting(scope,VisualValues.WaitUntil(()=>Compare(EntityField(EntityOf(id,"entity",entity,true),cfg,id),expected,Text(cfg,"operator","eq")),Number("timeout",.001,86400),Number("interval",.001,3600),scope.CancellationToken));break;
                     case "service":await Service(id,scope,cfg);break;
-                    case "log":PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},LogText(Get("value")));break;
+                    // A secret is not written to the log: the line is *** (true or false worked out from one is written).
+                    case "log":var said=Get("value");PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},SecretInput(id,"value",said)?TraceJson.Redacted:LogText(said));break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
                     case "parallel":await Parallel(id,scope,depth);break;
                     case "repeat":case "while":case "until":case "foreach":await Loop(id,scope,depth);break;
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     // A run already cancelled (superseded or stopped) does not act on its definition.
-                    case "entity_state":ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),state!);definition.SetAvailable(Text(cfg,"entity"),true);break;
+                    case "entity_state":ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),state!,hidden!);definition.SetAvailable(Text(cfg,"entity"),true);break;
                     // When commanded and When started only start their flows.
                     case "entity_command":case "entity_setup":break;
-                    case "set_entity_state":var values=EntityValues(scope,id);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values);break;
+                    case "set_entity_state":var values=EntityValues(scope,id,out var secret);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values,secret);break;
                     case "set_entity_available":var available=Input<bool>(scope,id,"available");ThrowIfCancelled(scope);definition!.SetAvailable(Text(cfg,"entity"),available);break;
                     case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     default:await Waiting(scope,custom(id,scope,this));break;
@@ -538,33 +643,59 @@ public sealed class VisualRuntime
                 // Both sides in the type the generator chose by widening only (C#'s numeric promotion), so neither is rounded.
                 var clr=ComparisonTypes.TryGetValue(common,out var widened)?widened:types[VisualTypes.RootId(catalog,common)];
                 var givenLeft=Read(scope,id,"left");var givenRight=Read(scope,id,"right");
-                var a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer,entities);
-                var b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer,entities);
+                object? a,b;
+                try {a=Coerce(givenLeft,clr,id+".left",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["left"],"left"),serializer,entities);}
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"left",givenLeft)) {throw Hidden(id,"left");}
+                try {b=Coerce(givenRight,clr,id+".right",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["right"],"right"),serializer,entities);}
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"right",givenRight)) {throw Hidden(id,"right");}
                 // The trace shows the values as they came, not as they were widened.
                 if(scope.Trace!=null){Traced(scope,id,"left",givenLeft);Traced(scope,id,"right",givenRight);}
                 // As in C#, an ordering with a missing number (a nullable side that is null) is false.
                 var op=Text(cfg,"operator","eq");Output(scope,id,op is not ("eq" or "ne")&&(a==null||b==null)?false:Compare(a,b,op));break;
-            case "constant":case "convert":if(compiledConversions.Contains(id))await custom(id,scope,this);else Output(scope,id,ConvertTo(Get("value"),Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value")));break;
-            case "entity_field":Output(scope,id,EntityField(Input<EntityStateSnapshot>(scope,id,"entity"),cfg,id));break;
-            case "object":case "array":Output(scope,id,ConvertTo(Get("value"),kind,id,false));break;
+            case "constant":case "convert":
+                if(compiledConversions.Contains(id)){await custom(id,scope,this);break;}
+                var convertible=Get("value");object? converted;
+                try {converted=ConvertTo(convertible,Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value"));}
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"value",convertible)) {throw Hidden(id,"value");}
+                Output(scope,id,converted);break;
+            case "entity_field":
+                var snapshot=Input<EntityStateSnapshot>(scope,id,"entity");object? field;
+                try {field=EntityField(snapshot,cfg,id);}
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"entity",snapshot)) {throw Hidden(id,"entity");}
+                Output(scope,id,field);break;
+            case "object":case "array":
+                var whole=Get("value");object? shaped;
+                try {shaped=ConvertTo(whole,kind,id,false);}
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"value",whole)) {throw Hidden(id,"value");}
+                Output(scope,id,shaped);break;
             case "object_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["fields"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get("field:"+p.Key)),serializer));break;
             case "array_create":Output(scope,id,JsonSerializer.SerializeToNode((cfg["items"] as JsonArray??[]).Select((_,i)=>Get("item:"+i)).ToArray(),serializer));break;
             case "last_error":Output(scope,id,scope.LastError?.Message??"","message");Output(scope,id,scope.LastErrorStep??"","step");break;
-            case "get_field":var json=Input<JsonElement>(scope,id,"value");var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}Output(scope,id,ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value")));break;
+            case "get_field":
+                var json=Input<JsonElement>(scope,id,"value");var read=json;object? got;
+                try {
+                    var pointer=Text(cfg,"pointer");foreach(var segment in pointer.Split('/').Skip(1)){var part=segment.Replace("~1","/").Replace("~0","~");json=json.ValueKind==JsonValueKind.Array?json[int.Parse(part,CultureInfo.InvariantCulture)]:json.GetProperty(part);}
+                    got=ConvertTo(json,Text(cfg,"type"),id,false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(OutputSpecs(id)?["value"],"value"));
+                }
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"value",read)) {throw Hidden(id,"value");}
+                Output(scope,id,got);break;
             // A failure is worded by Prepare, which names the node and the step reading it: the message says only what went wrong.
             // Wires carry entity ids: a member that is a handle goes out as its id.
             case "select_property":var property=Text(cfg,"property");var selected=SelectProperty(Get("value")??throw new InvalidOperationException($"{property} cannot be read because the value is empty"),property,id);Output(scope,id,selected is HassSharp.Entities.Entity handle?handle.EntityId:selected);break;
             // The definition's setting, of the type the graph's catalog resolved for it (resolvedOutputs).
-            // A secret setting's value reaches the nodes that use it, but its trace shows *** (those nodes' inputs still show it).
+            // A secret setting's value reaches the nodes that use it, but its trace shows *** (and so do the inputs it
+            // reaches, and the values worked out from it: see Secret).
             case "setting":
                 var settings=Definition();var key=Text(cfg,"key");var setting=settings.Setting(key);
-                if(Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType)setting=ConvertTo(setting,settingType,id+".value",false);
+                if(Text(catalog["resolvedOutputs"]?[id],"value") is {Length:>0} settingType)
+                    try {setting=ConvertTo(setting,settingType,id+".value",false);}
+                    catch(Exception error) when(error is not OperationCanceledException && SecretSetting(id)) {throw new InvalidOperationException($"{Title(id)} cannot give its value as {VisualGraphValidator.Words.TypeLabel(catalog,settingType)}; the value is hidden because it comes from a secret setting");}
                 scope.SetOutput((id,"value"),setting);
                 if(scope.Trace!=null)trace!.Output(scope.Trace,id,"value",setting,settings.IsSecret(key));
                 break;
             // Exactly that state, as Home Assistant stores it: an entity it does not have has none.
             case "entity_is":var checkedEntity=Input<string>(scope,id,"entity");var wanted=Input<string>(scope,id,"state");Output(scope,id,HomeAssistantState(checkedEntity)?.State is {} has&&string.Equals(has,wanted,StringComparison.Ordinal));break;
-            case "entity_current":Output(scope,id,ReadEntity(Input<string>(scope,id,"entity")));break;
+            case "entity_current":Output(scope,id,EntityOf(id,"entity",Input<string>(scope,id,"entity")));break;
             // A value node from a library (or any other kind) is compiled.
             default:await custom(id,scope,this);break;
         }
@@ -597,18 +728,28 @@ public sealed class VisualRuntime
     }
     internal static EntityStateSnapshot ReadEntity(string entity,bool fresh=false)=>
         EntityStateSnapshot.From(HomeAssistantState(entity,fresh)??throw new InvalidOperationException($"Entity '{entity}' is unavailable."));
+    /// <summary><see cref="ReadEntity"/> of the entity a step read on <paramref name="port"/>; an unavailable entity whose id is secret is not named.</summary>
+    EntityStateSnapshot EntityOf(string node,string port,string entity,bool fresh=false) {
+        try {return ReadEntity(entity,fresh);}
+        catch(InvalidOperationException) when(SecretInput(node,port,entity)) {throw new InvalidOperationException($"{Pin(node,port)} names an entity that is unavailable; its id is hidden because it comes from a secret setting");}
+    }
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
     static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting"],StringComparer.Ordinal);
     /// <summary>
     /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
-    /// entity's domain), as <see cref="EntityStateValue"/> gives it.
+    /// entity's domain), as <see cref="EntityStateValue"/> gives it; <paramref name="hidden"/> has the pins whose values
+    /// are secret (<see cref="SecretInput"/>), which the definition does not quote.
     /// </summary>
-    Dictionary<string,object?> EntityValues(VisualScope scope,string id) {
-        var values=new Dictionary<string,object?>(StringComparer.Ordinal);
-        foreach(var (port,spec) in InputSpecs(id) as JsonObject??[])
-            values[port]=EntityStateValue(Input(scope,id,port),(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port));
+    Dictionary<string,object?> EntityValues(VisualScope scope,string id,out HashSet<string> hidden) {
+        var values=new Dictionary<string,object?>(StringComparer.Ordinal);hidden=new(StringComparer.Ordinal);
+        foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
+            var given=Input(scope,id,port);
+            try {values[port]=EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port));}
+            catch(InvalidOperationException) when(SecretInput(id,port,given)) {throw Hidden(id,port);}
+            if(SecretInput(id,port,values[port]))hidden.Add(port);
+        }
         return values;
     }
     /// <summary>
@@ -682,23 +823,28 @@ public sealed class VisualRuntime
     /// with returnResponse. A target key that a field already set is an error, as the validator reports, never a silent overwrite.
     /// </summary>
     async Task Service(string id,VisualScope scope,JsonNode cfg) {
-        var payload=new JsonObject();
-        foreach(var (name,operand) in cfg["fields"] as JsonObject??[])if(Supplied(id,"field:"+name,operand))payload[name]=Json(Input(scope,id,"field:"+name));
-        var target=Supplied(id,"target",cfg["target"])?Json(Input(scope,id,"target"))??throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object."):null;
+        // The fields (and target keys) a secret fills, which the debug log of the call writes as ***.
+        var payload=new JsonObject();var hidden=new List<string>();
+        foreach(var (name,operand) in cfg["fields"] as JsonObject??[])
+            if(Supplied(id,"field:"+name,operand)){var given=Input(scope,id,"field:"+name);payload[name]=Json(given);if(SecretInput(id,"field:"+name,given))hidden.Add(name);}
+        object? aimed=null;
+        var target=Supplied(id,"target",cfg["target"])?Json(aimed=Input(scope,id,"target"))??throw new InvalidOperationException($"Input {id}.target requires an entity id or a target object."):null;
+        if(target!=null && SecretInput(id,"target",aimed))hidden.AddRange(target is JsonObject keys?keys.Select(p=>p.Key):["entity_id"]);
         var returnResponse=cfg["returnResponse"] is JsonValue flag && flag.TryGetValue<bool>(out var on) && on;
-        var response=await Call(scope,Text(cfg,"service"),payload,target,returnResponse,$"Input {id}.target");
+        var response=await Call(scope,Text(cfg,"service"),payload,target,returnResponse,$"Input {id}.target",hidden);
         if(returnResponse)Output(scope,id,ConvertTo(response,"object",id+".response",false),"response");
     }
     /// <summary><see cref="NodeContext.CallService"/>: the call the Call service step makes, from a node method.</summary>
     internal Task<JsonElement?> CallService(VisualScope scope,string node,string service,JsonNode? target,JsonObject? data,bool returnResponse)=>
         Call(scope,service,data==null?new JsonObject():(JsonObject)data.DeepClone(),target?.DeepClone(),returnResponse,"The target");
     /// <summary>
-    /// The target into the payload (<see cref="HassServices.PrepareCall"/>), then the call; the response only with returnResponse.
+    /// The target into the payload (<see cref="HassServices.PrepareCall"/>), then the call; the response only with
+    /// returnResponse. The <paramref name="hidden"/> keys of the payload are secret.
     /// </summary>
-    async Task<JsonElement?> Call(VisualScope scope,string service,JsonObject payload,JsonNode? target,bool returnResponse,string targetLabel) {
+    async Task<JsonElement?> Call(VisualScope scope,string service,JsonObject payload,JsonNode? target,bool returnResponse,string targetLabel,IReadOnlyCollection<string>? hidden=null) {
         var (domain,name)=HassServices.PrepareCall(service,payload,target,targetLabel);
-        if(returnResponse)return await Waiting(scope,HassServices.CallServiceAsync<JsonElement>(domain,name,payload).WaitAsync(scope.CancellationToken));
-        await Waiting(scope,HassServices.CallServiceAsync(domain,name,payload).WaitAsync(scope.CancellationToken));
+        if(returnResponse)return await Waiting(scope,HassServices.CallServiceAsync<JsonElement>(domain,name,payload,hidden).WaitAsync(scope.CancellationToken));
+        await Waiting(scope,HassServices.CallServiceAsync(domain,name,payload,hidden).WaitAsync(scope.CancellationToken));
         return null;
     }
     async Task Parallel(string id,VisualScope parent,int depth) {
@@ -727,12 +873,17 @@ public sealed class VisualRuntime
             var port=(group=="carry"?"carry:":"export:")+Text(d,"name");var type=Text(d,"type");declarations[port]=type;state[port]=ConvertTo(Operand(parent,d["initial"],id+"."+port),type,id+"."+port,false,Declared(port));
         }
         object?[]? items=null;var count=0;
-        if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"{Pin(id,"count")} must be a whole number from 0 to {max} (Maximum iterations), not {Convert.ToString(n,CultureInfo.InvariantCulture)}");count=(int)n;}
+        if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"{Pin(id,"count")} must be a whole number from 0 to {max} (Maximum iterations), not {(SecretInput(id,"count",n)?HiddenValue:Convert.ToString(n,CultureInfo.InvariantCulture))}");count=(int)n;}
         if(kind=="foreach") {
             var source=Input(parent,id,"items");var copy=new VisualSnapshot();
             items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(copy.Copy).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"{Pin(id,"items")} needs a list")};
             if(items.Length>max)throw new InvalidOperationException($"{Pin(id,"items")} has {items.Length} items, more than Maximum iterations ({max})");
-            for(var i=0;i<items.Length;i++){var item=i+1;items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture));}count=items.Length;
+            for(var i=0;i<items.Length;i++){
+                var item=i+1;
+                try {items[i]=ConvertTo(items[i],Text(cfg,"itemType"),id+".item["+i+"]",false,()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["items"],"items")+", item "+item.ToString(CultureInfo.InvariantCulture));}
+                catch(Exception error) when(error is not OperationCanceledException && SecretInput(id,"items",source)) {throw Hidden(id,"items");}
+            }
+            count=items.Length;
         }
         void Carried(VisualScope scope) {var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);}
         string Part(int iteration,string part)=>id+"#"+iteration.ToString(CultureInfo.InvariantCulture)+":"+part;
@@ -745,7 +896,15 @@ public sealed class VisualRuntime
             var current=iteration;
             var body=await RunScope(id,"body",parent,depth,Part(iteration,"body"),scope=>{Carried(scope);if(items!=null){scope.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[current]);scope.Outputs[(id,"index")]=(double)current;}});
             if(declarations.Count>0&&body.Updates==null)throw new InvalidOperationException($"Loop {id}: body did not return loop_result for declared carry/exports.");
-            if(body.Updates!=null){var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();foreach(var pair in body.Updates)updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key)));foreach(var pair in updates)state[pair.Key]=pair.Value;}
+            if(body.Updates!=null) {
+                var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();
+                foreach(var pair in body.Updates) {
+                    // A kept or exported value worked out from a secret is secret (see FollowSettings), and not quoted.
+                    try {updates[pair.Key]=copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key)));}
+                    catch(Exception error) when(error is not OperationCanceledException && Secret((id,pair.Key),pair.Value)) {throw Hidden(Declared(pair.Key)());}
+                }
+                foreach(var pair in updates)state[pair.Key]=pair.Value;
+            }
             if(kind=="until"&&await Condition(iteration))break;
         }
         foreach(var pair in state.Where(p=>p.Key.StartsWith("export:")))Output(parent,id,pair.Value,pair.Key);

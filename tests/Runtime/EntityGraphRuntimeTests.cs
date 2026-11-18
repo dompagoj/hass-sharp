@@ -24,7 +24,7 @@ static class EntityGraphRuntimeTests
         public readonly Dictionary<string, object?> Settings = new(StringComparer.Ordinal);
         public readonly HashSet<string> Secrets = new(StringComparer.Ordinal);
         public bool FailUnavailable;
-        public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values) =>
+        public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values, IReadOnlySet<string> hidden) =>
             Calls.Add($"state {entityKey} " + string.Join(" ", values.Select(p => p.Key + "=" + Typed(p.Value))));
         public void SetAvailable(string entityKey, bool available)
         {
@@ -147,6 +147,7 @@ static class EntityGraphRuntimeTests
                 (nameof(StateCancelledBeforePublishingMakesNoCall), StateCancelledBeforePublishingMakesNoCall),
                 (nameof(AFailingUnavailableKeepsTheStatesOwnFailure), AFailingUnavailableKeepsTheStatesOwnFailure),
                 (nameof(SecretSettingIsRedactedInTheTrace), SecretSettingIsRedactedInTheTrace),
+                (nameof(ASecretIsFollowedThroughALoopAndIntoACondition), ASecretIsFollowedThroughALoopAndIntoACondition),
                 (nameof(EntityIsIsFalseForAMissingEntity), EntityIsIsFalseForAMissingEntity),
                 (nameof(EntityIsReadsTheTriggeringEntitysFreshState), EntityIsReadsTheTriggeringEntitysFreshState),
                 (nameof(SetStateAndSetAvailableStepsCallTheDefinition), SetStateAndSetAvailableStepsCallTheDefinition),
@@ -288,6 +289,43 @@ static class EntityGraphRuntimeTests
         Check(JsonNode.DeepEquals(redacted, JsonNode.Parse("""{"type":"string","v":"***","redacted":true}""")), "the secret setting's value is redacted in the trace: " + redacted?.ToJsonString());
         var shown = plain.Event("k2")["outputs"]?["value"];
         Check(JsonNode.DeepEquals(shown, JsonNode.Parse("""{"type":"string","v":"kitchen"}""")), "a setting that is not secret is traced as it is: " + shown?.ToJsonString());
+    }
+
+    /// <summary>
+    /// A secret is followed through what hands it on: a list made of it, a For each over that list and the item it gives
+    /// the body, whose Log writes <c>***</c>. A secret true or false read by an If is hidden (it is the setting's own
+    /// value); Has state of an entity whose id is secret hides the id and shows its true or false.
+    /// </summary>
+    static async Task ASecretIsFollowedThroughALoopAndIntoACondition()
+    {
+        var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
+        const string Secret = "fake-secret-hunter2";
+        var graph = Entity(
+            [N("on", "entity_command", new { entity = "relay", command = "turn_on" }), Setting("tok", "token"), Setting("flag", "armed"), Setting("door", "door"),
+             N("list", "array_create", new JsonObject { ["items"] = new JsonArray(new JsonObject { ["kind"] = "unset" }) }),
+             N("loop", "foreach", new JsonObject { ["items"] = new JsonObject { ["kind"] = "unset" }, ["itemType"] = "string" }), N("say", "log", new { value = Unset }),
+             N("i", "if", new { value = Unset }), N("is", "entity_is", new JsonObject { ["entity"] = new JsonObject { ["kind"] = "unset" }, ["state"] = Lit("string", "on") }),
+             N("as_id", "convert", new { type = "entity_id", value = Unset }), N("yes", "log", new { value = Unset })],
+            [E("on", "loop"), E("loop", "say", "body"), E("loop", "i"), E("i", "yes", "true"),
+             D("tok", "list", "item:0"), D("list", "loop", "items"), D("loop", "say", "value", "item"), D("flag", "i", "value"), D("door", "as_id", "value"), D("as_id", "is", "entity"), D("is", "yes", "value")],
+            [("relay", "switch")],
+            ("token", "string"), ("armed", "boolean"), ("door", "string"));
+        using var compiled = await Compiled.Of(graph, "a loop over a secret and a condition of one");
+        States["binary_sensor.secret_door"] = "on";
+        var definition = new FakeDefinition { Settings = { ["token"] = Secret, ["armed"] = true, ["door"] = "binary_sensor.secret_door" }, Secrets = { "token", "armed", "door" } };
+        var sink = new TraceSink();
+        await compiled.Run("on", definition, sink: sink);
+        var text = sink.Final.ToJsonString();
+        Check(!text.Contains("hunter2", StringComparison.Ordinal) && !text.Contains("secret_door", StringComparison.Ordinal), $"the trace quotes a secret ({text.Length} characters)");
+        Check(messages.SequenceEqual(["***", "True"]), "the Log of the item writes ***, the Log of a true or false writes it: " + string.Join(" | ", messages.Select(m => m.Length > 8 ? $"text({m.Length})" : m)));
+        static bool Hidden(JsonNode? port, string? node = null) => port?["v"]?.ToJsonString() == "\"***\"" && port["redacted"]?.GetValue<bool>() == true && (node == null || port["src"]?["node"]?.GetValue<string>() == node);
+        static string Keys(JsonNode? port) => port is JsonObject o ? string.Join(",", o.Select(p => p.Key)) : "none";
+        Check(Hidden(sink.Event("list")["inputs"]?["item:0"], "tok") && Hidden(sink.Event("list")["outputs"]?["value"]), "the list made of the secret: " + Keys(sink.Event("list")["outputs"]?["value"]));
+        Check(Hidden(sink.Event("loop")["inputs"]?["items"], "list"), "the loop's list: " + Keys(sink.Event("loop")["inputs"]?["items"]));
+        Check(Hidden(sink.Event("say")["inputs"]?["value"], "loop"), "the item in the body: " + Keys(sink.Event("say")["inputs"]?["value"]));
+        Check(Hidden(sink.Event("i")["inputs"]?["value"], "flag"), "the secret true or false the If reads: " + Keys(sink.Event("i")["inputs"]?["value"]));
+        Check(Hidden(sink.Event("is")["inputs"]?["entity"], "as_id") && sink.Event("is")["outputs"]?["value"]?["v"]?.GetValue<bool>() == true && sink.Event("is")["outputs"]!["value"]!["redacted"] == null,
+            "Has state of a secret entity id: " + Keys(sink.Event("is")["inputs"]?["entity"]) + " / " + Keys(sink.Event("is")["outputs"]?["value"]));
     }
 
     /// <summary>Has state is false for an entity Home Assistant does not have, and the State is worked out from the other source.</summary>

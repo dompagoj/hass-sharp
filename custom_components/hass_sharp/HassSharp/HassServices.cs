@@ -50,12 +50,25 @@ static class HassServices
         return (domain, name);
     }
 
+    /// <summary>
+    /// The data as the debug log writes it: redacted as traces are (<see cref="TraceJson.Redact"/>), and each
+    /// <paramref name="hidden"/> key's value written as <c>***</c> whatever its name.
+    /// </summary>
+    static string Logged(JsonObject data, IReadOnlyCollection<string>? hidden)
+    {
+        var shown = TraceJson.Redact(data)!;
+        if (hidden is { Count: > 0 } && shown is JsonObject fields)
+            foreach (var key in hidden) if (fields.ContainsKey(key)) fields[key] = TraceJson.Redacted;
+        return shown.ToJsonString(JsonOptions);
+    }
+
     /// <summary>Completes when Home Assistant has run the service; faults with its error.</summary>
-    internal static Task CallServiceAsync(string domain, string service, JsonObject data)
+    /// <param name="hidden">Keys of <paramref name="data"/> whose values are secret (a secret setting's, or worked out from one).</param>
+    internal static Task CallServiceAsync(string domain, string service, JsonObject data, IReadOnlyCollection<string>? hidden = null)
     {
         var json = JsonSerializer.Serialize(data, JsonOptions);
         // Redacted as traces are: the debug log is no place for a lock's code or a token.
-        if (Logger.Level <= PyLogLevel.Debug) Logger.Debug($"Calling service (async): {domain}.{service} with data: {TraceJson.Redact(data)!.ToJsonString(JsonOptions)}");
+        if (Logger.Level <= PyLogLevel.Debug) Logger.Debug($"Calling service (async): {domain}.{service} with data: {Logged(data, hidden)}");
 
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         PyInterop.CallService(
@@ -70,11 +83,12 @@ static class HassServices
     }
 
     /// <summary>Asks for the service's response; completes with it once Home Assistant has run the service.</summary>
-    internal static Task<TResult?> CallServiceAsync<TResult>(string domain, string service, JsonObject data)
+    /// <param name="hidden">Keys of <paramref name="data"/> whose values are secret (a secret setting's, or worked out from one).</param>
+    internal static Task<TResult?> CallServiceAsync<TResult>(string domain, string service, JsonObject data, IReadOnlyCollection<string>? hidden = null)
     {
         var json = JsonSerializer.Serialize(data, JsonOptions);
         // Redacted as traces are: the debug log is no place for a lock's code or a token.
-        if (Logger.Level <= PyLogLevel.Debug) Logger.Debug($"Calling service for response (async): {domain}.{service} with data: {TraceJson.Redact(data)!.ToJsonString(JsonOptions)}");
+        if (Logger.Level <= PyLogLevel.Debug) Logger.Debug($"Calling service for response (async): {domain}.{service} with data: {Logged(data, hidden)}");
 
         var tcs = new TaskCompletionSource<TResult?>(TaskCreationOptions.RunContinuationsAsynchronously);
         PyInterop.CallServiceWithResponse(

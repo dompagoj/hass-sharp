@@ -179,15 +179,18 @@ sealed class VisualTrace
         catch (Exception error) { Fail(error); return null; }
     }
 
-    /// <summary>The node read <paramref name="port"/>; <paramref name="source"/> is the wire it came from.</summary>
-    public void Input(Event ev, string node, string port, object? value, (string Node, string Port)? source)
+    /// <summary>
+    /// The node read <paramref name="port"/>; <paramref name="source"/> is the wire it came from. With
+    /// <paramref name="redact"/> the value is written as <c>***</c>, the wire still shown.
+    /// </summary>
+    public void Input(Event ev, string node, string port, object? value, (string Node, string Port)? source, bool redact = false)
     {
         if (failed || !ev.Listed || ev.Stripped || ev.Node != node) return;
         try
         {
             Fault?.Invoke("input:" + node);
             var type = types.GetOrAdd((node, port, true), key => inputType(key.Item1, key.Item2)) ?? TraceJson.Kind(value);
-            var (full, bare) = TraceJson.Entry(port, type, value, source);
+            var (full, bare) = TraceJson.Entry(port, type, value, source, redact);
             lock (gate) Add(ev, ev.Inputs, port, full, bare);
         }
         catch (Exception error) { Fail(error); }

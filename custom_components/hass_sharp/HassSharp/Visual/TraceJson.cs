@@ -22,7 +22,9 @@ namespace HassSharp;
 /// library, and the public fields and compiler-generated auto-properties of objects (read from their fields, so
 /// no getter runs). A user-defined collection, a lazy sequence or anything else is written as its type name,
 /// marked <c>trunc</c>. Properties, dictionary keys and ports with a secret-looking name are written as
-/// <c>"***"</c>, and <c>token=</c> inside a string loses its value. The redaction is by name only.
+/// <c>"***"</c>, and <c>token=</c> inside a string loses its value. The redaction here is by name only; a port the
+/// runtime knows holds a secret by what it holds (a secret setting, or a value worked out from one) is written as
+/// <c>"***"</c> whatever its name (<see cref="Entry"/>'s <c>redact</c>).
 /// </remarks>
 static class TraceJson
 {
@@ -160,7 +162,8 @@ static class TraceJson
     /// One port: <c>{type, v, trunc?, redacted?, src?}</c>, and the same without <c>v</c> for when its value does not
     /// fit. A port with a secret name records <c>"***"</c>.
     /// </summary>
-    /// <param name="redact">Write the value as <c>***</c> whatever the port is named: it is secret by what it holds (a secret setting).</param>
+    /// <param name="redact">Write the value as <c>***</c> whatever the port is named: it is secret by what it holds (a secret
+    /// setting, or a value worked out from one).</param>
     internal static (byte[] Full, byte[] Bare) Entry(string port, string type, object? value, (string Node, string Port)? source, bool redact = false)
     {
         var secret = redact || Secret(port);

@@ -176,7 +176,7 @@ internal sealed partial class DefinitionHost
     /// starts is the entity's first. Ignored once the definition stops or is replaced. Thread-safe; never calls into a run.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The definition has no such entity, its domain no such state, or the entity does not take a value (<see cref="GraphState.Refuses"/>).</exception>
-    public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values)
+    public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values, IReadOnlySet<string> hidden)
     {
         SharpEntity entity;
         lock (gate)
@@ -184,10 +184,13 @@ internal sealed partial class DefinitionHost
             if (Ignoring) return;
             entity = GraphEntity(entityKey);
             var known = SharpDomains.Graph.TryGetValue(entity.Domain, out var domain) ? domain.State : new Dictionary<string, GraphState>();
-            // Every value is checked before any is kept: a refused call changes nothing.
+            // Every value is checked before any is kept: a refused call changes nothing. A secret value is not quoted.
             foreach (var (key, value) in values)
                 if (!known.TryGetValue(key, out var state)) throw new InvalidOperationException($"{definition.Name}: a {entity.Domain} has no state {key}, so entity {entityKey} cannot take it");
-                else if (state.Refuses(entity, value) is { } refused) throw new InvalidOperationException($"The {key} {Shown(value)} of {Named(entityKey)} {refused}");
+                else if (state.Refuses(entity, value) is { } refused)
+                    throw new InvalidOperationException(hidden.Contains(key)
+                        ? $"The {key} of {Named(entityKey)} {refused}; the value is hidden because it comes from a secret setting"
+                        : $"The {key} {Shown(value)} of {Named(entityKey)} {refused}");
             foreach (var (key, value) in values) known[key].Keep(entity, value);
             awaiting.Remove(entityKey);
         }

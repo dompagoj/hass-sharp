@@ -66,7 +66,12 @@ static class EntityGraphTests
             (nameof(AnUnavailableEntityStaysUnavailableThroughANewRevision), AnUnavailableEntityStaysUnavailableThroughANewRevision),
             (nameof(ACommandFlowThatEndsAtAStopStepSucceeds), ACommandFlowThatEndsAtAStopStepSucceeds),
             (nameof(FailingSetupAndTriggerFlowsAreLoggedByName), FailingSetupAndTriggerFlowsAreLoggedByName),
-            (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore) })
+            (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore),
+            (nameof(ASecretStaysHiddenInTheStepsThatReadIt), ASecretStaysHiddenInTheStepsThatReadIt),
+            (nameof(TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed), TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed),
+            (nameof(OnlyWhatASecretReachesIsHidden), OnlyWhatASecretReachesIsHidden),
+            (nameof(AStepWithASecretInputShowsItsOutputs), AStepWithASecretInputShowsItsOutputs),
+            (nameof(ASecretThatFailsIsNotQuoted), ASecretThatFailsIsNotQuoted) })
         {
             try
             {
@@ -1521,5 +1526,187 @@ static class EntityGraphTests
         var errors = rig.Home.Logs(PyLogLevel.Error);
         Check(errors.Length == 1 && System.Text.RegularExpressions.Regex.IsMatch(errors[0], @"^Invocation [0-9a-f]{32} \(VisualAutomation::Run_[0-9]+\) failed: System\.InvalidOperationException: Entity 'sensor\.gone' is unavailable\.")
             && errors[0].Contains("   at ", StringComparison.Ordinal), "the automation's failure line: " + Lines(errors));
+    }
+
+    // ---- A secret setting's value stays out of the steps that read it ----
+
+    /// <summary>An obviously fake secret; a check never prints it, only whether and where it was found.</summary>
+    const string FakeSecret = "fake-secret-hunter2";
+    /// <summary>Text helpers as a node library declares them: value nodes, and one step with a flow of its own.</summary>
+    const string TextLibrary = """
+        public static class Texts
+        {
+            [Node("Text length", Pure = true)] public static double Length(string text) => text.Length;
+            [Node("Bearer", Pure = true)] public static string Bearer(string token) => "Bearer " + token;
+            [Node("Join", Pure = true)] public static string Join(string first, string second) => first + "/" + second;
+            [Node("Measure")] public static double Measure(string text) => text.Length;
+        }
+        """;
+    static JsonObject Plain(string key, string value) => new() { ["key"] = key, ["type"] = "string", ["value"] = value };
+    static JsonObject UnsetValue() => new() { ["kind"] = "unset" };
+
+    /// <summary>A rig with the text library saved, and the kind of each of its nodes by label.</summary>
+    static async Task<(Rig Rig, Dictionary<string, string> Kinds)> TextRig(string name)
+    {
+        var rig = await Rig.Start(name);
+        Check((await rig.Library("texts", 0, TextLibrary))["ok"]!.GetValue<bool>(), "the text library saves");
+        var kinds = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var label in new[] { "Text length", "Bearer", "Join", "Measure" }) kinds[label] = await rig.LibraryNode(label);
+        return (rig, kinds);
+    }
+
+    /// <summary>Saves the definition, runs the entity's command and answers the recorded run's trace as the panel and MCP clients get it.</summary>
+    static async Task<JsonNode> Commanded(Rig rig, string id, JsonObject definition, string entity, string command)
+    {
+        var automationId = (await rig.Save(id, definition))["document"]!["automationId"]!.GetValue<string>();
+        await rig.Until(id + ":" + entity, _ => true, "the definition starts");
+        await rig.Api.EntityCommand(id + ":" + entity, command, null);
+        return JsonNode.Parse(rig.Api.GetRunTrace(rig.History(automationId).Single(r => r["cause"]!.GetValue<string>() == "Command")["runId"]!.GetValue<string>()))!;
+    }
+    // A value node is worked out for each step that reads it: its first event (the whole answer is checked for the secret).
+    static JsonObject Step(JsonNode answer, string node) => answer["trace"]!["events"]!.AsArray().Select(e => e!.AsObject()).First(e => e["node"]!.GetValue<string>() == node);
+    /// <summary>A recorded port written as <c>***</c>, marked redacted, from the wire given (none for an output).</summary>
+    static bool Hidden(JsonNode? port, string? node = null, string? from = null) =>
+        port?["v"] is JsonValue v && v.GetValueKind() == JsonValueKind.String && v.GetValue<string>() == "***" && port["redacted"]?.GetValue<bool>() == true
+        && (node == null ? port["src"] == null : port["src"]?["node"]?.GetValue<string>() == node && port["src"]?["port"]?.GetValue<string>() == from);
+    /// <summary>A recorded port in clear, with the value given.</summary>
+    static bool Clear(JsonNode? port, JsonNode want) => port != null && port["redacted"] == null && JsonNode.DeepEquals(port["v"], want);
+    /// <summary>What a check prints of a recorded port: its keys, and a text value only by its length, so a failure never prints a secret.</summary>
+    static string Shape(JsonNode? port) => port is not JsonObject o ? "none"
+        : "{" + string.Join(", ", o.Select(p => p.Key + ": " + (p.Value is JsonValue v && v.GetValueKind() == JsonValueKind.String ? $"text({v.GetValue<string>().Length})" : p.Value?.ToJsonString().Replace(FakeSecret, "<secret>", StringComparison.Ordinal)))) + "}";
+    static void Unquoted(string text, string what) => Check(!text.Contains("hunter2", StringComparison.Ordinal), $"{what} quotes the secret ({text.Length} characters)");
+
+    /// <summary>
+    /// The case the live check found: a secret token's length compared, and the comparison setting a switch. Its value is
+    /// hidden in the setting's output, in the length step's input and output and in the comparison's input; the
+    /// comparison's true or false, and the Set state step's input of it, are shown, as is the number it is compared with.
+    /// </summary>
+    static async Task ASecretStaysHiddenInTheStepsThatReadIt()
+    {
+        var (rig, kinds) = await TextRig("secret-flow");
+        await using var _ = rig;
+        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("len1", kinds["Text length"], new { arguments = new { } }),
+            N("cmp", "compare", new { left = UnsetValue(), right = Lit("number", 5), @operator = "gt" }), SetState("set_on", "relay", new JsonObject())],
+            Next("on", "set_on"), Data("tok1", "len1", "text"), Data("len1", "cmp", "left", "result"), Data("cmp", "set_on", "is_on"));
+        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch", new { name = "Relay" })], [Token(FakeSecret)]), "relay", "turn_on");
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the comparison of the real value sets the switch");
+        Unquoted(answer.ToJsonString(), "the run's trace answer");
+        Check(Hidden(Step(answer, "tok1")["outputs"]?["value"]), "the setting's own output: " + Shape(Step(answer, "tok1")["outputs"]?["value"]));
+        Check(Hidden(Step(answer, "len1")["inputs"]?["text"], "tok1", "value"), "the length step's input: " + Shape(Step(answer, "len1")["inputs"]?["text"]));
+        Check(Hidden(Step(answer, "len1")["outputs"]?["result"]), "the length worked out from it: " + Shape(Step(answer, "len1")["outputs"]?["result"]));
+        Check(Hidden(Step(answer, "cmp")["inputs"]?["left"], "len1", "result"), "the comparison's input of the length: " + Shape(Step(answer, "cmp")["inputs"]?["left"]));
+        Check(Clear(Step(answer, "cmp")["inputs"]?["right"], 5), "the number it is compared with: " + Shape(Step(answer, "cmp")["inputs"]?["right"]));
+        Check(Clear(Step(answer, "cmp")["outputs"]?["value"], true), "the comparison's true or false: " + Shape(Step(answer, "cmp")["outputs"]?["value"]));
+        Check(Clear(Step(answer, "set_on")["inputs"]?["is_on"], true) && Step(answer, "set_on")["inputs"]!["is_on"]!["src"]?["node"]?.GetValue<string>() == "cmp",
+            "the Set state step's input of it: " + Shape(Step(answer, "set_on")["inputs"]?["is_on"]));
+    }
+
+    /// <summary>
+    /// Text built from a secret is hidden where it is made and where it is used: in a service call's field (and the
+    /// service's data in the log), a Set state step's text and a Log step's line. The service and the entity get the real text.
+    /// </summary>
+    static async Task TextBuiltFromASecretIsHiddenWhereItIsMadeAndUsed()
+    {
+        var (rig, kinds) = await TextRig("secret-text");
+        await using var _ = rig;
+        var calls = new ConcurrentQueue<string>();
+        var call = PyInterop.CallService;
+        PyInterop.CallService = (domain, name, json, done, _) => { calls.Enqueue(domain + "." + name + " " + json); done?.Invoke(); };
+        try
+        {
+            var service = N("svc", "service", new JsonObject { ["service"] = "notify.send_message", ["fields"] = new JsonObject { ["message"] = UnsetValue() }, ["returnResponse"] = false });
+            var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("bear", kinds["Bearer"], new { arguments = new { } }),
+                service, SetState("set_label", "label", new JsonObject()), N("say", "log", new { value = UnsetValue() })],
+                Next("on", "svc"), Next("svc", "set_label"), Next("set_label", "say"),
+                Data("tok1", "bear", "token"), Data("bear", "svc", "field:message", "result"), Data("bear", "set_label", "value", "result"), Data("bear", "say", "value", "result"));
+            var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch"), Entity("label", "sensor")], [Token(FakeSecret)]), "relay", "turn_on");
+            Check(calls.Count == 1 && calls.Single().Contains("Bearer " + FakeSecret, StringComparison.Ordinal), $"the service gets the real text ({calls.Count} calls)");
+            await rig.Until("relay:label", s => s["values"]?["value"]?.GetValue<string>() == "Bearer " + FakeSecret, "the entity gets the real text");
+            Unquoted(answer.ToJsonString(), "the run's trace answer");
+            Unquoted(string.Join("\n", rig.Home.Logs()), "the log");
+            Check(Hidden(Step(answer, "bear")["inputs"]?["token"], "tok1", "value") && Hidden(Step(answer, "bear")["outputs"]?["result"]),
+                "where the text is made: " + Shape(Step(answer, "bear")["inputs"]?["token"]) + " / " + Shape(Step(answer, "bear")["outputs"]?["result"]));
+            Check(Hidden(Step(answer, "svc")["inputs"]?["field:message"], "bear", "result"), "the service call's field: " + Shape(Step(answer, "svc")["inputs"]?["field:message"]));
+            Check(Hidden(Step(answer, "set_label")["inputs"]?["value"], "bear", "result"), "the Set state step's text: " + Shape(Step(answer, "set_label")["inputs"]?["value"]));
+            Check(Hidden(Step(answer, "say")["inputs"]?["value"], "bear", "result"), "the Log step's input: " + Shape(Step(answer, "say")["inputs"]?["value"]));
+            Check(rig.Home.Logs().Any(l => l.Contains("notify.send_message", StringComparison.Ordinal) && l.Contains("\"message\":\"***\"", StringComparison.Ordinal)),
+                "the service's data in the debug log has the field hidden");
+        }
+        finally { PyInterop.CallService = call; }
+    }
+
+    /// <summary>
+    /// A setting that is not secret flows in clear everywhere, beside a secret one; a value step with one secret and one
+    /// clear input hides the secret input and its output, and shows the clear input.
+    /// </summary>
+    static async Task OnlyWhatASecretReachesIsHidden()
+    {
+        var (rig, kinds) = await TextRig("secret-mixed");
+        await using var _ = rig;
+        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("nm", "setting", new { key = "name" }),
+            N("nlen", kinds["Text length"], new { arguments = new { } }), N("join", kinds["Join"], new { arguments = new { } }),
+            SetState("set_label", "label", new JsonObject()), SetState("set_count", "count", new JsonObject())],
+            Next("on", "set_label"), Next("set_label", "set_count"),
+            Data("nm", "nlen", "text"), Data("tok1", "join", "first"), Data("nm", "join", "second"), Data("join", "set_label", "value", "result"), Data("nlen", "set_count", "value", "result"));
+        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch"), Entity("label", "sensor"), Entity("count", "sensor")], [Token(FakeSecret), Plain("name", "kitchen")]), "relay", "turn_on");
+        Unquoted(answer.ToJsonString(), "the run's trace answer");
+        Check(Clear(Step(answer, "nm")["outputs"]?["value"], "kitchen"), "the plain setting: " + Shape(Step(answer, "nm")["outputs"]?["value"]));
+        Check(Clear(Step(answer, "nlen")["inputs"]?["text"], "kitchen") && Clear(Step(answer, "nlen")["outputs"]?["result"], 7), "the plain setting's length: " + Shape(Step(answer, "nlen")["outputs"]?["result"]));
+        Check(Clear(Step(answer, "set_count")["inputs"]?["value"], 7), "the plain length's use: " + Shape(Step(answer, "set_count")["inputs"]?["value"]));
+        Check(Hidden(Step(answer, "join")["inputs"]?["first"], "tok1", "value") && Clear(Step(answer, "join")["inputs"]?["second"], "kitchen"),
+            "the join's inputs: " + Shape(Step(answer, "join")["inputs"]?["first"]) + " / " + Shape(Step(answer, "join")["inputs"]?["second"]));
+        Check(Hidden(Step(answer, "join")["outputs"]?["result"]) && Hidden(Step(answer, "set_label")["inputs"]?["value"], "join", "result"),
+            "the join's output and its use: " + Shape(Step(answer, "join")["outputs"]?["result"]) + " / " + Shape(Step(answer, "set_label")["inputs"]?["value"]));
+    }
+
+    /// <summary>A step with a flow of its own that reads a secret hides that input; what it gives is shown, and so is its use.</summary>
+    static async Task AStepWithASecretInputShowsItsOutputs()
+    {
+        var (rig, kinds) = await TextRig("secret-step");
+        await using var _ = rig;
+        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("meas", kinds["Measure"], new { arguments = new { } }),
+            SetState("set_count", "count", new JsonObject())],
+            Next("on", "meas"), Next("meas", "set_count"), Data("tok1", "meas", "text"), Data("meas", "set_count", "value", "result"));
+        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch"), Entity("count", "sensor")], [Token(FakeSecret)]), "relay", "turn_on");
+        Unquoted(answer.ToJsonString(), "the run's trace answer");
+        Check(Hidden(Step(answer, "meas")["inputs"]?["text"], "tok1", "value"), "the step's secret input: " + Shape(Step(answer, "meas")["inputs"]?["text"]));
+        Check(Clear(Step(answer, "meas")["outputs"]?["result"], FakeSecret.Length), "the step's output: " + Shape(Step(answer, "meas")["outputs"]?["result"]));
+        Check(Clear(Step(answer, "set_count")["inputs"]?["value"], FakeSecret.Length), "its use: " + Shape(Step(answer, "set_count")["inputs"]?["value"]));
+    }
+
+    /// <summary>
+    /// A secret that a step cannot use is not quoted: not in the trace, the run's error, the command's error or the log.
+    /// Text that is not a number converted to one; text an entity with options refuses; a number of iterations too many.
+    /// </summary>
+    static async Task ASecretThatFailsIsNotQuoted()
+    {
+        var (rig, kinds) = await TextRig("secret-failure");
+        await using var _ = rig;
+        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("conv", "convert", new { type = "number", value = UnsetValue() }),
+            SetState("set_count", "count", new JsonObject()),
+            Command("off", "relay", "turn_off"), SetState("set_mode", "mode", new JsonObject()),
+            Command("on2", "relay2", "turn_on"), N("len1", kinds["Text length"], new { arguments = new { } }), N("loop", "repeat", new { count = UnsetValue(), maxIterations = 5 }),
+             N("tick", "log", new { value = Lit("string", "tick") })],
+            Next("on", "set_count"), Next("off", "set_mode"), Next("on2", "loop"), E("loop", "tick", "body"),
+            Data("tok1", "conv", "value"), Data("conv", "set_count", "value"), Data("tok1", "set_mode", "value"), Data("tok1", "len1", "text"), Data("len1", "loop", "count", "result"));
+        var definition = Definition("Relay", graph, [Entity("relay", "switch"), Entity("relay2", "switch"), Entity("count", "sensor"), Entity("mode", "sensor", new { options = new { options = new[] { "a", "b" } } })], [Token(FakeSecret)]);
+        var automationId = (await rig.Save("relay", definition))["document"]!["automationId"]!.GetValue<string>();
+        await rig.Until("relay:relay", _ => true, "the definition starts");
+        var errors = new List<string>();
+        foreach (var (entity, command) in new[] { ("relay", "turn_on"), ("relay", "turn_off"), ("relay2", "turn_on") })
+        {
+            var before = rig.History(automationId).Select(r => r["runId"]!.GetValue<string>()).ToHashSet();
+            var refused = await Throws<Exception>(() => rig.Api.EntityCommand("relay:" + entity, command, null), $"{entity} {command}");
+            var run = rig.History(automationId).Single(r => !before.Contains(r["runId"]!.GetValue<string>()));
+            var answer = JsonNode.Parse(rig.Api.GetRunTrace(run["runId"]!.GetValue<string>()))!;
+            Check(run["status"]!.GetValue<string>() == "Failed", $"{entity} {command} failed: {run["status"]}");
+            Unquoted(answer.ToJsonString(), $"the trace answer of {entity} {command}");
+            errors.Add(run["error"]!.GetValue<string>());
+            errors.Add(refused.Message);
+        }
+        Unquoted(string.Join("\n", errors), "the runs' and the commands' errors");
+        string Shown(string error) => error.Replace(FakeSecret, "<secret>", StringComparison.Ordinal);
+        Check(errors.All(e => e.Contains("secret setting", StringComparison.Ordinal)), "each error says the value is hidden: " + string.Join(" | ", errors.Select(Shown)));
+        Unquoted(string.Join("\n", rig.Home.Logs()), "the log");
     }
 }

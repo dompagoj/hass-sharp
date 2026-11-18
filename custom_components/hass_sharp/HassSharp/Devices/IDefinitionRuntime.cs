@@ -17,8 +17,8 @@ namespace HassSharp;
 /// <para>
 /// <b>A State's run</b> (<c>entity_state</c>):
 /// <list type="number">
-/// <item>The runtime works out the State's value nodes, which may call <see cref="Setting"/> (and, in a traced run only,
-/// <see cref="IsSecret"/>), then reads its inputs.</item>
+/// <item>The runtime works out the State's value nodes, which may call <see cref="Setting"/> and <see cref="IsSecret"/>,
+/// then reads its inputs.</item>
 /// <item>On success it checks the run's cancellation: a run already cancelled (superseded by a newer one, or stopped) ends
 /// there and calls nothing more. Otherwise it calls <see cref="SetState"/>, then <see cref="SetAvailable"/> with true.
 /// It does so on every run, even when the values did not change.</item>
@@ -58,19 +58,21 @@ internal interface IDefinitionRuntime
     /// Sets the state of the definition's entity <paramref name="entityKey"/>. <paramref name="values"/> has one entry for
     /// each state key of the entity's domain (<c>entityDomains[domain].state</c>), in that order, each a plain value: a
     /// <see cref="bool"/> for true or false, a <see cref="double"/> for a number, a <see cref="string"/> for text, or null for
-    /// an empty value (the state is then unknown, never refused).
+    /// an empty value (the state is then unknown, never refused). The keys in <paramref name="hidden"/> have secret
+    /// values (a secret setting's, or worked out from one): a refusal names them without their value.
     /// </summary>
-    void SetState(string entityKey, IReadOnlyDictionary<string, object?> values);
+    void SetState(string entityKey, IReadOnlyDictionary<string, object?> values, IReadOnlySet<string> hidden);
     /// <summary>Marks the definition's entity <paramref name="entityKey"/> available or unavailable in Home Assistant.</summary>
     void SetAvailable(string entityKey, bool available);
     /// <summary>The value of the definition's setting <paramref name="key"/>: a string, bool or double; throws <see cref="KeyNotFoundException"/> for an unknown key.</summary>
     object? Setting(string key);
     /// <summary>
-    /// Whether the setting <paramref name="key"/> is marked secret; false for an unknown key. Asked only by a run that is
-    /// traced, as it writes a Setting node's output into the trace. A Setting node of a secret
-    /// setting is traced as <c>***</c>, while its value still reaches the nodes that use it. The value is not followed
-    /// further: a node that reads the secret value through a wire is traced with it in clear, which a later phase must
-    /// handle.
+    /// Whether the setting <paramref name="key"/> is marked secret; false for an unknown key. A Setting node of a secret
+    /// setting is traced as <c>***</c>, while its value still reaches the nodes that use it; so are the inputs it reaches
+    /// and the values worked out from it (true or false aside), and a failure, the Log step and a service call's debug
+    /// log do not quote them. Asked by a traced run as it writes such a value, and by any run, traced or not, once per
+    /// Setting node, when a step that reads one fails, logs or calls a service. A throwing call fails the Setting node
+    /// that asked it; asked for a value it reached, a throwing call is taken as yes.
     /// </summary>
     bool IsSecret(string key);
 }
