@@ -243,3 +243,45 @@
 ## Carried forward
 
 Sections for phase 4, phase 6, the untied items and the test items stay in the phase 2 plan until their phase. Not taken by this phase, from the phase 3 lists: the `run` operation and Run now for definitions (→ phase 6); an explicit rename of a saved entity key (→ phase 6 docs say keys are permanent); `command.unhandled` naming the entity by name as well as key; a form for a parent device (`via`); `get_capabilities` carrying `entityDomains`; the entity API's duplicated `currentRevisionActive`/`activationError` formulas and its `invalid_request` after a completed store write.
+
+## Outcome of phase 3, and what it hands on
+
+Phase 3 ended at `d5fba05` (22 commits after `bc9a123`: Tasks 1–11 with their fix rounds, an added Task 12, and one fix wave after the whole-phase review). All five suites pass (runtime 402 PASS lines, editor 22, host Python 155 with 41 skipped, packaging 5, frontend 1638 tests in 69 files); in the Home Assistant 2026.11.1 container the Python suite passes with none skipped (167) and both packaging smokes pass. A scripted live check over the websocket and a walk-through in the browser against a real Home Assistant passed: the derived motion sensor and a plug device (switch, power sensor, device details, a secret setting, command flows) were both built in the panel with nodes only; two definitions were created from one node-library class with different settings; the list followed live states; command runs and their traces opened; narrow width, light and dark theme; the automation editor still opens and saves.
+
+Decisions taken during the phase that the spec and the tasks above do not state:
+
+- **Secrets, on the wire.** A setting sent with no value and `hasValue: true` — what an answer contains for a stored secret — is kept, like `keep: true`; a value wins over `hasValue`; clearing is `value: null` without `hasValue`. So a definition read and saved back loses nothing. Two settings with one key are both answered masked if either is secret. When the class of a class definition cannot be read (its library does not compile, the class is gone), every setting is answered masked and a save is refused (`definition.library`).
+- **Secrets, in the panel.** `hasValue` says what is stored and is never changed by typing; a typed replacement is `value`. A typed secret is shown only in its own field: drafts in `localStorage`, the graph download and the Graph JSON view go through the adapter's `draft`, which drops secret values. A setting's key cannot be renamed while its saved secret is untouched.
+- **Secrets, in traces (Task 12).** A value is secret when it is a secret setting's output or the non-boolean output of a value step with a secret input, transitively (a For each's item and a loop's carried values included). An input fed by a secret is recorded `"v": "***", "redacted": true` with its source kept; a true/false worked out from a secret is recorded; an action step's own outputs are not secret by derivation. The Log step and the service call's debug log hide such values, and messages the runtime composes say the value is hidden instead of quoting it. Secrecy is worked out by the runtime from the graph's wires, once per run, so no generated source changed. A trace recorded before this fix keeps what it recorded (nothing was released).
+- **Ids and keys.** `new` is never a definition id: the panel's slug skips it and the server refuses it. A graph definition's setting key is any non-blank, unique text (the server's rule).
+- **The editor.** One editor shell edits an automation or a definition through an adapter (`frontend/src/visual/adapter.ts`); `EntityApiError extends VisualApiError`. The entity adapter refuses to read a class definition with a typed code; the page reads first and shows the class page, and the run-trace page uses the refusal for its "built from a class" state.
+- **Pre-fill.** A new entity step takes the definition's only eligible entity, and a When commanded step the entity's first command no other step handles.
+- **The class page.** Number fields are text fields: text that does not read as a number of the setting's type is a problem that blocks Save (nothing is sent; the field is focused and says why), counts as unsaved work, and is cleared by Reload only.
+- **Runs.** The causes read "Command" and "Started"; a run page whose definition cannot be read shows an error with Try again rather than a run it cannot confirm as its own. A library save reports the running definitions it rebuilt and the ones it left invalid; a save that would break a running definition is refused with their names.
+- The New entity definition dialog's button reads "Continue" (a class definition has no draft).
+
+### For phase 4 (tools, more domains, restore)
+
+In addition to the phase 2 plan's list:
+
+- First task, before the six domains: one table for domain labels and one for command labels (three places work them out today); the first-save id retry is written twice (`visual/session.ts:399-419`, `entities/classSession.ts:167-181`); `RunTraceView.tsx:96-98` should look at the cached document before showing the error state.
+- `http_request` goes through the runtime's `SecretInput` guard from the start; `Compare`'s ordered fallback (`VisualRuntime.cs:654`, `:807-817`) is not behind it; the guard idiom is repeated about eight times (a `Guarded<T>` helper). Revisit the rule that an action step's outputs are not secret when a response can echo a credential.
+- A graph switch reads `unknown` until its first command and again after a restart (state restore).
+- Statuses: a graph's failing When started and a class's failing `Setup()` answer `off` with `activationError` (the panel says "Not running"), `failed` only comes from a class whose `Start()` throws; a class whose `Setup()` throws logs nothing at warning level.
+- A rebuilt definition that is off is not in a library save's `definitions` (the panel says "that are on").
+- An `int` setting cannot declare a range (`types` answers int.Min..int.Max); a class's title is its type name (a title on the attribute).
+- Panel: a problem with no form row does nothing while a step is selected; the pickers' "Choose an entity first." / "no entities yet" hints; the stored state value left hidden after a missing entity is cleaned up.
+- Tests: the in-memory backend's leniencies (`disabled` always false, no `setup`/`stopped` host status); no test of the trace page's opening focus; picker test gaps; `own` shadowed in `visual/NodeConfig.tsx`.
+
+### For phase 6 (MCP and docs)
+
+- The `run` operation and Run now for definitions; the parent device (`via`) has no form; a saved entity key is permanent.
+- The MCP tool contract must say: clearing a secret means dropping `hasValue`; `new` is not an id; a definition's runs are read with its `automationId`.
+- Docs: what a trace hides and what it does not (a true/false from a secret is shown; a step that returns what it was given can show it); Compare refuses Text against Number and Entity field defaults to Text; Home Assistant restores a deleted entity's registry customisation when its unique id comes back.
+- The catalog's Trigger description says "Start the automation…" inside a definition: override it in the frontend, not in the catalog (the catalog is part of generated sources).
+
+### Not tied to a phase
+
+- Shared editor: Fit to view leaves the lowest node under the canvas toolbar; the palette search does not rank an exact name first ("or").
+- The plan's review-package script writes the external diff tool's side-by-side output in this checkout; reviews of this phase's last rounds used `git diff --no-ext-diff` files instead.
+- Commits by the implementing agents carry a "Claude Opus 5.5" co-author trailer; the plan and outcome commits carry "Claude Fable 5.2".
