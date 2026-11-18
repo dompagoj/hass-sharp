@@ -221,7 +221,8 @@ public partial class HassSharpManager
 
     /// <summary>
     /// The request's <c>definition</c>. A setting given <c>keep</c> carries no value (null counts as none): the value is the
-    /// stored definition's, which the save puts in (<see cref="DefinitionSetting.Keep"/>).
+    /// stored definition's, which the save puts in (<see cref="DefinitionSetting.Keep"/>). One sent back as an answer masks
+    /// it, <c>hasValue</c> and no value, is kept alike; with a value, the value wins (<see cref="DefinitionSetting.HasValue"/>).
     /// </summary>
     static DefinitionBody DefinitionBody(JsonObject request)
     {

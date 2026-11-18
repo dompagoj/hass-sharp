@@ -183,24 +183,24 @@ public partial class HassSharpManager
     }
 
     /// <summary>
-    /// Answers each secret setting of the document without its value: <c>value</c> null, <c>secret</c> true and
-    /// <c>hasValue</c>, whether one is stored; its other fields as they are. Secret are a graph's settings the document
-    /// marks <c>secret</c> and a class's settings its class marks secret (<see cref="SettingAttribute.Secret"/>); when the
-    /// libraries do not compile or no longer declare the class, which of its settings are secret is not known, so every
-    /// one is answered so. The answers reach clients, the panel and an assistant over MCP, that have no business with them;
-    /// a save gives such a setting <c>keep</c> to leave its value as stored (<see cref="DefinitionSetting.Keep"/>).
+    /// Answers each setting of the document that may be secret without its value: <c>value</c> null, <c>secret</c> true
+    /// and <c>hasValue</c>, whether one is stored; its other fields as they are. Only a setting known not to be secret
+    /// keeps its value: a graph's setting the document does not mark <c>secret</c>, a class's setting its class declares
+    /// and does not mark secret (<see cref="SettingAttribute.Secret"/>). A class's setting its class does not declare, and
+    /// every one when the libraries do not compile or no longer declare the class, may be secret for all that is known.
+    /// The answers reach clients, the panel and an assistant over MCP, that have no business with them; a save sends such
+    /// a setting back with <c>keep</c>, or as answered, to leave its value as stored (<see cref="DefinitionSetting.Keep"/>).
     /// </summary>
     /// <param name="snapshot">The libraries the definition is answered against.</param>
     static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document, VisualCatalogSnapshot snapshot)
     {
-        // Null: not known, so every setting is secret.
-        var secret = document.Logic.Kind == "graph" ? document.Settings.Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal)
+        var open = (document.Logic.Kind == "graph" ? document.Settings.Where(s => !s.Secret).Select(s => s.Key)
             : !snapshot.LibraryDiagnostics.Any(d => d.Severity == 3) && document.Logic.Type is { } type && snapshot.EntityTypes.TryGetValue(type, out var described)
-                ? described.Settings.Where(s => s.Secret).Select(s => s.Key).ToHashSet(StringComparer.Ordinal)
-            : null;
+                ? described.Settings.Where(s => !s.Secret).Select(s => s.Key)
+            : []).ToHashSet(StringComparer.Ordinal);
         foreach (var setting in (json["settings"] as JsonArray ?? []).OfType<JsonObject>())
         {
-            if (secret != null && !(setting["key"] is JsonValue key && key.TryGetValue<string>(out var name) && secret.Contains(name))) continue;
+            if (setting["key"] is JsonValue key && key.TryGetValue<string>(out var name) && open.Contains(name)) continue;
             var hasValue = setting["value"] is { } value && value.GetValueKind() != JsonValueKind.Null;
             setting["value"] = null;
             setting["secret"] = true;

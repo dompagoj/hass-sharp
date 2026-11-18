@@ -42,6 +42,12 @@ public sealed record DefinitionSetting(string Key, JsonNode? Value)
     /// is never stored or answered; a preview, which reads no stored definition, checks no value for it.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool Keep { get; init; }
+    /// <summary>
+    /// In a save or preview request only: what an answer says of a setting it masks, that a value is stored. Sent back
+    /// with no value, as the answer has it, the setting keeps that value as <see cref="Keep"/> does; a value given wins.
+    /// Never stored: the answer works it out from the stored value.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool HasValue { get; init; }
 }
 
 /// <summary>Where a definition's behaviour comes from.</summary>
@@ -225,15 +231,21 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
     }
 
     /// <summary>
-    /// The body with each setting given <see cref="DefinitionSetting.Keep"/> holding the value <paramref name="old"/> has
-    /// for its key instead, none when it has none (or there is no old definition); its other fields stay as given. Under
-    /// the lock of the save, so the value kept is the one the revision checked has, and is checked as any value is.
+    /// The body with each setting that keeps its value holding the value <paramref name="old"/> has for its key instead,
+    /// none when it has none (or there is no old definition): one given <see cref="DefinitionSetting.Keep"/>, or sent back
+    /// as an answer masks it, <see cref="DefinitionSetting.HasValue"/> and no value. Its other fields stay as given, but
+    /// that a value kept from a secret setting stays secret: making it open needs the value given again. Neither marker
+    /// is left on any setting. Under the lock of the save, so the value kept is the one the revision checked has, and is
+    /// checked as any value is.
     /// </summary>
     static DefinitionBody WithKeptValues(DefinitionBody body, EntityDefinitionDocument? old)
     {
-        if (body.Settings is not { } given || !given.Any(s => s is { Keep: true })) return body;
-        JsonNode? Stored(string key) => old?.Settings.FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.Ordinal))?.Value?.DeepClone();
-        return body with { Settings = [.. given.Select(s => s is { Keep: true } ? s with { Value = Stored(s.Key), Keep = false } : s)] };
+        if (body.Settings is not { } given || !given.Any(s => s is { Keep: true } or { HasValue: true })) return body;
+        static bool Kept(DefinitionSetting s) => s.Keep || s.HasValue && (s.Value == null || s.Value.GetValueKind() == JsonValueKind.Null);
+        DefinitionSetting? Stored(string key) => old?.Settings.FirstOrDefault(s => string.Equals(s.Key, key, StringComparison.Ordinal));
+        return body with { Settings = [.. given.Select(s => s is not { } setting ? s
+            : !Kept(setting) ? setting with { HasValue = false }
+            : setting with { Value = Stored(setting.Key)?.Value?.DeepClone(), Secret = setting.Secret || Stored(setting.Key)?.Secret == true, Keep = false, HasValue = false })] };
     }
 
     /// <summary>

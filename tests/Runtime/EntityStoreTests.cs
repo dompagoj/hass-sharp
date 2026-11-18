@@ -380,6 +380,10 @@ static class EntityStoreTests
             Check(Settings() == """[{"key":"offset","value":4,"type":"number"},{"key":"token","value":"hunter2","label":"Token","type":"string","secret":true},{"key":"other","value":null,"type":"string"}]""",
                 "the stored settings: " + Settings());
             Check(kept.Settings.All(s => !s.Keep) && store.Read("level")!.Settings.All(s => !s.Keep) && kept.Settings[1].Value!.GetValue<string>() == "hunter2", "the document keeps no marker");
+            // A setting sent back as an answer masks it, hasValue and no value, is kept alike; hasValue is not stored either.
+            var answered = store.Save("level", Level(Typed("token", "string", label: "Token", secret: true) with { HasValue = true }, Typed("other", "string", "\"open\"") with { HasValue = true }), 3, snapshot, "g1");
+            Check(Settings() == """[{"key":"offset","value":4,"type":"number"},{"key":"token","value":"hunter2","label":"Token","type":"string","secret":true},{"key":"other","value":"open","type":"string"}]"""
+                && answered.Settings.All(s => !s.HasValue && !s.Keep), "hasValue keeps a value and a value given wins; neither marker is stored: " + Settings());
 
             // A class definition's kept setting is stored as its settings always are, a key and a value.
             store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
