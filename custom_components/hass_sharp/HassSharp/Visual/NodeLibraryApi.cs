@@ -8,6 +8,8 @@ public partial class HassSharpManager
     string AuthoringRoot => Path.Combine(HassPath.HassConfiguration, ".storage", "hass_sharp");
     /// <summary>The entities' last state values, beside their definitions (<see cref="EntityStateStore"/>).</summary>
     string EntityStatesPath => Path.Combine(AuthoringRoot, "entity_states.json");
+    /// <summary>The files the entity definitions downloaded, each in the directory of its checksum (<see cref="SharpFiles"/>).</summary>
+    string FilesPath => Path.Combine(AuthoringRoot, "files");
     NodeLibraryStore LibraryDocuments => new(Path.Combine(AuthoringRoot, "libraries"));
     AuthoringTransaction AuthoringFiles => new(AuthoringRoot);
     CancellationTokenSource _languageLifetime = new();

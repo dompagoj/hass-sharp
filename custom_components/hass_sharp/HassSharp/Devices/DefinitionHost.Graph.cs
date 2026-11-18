@@ -73,8 +73,11 @@ internal sealed partial class DefinitionHost
         foreach (var line in dropped) Report(line, PyLogLevel.Debug);
         entities = all;
         if (definition.Roots?.Setup is not { } setup) return all;
+        var clock = setupClock = new SetupClock();
         var run = FlowClass(setup).RunToEnd(setup, InvocationCause.Setup, TriggerPayload.Setup());
-        if (!await Within(run, SetupTimeout))
+        var ended = await Within(run, clock);
+        setupClock = null;
+        if (!ended)
             throw new TimeoutException($"{definition.Name} does not start: its When started flow did not finish within {Seconds(SetupTimeout)} s");
         var outcome = await run;
         // A flow that ends at a Stop step has done what it was to do.

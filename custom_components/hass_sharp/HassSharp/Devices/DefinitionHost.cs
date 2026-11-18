@@ -27,7 +27,8 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
 /// tells Home Assistant which entities exist, starts and stops it, and carries its states, timers, tracks and commands.
 /// A definition built from nodes has no user class: the host creates the entities its document describes, its graph's
 /// runs set their states through it (<see cref="IDefinitionRuntime"/>), and it runs the graph's When started flow as it
-/// prepares and a When commanded flow for each command.
+/// prepares and a When commanded flow for each command. It owns the definition's HTTP client and downloads, which it ends
+/// once the definition has stopped.
 /// </summary>
 internal sealed partial class DefinitionHost(UserScript script, CompiledDefinition definition) : IComponentHost, IDefinitionRuntime
 {
@@ -42,7 +43,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     internal static TimeSpan StartWarning { get; set; } = TimeSpan.FromSeconds(10);
 
     // Guards the status, the start and stop, the timer and track lists, the commands and track callbacks running, the
-    // entities whose publish failed, and a graph's entities, their states, those awaiting their first and the failing States.
+    // entities whose publish failed, the HTTP client and the downloads, and a graph's entities, their states, those
+    // awaiting their first and the failing States.
     readonly object gate = new();
     readonly List<Repeating> timers = [];
     readonly List<IDisposable> tracks = [];
@@ -57,6 +59,12 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     volatile string? error;
     Task? starting;
     TaskCompletionSource? stopped;
+    // The definition's HTTP client and downloads, made on first use; once released (after the last Stop()) none is made again.
+    HttpClient? http;
+    SharpFiles? files;
+    bool released;
+    // The clock of the Setup()s or the When started flow while the definition prepares, which a download's receiving stops; null after.
+    volatile SetupClock? setupClock;
 
     UserScriptManager Manager => script.ScriptManager;
 
@@ -74,6 +82,33 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     public CancellationToken Stopping => stopping.Token;
     /// <inheritdoc/>
     public CancellationToken Calls => calls.Token;
+
+    /// <inheritdoc/>
+    public HttpClient Http
+    {
+        get
+        {
+            lock (gate)
+            {
+                if (released) throw new ObjectDisposedException(nameof(HttpClient), $"{definition.Name} has stopped: its HTTP client is disposed");
+                return http ??= SharpHttp.Create();
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    public SharpFiles Files
+    {
+        get
+        {
+            lock (gate)
+            {
+                if (released) throw new ObjectDisposedException(nameof(SharpFiles), $"{definition.Name} has stopped: it downloads nothing more");
+                return files ??= new SharpFiles(Manager.FilesRoot ?? throw new InvalidOperationException("Downloads have no directory here"),
+                    line => Report(line, PyLogLevel.Info), () => setupClock?.Receiving() ?? Nothing);
+            }
+        }
+    }
 
     /// <summary>
     /// For a class, builds the device or entity, applies the settings and runs <c>Setup()</c> on the device, then on each
@@ -119,14 +154,13 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
         // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
         // cancelled. One that ignores Stopping cannot be stopped, and keeps its component (and so this host) until it
-        // returns.
-        var clock = Stopwatch.StartNew();
+        // returns. The time a download receives is not counted (see SetupClock).
+        var clock = setupClock = new SetupClock();
         async Task SetUp(SharpComponent component)
         {
-            var left = SetupTimeout - clock.Elapsed;
             var setup = Task.Factory.StartNew(async () => await component.Setup(), CancellationToken.None,
                 TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default).Unwrap();
-            if (!await Within(setup, left > TimeSpan.Zero ? left : TimeSpan.Zero))
+            if (!await Within(setup, clock))
                 throw new TimeoutException($"{definition.Name}: Setup() did not finish within {Seconds(SetupTimeout)} s");
         }
         if (device != null)
@@ -148,10 +182,36 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             device.Sealed = true;
             device.Added = null;
         }
+        setupClock = null;
         var all = Collect();
         CheckKeys(all);
         entities = all;
         return all;
+    }
+
+    /// <summary>
+    /// Waits for <paramref name="task"/> as <see cref="Within(Task, TimeSpan)"/> does, until <see cref="SetupTimeout"/> has
+    /// passed on <paramref name="clock"/>, which stands while a download receives.
+    /// </summary>
+    async Task<bool> Within(Task task, SetupClock clock)
+    {
+        using var timer = CancellationTokenSource.CreateLinkedTokenSource(Stopping);
+        while (!task.IsCompleted && !Stopping.IsCancellationRequested)
+        {
+            var (left, changed) = clock.Left(SetupTimeout);
+            if (left <= TimeSpan.Zero) break;
+            // While a download receives the clock stands, until it ends or another begins.
+            await Task.WhenAny(task, changed, Task.Delay(left ?? Timeout.InfiniteTimeSpan, timer.Token));
+        }
+        timer.Cancel();
+        if (task.IsCompleted)
+        {
+            await task;
+            return true;
+        }
+        _ = task.ContinueWith(ended => _ = ended.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        Stopping.ThrowIfCancellationRequested();
+        return false;
     }
 
     /// <summary>
@@ -338,6 +398,20 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             // Nothing of the user's code stays reachable from the host once stopped.
             device = null;
             entities = [];
+            // After the last Stop(), which may still make requests: disposing the client cancels what is still in flight on
+            // it, and closing the downloads ends those still running.
+            HttpClient? client;
+            SharpFiles? downloads;
+            lock (gate)
+            {
+                released = true;
+                (client, http) = (http, null);
+                (downloads, files) = (files, null);
+            }
+            try { client?.Dispose(); }
+            catch (Exception failure) { Report("disposing the HTTP client failed", failure, PyLogLevel.Warn); }
+            try { downloads?.Close(); }
+            catch (Exception failure) { Report("ending the downloads failed", failure, PyLogLevel.Warn); }
             lock (gate)
             {
                 running.Clear();
@@ -665,6 +739,55 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     {
         int disposed;
         public void Dispose() { if (Interlocked.Exchange(ref disposed, 1) == 0) dispose(); }
+    }
+
+    /// <summary>
+    /// The clock of the setup limit: the time since the definition began to prepare, less the time during which a download
+    /// receives (from the server's answer until the file is complete, or while it waits for another download of the same
+    /// file), so that a large file does not fail the setup while a server that does not answer does. A download that
+    /// receives nothing fails on its own (<see cref="SharpFiles.StallTimeout"/>).
+    /// </summary>
+    sealed class SetupClock
+    {
+        readonly object gate = new();
+        readonly Stopwatch clock = Stopwatch.StartNew();
+        TimeSpan stood, since;
+        int receiving;
+        TaskCompletionSource changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>What is left of <paramref name="limit"/>, null while a download receives; and a task that ends when a download begins or ends receiving.</summary>
+        public (TimeSpan? Left, Task Changed) Left(TimeSpan limit)
+        {
+            lock (gate) return (receiving > 0 ? null : limit - (clock.Elapsed - stood), changed.Task);
+        }
+
+        /// <summary>Stops the clock until the handle is disposed (with every other such handle).</summary>
+        public IDisposable Receiving()
+        {
+            lock (gate)
+                if (receiving++ == 0)
+                {
+                    since = clock.Elapsed;
+                    Changed();
+                }
+            return new Handle(() =>
+            {
+                lock (gate)
+                    if (--receiving == 0)
+                    {
+                        stood += clock.Elapsed - since;
+                        Changed();
+                    }
+            });
+        }
+
+        // Under the gate; the waiters go on on their own threads.
+        void Changed()
+        {
+            var was = changed;
+            changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            was.TrySetResult();
+        }
     }
 
     // A timer: disposing it ends its loop after the call in progress, if any.

@@ -25,6 +25,10 @@ static class SharpEntityTests
         public IDisposable Every(TimeSpan interval, Func<Task> action, bool immediately) { Calls.Add($"every {interval.TotalSeconds} {immediately}"); return new MemoryStream(); }
         public IDisposable Track(string entityId, Func<EntityChange, Task> action) { Calls.Add("track " + entityId); return new MemoryStream(); }
         public void Log(string message, PyLogLevel level) => Calls.Add($"log {level} {message}");
+        // Made on first use, as the real host's; never disposed, as no definition stops here.
+        HttpClient? http;
+        public HttpClient Http => http ??= SharpHttp.Create();
+        public SharpFiles Files => throw new NotSupportedException("this host downloads nothing");
     }
 
     // Reaches the protected services a component's own code uses.

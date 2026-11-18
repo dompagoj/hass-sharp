@@ -11,8 +11,10 @@ using static VisualExecutionTests;
 /// anonymous object of its own to a typed call, and a library record, made an object by Convert, goes into a Call service field, so System.Text.Json
 /// meets types of the automations' own assemblies. Each generation also runs an entity definition whose device, a class
 /// of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
-/// its library serialized by System.Text.Json, and takes a command on its switch; a library save then rebuilds it (and the
-/// automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
+/// its library serialized by System.Text.Json, reads a value with its HTTP client from a loopback server and leaves a
+/// request open to a server that never answers (it does not pass Stopping, so only disposing the client ends it, which
+/// every reload must see happen), and takes a command on its switch; a library save then rebuilds it
+/// (and the automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
 /// each revision replacing the one before, taking a command on its switch and working out its State from its setting.
 /// Every generation's automation and definition load contexts, and every graph revision's, must be collected, and
 /// managed memory must stop growing.
@@ -65,6 +67,11 @@ static class ReloadMemoryTests
         PyInterop.BeginRegisterHaTriggers = (generation, _, _, success, _) => success(generation);
         PyInterop.BeginRemoveHaTriggers = (_, success, _) => success();
         var descriptions = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-service-descriptions.json"));
+        // What the definition reads, and where it leaves a request open, which nothing answers.
+        await using var server = LoopbackServer.Start();
+        await using var silent = SilentServer.Start();
+        (Server, Silent) = (server.Url(""), silent.Url(""));
+        server.Respond("/reading", LoopbackServer.Reply.Text("42 W"));
         // Other suites' collectible assemblies may still be loaded: only the ones loaded from here on count.
         var earlier = CollectibleAssemblies();
         var startedPythonNet = StartPythonNetAssemblies();
@@ -96,6 +103,11 @@ static class ReloadMemoryTests
                 lock (states) states.Clear();
                 // async_unload_entry, then async_setup_entry: services.async_start pushes the descriptions before Init.
                 await manager.UnloadAsync();
+                // The requests the stopped definitions left open end as their clients are disposed. The servers forget what
+                // they recorded, so that they keep no memory across the reloads.
+                await EntityTestHome.Until(() => silent.Open == 0, $"reload {reload}: the requests the stopped definitions left open are cancelled ({silent.Open} open)");
+                server.Clear();
+                silent.Clear();
                 manager.SetServiceDescriptions(descriptions, started: true);
                 await manager.RetriesDone();
                 await manager.Init();
@@ -108,7 +120,7 @@ static class ReloadMemoryTests
                 // A library save rebuilds the definition (and the automations, which embed every library) and replaces it.
                 var saved = await Request(manager.NodeLibraryRequest, new { operation = "save", id = "meters", name = "Meters.cs", expectedRevision = reload, source = MeterLibrary(reload) });
                 Check(saved["definitions"]!.AsArray().Single()!["active"]!.GetValue<bool>(), $"reload {reload}: the library save runs the rebuilt definition: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
-                await Exercise(manager, calls, states, before, reload);
+                await Exercise(manager, silent, calls, states, before, reload);
                 var loaded = Loaded(manager);
                 Check(loaded.Count == Automations.Length && loaded.All(s => s.Active), $"reload {reload}: all {Automations.Length} automations are active again: " + string.Join(", ", loaded.Select(s => s.CompiledScript.FileName)));
                 await RunAll(manager, calls, reload);
@@ -157,7 +169,7 @@ static class ReloadMemoryTests
             var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
             var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
             Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library and takes a switch command, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, and takes a switch command, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
         }
         finally
         {
@@ -250,11 +262,14 @@ static class ReloadMemoryTests
     }
 
     const string MeterType = "library:meters:NodeLib.MemoryMeter";
+    // The loopback servers' addresses, which the definition's library names: one that answers, one that never does.
+    static string Server = "", Silent = "";
     static string Marker(int generation) => "gen" + generation;
 
     // The definition's node library as generation N saves it: only its marker changes, so each save rebuilds the
     // definition. Start() starts a 20 ms timer and a track, and calls a service with a record of the library made JSON
     // by System.Text.Json's default options; the switch's handler and the track show what they ran on the "seen" sensor.
+    // It also leaves a request open that does not pass Stopping, and shows what it read over HTTP on the "reading" sensor.
     static string MeterLibrary(int generation) => $$"""
         public record Brightness(int BrightnessPct, string Marker);
 
@@ -262,7 +277,7 @@ static class ReloadMemoryTests
         {
             const string Marker = "{{Marker(generation)}}";
             readonly SharpSwitch relay;
-            readonly SharpSensor level, seen;
+            readonly SharpSensor level, seen, reading;
             int ticks;
 
             public MemoryMeter()
@@ -270,6 +285,7 @@ static class ReloadMemoryTests
                 relay = Add(new SharpSwitch("relay") { OnTurnOn = () => { relay.IsOn = true; seen.Value = "command " + Marker; return Task.CompletedTask; } });
                 level = Add(new SharpSensor("level"));
                 seen = Add(new SharpSensor("seen"));
+                reading = Add(new SharpSensor("reading"));
             }
 
             protected override async Task Start()
@@ -278,6 +294,8 @@ static class ReloadMemoryTests
                 Track("sensor.memory", change => { seen.Value = "track " + change.To.State + " " + Marker; return Task.CompletedTask; });
                 var data = System.Text.Json.JsonSerializer.SerializeToNode(new Brightness(40, Marker))!.AsObject();
                 await CallService("light.turn_on", "light.memory", data);
+                _ = Http.GetStringAsync("{{Silent}}/hold?m=" + Marker);
+                reading.Value = Marker + " " + await Http.GetStringAsync("{{Server}}/reading", Stopping);
             }
         }
         """;
@@ -322,12 +340,14 @@ static class ReloadMemoryTests
         lock (states) return states.GetValueOrDefault("meter:" + key)?["values"]?[field]?.ToJsonString();
     }
 
-    // The rebuilt definition: its Start() called the service once, its timer ticks, its track gets a change and its
-    // switch takes a command, each seen in what it pushes.
-    static async Task Exercise(HassSharpManager manager, List<(string Service, string Json)> calls, Dictionary<string, JsonObject> states, int from, int reload)
+    // The rebuilt definition: its Start() called the service once, read over HTTP and left its request open, its timer
+    // ticks, its track gets a change and its switch takes a command, each seen in what it pushes or what the server got.
+    static async Task Exercise(HassSharpManager manager, SilentServer silent, List<(string Service, string Json)> calls, Dictionary<string, JsonObject> states, int from, int reload)
     {
         var marker = Marker(reload);
         await MeterCalled(calls, from, marker, $"reload {reload}: the rebuilt definition");
+        await EntityTestHome.Until(() => Pushed(states, "reading", "value") == $"\"{marker} 42 W\"", $"reload {reload}: the rebuilt definition reads over HTTP");
+        await EntityTestHome.Until(() => silent.Targets().Contains("/hold?m=" + marker), $"reload {reload}: the rebuilt definition leaves a request open");
         Check(MeterCalls(calls, from).SequenceEqual([Marker(reload - 1), marker]), $"reload {reload}: the definition's calls: " + string.Join(", ", MeterCalls(calls, from)));
         await EntityTestHome.Until(() => Pushed(states, "level", "value") is { } level && level.StartsWith($"\"{marker} tick ", StringComparison.Ordinal)
             && int.Parse(level.Split(' ')[^1].TrimEnd('"')) >= 2, $"reload {reload}: the rebuilt definition's timer ticks twice");

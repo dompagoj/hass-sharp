@@ -5,8 +5,8 @@ namespace HassSharp;
 
 /// <summary>
 /// What hosts a custom device or entity while its definition runs: it publishes state to Home Assistant, owns the
-/// timers and entity tracks the component starts, and says when the definition is stopping. A component without one
-/// (built but not yet attached, or in a test) publishes nothing.
+/// timers and entity tracks the component starts and the definition's HTTP client and downloads, and says when the
+/// definition is stopping. A component without one (built but not yet attached, or in a test) publishes nothing.
 /// </summary>
 internal interface IComponentHost
 {
@@ -25,6 +25,13 @@ internal interface IComponentHost
     IDisposable Track(string entityId, Func<EntityChange, Task> action);
     /// <summary>Writes to the Home Assistant log on behalf of the definition.</summary>
     void Log(string message, PyLogLevel level);
+    /// <summary>
+    /// The definition's HTTP client, the same for its device and every entity: made on first use, disposed once the last
+    /// <c>Stop()</c> has run, which cancels what is still in flight on it. Throws <see cref="ObjectDisposedException"/> after.
+    /// </summary>
+    HttpClient Http { get; }
+    /// <summary>The definition's downloads (<see cref="SharpFiles"/>): ended once it stopped. Throws <see cref="ObjectDisposedException"/> after.</summary>
+    SharpFiles Files { get; }
 }
 
 /// <summary>A change of an entity that <see cref="SharpComponent.Track"/> follows.</summary>
@@ -69,8 +76,8 @@ public abstract class SharpComponent
     /// <summary>
     /// Runs once before the entities are registered, with the settings applied: the place to check settings or fetch
     /// what the device needs. A failure leaves Home Assistant untouched. The <c>Setup()</c>s of a definition's device
-    /// and entities have 60 seconds together; one that takes longer fails the definition, which is tried again when
-    /// the libraries or Home Assistant's services change.
+    /// and entities have 60 seconds together, not counting the time a download of <see cref="Files"/> receives; one that
+    /// takes longer fails the definition, which is tried again when the libraries or Home Assistant's services change.
     /// </summary>
     protected internal virtual Task Setup() => Task.CompletedTask;
 
@@ -116,6 +123,23 @@ public abstract class SharpComponent
     /// <param name="action">What to run with the change.</param>
     protected IDisposable Track(string entityId, Func<EntityChange, Task> action) => Attached().Track(entityId, action);
 
+    /// <summary>
+    /// An HTTP client to reach the device with, such as <c>await Http.GetStringAsync(url, Stopping)</c>: the definition's
+    /// own, the same for its device and every entity, with 30 seconds per request, at most 5 redirects, certificates
+    /// always checked and <c>User-Agent: HassSharp</c>. Pass <see cref="Stopping"/> to each request, so that it ends when
+    /// the definition stops. The definition disposes it after the last <see cref="Stop"/> (a request from there still
+    /// works), which cancels any request still in flight; from then on it throws <see cref="ObjectDisposedException"/>.
+    /// Only once the component is attached, from <see cref="Setup"/> on.
+    /// </summary>
+    protected HttpClient Http => Attached(nameof(Http)).Http;
+
+    /// <summary>
+    /// The files the definition depends on, downloaded once and checked against their checksum, such as
+    /// <c>var path = await Files.Download(url, sha256, cancellationToken: Stopping)</c> in <see cref="Setup"/>. Only once
+    /// the component is attached, from <see cref="Setup"/> on.
+    /// </summary>
+    protected SharpFiles Files => Attached(nameof(Files)).Files;
+
     /// <summary>The current state of an entity, read from Home Assistant now. Throws when the entity does not exist.</summary>
     /// <param name="entityId">The entity, such as <c>light.kitchen</c>.</param>
     protected EntityStateSnapshot State(string entityId) => VisualRuntime.ReadEntity(entityId, fresh: true);
@@ -152,4 +176,7 @@ public abstract class SharpComponent
 
     IComponentHost Attached() =>
         Host ?? throw new InvalidOperationException($"{GetType().Name} is not running yet: start timers and tracks from Start, not from the constructor.");
+
+    IComponentHost Attached(string what) =>
+        Host ?? throw new InvalidOperationException($"{GetType().Name} is not running yet: use {what} from Setup or later, not from the constructor.");
 }
