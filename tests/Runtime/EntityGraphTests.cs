@@ -98,7 +98,8 @@ static class EntityGraphTests
             (nameof(AButtonRunsItsFlow), AButtonRunsItsFlow),
             (nameof(ACommandsDataIsCheckedAsAClassChecksIt), ACommandsDataIsCheckedAsAClassChecksIt),
             (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted),
-            (nameof(ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot), ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot) })
+            (nameof(ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot), ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot),
+            (nameof(APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture), APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture) })
         {
             try
             {
@@ -2426,5 +2427,54 @@ static class EntityGraphTests
         var problems = refused["error"]?["detail"]?["diagnostics"]?.AsArray().Where(d => d!["code"]?.GetValue<string>() == "node.document").Select(d => d!["nodeId"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray() ?? [];
         Check(!refused["ok"]!.GetValue<bool>() && problems.SequenceEqual(["label", "rect", "snap"]), "an automation cannot take a picture or draw on one: " + refused.ToJsonString());
         Check(rig.Home.Pictures().Length == 1, "the refused automation took no picture");
+    }
+
+    /// <summary>
+    /// A picture goes into no node library pin, not even one of its own class (<c>SharpImage</c>), what that implements or
+    /// <c>object</c>, and a library's <c>SharpImage</c> is no picture for a drawing step: the type is the catalog's own,
+    /// decided by its entry alone, as the editor decides it. A library's SharpImage still goes into its own SharpImage pins.
+    /// </summary>
+    static Task APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture()
+    {
+        const string source = """
+            public static class Pictures
+            {
+                [Node("Keep picture")] public static void KeepPicture(SharpImage picture) {}
+                [Node("Keep snapshot")] public static void KeepSnapshot(IVisualSnapshot value) {}
+                [Node("Keep anything")] public static void KeepAnything(object value) {}
+                [Node("Make picture")] public static SharpImage MakePicture() => SharpImage.Blank(1, 1);
+            }
+            """;
+        var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new("pictures", source, 1)]);
+        Check(preview.Valid, "the library compiles: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        var snapshot = preview.Snapshot;
+        JsonObject Library(string method, string id) => VisualGraphContract.CreateNode(snapshot.Methods.Values.Single(m => m.Method.Name == method).Kind, id, snapshot);
+        JsonObject Picture(JsonObject step, params JsonObject[] wires)
+        {
+            var graph = Graph("Pictures", [N("setup", "entity_setup"), N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") }), step],
+                [Next("setup", "snap"), Next("snap", step["id"]!.GetValue<string>()), .. wires]);
+            graph["definition"] = new JsonObject { ["entities"] = new JsonArray(Entity("porch", "sensor")), ["settings"] = new JsonArray() };
+            return graph;
+        }
+        string[] Problems(JsonObject graph) => [.. VisualGraphValidator.Validate(graph, snapshot).Select(d => $"{d.NodeId}.{d.InputId}: {d.Message}")];
+        foreach (var (method, port) in new[] { ("KeepPicture", "picture"), ("KeepSnapshot", "value"), ("KeepAnything", "value") })
+        {
+            var problems = Problems(Picture(Library(method, "keep"), Data("snap", "keep", port, "image")));
+            Check(problems.Length == 1 && problems[0].StartsWith($"keep.{port}: ", StringComparison.Ordinal) && problems[0].EndsWith(", not Image", StringComparison.Ordinal),
+                $"a picture into {method}'s pin is refused by its type: " + string.Join(" | ", problems));
+        }
+        var rect = N("rect", "image_draw_rect", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1), ["width"] = Lit("number", 8), ["height"] = Lit("number", 8) });
+        var made = Picture(Library("MakePicture", "make"), Data("make", "rect", "image", "result"));
+        made["nodes"]!.AsArray().Add(rect);
+        made["nodes"]!.AsArray().Add(N("say", "log", new { value = Unset }));
+        made["edges"]!.AsArray().Add(Next("make", "say"));
+        made["edges"]!.AsArray().Add(Data("rect", "say", "value", "image"));
+        var drawn = Problems(made);
+        Check(drawn.Length == 1 && drawn[0].StartsWith("rect.image: Image accepts Image, not ", StringComparison.Ordinal), "a library's SharpImage is no picture for Draw rectangle: " + string.Join(" | ", drawn));
+        var own = Picture(Library("MakePicture", "make"), Data("make", "keep", "picture", "result"));
+        own["nodes"]!.AsArray().Add(Library("KeepPicture", "keep"));
+        own["edges"]!.AsArray().Add(Next("make", "keep"));
+        Check(Problems(own).Length == 0, "a library's SharpImage goes into its own SharpImage pin: " + string.Join(" | ", Problems(own)));
+        return Task.CompletedTask;
     }
 }

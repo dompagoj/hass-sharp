@@ -182,6 +182,18 @@ public static class NodeLibraryFixture
         CustomCase("custom: a library string array into a custom enumerable of object", Node("RequiredElements", "array"), "result", Custom("take", Method("void", "IEnumerable<object> value", "Logger.Info(string.Join(\",\", value))")), "value", true);
         CustomCase("custom: a custom list into a library enumerable", Custom("make", Method("List<string>", "", "[\"a\"]")), "result", Node("RequiredEnumerable", "consumer"), "items", true);
         CustomCase("custom: a library record does not go into a custom string pin", Node("Describe", "describe"), "result", Custom("take", Method("void", "string value", "Logger.Info(value)")), "value", false);
+        // A picture (an entity definition's Take a picture) goes into no pin of another type, not even object: both
+        // validators decide the type by its catalog entry alone.
+        var picture = new JsonObject
+        {
+            ["version"] = 5, ["name"] = "Shared rich catalog",
+            ["nodes"] = new JsonArray(VisualGraphContract.CreateNode("entity_setup", "setup", snapshot), VisualGraphContract.CreateNode("camera_snapshot", "snap", snapshot), Custom("take", Method("void", "object value", "Logger.Info(value.ToString()!)"))),
+            ["edges"] = new JsonArray(new JsonObject { ["id"] = "flow0", ["source"] = "setup", ["target"] = "snap" }, new JsonObject { ["id"] = "flow1", ["source"] = "snap", ["target"] = "take" }),
+            ["definition"] = new JsonObject { ["entities"] = new JsonArray(new JsonObject { ["key"] = "porch", ["domain"] = "sensor" }), ["settings"] = new JsonArray() },
+        };
+        picture["nodes"]![1]!["config"]!["entity"] = JsonNode.Parse("""{"kind":"literal","type":"entity_id:camera","value":"camera.porch"}""");
+        Wire(picture, "snap", "image", "take", "value");
+        Case("custom: a picture does not go into a custom object pin", Derived(picture), false, "value");
         foreach (var test in cases.Where(c => c!["name"]!.GetValue<string>().StartsWith("custom: ")))
             if (test!["graph"]!["nodes"]!.AsArray().Any(n => n!["kind"]!.GetValue<string>() == "custom" && n["config"]!["signature"] == null))
                 throw new Exception($"{test["name"]}: the custom node's code does not compile");

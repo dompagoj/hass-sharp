@@ -128,8 +128,15 @@ public sealed class VisualCatalogSnapshot
     internal VisualCatalogSnapshot WithRoot(JsonObject root) => new(this, root);
 
     // Refinement is decided first; Roslyn only ever compares two root types.
+    // A built-in type left out of the type lists (the picture a camera takes) is decided by its entry alone, as
+    // contract.ts decides it: its class converts to object, to what it implements and to a library pin of that class, but
+    // the type is assignable to itself only, and nothing else to it.
     public bool IsAssignable(string source, string target) => VisualTypes.IsAssignable(catalog, source, target, (root, to) =>
-        Compilation != null && Types.TryGetValue(root, out var from) && Types.TryGetValue(to, out var symbol) ? StandardConversion(Compilation, from.Symbol, symbol.Symbol) : null);
+        Compilation != null && !Unlisted.Contains(root) && !Unlisted.Contains(to) && Types.TryGetValue(root, out var from) && Types.TryGetValue(to, out var symbol) ? StandardConversion(Compilation, from.Symbol, symbol.Symbol) : null);
+
+    /// <summary>The ids of the built-in catalog's types with <c>listed: false</c>, which Roslyn never compares.</summary>
+    internal static readonly ImmutableHashSet<string> Unlisted = VisualNodeCatalog.Root["types"]!.AsObject()
+        .Where(pair => pair.Value?["listed"] is JsonValue shown && shown.TryGetValue<bool>(out var listed) && !listed).Select(pair => pair.Key).ToImmutableHashSet(StringComparer.Ordinal);
 
     internal static bool StandardConversion(CSharpCompilation compilation, ITypeSymbol source, ITypeSymbol target)
     {

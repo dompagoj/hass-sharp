@@ -227,7 +227,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
         }
         // A built-in type left out of the type lists (the picture a camera takes) stays as the catalog describes it: it
-        // joins the snapshot's types last, for the runtime, and is never compared with the others, nor are its class, what
+        // joins the snapshot's types last, for the runtime, and is never compared with the others (nor does the snapshot
+        // compare it, see VisualCatalogSnapshot.IsAssignable), nor are its class, what
         // that implements and its members' types added; they would join every automation's embedded catalog (a Custom C#
         // node's object pin would list it too) and change the source of existing automations.
         var unlistedBuiltIn = new List<(string Id, ITypeSymbol Symbol)>();
@@ -235,7 +236,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         {
             var metadataName = VisualNodeCatalog.Text(descriptor, "clrType");
             if (compilation.GetTypeByMetadataName(metadataName) is not { } symbol) continue;
-            if (descriptor?["listed"] is JsonValue shown && shown.TryGetValue<bool>(out var listedType) && !listedType) unlistedBuiltIn.Add((id, symbol));
+            if (VisualCatalogSnapshot.Unlisted.Contains(id)) unlistedBuiltIn.Add((id, symbol));
             else { Register(typeSymbols, symbol); typeSymbols[id] = symbol; }
         }
         // The types of the static catalog, which every generation has and the editor knows before the server's catalog

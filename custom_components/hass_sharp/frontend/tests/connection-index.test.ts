@@ -47,7 +47,7 @@ const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not 
   ...['entity graph: empty graph is valid', 'code definition.invalid: unknown domain', 'code definition.invalid: repeated key', 'code definition.invalid: repeated setting key',
     'code definition.invalid: setting of an unknown type', 'code definition.invalid: entity without a domain', 'code command.unhandled: switch without flows'].map(name => `${name}: no node has an id and config`),
   'code graph.limit: entity graph past the limit: past the graph limit']
-const RICH: Totals = { graphs: 39, pairs: 344, accepted: 107, rejected: 237, byValidation: 237, fallbacks: [], skipped: [] }
+const RICH: Totals = { graphs: 40, pairs: 346, accepted: 107, rejected: 239, byValidation: 239, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
 interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }
