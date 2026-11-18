@@ -98,3 +98,42 @@
   .hs-app .hs-ent-choice, .hs-app .hs-ent-start { border-color: ButtonText; }
   .hs-app .hs-ent-card__status::before { forced-color-adjust: none; background: CanvasText; }
 }
+
+/* The class definition's page: the editor's top bar (editor-shell.css) over one column of sections, each a card. */
+.hs-app .hs-cdef { display: flex; flex-direction: column; min-height: 100%; background: var(--hs-bg); color: var(--hs-text); }
+.hs-app .hs-cdef .hs-topbar__title { flex: 1 1 auto; }
+.hs-app .hs-cdef__body { display: grid; align-content: start; gap: 16px; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; padding: 24px 24px 64px; }
+.hs-app .hs-cdef__body > .hs-def-section { gap: 12px; padding: 16px; border: 1px solid var(--hs-line); border-radius: 12px; background: var(--hs-surface); }
+.hs-app .hs-cdef__body > .hs-def-delete { padding-top: 0; border-top: 0; }
+.hs-app .hs-cdef-notice { margin: 0; }
+.hs-app .hs-cdef-notice p { margin: 8px 0 0; }
+.hs-app .hs-cdef-status { display: grid; gap: 4px; min-width: 0; }
+.hs-app .hs-cdef-status > p { margin: 0; }
+.hs-app .hs-cdef-status__line { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; overflow-wrap: anywhere; }
+.hs-app .hs-cdef-status__line .hs-insp-glyph { flex: none; width: 16px; height: 16px; margin-top: 1px; }
+.hs-app .hs-cdef-status__line--error { color: var(--hs-danger); }
+.hs-app .hs-cdef-status__line--stale { color: var(--hs-warning); }
+.hs-app .hs-cdef-chosen { display: grid; gap: 4px; min-width: 0; }
+.hs-app .hs-cdef-chosen p, .hs-app .hs-cdef-class > p { margin: 0; }
+.hs-app .hs-cdef-missing { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid color-mix(in oklab, var(--hs-danger) 40%, var(--hs-line)); border-radius: 8px; background: color-mix(in oklab, var(--hs-danger) 8%, var(--hs-surface)); }
+.hs-app .hs-cdef-missing p { margin: 0; overflow-wrap: anywhere; }
+.hs-app .hs-cdef-keys { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-cdef-keys code, .hs-app .hs-cdef-unused__head code { padding: 2px 6px; border-radius: 6px; background: var(--hs-soft); overflow-wrap: anywhere; }
+.hs-app .hs-cdef-fields { display: grid; gap: 14px; min-width: 0; }
+.hs-app .hs-cdef-unused { display: grid; gap: 8px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--hs-line); }
+.hs-app .hs-cdef-unused h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.hs-app .hs-cdef-unused__row { gap: 4px; padding: 8px 10px; }
+.hs-app .hs-cdef-unused__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.hs-app .hs-cdef-unused__head .hs-button { min-height: 36px; padding: 6px 12px; }
+.hs-app .hs-cdef-entity { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; }
+
+@media (max-width: 700px) {
+  /* One column at the page's own width; touch targets 44px high. */
+  .hs-app .hs-cdef__body { gap: 12px; padding: 16px 16px 40px; }
+  .hs-app .hs-cdef__body > .hs-def-section { padding: 12px; }
+  .hs-app .hs-cdef-unused__head .hs-button, .hs-app .hs-cdef .hs-def-row__show { min-height: 44px; }
+  .hs-app .hs-cdef .hs-def-row__id { padding-left: 10px; }
+}
+@media (forced-colors: active) {
+  .hs-app .hs-cdef__body > .hs-def-section, .hs-app .hs-cdef-missing { border-color: CanvasText; }
+}

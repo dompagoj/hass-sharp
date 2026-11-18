@@ -181,10 +181,18 @@ function PlainValue(props: { type: string; value: JsonValue | undefined; onChang
  * A secret's value. Never shown: the field is a password field that starts empty and empties again once its text is
  * taken (on blur or Enter); its placeholder says whether a value is saved or a new one was typed. Untouched it changes
  * nothing; "Clear value" leaves the setting without a value.
+ *
+ * `label` names the field (default "Value"), `note` follows the state in its hint (default: about drafts and
+ * downloads; empty for none), and `errors` are the server's problems with it, shown under it.
  */
-function SecretValue(props: { type: string; setting: DefinitionSetting; onChange(value: JsonValue): void; onClear(): void }) {
-  const id = createUniqueId(), hintId = `${id}-hint`, errorId = `${id}-error`
+export function SecretValue(props: {
+  type: string; setting: DefinitionSetting; onChange(value: JsonValue): void; onClear(): void
+  name?: string; label?: string; note?: string; errors?: string[]
+}) {
+  const id = createUniqueId(), hintId = `${id}-hint`, errorId = `${id}-error`, errorsId = `${id}-errors`
   const [error, setError] = createSignal<string>()
+  const errors = () => props.errors ?? []
+  const note = () => props.note ?? "A secret is kept out of this browser's drafts and downloads."
   const typedBefore = () => !none(props.setting.value)
   const saved = () => props.setting.hasValue === true
   const state = () => (typedBefore() ? 'New value set; type to replace' : saved() ? 'Saved; type to replace' : 'No value')
@@ -198,22 +206,23 @@ function SecretValue(props: { type: string; setting: DefinitionSetting; onChange
     props.onChange(result.value)
   }
   return (
-    <div class="hs-insp-field hs-def-field" data-field="value" aria-invalid={!!error() || undefined}>
-      <label class="hs-insp-field__label" for={id}>Value</label>
+    <div class="hs-insp-field hs-def-field" data-field={props.name ?? 'value'} aria-invalid={!!error() || errors().length > 0 || undefined}>
+      <label class="hs-insp-field__label" for={id}>{props.label ?? 'Value'}</label>
       <div class="hs-def-secret">
-        <input id={id} class="hs-input" type="password" autocomplete="new-password" placeholder={state()} aria-invalid={!!error() || undefined}
-          aria-describedby={describedBy(hintId, !!error() && errorId)}
+        <input id={id} class="hs-input" type="password" autocomplete="new-password" placeholder={state()} aria-invalid={!!error() || errors().length > 0 || undefined}
+          aria-describedby={describedBy(hintId, !!error() && errorId, errors().length > 0 && errorsId)}
           onBlur={event => take(event.currentTarget)}
           onKeyDown={event => {
             if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); take(event.currentTarget) }
             if (event.key === 'Escape' && event.currentTarget.value) { event.preventDefault(); event.stopPropagation(); event.currentTarget.value = ''; setError(undefined) }
           }} />
         <Show when={saved() || typedBefore()}>
-          <Button aria-label="Clear value" onClick={() => props.onClear()}>Clear</Button>
+          <Button aria-label={props.label ? `Clear ${props.label}` : 'Clear value'} onClick={() => props.onClear()}>Clear</Button>
         </Show>
       </div>
-      <small id={hintId} class="hs-field-hint">{state()}. A secret is kept out of this browser's drafts and downloads.</small>
+      <small id={hintId} class="hs-field-hint">{state()}.{note() ? ` ${note()}` : ''}</small>
       <Show when={error()}><small id={errorId} class="hs-error">{error()}</small></Show>
+      <FieldErrors id={errorsId} list={errors()} />
     </div>
   )
 }

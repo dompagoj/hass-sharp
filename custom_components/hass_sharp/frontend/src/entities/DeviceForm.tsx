@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import type { VisualGraph } from '../visual/graph'
-import { definitionOf, setDevice, updateDevice } from './definitionEdits'
+import { definitionOf, setDevice, withDetail } from './definitionEdits'
 import { SwitchField, TextField } from './formFields'
 import type { DefinitionDevice } from './model'
 
@@ -46,24 +46,49 @@ export function DeviceForm(props: {
   savedId?: string
   savedDevice?: DefinitionDevice | null
 }) {
-  const device = () => definitionOf(props.graph).device
+  return (
+    <DeviceSection device={definitionOf(props.graph).device} onChange={device => props.commit(setDevice(props.graph, device))} memory={props.memory}
+      savedId={props.savedId} savedDevice={props.savedDevice} />
+  )
+}
+
+/**
+ * {@link DeviceForm} over a device itself, for a form that does not edit a graph (a class definition's page).
+ * `fixed`: the device always exists (a device class's own, whose details these fields override), so there is no
+ * switch, and an empty field says what it falls back to. `toggle`: the switch's label and hint (default: a graph's
+ * entities).
+ */
+export function DeviceSection(props: {
+  device: DefinitionDevice | null
+  onChange(device: DefinitionDevice | null): void
+  memory?: DeviceMemory
+  savedId?: string
+  savedDevice?: DefinitionDevice | null
+  fixed?: { hint: string; placeholder: string }
+  toggle?: { label: string; hint: string }
+}) {
+  const device = () => props.device
   const detail = (member: keyof DefinitionDevice) => { const value = device()?.[member]; return typeof value === 'string' ? value : '' }
   const toggle = (on: boolean) => {
-    if (on) return props.commit(setDevice(props.graph, props.memory.recall(props.savedId) ?? props.savedDevice ?? {}))
-    props.memory.remember(props.savedId, device() ?? undefined)
-    props.commit(setDevice(props.graph, null))
+    if (on) return props.onChange(props.memory?.recall(props.savedId) ?? props.savedDevice ?? {})
+    props.memory?.remember(props.savedId, device() ?? undefined)
+    props.onChange(null)
   }
   return (
     <section class="hs-def-section" aria-label="Device">
       <h2 class="hs-insp-heading">Device</h2>
-      <SwitchField name="device" label="Group these entities as a device" checked={!!device()} onChange={toggle}
-        hint="Home Assistant shows them together on one device page, named after this entity definition." />
-      <Show when={!!device()}>
+      <Show when={props.fixed} fallback={
+        <SwitchField name="device" label={props.toggle?.label ?? 'Group these entities as a device'} checked={!!device()} onChange={toggle}
+          hint={props.toggle?.hint ?? 'Home Assistant shows them together on one device page, named after this entity definition.'} />
+      }>
+        {fixed => <p class="hs-field-hint">{fixed().hint}</p>}
+      </Show>
+      <Show when={props.fixed || !!device()}>
         <div class="hs-def-device">
           <For each={fields}>
             {field => (
-              <TextField name={field.member} label={field.label} hint={field.hint} type={field.type} placeholder="Not set"
-                text={detail(field.member)} commit={value => props.commit(updateDevice(props.graph, field.member, value.trim()))} />
+              <TextField name={field.member} label={field.label} hint={field.hint} type={field.type} placeholder={props.fixed?.placeholder ?? 'Not set'}
+                text={detail(field.member)} commit={value => props.onChange(withDetail(device(), field.member, value.trim()))} />
             )}
           </For>
         </div>

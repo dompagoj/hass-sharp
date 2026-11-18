@@ -202,13 +202,16 @@ export function copyNotice(copied: VisualGraph): string | undefined {
 
 // ---- Device
 
-/** The device's details with `member` set, or left out when `value` is empty; the device's parent (`via`) stays as it is. */
-export function updateDevice(graph: VisualGraph, member: keyof DefinitionDevice, value: string): VisualGraph {
-  const device: DefinitionDevice = { ...(definitionOf(graph).device ?? {}) }
-  if (value.trim()) (device as Record<string, unknown>)[member] = value
-  else delete device[member]
-  return withDefinition(graph, { device })
+/** A device's details with `member` set to `value`, or left out when it is blank; its parent (`via`) stays as it is. */
+export function withDetail(device: DefinitionDevice | null, member: keyof DefinitionDevice, value: string): DefinitionDevice {
+  const next: DefinitionDevice = { ...(device ?? {}) }
+  if (value.trim()) (next as Record<string, unknown>)[member] = value
+  else delete next[member]
+  return next
 }
+/** The device's details with `member` set, or left out when `value` is empty; the device's parent (`via`) stays as it is. */
+export const updateDevice = (graph: VisualGraph, member: keyof DefinitionDevice, value: string): VisualGraph =>
+  withDefinition(graph, { device: withDetail(definitionOf(graph).device, member, value) })
 export const setDevice = (graph: VisualGraph, device: DefinitionDevice | null): VisualGraph => withDefinition(graph, { device })
 
 // ---- Problems

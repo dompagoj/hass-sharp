@@ -28,7 +28,7 @@ export type DefinitionTone = 'running' | 'starting' | 'failed' | 'stopped' | 'of
  * exist and are unavailable) or Not running (on, but it could not be loaded), with the reason when there is one; and
  * "Changes not applied" while an older revision runs.
  */
-export function definitionStatus(item: HomeDefinition): { label: string; tone: DefinitionTone; error?: string; stale?: string } {
+export function definitionStatus(item: Pick<HomeDefinition, 'enabled' | 'activationError' | 'status' | 'currentRevisionActive'>): { label: string; tone: DefinitionTone; error?: string; stale?: string } {
   if (!item.enabled) return { label: 'Off', tone: 'off' }
   const error = item.activationError && item.activationError !== notActive ? item.activationError : undefined
   if (item.status === 'failed') return { label: 'Failed', tone: 'failed', error }
@@ -50,7 +50,7 @@ const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: tr
  * Assistant has one disabled always comes from the registry. Each is named by its name (its own, else the one the
  * definition gives it), else its key, else its entity id. Enabled ones come first, each group by name.
  */
-export function cardEntities(item: HomeDefinition): CardEntity[] {
+export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'>): CardEntity[] {
   const declared = new Map((item.entities ?? []).map(entity => [entity.key, entity.name]))
   const registry = new Map(item.registeredEntities.map(entry => [entry.uniqueId, entry]))
   const entity = (key: string, name: string | null | undefined, domain: string, entityId: string | null, disabled: boolean): CardEntity =>

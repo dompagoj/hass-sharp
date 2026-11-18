@@ -482,14 +482,17 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
 
 it('hands a definition built from a class, saved or new, to its own page', async () => {
   const { root } = setup('/entities/plug1', fixture => fixture.entities.seed('plug1', { name: 'Plug one', settings: [{ key: 'Host', value: '10.0.0.1' }], logic: { kind: 'class', type: 'library:shelly:NodeLib.FakePlug' } }))
-  await vi.waitFor(() => expect(root.textContent).toContain('Entity definitions built from a class in a node library cannot be edited here yet.'))
+  await vi.waitFor(() => expect(root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).not.toBeNull())
   expect(root.querySelector('h1')!.textContent).toBe('Plug one')
+  expect(nameInput(root).value).toBe('Plug one')
   expect(root.querySelector('section[aria-label="Entity definition editor"]')).toBeNull()
   dispose!(); document.body.innerHTML = ''
+  // A new one: the class page at once, which asks only for the classes.
   const fresh = setup('/entities/new?logic=class&name=Shelly')
-  expect(fresh.root.textContent).toContain('cannot be edited here yet')
+  expect(fresh.root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).not.toBeNull()
   expect(fresh.root.querySelector('h1')!.textContent).toBe('Shelly')
-  expect(fresh.fixture.entities.requests).toEqual([])
+  await vi.waitFor(() => expect(fresh.fixture.entities.requests).toEqual([{ operation: 'types' }]))
+  expect(fresh.root.querySelector('section[aria-label="Entity definition editor"]')).toBeNull()
 })
 
 it('starts a new definition named from the address, with one binary sensor named after it and the editor in its words', async () => {

@@ -137,6 +137,9 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *   threw: `status: 'failed'`, `active: true`, `activationError`); `notLoaded` (`status: 'off'`, `active: false`,
  *   `activationError`). `controls.activationError` is the text of the last two. A definition off by the user is `off`,
  *   `active: false`, `activationError: 'Not active'` in documents and `null` in the save and `set_enabled` answers.
+ * - `controls.classChecks` (off by default): a class definition's class and setting values are checked as the real
+ *   preview and save check them; `controls.libraryErrors`: the node libraries do not compile (`definition.library`,
+ *   and every class setting answered masked).
  *
  * The document checks are the real ones a test meets most (codes of `DefinitionDocument`/`DefinitionGenerator`): a name
  * of 1–120 characters (`definition.name`) and, for a graph, at least one entity (`definition.entitiesRequired`), each
@@ -160,7 +163,17 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const runs = new Map<string, FixtureRuns>()
   const types = structuredClone(options.entityTypes ?? [])
   const requests: any[] = []
-  const controls = { diagnostics: [] as VisualDiagnostic[], activation: 'running' as FixtureActivation, activationError: 'Fixture start failed' }
+  const controls = {
+    diagnostics: [] as VisualDiagnostic[], activation: 'running' as FixtureActivation, activationError: 'Fixture start failed',
+    /**
+     * Check a class definition as `DefinitionGenerator.Preview` does (off unless a test turns it on): the class is in
+     * `types` (`definition.unknownType`), and each setting is one it declares (`definition.unknownSetting`), of its type
+     * and range (`definition.settingType`), once (`definition.duplicateSetting`); a kept value is checked as stored.
+     */
+    classChecks: false,
+    /** The node libraries do not compile: every definition is refused (`definition.library`), and a class's settings are all answered masked. */
+    libraryErrors: false,
+  }
   const ok = (result: unknown) => ({ version: 1, ok: true, result })
   const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
   const empty = (value: unknown) => value === undefined || value === null
@@ -185,8 +198,36 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     })
     return problems
   }
-  const preview = (body: DefinitionBody) => {
-    const problems = documentProblems(body)
+  /** A class's setting value problems, as `DefinitionGenerator.Settings` words them; `before` gives a kept value. */
+  const classProblems = (body: DefinitionBody, before?: EntityDocument): VisualDiagnostic[] => {
+    if (controls.libraryErrors) return [problem('definition.library', 'The node libraries have errors; fix them first')]
+    if (!controls.classChecks || body.logic?.kind !== 'class') return []
+    const name = body.logic.type
+    if (typeof name !== 'string' || !name.trim()) return [problem('definition.unknownType', 'No entity class was given: choose the class the definition creates')]
+    const type = types.find(t => t.id === name)
+    if (!type) return [problem('definition.unknownType', `No entity class ${name} in the node libraries`)]
+    const given = (body.settings ?? []).map(s => {
+      const kept = s.keep === true || (s.hasValue === true && empty(s.value))
+      return { key: s.key, value: kept ? before?.settings.find(old => old.key === s.key)?.value ?? null : s.value ?? null }
+    })
+    const problems: VisualDiagnostic[] = []
+    for (const key of new Set(given.map(s => s.key))) if (!type.settings.some(s => s.key === key)) problems.push(problem('definition.unknownSetting', `${type.title} has no setting ${key}`, key))
+    const phrase = (s: (typeof type.settings)[number]) =>
+      s.type === 'integer' ? (s.minimum !== undefined || s.maximum !== undefined ? `a whole number from ${s.minimum ?? '-9223372036854775808'} to ${s.maximum ?? '9223372036854775807'}` : 'a whole number')
+        : s.type === 'enum' ? `one of ${s.options.join(', ')}` : s.type === 'boolean' ? 'true or false' : s.type === 'number' ? 'a number' : 'a text'
+    const fits = (s: (typeof type.settings)[number], value: unknown) =>
+      empty(value) || (s.type === 'integer' ? Number.isInteger(value) && (value as number) >= (s.minimum ?? -Infinity) && (value as number) <= (s.maximum ?? Infinity)
+        : s.type === 'enum' ? typeof value === 'string' && s.options.includes(value)
+        : s.type === 'boolean' ? typeof value === 'boolean' : s.type === 'number' ? typeof value === 'number' && Number.isFinite(value) : typeof value === 'string')
+    for (const { key, value } of given) {
+      const setting = type.settings.find(s => s.key === key)
+      if (setting && !fits(setting, value)) problems.push(problem('definition.settingType', `${setting.label} takes ${phrase(setting)}`, key))
+    }
+    for (const key of new Set(given.map(s => s.key).filter((key, i, all) => all.indexOf(key) !== i))) problems.push(problem('definition.duplicateSetting', `${key} is set twice`, key))
+    return problems
+  }
+  const preview = (body: DefinitionBody, before?: EntityDocument) => {
+    const problems = [...documentProblems(body), ...classProblems(body, before)]
     const diagnostics = problems.length ? problems : structuredClone(controls.diagnostics)
     const valid = !diagnostics.some(d => d.severity >= 3)
     return { valid, diagnostics, source: valid ? '// HassSharp entity definition (fixture)' : '', sourceMap: [] }
@@ -239,7 +280,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const answered = (document: EntityDocument) => {
     const type = document.logic.kind === 'class' ? types.find(t => t.id === document.logic.type) : undefined
     // As EntityLifecycle.WithoutSecretValues: a class's setting is answered only when its type declares it, not secret.
-    const masked = (key: string, secret?: boolean) => document.logic.kind === 'graph' ? secret === true : !type || !type.settings.some(s => s.key === key && !s.secret)
+    const masked = (key: string, secret?: boolean) => document.logic.kind === 'graph' ? secret === true : controls.libraryErrors || !type || !type.settings.some(s => s.key === key && !s.secret)
     const settings = document.settings.map(s => (masked(s.key, s.secret) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
     const entries = [...(registry.get(document.id) ?? published.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
     return structuredClone({ ...document, settings, registeredEntities: entries })
@@ -281,7 +322,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const existing = documents.get(id)
     if ((existing?.revision ?? 0) !== expected) return fail('conflict', 'Revision conflict; reload the current document')
     if (existing && enabled !== undefined) refuse('enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')
-    const checked = preview(definition)
+    const checked = preview(definition, existing)
     if (!checked.valid) return fail('validation', checked)
     const document = keep(stored(id, definition, expected + 1, existing?.enabled ?? enabled ?? true, existing))
     return ok({ id, saved: true, document: answered(document), ...started(document), ...(checked.diagnostics.length ? { diagnostics: checked.diagnostics } : {}) })

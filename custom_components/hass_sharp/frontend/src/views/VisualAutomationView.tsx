@@ -1,7 +1,6 @@
 import { createSignal, onMount } from 'solid-js'
-import { useBeforeLeave, useSearchParams, useParams, useNavigate } from '@solidjs/router'
-import { Button } from '../components/Controls'
-import { Dialog } from '../components/Dialog'
+import { useSearchParams, useParams, useNavigate } from '@solidjs/router'
+import { LeaveGuard } from '../components/LeaveGuard'
 import { useHass } from '../context'
 import { VisualEditor } from '../visual/VisualEditor'
 import { automationAdapter, type EditorAdapter, type EditorDocument } from '../visual/adapter'
@@ -22,15 +21,8 @@ export function EditorView<D extends EditorDocument>(props: { adapter: EditorAda
   const route = useParams()
   const navigate = useNavigate()
   const [dirty, setDirty] = createSignal(false)
-  const [leave, setLeave] = createSignal<(() => void)>()
   // Leaving through Discard changes also drops the draft the editor keeps of them.
   let discardDraft: (() => void) | undefined
-  // Leaving with unsaved changes (the back button, a link, the browser's back) asks first.
-  useBeforeLeave(event => {
-    if (!dirty()) return
-    event.preventDefault()
-    setLeave(() => () => event.retry(true))
-  })
   // `?drawer=runs` only says which tab to open with: the editor has read it by now, so it leaves the address and a
   // reload opens the editor as usual.
   onMount(() => { if (params.drawer !== undefined) setParams({ drawer: undefined }, { replace: true }) })
@@ -43,9 +35,6 @@ export function EditorView<D extends EditorDocument>(props: { adapter: EditorAda
       onOpenLibrary={(id, line) => navigate(libraryHref(id, line))}
       drawer={params.drawer === 'runs' ? 'runs' : undefined}
       name={typeof params.name === 'string' && params.name.trim() ? params.name : adapter.texts.untitled} />
-    <Dialog open={!!leave()} title="Unsaved changes" width="small" onClose={() => setLeave(undefined)} footer={<>
-      <Button onClick={() => setLeave(undefined)}>Keep editing</Button>
-      <Button variant="danger" onClick={() => { const retry = leave(); setLeave(undefined); discardDraft?.(); retry?.() }}>Discard changes</Button>
-    </>}><p>Leave and discard your unsaved changes?</p></Dialog>
+    <LeaveGuard dirty={dirty()} onDiscard={() => discardDraft?.()} />
   </>
 }
