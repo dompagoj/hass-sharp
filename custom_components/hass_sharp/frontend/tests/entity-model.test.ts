@@ -4,7 +4,7 @@ import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { serializeGraph } from '../src/visual/graph'
 import {
-  definitionBody, definitionId, draftGraph, editorGraph, newGraphDefinition, renameEntityKey,
+  definitionBody, definitionEntityKinds, definitionId, draftGraph, editorGraph, newGraphDefinition, renameEntityKey,
   type DefinitionBody, type DefinitionSetting,
 } from '../src/entities/model'
 
@@ -200,7 +200,8 @@ describe('a new graph definition', () => {
     const key = (name: string) => newGraphDefinition(name).entities![0].key
     expect(key('Hall — Motion 2')).toBe('hall_motion_2')
     expect(key('2nd floor')).toBe('nd_floor')
-    expect(key('Été')).toBe('t')
+    expect(key('Été')).toBe('ete')
+    expect(key('Café Ü')).toBe('cafe_u')
     expect(key('!!!')).toBe('entity')
     expect(key('123')).toBe('entity')
     expect(key('a'.repeat(30) + ' ' + 'b'.repeat(30))).toBe('a'.repeat(30) + '_' + 'b'.repeat(9))
@@ -220,6 +221,11 @@ describe('definition ids', () => {
     expect(definitionId('Plug 2', [])).toBe('plug_2')
     expect(definitionId('', [])).toBe('entity')
     expect(definitionId('!!!', [])).toBe('entity')
+  })
+  it('drops accents rather than letters', () => {
+    expect(definitionId('Café', [])).toBe('cafe')
+    expect(definitionId('Čajna kuhinja — Žarulja', [])).toBe('cajna_kuhinja_zarulja')
+    expect(definitionId('Ølstue', [])).toBe('lstue')
   })
   it('keeps to 80 characters', () => {
     expect(definitionId('a'.repeat(100), [])).toBe('a'.repeat(80))
@@ -256,5 +262,25 @@ describe('renaming an entity key', () => {
   it('refuses a key another entity has', () => {
     const graph = editorGraph(plug())
     expect(renameEntityKey(graph, 'relay', 'power')).toBe(graph)
+  })
+  it('refuses a key outside the entity key rule', () => {
+    const graph = editorGraph(plug())
+    for (const to of ['', 'Relay', '1relay', 'relay-2', 'r'.repeat(41)]) expect(renameEntityKey(graph, 'relay', to)).toBe(graph)
+    expect(renameEntityKey(graph, 'relay', 'r'.repeat(40))).not.toBe(graph)
+  })
+  it('renames only the steps whose entity is a definition entity', () => {
+    const graph = editorGraph(plug())
+    graph.nodes.push(
+      { id: 't', kind: 'trigger', config: { type: 'entity', entity: 'relay' } },
+      { id: 'avail', kind: 'set_entity_available', config: { entity: 'relay', available: { kind: 'literal', type: 'boolean', value: true } } },
+    )
+    const renamed = renameEntityKey(graph, 'relay', 'outlet')
+    expect(Object.fromEntries(renamed.nodes.map(n => [n.id, n.config.entity]))).toEqual({ p: 'power', on: 'outlet', set_on: 'outlet', t: 'relay', avail: 'outlet' })
+  })
+  it('knows the catalog steps that name a definition entity by its key', () => {
+    const kinds = Object.entries(contract.nodeCatalog.nodes)
+      .filter(([, spec]) => Object.hasOwn(spec.config ?? {}, 'entity') && ((spec as { documents?: string[] }).documents ?? []).join() === 'entity')
+      .map(([kind]) => kind)
+    expect([...definitionEntityKinds].sort()).toEqual(kinds.sort())
   })
 })

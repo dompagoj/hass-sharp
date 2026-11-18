@@ -1,5 +1,5 @@
 import type { HomeAssistant } from '../types'
-import { visualError, type VisualDiagnostic, type VisualPreview } from '../visual/api'
+import { VisualApiError, visualError, type VisualDiagnostic, type VisualPreview } from '../visual/api'
 import type { DefinitionBody, DefinitionSummary, EntityDocument, EntityType, HomeDefinition } from './model'
 
 /** `preview`'s answer, and the detail of a refused save's `validation` error. */
@@ -25,32 +25,40 @@ type Envelope<T> = { version: 1; ok: true; result: T } | { version: 1; ok: false
 
 /**
  * A refused entity request: the backend's `{code, detail}` (`validation`, `conflict`, `not_found`, `invalid_request`,
- * `storage`, `internal`), or Home Assistant's own `{code, message}` (`unauthorized`, `not_ready`, …) with the message
- * as its detail. The message is the detail when that is a sentence.
+ * `storage`, `internal`), or Home Assistant's own refusal (`unauthorized`, `not_ready`, a lost connection, …) with its
+ * message as the detail. The message is the detail when that is a sentence. A {@link VisualApiError}, so the editor
+ * session's conflict and validation handling takes it as it takes an automation's.
  */
-export class EntityApiError extends Error {
-  constructor(
-    public code: string,
-    public detail: unknown,
-  ) {
-    super(
+export class EntityApiError extends VisualApiError {
+  constructor(code: string, detail: unknown) {
+    super(code, detail)
+    this.message =
       typeof detail === 'string'
         ? detail
         : code === 'validation'
           ? 'Fix the problems before saving.'
-          : `Entity definition request failed (${code}).`,
-    )
+          : `Entity definition request failed (${code}).`
   }
 }
 /** What to tell the user about a failed request: as `visualError` does for automations. */
 export const entityError = visualError
 
-/** Home Assistant answers a refused websocket command with a plain `{code, message}` object, not an Error. */
+/** home-assistant-js-websocket's code for a connection lost while a command waits (`ERR_CONNECTION_LOST`). */
+const connectionLost = 3
+export const connectionLostMessage = 'The connection to Home Assistant was lost.'
+
+/**
+ * Home Assistant's websocket library rejects a command with a plain value, never an Error: the result's `{code,
+ * message}`, a whole failed result `{type: 'result', success: false, error: {code, message}}` (a lost connection), or
+ * the bare number {@link connectionLost}.
+ */
 const homeAssistantError = (error: unknown) => {
+  if (error === connectionLost) return new EntityApiError(String(error), connectionLostMessage)
   if (error === null || typeof error !== 'object' || error instanceof Error) return
-  const { code, message } = error as { code?: unknown; message?: unknown }
+  const found = error as { code?: unknown; message?: unknown; error?: unknown }
+  const { code, message } = (typeof found.code === 'string' || typeof found.code === 'number' ? found : found.error ?? {}) as { code?: unknown; message?: unknown }
   if (typeof code !== 'string' && typeof code !== 'number') return
-  return new EntityApiError(String(code), typeof message === 'string' ? message : undefined)
+  return new EntityApiError(String(code), typeof message === 'string' ? message : code === connectionLost ? connectionLostMessage : undefined)
 }
 
 /** The entity definitions' websocket API (`hass_sharp/entities`). */

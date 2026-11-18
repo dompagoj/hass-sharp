@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { entityApi, EntityApiError, entityError } from '../src/entities/api'
-import { definitionBody, editorGraph, type DefinitionBody, type EntityType } from '../src/entities/model'
+import { VisualApiError } from '../src/visual/api'
+import { definitionBody, editorGraph, newGraphDefinition, type DefinitionBody, type EntityType } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
 
 const ok = (result: unknown) => ({ version: 1, ok: true, result })
@@ -74,11 +75,23 @@ describe('entity API client', () => {
     expect(error).toMatchObject({ code: 'unauthorized', detail: 'Administrator required', message: 'Administrator required' })
     expect(entityError(error)).toBe('Administrator required')
   })
-  it('leaves a lost connection as it is', async () => {
-    const lost = new Error('Connection lost')
-    const hass = { callWS: async () => { throw lost } }
-    await expect(entityApi(hass as any).list()).rejects.toBe(lost)
-    expect(entityError(lost)).toBe('Connection lost')
+  it('is a VisualApiError, so the editor session handles its conflicts and validation', async () => {
+    const error = new EntityApiError('conflict', 'Revision conflict; reload the current document')
+    expect(error).toBeInstanceOf(VisualApiError)
+    expect(error).toBeInstanceOf(EntityApiError)
+    expect(new VisualApiError('conflict', 'x')).not.toBeInstanceOf(EntityApiError)
+    expect(new EntityApiError('validation', {})).toMatchObject({ code: 'validation', detail: {}, message: 'Fix the problems before saving.' })
+  })
+  it('passes a lost connection on in both forms the websocket library rejects with', async () => {
+    const rejecting = (value: unknown) => entityApi({ callWS: async () => { throw value } } as any).list().catch(e => e)
+    const result = await rejecting({ type: 'result', success: false, error: { code: 3, message: 'Connection lost' } })
+    expect(result).toBeInstanceOf(EntityApiError)
+    expect(result).toMatchObject({ code: '3', detail: 'Connection lost', message: 'Connection lost' })
+    expect(entityError(result)).toBe('Connection lost')
+    const bare = await rejecting(3)
+    expect(bare).toBeInstanceOf(EntityApiError)
+    expect(bare).toMatchObject({ code: '3', message: 'The connection to Home Assistant was lost.' })
+    expect(entityError(bare)).toBe('The connection to Home Assistant was lost.')
     expect(entityError(undefined)).toBe('Check your connection and try again.')
   })
 })
@@ -146,10 +159,15 @@ describe('the in-memory entities backend', () => {
     await api.save('plug1', plug, 0)
     expect(fixture.entities.documents.get('plug1')!.settings).toEqual(plug.settings)
     expect((await api.read('plug1')).settings).toEqual([{ key: 'Host', value: '10.0.0.1' }, { key: 'Password', value: null, secret: true, hasValue: true }])
+    // A setting the class does not declare (renamed since, or a stray) is never answered in clear.
+    await api.save('plug1', { ...plug, settings: [...plug.settings!, { key: 'Old', value: 'stray' }] }, 1)
+    expect((await api.read('plug1')).settings[2]).toEqual({ key: 'Old', value: null, secret: true, hasValue: true })
+    expect(JSON.stringify(await api.list())).not.toContain('stray')
+    await api.save('plug1', plug, 2)
     fixture.entities.types.length = 0
     expect((await api.read('plug1')).settings).toEqual([{ key: 'Host', value: null, secret: true, hasValue: true }, { key: 'Password', value: null, secret: true, hasValue: true }])
     // Sent back as answered: every value kept.
-    await api.save('plug1', { ...plug, settings: (await api.read('plug1')).settings }, 1)
+    await api.save('plug1', { ...plug, settings: (await api.read('plug1')).settings }, 3)
     expect(fixture.entities.documents.get('plug1')!.settings.map(s => s.value)).toEqual(['10.0.0.1', 'pw'])
   })
   it('lists the home view with seeded runs and registry entries, and switches definitions on and off', async () => {
@@ -175,5 +193,89 @@ describe('the in-memory entities backend', () => {
     expect(await api.preview(body())).toMatchObject({ valid: false, diagnostics: fixture.entities.controls.diagnostics, source: '', sourceMap: [] })
     await expect(api.save('motion', body(), 0)).rejects.toMatchObject({ code: 'validation', detail: { valid: false, diagnostics: fixture.entities.controls.diagnostics } })
     expect(fixture.entities.documents.size).toBe(0)
+  })
+  it('refuses an id outside the definition id rule on every operation that takes one', async () => {
+    const { fixture, api } = setup()
+    for (const id of ['Any motion', '_motion', 'new:1', 'a'.repeat(81), '']) {
+      await expect(api.save(id, { ...body(), logic: { kind: 'class', type: tokenType.id }, entities: null }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+      await expect(api.save(id, body(), 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+      await expect(api.read(id)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+      await expect(api.setEnabled(id, true)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+      await expect(api.remove(id, 1)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+    }
+    expect(fixture.entities.documents.size).toBe(0)
+    await expect(api.save('a'.repeat(80), body(), 0)).resolves.toMatchObject({ saved: true })
+    await expect(api.save('0-motion_2', body(), 0)).resolves.toMatchObject({ saved: true })
+  })
+  it('refuses a save in the order the real API does', async () => {
+    const { fixture, api } = setup()
+    await api.save('motion', body(), 0)
+    const errors = [{ nodeId: 's', message: 'On is required', severity: 3, startLine: null, startColumn: null, inputId: 'is_on' }]
+    fixture.entities.controls.diagnostics = errors
+    // A graph is previewed first: an invalid one is refused as such, stale or not, with or without a revision.
+    await expect(api.save('motion', body(), 0)).rejects.toMatchObject({ code: 'validation' })
+    await expect(fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'save', id: 'motion', definition: body() } })).resolves.toMatchObject({ ok: false, error: { code: 'validation' } })
+    await expect(api.save('Bad id', body(), 0)).rejects.toMatchObject({ code: 'validation' })
+    await expect(api.save('motion', { ...body(), settings: [{ key: 'token', value: 'x', keep: true }] }, 0)).rejects.toMatchObject({ code: 'invalid_request' })
+    // A class is not: its revision is checked before its validation.
+    const plug: DefinitionBody = { name: '', settings: [], logic: { kind: 'class', type: tokenType.id } }
+    await expect(api.save('motion', plug, 0)).rejects.toMatchObject({ code: 'conflict' })
+    await expect(api.save('plug', plug, 0)).rejects.toMatchObject({ code: 'validation', detail: { diagnostics: [{ code: 'definition.name' }] } })
+    fixture.entities.controls.diagnostics = []
+    // A valid graph: a missing revision, then a stale one, then enabled for a saved definition.
+    await expect(fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'save', id: 'motion', definition: body() } })).resolves.toEqual({ version: 1, ok: false, error: { code: 'invalid_request', detail: 'expectedRevision is required: the revision this replaces, 0 for a new definition' } })
+    await expect(api.save('motion', body(), 0, false)).rejects.toMatchObject({ code: 'conflict' })
+    await expect(api.save('motion', body(), 1, false)).rejects.toMatchObject({ code: 'invalid_request', message: /enabled can only be given/ })
+    await expect(fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'delete', id: 'motion' } })).resolves.toMatchObject({ ok: false, error: { code: 'invalid_request' } })
+  })
+  it('checks the document as the real API does, before the graph', async () => {
+    const { fixture, api } = setup()
+    fixture.entities.controls.diagnostics = [{ nodeId: 's', message: 'On is required', severity: 3, startLine: null, startColumn: null }]
+    const codes = async (definition: DefinitionBody) => (await api.preview(definition)).diagnostics.map(d => d.code)
+    expect(await codes({ ...body(), name: '' })).toEqual(['definition.name'])
+    expect(await codes({ ...body(), name: 'x'.repeat(121) })).toEqual(['definition.name'])
+    expect(await codes({ ...body(), entities: [] })).toEqual(['definition.entitiesRequired'])
+    expect(await codes({ ...body(), entities: [{ key: 'Door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }] }))
+      .toEqual(['definition.entityKey', 'definition.duplicateEntity'])
+    const keyProblem = (await api.preview({ ...body(), entities: [{ key: 'Door', domain: 'binary_sensor' }] })).diagnostics[0]
+    expect(keyProblem).toEqual({ nodeId: null, message: 'Entity key Door is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters', severity: 3, startLine: null, startColumn: null, inputId: 'Door', portId: null, code: 'definition.entityKey' })
+    // With no document problem, the seeded graph diagnostics.
+    expect(await api.preview(body())).toMatchObject({ valid: false, diagnostics: [{ message: 'On is required' }] })
+    expect(await codes(newGraphDefinition('x'.repeat(120)))).toEqual([undefined])
+  })
+  it('answers a valid save with its warnings', async () => {
+    const { fixture, api } = setup()
+    const warning = { nodeId: 'a', message: 'Home Assistant has no entity binary_sensor.motion_a', severity: 2, startLine: null, startColumn: null, inputId: 'entity' }
+    fixture.entities.controls.diagnostics = [warning]
+    expect(await api.preview(body())).toMatchObject({ valid: true, diagnostics: [warning] })
+    expect((await api.save('motion', body(), 0)).diagnostics).toEqual([warning])
+    fixture.entities.controls.diagnostics = []
+    expect(await api.save('motion', body(), 1)).not.toHaveProperty('diagnostics')
+  })
+  it('runs a definition as the test says: running, failed in its start, not loaded or off', async () => {
+    const { fixture, api } = setup()
+    const state = (d: { status: string; active: boolean; currentRevisionActive: boolean; activationError: string | null }) => [d.status, d.active, d.currentRevisionActive, d.activationError]
+    let saved = await api.save('motion', body(), 0)
+    expect([saved.active, saved.activationError, ...state(saved.document)]).toEqual([true, null, 'running', true, true, null])
+    fixture.entities.controls.activation = 'failed'
+    fixture.entities.controls.activationError = 'Start threw: no network'
+    saved = await api.save('motion', body(), 1)
+    expect([saved.active, saved.activationError, ...state(saved.document)]).toEqual([true, 'Start threw: no network', 'failed', true, true, 'Start threw: no network'])
+    expect(saved.document.liveEntities).toEqual([])
+    fixture.entities.controls.activation = 'notLoaded'
+    fixture.entities.controls.activationError = 'The node libraries have errors; fix them first'
+    saved = await api.save('motion', body(), 2)
+    expect([saved.active, saved.activationError, ...state(saved.document)]).toEqual([false, 'The node libraries have errors; fix them first', 'off', false, false, 'The node libraries have errors; fix them first'])
+    expect(saved.document.enabled).toBe(true)
+    // Off by the user: "Not active" in the document, no error in the switch's answer.
+    await expect(api.setEnabled('motion', false)).resolves.toEqual({ id: 'motion', enabled: false, active: false, activationError: null })
+    const off = await api.read('motion')
+    expect([off.enabled, ...state(off)]).toEqual([false, 'off', false, false, 'Not active'])
+    fixture.entities.controls.activation = 'running'
+    await expect(api.setEnabled('motion', true)).resolves.toEqual({ id: 'motion', enabled: true, active: true, activationError: null })
+    const seeded = fixture.entities.seed('seeded', body(), { enabled: false })
+    expect(state(seeded)).toEqual(['off', false, false, 'Not active'])
+    const fresh = await api.save('fresh', body(), 0, false)
+    expect([fresh.active, fresh.activationError, fresh.document.status]).toEqual([false, null, 'off'])
   })
 })

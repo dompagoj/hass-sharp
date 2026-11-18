@@ -192,8 +192,9 @@ export function draftGraph(graph: Graph): Graph {
   return { ...graph, definition: { ...definition, settings } as unknown as GraphDefinition }
 }
 
-/** Lower case, each run of other characters one `_`, no `_` at either end. */
-const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^[_-]+|[_-]+$/g, '')
+/** Lower case without accents (`Café` → `cafe`), each run of other characters one `_`, no `_` at either end. */
+const slug = (name: string) =>
+  name.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^[_-]+|[_-]+$/g, '')
 const trimEnd = (text: string) => text.replace(/[_-]+$/, '')
 
 /** An entity key from a name: it starts with a letter and has at most 40 characters; `entity` when the name gives none. */
@@ -225,16 +226,22 @@ export function definitionId(name: string, taken: string[]): string {
 }
 
 /**
- * Renames an entity of the editor graph and every step whose `entity` names it. The same graph when no entity has
- * `from`, or another already has `to`.
+ * The steps whose `entity` is one of the definition's entities by its key (catalog `documents: ['entity']`); a trigger's
+ * `entity` is a Home Assistant entity id.
+ */
+export const definitionEntityKinds: readonly string[] = ['entity_state', 'entity_command', 'set_entity_state', 'set_entity_available']
+
+/**
+ * Renames an entity of the editor graph and every step whose `entity` names it ({@link definitionEntityKinds}). The
+ * same graph when no entity has `from`, `to` is not an entity key, or another entity already has it.
  */
 export function renameEntityKey(graph: Graph, from: string, to: string): Graph {
-  if (!record(graph.definition) || from === to) return graph
+  if (!record(graph.definition) || from === to || !entityKeyPattern.test(to)) return graph
   const definition = editorDefinition(graph)
   if (!definition.entities.some(e => e.key === from) || definition.entities.some(e => e.key === to)) return graph
   return {
     ...graph,
-    nodes: graph.nodes.map(node => (node.config?.entity === from ? { ...node, config: { ...node.config, entity: to } } : node)),
+    nodes: graph.nodes.map(node => (definitionEntityKinds.includes(node.kind) && node.config?.entity === from ? { ...node, config: { ...node.config, entity: to } } : node)),
     definition: { ...definition, entities: definition.entities.map(e => (e.key === from ? { ...e, key: to } : e)) } as unknown as GraphDefinition,
   }
 }
