@@ -1,10 +1,17 @@
 import { createUniqueId, For, Show, type JSX } from 'solid-js'
+import { focusControl } from '../visual/InputRow'
 import { DraftField, describedBy } from '../visual/widgets/common'
 
 /**
  * The definition form's fields, laid out as the inspector's settings are: a label above the control, a hint and the
  * field's problems below it. A text field commits once, on blur or Enter (one undo step), as the inspector's do.
  */
+
+/** Focuses the first field of the row of `list` whose `data-<member>` is `key` (its head while it is closed). */
+export function focusRow(list: HTMLElement | undefined, member: 'entityKey' | 'settingKey', key: string) {
+  const row = [...(list?.children ?? [])].find(el => el instanceof HTMLElement && el.dataset[member] === key) as HTMLElement | undefined
+  if (row) focusControl(row.querySelector<HTMLElement>('.hs-def-row__body') ?? row)
+}
 
 /** A field's problems, under it. */
 export function FieldErrors(props: { id?: string; list: string[] }) {

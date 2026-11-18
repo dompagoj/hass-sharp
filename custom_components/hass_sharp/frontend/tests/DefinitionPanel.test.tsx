@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
-import { DefinitionPanel, type DefinitionLiveEntity } from '../src/entities/DefinitionPanel'
-import { definitionBody, draftGraph, editorGraph, newGraphDefinition, type DefinitionBody, type EditorDefinition } from '../src/entities/model'
+import { DefinitionPanel, deviceMemory, type DefinitionLiveEntity, type DeviceMemory } from '../src/entities/DefinitionPanel'
+import { definitionBody, draftGraph, editorGraph, newGraphDefinition, type DefinitionBody, type DefinitionDevice, type EditorDefinition } from '../src/entities/model'
 import type { VisualDiagnostic } from '../src/visual/api'
 import { addGraphNode, connectData, nodeCatalog, validateGraph } from '../src/visual/contract'
 import { createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
@@ -25,18 +25,28 @@ const plug = (): DefinitionBody => ({
 })
 const definition = (graph: VisualGraph) => graph.definition as unknown as EditorDefinition
 
-function mount(graph: VisualGraph, options: { saved?: boolean; diagnostics?: VisualDiagnostic[]; liveEntities?: DefinitionLiveEntity[] } = {}) {
+/**
+ * The form on `graph`. `saved`: the saved definition's entity keys (`true`: those of `graph`), which are fixed;
+ * `device`: what the editor remembers of a device turned off, and the saved document's device.
+ */
+function mount(graph: VisualGraph, options: {
+  saved?: boolean | string[]; diagnostics?: VisualDiagnostic[]; liveEntities?: DefinitionLiveEntity[]
+  memory?: DeviceMemory; savedDevice?: DefinitionDevice | null
+} = {}) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
   const history = createGraphHistory(graph)
   const [diagnostics, setDiagnostics] = createSignal(options.diagnostics ?? [])
+  const [located, setLocated] = createSignal<{ target: string }>()
+  const savedKeys = options.saved === true ? definition(graph).entities.map(e => e.key) : options.saved || []
   const notices: string[] = []
   dispose = render(() => (
-    <DefinitionPanel graph={history.graph()} catalog={nodeCatalog} diagnostics={diagnostics()} saved={!!options.saved} commit={history.commit}
-      liveEntities={options.liveEntities} onNotice={text => notices.push(text)} />
+    <DefinitionPanel graph={history.graph()} catalog={nodeCatalog} diagnostics={diagnostics()} savedKeys={savedKeys} commit={history.commit}
+      liveEntities={options.liveEntities} onNotice={text => notices.push(text)} deviceMemory={options.memory} savedDevice={options.savedDevice}
+      located={located()} />
   ), el)
-  return { el, history, notices, setDiagnostics, graph: () => history.graph() }
+  return { el, history, notices, setDiagnostics, setLocated, graph: () => history.graph() }
 }
 const button = (root: Element, name: string) => {
   const found = [...root.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === name || b.getAttribute('aria-label') === name)
@@ -157,6 +167,54 @@ describe('the entities', () => {
     expect(entityRow(el, 'power').querySelector('.hs-def-row__id')).toBeNull()
   })
 
+  it('keeps the key of an entity added to a saved definition open until it is saved, and fixes a key the saved definition has', () => {
+    const { el, graph } = mount(editorGraph(plug()), { saved: true })
+    button(el, 'Add entity').click()
+    const added = entityRow(el, 'entity')
+    expect(control(added, 'key').readOnly).toBe(false)
+    type(control(added, 'key'), 'meter')
+    expect(control(entityRow(el, 'meter'), 'key').readOnly).toBe(false)
+    expect(entityRow(el, 'meter').textContent).toContain('It cannot change once saved.')
+    // Power removed and added back under its key is the same entity in Home Assistant: its key is fixed again.
+    button(expand(entityRow(el, 'power')), 'Remove entity Power').click()
+    expect(entityRow(el, 'power')).toBeNull()
+    button(el, 'Add entity').click()
+    type(control(entityRow(el, 'entity'), 'key'), 'power')
+    const back = entityRow(el, 'power')
+    expect(control(back, 'key').readOnly).toBe(true)
+    expect(back.textContent).toContain("The key is part of the entity's identity in Home Assistant and cannot change.")
+    expect(definition(graph()).entities.map(e => e.key)).toEqual(['relay', 'meter', 'power'])
+  })
+
+  it('trims an entity\'s name, and names its body as the head\'s only while it is shown', () => {
+    const { el, graph } = mount(editorGraph(plug()))
+    const row = entityRow(el, 'relay')
+    const head = row.querySelector('.hs-def-row__head')!
+    expect(head.hasAttribute('aria-controls')).toBe(false)
+    expand(row)
+    expect(document.getElementById(head.getAttribute('aria-controls')!)).toBe(row.querySelector('.hs-def-row__body'))
+    type(control(row, 'name'), '  Main relay ')
+    expect(definition(graph()).entities[0].name).toBe('Main relay')
+    type(control(row, 'name'), '   ')
+    expect(definition(graph()).entities[0].name).toBeUndefined()
+  })
+
+  it('opens and focuses the row of a problem chosen in the Problems tab', async () => {
+    const diagnostics = [{ nodeId: null, message: 'Entity key relay is wrong', severity: 3, startLine: null, startColumn: null, inputId: 'relay', portId: null, code: 'definition.entityKey' }]
+    const { el, setLocated } = mount(editorGraph(plug()), { diagnostics })
+    const row = entityRow(el, 'relay')
+    // Opened for its problem, then closed by the person.
+    row.querySelector<HTMLButtonElement>('.hs-def-row__head')!.click()
+    expect(row.querySelector('.hs-def-row__body')).toBeNull()
+    setLocated({ target: 'entity:relay' })
+    expect(row.querySelector('.hs-def-row__body')).not.toBeNull()
+    await vi.waitFor(() => expect(document.activeElement).toBe(control(row, 'name')))
+    // A setting's problem, the same way.
+    expect(settingRow(el, 'host').querySelector('.hs-def-row__body')).toBeNull()
+    setLocated({ target: 'setting:host' })
+    await vi.waitFor(() => expect(document.activeElement).toBe(control(settingRow(el, 'host'), 'key')))
+  })
+
   it('adds an entity with a free key and opens it; removing one that steps use asks first and leaves a problem naming it', async () => {
     let graph = editorGraph(plug())
     graph = updateNode(addGraphNode(graph, 'entity_command', 'on', nodeCatalog), 'on', { config: { entity: 'relay', command: 'turn_on' } })
@@ -230,6 +288,25 @@ describe('the device', () => {
     expect(definition(graph()).device?.model).toBe('P1')
   })
 
+  it('remembers the device turned off for the editor, past the form being shown again, and else turns the saved one back on', () => {
+    const memory = deviceMemory()
+    const first = mount(editorGraph(plug()), { memory })
+    toggle(control(first.el.querySelector('[aria-label="Device"]')!, 'device'))
+    const off = first.graph()
+    expect(definition(off).device).toBeNull()
+    // A step selected: the form goes; nothing selected: it is back, on the same graph.
+    dispose!(); document.body.innerHTML = ''
+    const again = mount(off, { memory })
+    toggle(control(again.el.querySelector('[aria-label="Device"]')!, 'device'))
+    expect(definition(again.graph()).device).toEqual({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } })
+    // Nothing remembered (a draft restored with the device off): the saved document's device.
+    dispose!(); document.body.innerHTML = ''
+    const saved: DefinitionDevice = { manufacturer: 'Acme', model: 'P2', via: { definition: 'hub', deviceId: null } }
+    const restored = mount(off, { memory: deviceMemory(), savedDevice: saved })
+    toggle(control(restored.el.querySelector('[aria-label="Device"]')!, 'device'))
+    expect(definition(restored.graph()).device).toEqual(saved)
+  })
+
   it('starts a device of a definition that had none with no details', () => {
     const { el, graph } = mount(editorGraph(newGraphDefinition('Any motion')))
     const device = el.querySelector('[aria-label="Device"]')!
@@ -268,6 +345,61 @@ describe('the settings', () => {
     expect(definition(current()).settings.at(-1)).toEqual({ key: 'setting', type: 'boolean', value: null })
     choose(control(added, 'value'), 'true')
     expect(definition(current()).settings.at(-1)).toEqual({ key: 'setting', type: 'boolean', value: true })
+  })
+
+  it('takes any key that is not blank and not another setting\'s, trimmed, and trims the label (ruling R15)', () => {
+    const { el, graph } = mount(editorGraph(plug()))
+    const host = expand(settingRow(el, 'host'))
+    expect(host.querySelector('[data-field="key"]')!.textContent).toContain('Any text that is not blank and not another setting\'s key. Setting steps that read it follow it.')
+    type(control(host, 'key'), '  Host name ')
+    expect(definition(graph()).settings[0].key).toBe('Host name')
+    const row = settingRow(el, 'Host name')
+    type(control(row, 'key'), '   ')
+    expect(row.textContent).toContain('Give the setting a key.')
+    type(control(row, 'key'), 'password')
+    expect(row.textContent).toContain('Another one already has this key; give each a key of its own.')
+    expect(definition(graph()).settings.map(s => s.key)).toEqual(['Host name', 'password'])
+    type(control(row, 'label'), '  Address  ')
+    expect(definition(graph()).settings[0].label).toBe('Address')
+  })
+
+  it('says when a new type removed a setting\'s value, and not when the value fits it', () => {
+    const { el, graph, notices } = mount(editorGraph(plug()))
+    const host = expand(settingRow(el, 'host'))
+    choose(control(host, 'type'), 'number')
+    expect(definition(graph()).settings[0].value).toBeNull()
+    expect(notices).toEqual(['The value was removed because it does not fit the new type.'])
+    type(control(host, 'value'), '4')
+    choose(control(host, 'type'), 'string')
+    expect(definition(graph()).settings[0].value).toBe('4')
+    expect(notices).toHaveLength(1)
+    // A saved secret's value is not here to convert: a new type removes it.
+    const password = expand(settingRow(el, 'password'))
+    choose(control(password, 'type'), 'number')
+    expect(definition(graph()).settings[1]).toMatchObject({ type: 'number', value: null, hasValue: false })
+    expect(notices).toHaveLength(2)
+  })
+
+  it('renames a saved secret only once its value is typed again or cleared (ruling R16)', () => {
+    let graph = editorGraph(plug())
+    graph = updateNode(addGraphNode(graph, 'setting', 'read', nodeCatalog), 'read', { config: { key: 'password' } })
+    const { el, graph: current } = mount(graph, { saved: true })
+    const row = expand(settingRow(el, 'password'))
+    expect(control(row, 'key').readOnly).toBe(true)
+    expect(row.querySelector('[data-field="key"]')!.textContent).toContain('To rename this setting, type its value again first.')
+    type(control(row, 'value'), 'hunter2')
+    type(control(row, 'key'), 'secret')
+    expect(definition(current()).settings[1]).toMatchObject({ key: 'secret', value: 'hunter2' })
+    expect(current().nodes[0].config.key).toBe('secret')
+    expect(el.innerHTML).not.toContain('hunter2')
+    dispose!(); document.body.innerHTML = ''
+    // Cleared, it has no saved value to lose.
+    const other = mount(editorGraph(plug()), { saved: true })
+    const cleared = expand(settingRow(other.el, 'password'))
+    button(cleared, 'Clear value').click()
+    expect(control(cleared, 'key').readOnly).toBe(false)
+    type(control(cleared, 'key'), 'token')
+    expect(definition(other.graph()).settings[1]).toMatchObject({ key: 'token', value: null, hasValue: false })
   })
 
   it('asks before removing a setting a step reads', () => {

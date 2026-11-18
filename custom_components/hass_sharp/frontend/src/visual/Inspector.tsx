@@ -51,6 +51,8 @@ export interface InspectorProps {
    * Without it (an automation's) nothing is shown there with nothing selected.
    */
   overviewPeek?: string
+  /** That bar's icon (default: a value's). */
+  overviewIcon?: readonly string[]
   /**
    * Docked: a side panel beside the canvas, always shown, with the overview when nothing is selected. Otherwise
    * (below 900px, or floating over a full-screen canvas) it is a sheet in two stages: a peek bar naming the
@@ -224,7 +226,7 @@ export function Inspector(props: InspectorProps) {
       setDismissed(false)
     }
     return (
-      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : !edge() && props.overviewPeek ? icons.entity : icons.data)} color={identity()?.color} verb="Edit" onOpen={expand} />
+      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : !edge() && props.overviewPeek ? props.overviewIcon ?? icons.data : icons.data)} color={identity()?.color} verb="Edit" onOpen={expand} />
     )
   }
 

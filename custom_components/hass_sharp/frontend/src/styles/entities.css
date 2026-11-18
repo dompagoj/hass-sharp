@@ -38,7 +38,8 @@
   /* The sheet: rows use its full width; touch targets stay 44px high. */
   .hs-app .hs-def-row__head { min-height: 52px; }
   .hs-app .hs-def-row__id { padding-left: 10px; }
-  .hs-app .hs-def-actions .hs-button { min-height: 44px; }
+  .hs-app .hs-def-actions .hs-button, .hs-app .hs-def-row__show { min-height: 44px; }
+  .hs-app .hs-def-row__show { padding-inline: 12px; }
 }
 @media (forced-colors: active) {
   .hs-app .hs-def-row, .hs-app .hs-def-problems__item { border-color: CanvasText; }

@@ -116,6 +116,11 @@ export interface EditorContext<D extends EditorDocument = EditorDocument> {
   notice(notice: RunNotice): void
   /** Selects a step (the overview's: and moves focus to it in the panel), or nothing. */
   select(id?: string): void
+  /**
+   * The overview's row a problem chosen in the Problems tab is about (`overviewProblem`'s answer), a new object each
+   * time one is chosen and undefined once a step is selected: the overview opens that row and moves focus into it.
+   */
+  readonly located?: { target: string }
 }
 
 /**
@@ -160,6 +165,19 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   runGroup?(context: EditorContext<D>): JSX.Element
   /** The top of the inspector's overview, when nothing is selected (the problem count and last run follow it). */
   overview?(context: EditorContext<D>): JSX.Element
+  /** The icon of the bar that opens the overview where the inspector is a sheet (with `texts.overviewPeek`). */
+  overviewIcon?: readonly string[]
+  /**
+   * The overview's row that shows a problem about no step (an entity definition's entity or setting), if any. Chosen
+   * in the Problems tab, such a problem then selects nothing, shows the overview, and hands it the row as
+   * `context.located`. Without it (an automation) such a problem selects nothing, as before.
+   */
+  overviewProblem?(diagnostic: VisualDiagnostic): string | undefined
+  /**
+   * What to tell the person once Save as a copy has saved `copied` (the graph as it was before the copy): what the
+   * copy lacks (an entity definition's secrets that were not typed here). Without it, or an answer of undefined, nothing.
+   */
+  copyNotice?(copied: VisualGraph): string | undefined
   /** The help dialog, opened from the "⋯" menu (no Help item without it). */
   help?: Component<{ open: boolean; onClose(): void }>
 }

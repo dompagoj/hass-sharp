@@ -7,7 +7,7 @@ import { Glyph } from '../visual/Glyph'
 import type { VisualGraph } from '../visual/graph'
 import { icons } from '../visual/icons'
 import { addEntity, definitionOf, keyProblem, keyRule, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
-import { FieldErrors, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
+import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey, type DefinitionEntity } from './model'
 import { entityTypeLabel, retypeEntity } from './NodePickers'
 
@@ -28,7 +28,13 @@ export interface RowsProps {
   catalog: VisualCatalogSnapshot
   /** The problems about each entity (by key) that no step has. */
   problems: Map<string, VisualDiagnostic[]>
-  saved: boolean
+  /**
+   * The keys of the saved definition's entities: each is part of its entity's identity in Home Assistant and no longer
+   * changes. An entity added since keeps its key open until the save that first stores it.
+   */
+  savedKeys: readonly string[]
+  /** A problem chosen in the Problems tab: the row it names (`entity:<key>`) opens, and focus goes into it. */
+  located?: { target: string }
   commit(graph: VisualGraph): void
   /** The entity id Home Assistant gave each entity of the saved definition, by key. */
   entityIds: Map<string, string>
@@ -45,6 +51,14 @@ export function EntityRows(props: RowsProps) {
   const toggle = (key: string, wanted = !open().has(key)) => setOpen(current => { const next = new Set(current); if (wanted) next.add(key); else next.delete(key); return next })
   // A row that gets a problem opens, so the problem is in view.
   createEffect(on(() => [...props.problems.keys()].join(' '), () => { for (const key of props.problems.keys()) if (!open().has(key)) toggle(key, true) }))
+  let list: HTMLUListElement | undefined
+  createEffect(on(() => props.located, located => {
+    const key = located?.target.startsWith('entity:') ? located.target.slice('entity:'.length) : undefined
+    if (key === undefined || !entities().some(e => e.key === key)) return
+    toggle(key, true)
+    // Once the opened row is drawn.
+    queueMicrotask(() => focusRow(list, 'entityKey', key))
+  }))
   const domains = () => Object.keys(props.catalog.entityDomains ?? {})
   const [removing, setRemoving] = createSignal<string>()
   const remove = (key: string) => {
@@ -61,7 +75,7 @@ export function EntityRows(props: RowsProps) {
     <section class="hs-def-section" aria-label="Entities">
       <h2 class="hs-insp-heading">Entities</h2>
       <Show when={entities().length} fallback={<p class="hs-muted">This entity definition has no entities yet.</p>}>
-        <ul class="hs-def-rows" aria-label="Entities">
+        <ul class="hs-def-rows" aria-label="Entities" ref={list}>
           <Index each={entities()}>
             {entity => (
               <EntityRow entity={entity()} rows={props} open={open().has(entity().key)} onToggle={() => toggle(entity().key)}
@@ -114,7 +128,7 @@ function EntityRow(props: {
     (event.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true }))
   return (
     <li class="hs-def-row" data-entity-key={key()} classList={{ 'hs-def-row--problem': problems().length > 0 }}>
-      <button type="button" class="hs-def-row__head" aria-expanded={props.open} aria-controls={`${id}-body`} onClick={() => props.onToggle()}>
+      <button type="button" class="hs-def-row__head" aria-expanded={props.open} aria-controls={props.open ? `${id}-body` : undefined} onClick={() => props.onToggle()}>
         <span class="hs-def-row__icon" aria-hidden="true"><Glyph paths={icons.entity} /></span>
         <span class="hs-def-row__title">
           <strong>{text(props.entity.name) || key()}</strong>
@@ -137,8 +151,8 @@ function EntityRow(props: {
         <div id={`${id}-body`} class="hs-def-row__body">
           <FieldErrors list={problems()} />
           <TextField name="name" label="Name" text={text(props.entity.name)} placeholder="Not set"
-            hint="The name Home Assistant shows for it." commit={value => set({ name: value.trim() ? value : undefined })} />
-          <Show when={!rows.saved} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
+            hint="The name Home Assistant shows for it." commit={value => set({ name: value.trim() || undefined })} />
+          <Show when={!rows.savedKeys.includes(key())} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
             <TextField name="key" label="Key" text={key()} hint={`${keyRule} Steps that use the entity follow it. It cannot change once saved.`}
               commit={value => {
                 if (value === key()) return

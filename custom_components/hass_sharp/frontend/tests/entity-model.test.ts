@@ -231,6 +231,11 @@ describe('definition ids', () => {
     expect(definitionId('a'.repeat(100), [])).toBe('a'.repeat(80))
     expect(definitionId('a'.repeat(79) + ' b', [])).toBe('a'.repeat(79))
   })
+  it('never answers new, the address of a definition not saved yet (ruling R17)', () => {
+    expect(definitionId('New', [])).toBe('new_2')
+    expect(definitionId('  new!! ', ['new_2'])).toBe('new_3')
+    expect(definitionId('Newer', [])).toBe('newer')
+  })
   it('avoids taken ids', () => {
     expect(definitionId('Any motion', ['any_motion'])).toBe('any_motion_2')
     expect(definitionId('Any motion', ['any_motion', 'any_motion_2'])).toBe('any_motion_3')

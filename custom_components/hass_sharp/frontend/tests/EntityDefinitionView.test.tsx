@@ -6,6 +6,7 @@ import { HassCtx } from '../src/context'
 import { EntityDefinitionView } from '../src/views/EntityDefinitionView'
 import { newGraphDefinition, type DefinitionBody } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
+import { icons } from '../src/visual/icons'
 
 // The entity definition editor in the panel, against the in-memory entity API: a definition is built, saved, read
 // back, switched, deleted and recovered entirely through the page.
@@ -207,7 +208,7 @@ const pickOption = async (root: Element, field: string, text: string) => {
   ;[...inspector(root).querySelectorAll<HTMLElement>(`[data-input-id="${field}"] [role="option"]`)].find(o => o.firstElementChild?.textContent === text)!.click()
 }
 
-it('builds the plug device: three entities, its device, two settings, a polling trigger and the command flows', async () => {
+it('builds a polled plug: a time-pattern trigger sets its power, two When commanded flows answer its relay, with a host and a secret password', async () => {
   const { root, fixture } = setup('/entities/new?name=Plug')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   // The starter's entity, named after the definition, becomes the relay.
@@ -278,6 +279,10 @@ it('builds the plug device: three entities, its device, two settings, a polling 
     if (command === 'Turn off') inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
     flow(root, when, set)
   }
+  // The new definition's draft is kept as it is edited, with the device and without the typed secret.
+  await vi.waitFor(() => expect(Object.values(localStorage).find(draft => draft.includes('"Acme"'))).toBeDefined(), { timeout: 3000 })
+  expect(Object.values(localStorage).find(draft => draft.includes('"Acme"'))).toContain('"password"')
+  expect(Object.values(localStorage).join('')).not.toContain('hunter2')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   button(root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
@@ -314,7 +319,6 @@ it('builds the plug device: three entities, its device, two settings, a polling 
   expect(control(expand(settingRow(root, 'password')), 'value').placeholder).toBe('Saved; type to replace')
   expect(root.innerHTML).not.toContain('hunter2')
   expect(JSON.stringify(json(root))).not.toContain('hunter2')
-  expect(Object.values(localStorage).join('')).not.toContain('hunter2')
   // Each entity now shows the entity id Home Assistant gave it.
   await vi.waitFor(() => expect(entityRow(root, 'power').querySelector('.hs-def-row__id code')?.textContent).toBe('sensor.plug_power'))
 })
@@ -460,6 +464,8 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
   expect(sheet.dataset.open).toBe('false')
   expect(sheet.dataset.peek).toBe('true')
   const peek = button(root, 'Edit Entities, device and settings')
+  // Its icon is the adapter's: an entity definition's.
+  expect(peek.querySelector('.hs-insp-peek__icon')!.innerHTML).toContain(`d="${icons.entity[0]}"`)
   expect(peek.getAttribute('aria-expanded')).toBe('false')
   peek.click()
   await vi.waitFor(() => expect(sheet.dataset.open).toBe('true'))
@@ -512,3 +518,266 @@ const more = (root: Element, item: string) => {
   button(root, 'More actions').click()
   ;[...root.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].find(b => b.textContent === item)!.click()
 }
+
+/** The phase 2 example of the device definition (code map, section 3; `tests/Runtime/EntityGraphTests.cs:511-535`). */
+const plugExample: DefinitionBody = {
+  name: 'Plug', device: { manufacturer: 'Acme', model: 'P1', suggestedArea: 'Kitchen' }, settings: [],
+  entities: [
+    { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' } },
+    { key: 'online', domain: 'binary_sensor', deviceClass: 'connectivity', entityCategory: 'diagnostic' },
+    { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket', enabledByDefault: false }],
+  logic: { kind: 'graph', graph: { version: 5, name: 'Plug',
+    nodes: [
+      { id: 'p', kind: 'entity_state', config: { value: { kind: 'literal', type: 'number', value: 42 }, entity: 'power' } },
+      { id: 'o', kind: 'entity_state', config: { is_on: { kind: 'literal', type: 'boolean', value: true }, entity: 'online' } },
+      { id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' } },
+      { id: 'set_on', kind: 'set_entity_state', config: { is_on: { kind: 'literal', type: 'boolean', value: true }, entity: 'relay' } },
+      { id: 'off', kind: 'entity_command', config: { entity: 'relay', command: 'turn_off' } },
+      { id: 'set_off', kind: 'set_entity_state', config: { is_on: { kind: 'literal', type: 'boolean', value: false }, entity: 'relay' } }],
+    edges: [
+      { id: 'on:next:set_on', source: 'on', target: 'set_on', port: 'next' },
+      { id: 'off:next:set_off', source: 'off', target: 'set_off', port: 'next' }] } },
+}
+
+it('builds the phase 2 plug through the page, every member of it, and saves that example', async () => {
+  const { root, fixture } = setup('/entities/new?name=Plug')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  // The starter's entity, named after the definition, becomes the power sensor.
+  let row = expand(entityRow(root, 'plug'))
+  type(control(row, 'key'), 'power')
+  row = entityRow(root, 'power')
+  type(control(row, 'name'), 'Power')
+  choose(control(row, 'domain'), 'sensor')
+  type(control(row, 'deviceClass'), 'power')
+  type(control(row, 'option:unit'), 'W')
+  choose(control(row, 'option:stateClass'), 'measurement')
+  // A binary sensor without a name of its own.
+  button(root, 'Add entity').click()
+  type(control(entityRow(root, 'entity'), 'key'), 'online')
+  row = entityRow(root, 'online')
+  type(control(row, 'deviceClass'), 'connectivity')
+  choose(control(row, 'entityCategory'), 'diagnostic')
+  // The relay, which Home Assistant adds turned off.
+  button(root, 'Add entity').click()
+  type(control(entityRow(root, 'entity'), 'key'), 'relay')
+  row = entityRow(root, 'relay')
+  choose(control(row, 'domain'), 'switch')
+  type(control(row, 'name'), 'Relay')
+  type(control(row, 'icon'), 'mdi:power-socket')
+  control(row, 'enabledByDefault').click()
+  const device = root.querySelector<HTMLElement>('[aria-label="Device"]')!
+  control(device, 'device').click()
+  type(control(device, 'manufacturer'), 'Acme')
+  type(control(device, 'model'), 'P1')
+  type(control(device, 'suggestedArea'), 'Kitchen')
+
+  // Each step is added with its title as its label; the example's steps have none, so the label is cleared.
+  const ids: string[] = []
+  // The power's State: 42 W.
+  button(root, 'Add State').click()
+  ids.push(lastStep(root))
+  label(root, '')
+  await pickOption(root, 'entity', 'Power')
+  choose(inspector(root).querySelector<HTMLSelectElement>('[data-input-id="value"] select[aria-label="Value kind"]')!, 'number')
+  type(inspector(root).querySelector<HTMLInputElement>('[data-input-id="value"] input[aria-label="Value"]')!, '42')
+  // The online State: on.
+  button(root, 'Add State').click()
+  ids.push(lastStep(root))
+  label(root, '')
+  await pickOption(root, 'entity', 'online')
+  inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
+  // Turn on and Turn off, each setting the relay (the only entity that takes commands, so chosen for them).
+  for (const [command, on] of [['Turn on', true], ['Turn off', false]] as const) {
+    deselect(root)
+    button(root, 'Add When commanded').click()
+    const when = lastStep(root)
+    ids.push(when)
+    label(root, '')
+    if (command === 'Turn off') await pickOption(root, 'command', 'Turn off')
+    button(root, 'Add Set state').click()
+    const set = lastStep(root)
+    ids.push(set)
+    label(root, '')
+    await pickOption(root, 'entity', 'Relay')
+    const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
+    toggle().click()
+    if (!on) toggle().click()
+    flow(root, when, set)
+  }
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  const sent = JSON.parse(JSON.stringify(saves(fixture)[0]))
+  expect(sent).toMatchObject({ id: 'plug', expectedRevision: 0 })
+  const body = normalised(sent.definition, ['p', 'o', 'on', 'set_on', 'off', 'set_off'])
+  // Normalised as the motion example's: the page's step ids, positions and wire ids replaced by the example's. Beyond
+  // that the page writes each step's run history at its catalog default (a State off, When commanded on), which the
+  // hand-written example leaves to that default; and a flow wire from Next leaves its port out, which the graph format
+  // reads as `next`, where the example names it.
+  const nodes = body.logic.graph.nodes
+  expect(nodes.map((n: any) => n.config.trackHistory)).toEqual([false, false, true, undefined, true, undefined])
+  for (const node of nodes) delete node.config.trackHistory
+  body.logic.graph.edges = body.logic.graph.edges.map(({ id: _id, ...edge }: any) => {
+    expect(Object.keys(edge)).toEqual(['source', 'target'])
+    return { id: `${edge.source}:next:${edge.target}`, ...edge, port: 'next' }
+  })
+  expect(body).toEqual(plugExample)
+})
+
+it('keeps the key of an entity added to a saved definition open until the save that stores it', async () => {
+  const { root, fixture } = await openPlug()
+  button(inspector(root), 'Add entity').click()
+  const added = entityRow(root, 'entity')
+  expect(control(added, 'key').readOnly).toBe(false)
+  type(control(added, 'key'), 'meter')
+  expect(control(entityRow(root, 'meter'), 'key').readOnly).toBe(false)
+  // The saved ones stay fixed meanwhile.
+  expect(control(expand(entityRow(root, 'relay')), 'key').readOnly).toBe(true)
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 2'))
+  expect(saves(fixture).at(-1).definition.entities.map((e: any) => e.key)).toEqual(['relay', 'power', 'meter'])
+  expect(control(entityRow(root, 'meter'), 'key').readOnly).toBe(true)
+})
+
+it('saves a definition named New under another id than the new one\'s address (ruling R17)', async () => {
+  const { root, fixture, history } = setup('/entities/new?name=New')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/new_2'))
+  expect(saves(fixture)[0]).toMatchObject({ id: 'new_2', expectedRevision: 0 })
+  await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 1'))
+  expect(nameInput(root).value).toBe('New')
+})
+
+it('gives a new definition the next free id when its id was taken elsewhere before its first save went through', async () => {
+  const { root, fixture, history } = setup('/entities/new?name=Hall motion')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  const answer = fixture.entities.callWS
+  fixture.entities.callWS = (message: any) => {
+    // Another page saves "Hall motion" first, between this page's choice of the id and its save.
+    if (message.request?.operation === 'save' && message.request.id === 'hall_motion' && !fixture.entities.documents.has('hall_motion'))
+      fixture.entities.seed('hall_motion', newGraphDefinition('Hall motion'))
+    return answer(message)
+  }
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/hall_motion_2'))
+  expect(saves(fixture).map(s => [s.id, s.expectedRevision])).toEqual([['hall_motion', 0], ['hall_motion_2', 0]])
+  expect(document.querySelector('dialog[open]')).toBeNull()
+  await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 1'))
+  expect(fixture.entities.documents.get('hall_motion')!.revision).toBe(1)
+})
+
+it('turns the device back on as it was, its parent too, after a step was selected in between', async () => {
+  const body = plugBody()
+  body.device = { manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } }
+  const { root } = await openPlug(fixture => fixture.entities.seed('plug', body))
+  // As read: the store answers every member of the device, those not set as null.
+  const before = json(root).definition.device
+  expect(before).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } })
+  control(inspector(root).querySelector('[aria-label="Device"]')!, 'device').click()
+  expect(json(root).definition.device).toBeNull()
+  // A step selected (the form goes), then nothing (it is back).
+  press(root.querySelector('.solid-flow__node[data-id="on"]')!)
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
+  deselect(root)
+  control(inspector(root).querySelector('[aria-label="Device"]')!, 'device').click()
+  expect(json(root).definition.device).toEqual(before)
+})
+
+/** The plug with three secrets saved: Password, Token and API key. */
+const securePlug = () => {
+  const body = plugBody()
+  body.settings = [...body.settings, { key: 'token', label: 'Token', type: 'string', secret: true, value: 'stored-token' }, { key: 'api_key', label: 'API key', type: 'string', secret: true, value: 'stored-key' }]
+  return body
+}
+const conflictWith = async (root: Element, fixture: Fixture) => {
+  const stored = fixture.entities.documents.get('plug')!
+  fixture.entities.documents.set('plug', { ...stored, revision: 2, name: 'Plug (elsewhere)' })
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(document.querySelector('dialog[open]')?.textContent).toContain('This entity definition changed elsewhere'))
+  return document.querySelector<HTMLDialogElement>('dialog[open]')!
+}
+
+it('saves a copy turned off after a conflict, and names the secrets the copy has no value for', async () => {
+  const { root, fixture, history } = await openPlug(fixture => fixture.entities.seed('plug', securePlug()))
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  type(control(expand(settingRow(root, 'token')), 'value'), 'typed-token')
+  button(await conflictWith(root, fixture), 'Save as a copy').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/plug_copy'))
+  const copy = saves(fixture).at(-1)
+  expect(copy).toMatchObject({ id: 'plug_copy', expectedRevision: 0, enabled: false })
+  expect(copy.definition.name).toBe('Plug (copy)')
+  expect(copy.definition.settings.find((s: any) => s.key === 'token').value).toBe('typed-token')
+  await vi.waitFor(() => expect(root.textContent).toContain('The copy has no saved value for Password and API key. Type them again.'))
+  expect(fixture.entities.documents.get('plug')!.name).toBe('Plug (elsewhere)')
+  deselect(root)
+  expect(control(expand(settingRow(root, 'password')), 'value').placeholder).toBe('No value')
+  expect(root.innerHTML).not.toMatch(/stored-|typed-token/)
+})
+
+it('says so when the copy lacks a single secret', async () => {
+  const { root, fixture } = await openPlug()
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  button(await conflictWith(root, fixture), 'Save as a copy').click()
+  await vi.waitFor(() => expect(root.textContent).toContain('The copy has no saved value for Password. Type it again.'))
+})
+
+it('discards the changes after a conflict, opening the definition as saved elsewhere', async () => {
+  const { root, fixture } = await openPlug()
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  button(await conflictWith(root, fixture), 'Discard my changes').click()
+  await vi.waitFor(() => expect(nameInput(root).value).toBe('Plug (elsewhere)'))
+  expect(chipTip(root)).toBe('Saved revision 2')
+  expect(json(root).definition.entities[0].name).toBe('Relay')
+  expect(saves(fixture)).toHaveLength(1)
+})
+
+it('reads the definition again when node libraries change: the newer revision when nothing is unsaved, the conflict otherwise', async () => {
+  const { root, fixture } = await openPlug()
+  const stored = fixture.entities.documents.get('plug')!
+  fixture.entities.documents.set('plug', { ...stored, revision: 2, name: 'Plug renamed' })
+  fixture.controls.generation = 'g2'
+  window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
+  await vi.waitFor(() => expect(nameInput(root).value).toBe('Plug renamed'))
+  expect(chipTip(root)).toBe('Saved revision 2')
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  fixture.entities.documents.set('plug', { ...fixture.entities.documents.get('plug')!, revision: 3 })
+  fixture.controls.generation = 'g3'
+  window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
+  await vi.waitFor(() => expect(root.textContent).toContain('This entity definition changed elsewhere while you had unsaved changes here.'))
+  expect(json(root).definition.entities[0].name).toBe('Main relay')
+})
+
+it('keeps the definition when its delete is refused because it changed elsewhere, and says why', async () => {
+  const { root, fixture, history } = await openPlug()
+  const stored = fixture.entities.documents.get('plug')!
+  fixture.entities.documents.set('plug', { ...stored, revision: 2 })
+  button(inspector(root), 'Delete entity definition').click()
+  button(document.querySelector('dialog[open]')!, 'Delete').click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Could not delete it:'))
+  expect(fixture.entities.requests.at(-1)).toEqual({ operation: 'delete', id: 'plug', expectedRevision: 1 })
+  expect(fixture.entities.documents.has('plug')).toBe(true)
+  expect(history.get()).toBe('/entities/plug')
+  expect(document.querySelector('dialog[open]')).toBeNull()
+})
+
+it('shows a save refused with a setting\'s problem on its row, and the Problems tab finds that row', async () => {
+  const { root, fixture } = await openPlug()
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  fixture.entities.controls.diagnostics = [{ nodeId: null, inputId: 'host', portId: null, code: 'definition.settingType', severity: 3, message: 'Setting host is not a text', startLine: null, startColumn: null } as any]
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(settingRow(root, 'host').textContent).toContain('Setting host is not a text'))
+  expect(settingRow(root, 'host').querySelector('.hs-def-row__head')!.getAttribute('aria-expanded')).toBe('true')
+  expect(chipTip(root)).not.toBe('Saved revision 2')
+  // Closed by the person, then found from the Problems tab: the form shows, the row opens, focus is in it.
+  settingRow(root, 'host').querySelector<HTMLButtonElement>('.hs-def-row__head')!.click()
+  press(root.querySelector('.solid-flow__node[data-id="on"]')!)
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'Setting host is not a text')!.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(control(settingRow(root, 'host'), 'key')))
+  expect(inspector(root).querySelector('.hs-insp-node')).toBeNull()
+})

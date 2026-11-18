@@ -143,7 +143,13 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     setConflictOpen(false)
     // An open code editor stays, or offers its unapplied code when its step is gone (as on any reload).
     if (choice === 'discard') return session.discardChanges()
-    stored(await (choice === 'keep' ? session.keepMine() : session.saveCopy()))
+    if (choice === 'keep') return stored(await session.keepMine())
+    const copied = graph()
+    const result = await session.saveCopy()
+    stored(result)
+    // What the copy lacks, in the adapter's words (an entity definition's secrets not typed here).
+    const notice = result && adapter.copyNotice?.(copied)
+    if (notice) showRunNotice({ text: notice })
   }
   const draftTime = (at: number | undefined) => (at === undefined ? '' : new Date(at).toLocaleString())
   // ---- A check of the graph that could not run is tried again when the page comes back or reconnects.
@@ -178,6 +184,9 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     setSelectedId(id)
     setSourceLine(undefined)
   }
+  /** The overview's row of the problem last chosen in the Problems tab, until a step is selected (`context.located`). */
+  const [located, setLocated] = createSignal<{ target: string }>()
+  createEffect(on(selectedId, id => { if (id) setLocated(undefined) }, { defer: true }))
   const narrow = media('(max-width: 899px)')
   const fullscreen = createFullscreen(() => editor)
   /**
@@ -277,6 +286,15 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
       diagnostic.nodeId ??
       session.preview()?.sourceMap.find(range => diagnostic.startLine != null && diagnostic.startLine >= range.startLine && diagnostic.startLine <= range.endLine)?.nodeId
     if (!nodeId || !graph().nodes.some(n => n.id === nodeId)) {
+      // About no step, but on a row of the adapter's overview: nothing selected, the overview shows it.
+      const target = diagnostic.nodeId ? undefined : adapter.overviewProblem?.(diagnostic)
+      if (target) {
+        leaveDrawer()
+        choose(undefined)
+        openPanel(false)
+        setLocated({ target })
+        return
+      }
       if (diagnostic.startLine != null) showLine(diagnostic.startLine)
       return
     }
@@ -365,6 +383,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     get diagnostics() { return session.diagnostics() }, get saved() { return !!session.document() }, get names() { return names() },
     get enabled() { return enabled() }, get dirty() { return session.dirty() }, get busy() { return busy() },
     get conflict() { return session.conflict() }, get catalogError() { return session.catalogError() },
+    get located() { return located() },
   })
 
   // ---- Full screen: the library and the drawer fold away; the inspector floats; a compact bar stays.
@@ -547,6 +566,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           overview={select => adapter.overview?.(context(select))}
           overviewLabel={texts.overviewLabel}
           overviewPeek={texts.overviewPeek}
+          overviewIcon={adapter.overviewIcon}
           docked={!floating()}
           open={panelOpen()}
           onClose={() => setPanelOpen(false)}

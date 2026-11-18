@@ -403,7 +403,20 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
         if (disposed || current !== identityGeneration) return
         id = target
       }
-      const result = await adapter.save(target, snapshot, document()?.revision ?? 0)
+      let result: EditorSaveResult<D>
+      try {
+        result = await adapter.save(target, snapshot, document()?.revision ?? 0)
+      } catch (err) {
+        // A new document whose id was taken elsewhere since it was chosen (an id from the name, as an entity
+        // definition's is): once, the id `newId` gives now. An automation's ids are random, so it never meets this.
+        if (document() || adapter.apiError(err)?.code !== 'conflict') throw err
+        const made = adapter.newId(snapshot)
+        const next = typeof made === 'string' ? made : await made
+        if (disposed || current !== identityGeneration) return
+        if (next === target) throw err
+        id = target = next
+        result = await adapter.save(target, snapshot, 0)
+      }
       if (disposed || current !== identityGeneration) return
       saved(result, snapshot)
       return result

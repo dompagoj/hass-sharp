@@ -213,11 +213,12 @@ export function newGraphDefinition(name: string): DefinitionBody {
 
 /**
  * A definition id from a name, fixed at its first save: `Any motion` → `any_motion`, then `any_motion_2`, `_3`… past
- * those `taken`; at most 80 characters, `entity` when the name gives none.
+ * those `taken`; at most 80 characters, `entity` when the name gives none. Never `new`, the address of a definition not
+ * saved yet (`/entities/new`, ruling R17): `New` → `new_2`.
  */
 export function definitionId(name: string, taken: string[]): string {
   const base = trimEnd(slug(name).slice(0, 80)) || 'entity'
-  const used = new Set(taken)
+  const used = new Set([...taken, 'new'])
   if (!used.has(base)) return base
   for (let n = 2; ; n++) {
     const suffix = `_${n}`

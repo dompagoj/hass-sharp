@@ -8,20 +8,26 @@ import type { VisualGraph } from '../visual/graph'
 import { icons } from '../visual/icons'
 import { typeLabel } from '../visual/typeLabels'
 import { describedBy } from '../visual/widgets/common'
-import { addSetting, definitionOf, keyProblem, keyRule, removeSetting, renameSetting, retypeSetting, stepsUsingSetting, updateSetting, valueFor } from './definitionEdits'
+import { addSetting, definitionOf, maskedSecret, removeSetting, renameSetting, retypeSetting, settingKeyProblem, settingKeyRule, stepsUsingSetting, updateSetting, valueFor } from './definitionEdits'
 import { usedBy } from './EntityRows'
-import { FieldErrors, SelectField, SwitchField, TextField } from './formFields'
+import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField } from './formFields'
 import type { DefinitionSetting } from './model'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 const none = (value: unknown) => value === null || value === undefined
+/** What a new type that removed a setting's value says. */
+export const valueRemoved = 'The value was removed because it does not fit the new type.'
 
 export interface SettingRowsProps {
   graph: VisualGraph
   catalog: VisualCatalogSnapshot
   /** The problems about each setting (by key) that no step has. */
   problems: Map<string, VisualDiagnostic[]>
+  /** A problem chosen in the Problems tab: the row it names (`setting:<key>`) opens, and focus goes into it. */
+  located?: { target: string }
   commit(graph: VisualGraph): void
+  /** Says what a change also did (a new type removed the value). */
+  onNotice?(text: string): void
 }
 
 /**
@@ -33,6 +39,13 @@ export function SettingRows(props: SettingRowsProps) {
   const [open, setOpen] = createSignal<ReadonlySet<string>>(new Set())
   const toggle = (key: string, wanted = !open().has(key)) => setOpen(current => { const next = new Set(current); if (wanted) next.add(key); else next.delete(key); return next })
   createEffect(on(() => [...props.problems.keys()].join(' '), () => { for (const key of props.problems.keys()) if (!open().has(key)) toggle(key, true) }))
+  let list: HTMLUListElement | undefined
+  createEffect(on(() => props.located, located => {
+    const key = located?.target.startsWith('setting:') ? located.target.slice('setting:'.length) : undefined
+    if (key === undefined || !settings().some(s => s.key === key)) return
+    toggle(key, true)
+    queueMicrotask(() => focusRow(list, 'settingKey', key))
+  }))
   const [removing, setRemoving] = createSignal<string>()
   const removingUses = () => { const key = removing(); return key ? stepsUsingSetting(props.graph, key).length : 0 }
   const remove = (key: string) => {
@@ -48,7 +61,7 @@ export function SettingRows(props: SettingRowsProps) {
     <section class="hs-def-section" aria-label="Settings">
       <h2 class="hs-insp-heading">Settings</h2>
       <Show when={settings().length} fallback={<p class="hs-muted">No settings. A setting is a value its steps read with a Setting step, such as an address or a password.</p>}>
-        <ul class="hs-def-rows" aria-label="Settings">
+        <ul class="hs-def-rows" aria-label="Settings" ref={list}>
           <Index each={settings()}>
             {setting => (
               <SettingRow setting={setting()} rows={props} open={open().has(setting().key)} onToggle={() => toggle(setting().key)}
@@ -77,12 +90,17 @@ function SettingRow(props: { setting: DefinitionSetting; rows: SettingRowsProps;
   const problems = () => (rows.problems.get(key()) ?? []).map(d => d.message)
   const set = (changes: Partial<Record<keyof DefinitionSetting, unknown>>) => rows.commit(updateSetting(rows.graph, key(), changes))
   const others = () => definitionOf(rows.graph).settings.filter(s => s.key !== key()).map(s => s.key)
-  /** A secret whose saved value is not here (masked): it cannot be made a plain setting without its value. */
-  const masked = () => props.setting.secret === true && props.setting.hasValue === true && none(props.setting.value)
+  /** A secret whose saved value is not here (masked): it keeps its key, and stays a secret, until its value is typed or cleared. */
+  const masked = () => maskedSecret(props.setting)
+  const retype = (type: string) => {
+    const result = retypeSetting(rows.graph, key(), type)
+    rows.commit(result.graph)
+    if (result.removed) rows.onNotice?.(valueRemoved)
+  }
   const types = () => [...(settingTypes.includes(type()) ? [] : [type()]), ...settingTypes].map(t => ({ value: t, label: typeLabel(t, rows.catalog) }))
   return (
     <li class="hs-def-row" data-setting-key={key()} classList={{ 'hs-def-row--problem': problems().length > 0 }}>
-      <button type="button" class="hs-def-row__head" aria-expanded={props.open} aria-controls={`${id}-body`} onClick={() => props.onToggle()}>
+      <button type="button" class="hs-def-row__head" aria-expanded={props.open} aria-controls={props.open ? `${id}-body` : undefined} onClick={() => props.onToggle()}>
         <span class="hs-def-row__icon" aria-hidden="true"><Glyph paths={icons.data} /></span>
         <span class="hs-def-row__title">
           <strong>{text(props.setting.label) || key()}</strong>
@@ -95,18 +113,22 @@ function SettingRow(props: { setting: DefinitionSetting; rows: SettingRowsProps;
       <Show when={props.open}>
         <div id={`${id}-body`} class="hs-def-row__body">
           <FieldErrors list={problems()} />
-          <TextField name="key" label="Key" text={key()} hint={`${keyRule} Setting steps that read it follow it.`}
-            commit={value => {
-              if (value === key()) return
-              const problem = keyProblem(value, others())
-              if (problem) return problem
-              const from = key()
-              rows.commit(renameSetting(rows.graph, from, value))
-              props.onRenamed(from, value)
-            }} />
+          {/* The server keeps a saved secret by its key: renamed untouched, it would be lost (ruling R16). */}
+          <Show when={!masked()} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint="To rename this setting, type its value again first." />}>
+            <TextField name="key" label="Key" text={key()} hint={`${settingKeyRule} Setting steps that read it follow it.`}
+              commit={value => {
+                const to = value.trim()
+                if (to === key()) return
+                const problem = settingKeyProblem(to, others())
+                if (problem) return problem
+                const from = key()
+                rows.commit(renameSetting(rows.graph, from, to))
+                props.onRenamed(from, to)
+              }} />
+          </Show>
           <TextField name="label" label="Label" text={text(props.setting.label)} placeholder="Not set" hint="How the Setting step names it."
-            commit={value => set({ label: value.trim() ? value : undefined })} />
-          <SelectField name="type" label="Type" value={type()} choices={types()} onChange={value => rows.commit(retypeSetting(rows.graph, key(), value))} />
+            commit={value => set({ label: value.trim() || undefined })} />
+          <SelectField name="type" label="Type" value={type()} choices={types()} onChange={retype} />
           <SwitchField name="secret" label="Secret" checked={props.setting.secret === true} disabled={masked()}
             hint={masked() ? 'Clear its saved value first to make it a plain setting.' : 'A secret, such as a password, is never shown again once saved.'}
             onChange={secret => set({ secret: secret ? true : undefined })} />

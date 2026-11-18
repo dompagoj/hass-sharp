@@ -4,7 +4,9 @@ import type { EditorAdapter, EditorTexts } from '../visual/adapter'
 import type { VisualGraph } from '../visual/graph'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
 import { DefinitionOverview } from './DefinitionPanel'
-import { renameDefinition, savedSecrets } from './definitionEdits'
+import { icons } from '../visual/icons'
+import { copyNotice, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
+import { deviceMemory } from './DeviceForm'
 import { EntityHelp } from './EntityHelp'
 import { definitionBody, definitionId, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
 
@@ -61,6 +63,8 @@ export function entityAdapter(
   options: { onClassDefinition?(document: EntityDocument): void } = {},
 ): EditorAdapter<EntityEditorDocument> {
   const api = entityApi(hass)
+  // A device turned off, for as long as this editor is open: the form goes whenever a step is selected.
+  const memory = deviceMemory()
   return {
     document: 'entity',
     read: async id => {
@@ -90,7 +94,10 @@ export function entityAdapter(
     runHref: (id, runId) => `/entities/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`,
     queryKeys: [definitionsQueryKey],
     texts: entityTexts,
-    overview: context => createComponent(DefinitionOverview, { context }),
+    overview: context => createComponent(DefinitionOverview, { context, memory }),
+    overviewIcon: icons.entity,
+    overviewProblem: problemRow,
+    copyNotice,
     help: EntityHelp,
   }
 }

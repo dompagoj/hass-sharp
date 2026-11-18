@@ -8,8 +8,11 @@ import { definitionEntityKinds, entityKey, entityKeyPattern, renameEntityKey, ty
  * graph: one undo step when committed. Nothing here changes its argument.
  */
 
-/** The rule an entity's (or a graph setting's) key follows, as the form says it. */
+/** The rule an entity's key follows, as the form says it. */
 export const keyRule = 'Lower-case letters, digits and underscores, starting with a letter; at most 40 characters.'
+/** The rule a setting's key follows, the server's (ruling R15): not blank once trimmed, and not another setting's. */
+export const settingKeyRule = "Any text that is not blank and not another setting's key."
+const takenKey = 'Another one already has this key; give each a key of its own.'
 
 /** The definition the graph carries; empty lists and no device when it has none. */
 export function definitionOf(graph: VisualGraph): EditorDefinition {
@@ -25,11 +28,25 @@ export function freeKey(base: string, taken: string[]): string {
   for (let n = 2; ; n++) if (!taken.includes(`${base}_${n}`)) return `${base}_${n}`
 }
 
-/** Why `text` cannot be the new key of an entity (or setting) among `others`; undefined when it can. */
+/** Why `text` cannot be the new key of an entity among `others`; undefined when it can. */
 export function keyProblem(text: string, others: string[]): string | undefined {
   if (!entityKeyPattern.test(text)) return keyRule
-  if (others.includes(text)) return 'Another one already has this key; give each a key of its own.'
+  if (others.includes(text)) return takenKey
 }
+
+/** Why `text`, trimmed, cannot be the new key of a setting among `others` (ruling R15); undefined when it can. */
+export function settingKeyProblem(text: string, others: string[]): string | undefined {
+  const key = text.trim()
+  if (!key) return 'Give the setting a key.'
+  if (others.includes(key)) return takenKey
+}
+
+/**
+ * A secret whose saved value is not here (masked; nothing typed in its place): its key cannot be renamed (ruling R16),
+ * as the server keeps a saved value by the key it was saved under, and it cannot be made a plain setting.
+ */
+export const maskedSecret = (setting: DefinitionSetting) =>
+  setting.secret === true && setting.hasValue === true && (setting.value === null || setting.value === undefined)
 
 // ---- Entities
 
@@ -118,10 +135,15 @@ export function updateSetting(graph: VisualGraph, key: string, changes: Partial<
   })
 }
 
-/** The setting renamed, with every Setting step that reads it; the same graph when `to` is not a free key. */
+/**
+ * The setting renamed to `to` (trimmed), with every Setting step that reads it; the same graph when that is not a free
+ * key, or the setting is a masked secret (ruling R16).
+ */
 export function renameSetting(graph: VisualGraph, from: string, to: string): VisualGraph {
   const settings = definitionOf(graph).settings
-  if (from === to || keyProblem(to, settings.filter(s => s.key !== from).map(s => s.key)) || !settings.some(s => s.key === from)) return graph
+  const setting = settings.find(s => s.key === from)
+  to = to.trim()
+  if (!setting || from === to || maskedSecret(setting) || settingKeyProblem(to, settings.filter(s => s.key !== from).map(s => s.key))) return graph
   const renamed = updateSetting(graph, from, { key: to })
   return { ...renamed, nodes: renamed.nodes.map(node => (node.kind === 'setting' && node.config?.key === from ? { ...node, config: { ...node.config, key: to } } : node)) }
 }
@@ -140,13 +162,15 @@ export function valueFor(type: string, value: JsonValue | undefined): JsonValue 
 
 /**
  * A setting's type changed: its value converted when it can be (else none). A masked secret has no value here to
- * convert: it is cleared, and says so (`hasValue: false`).
+ * convert: it is cleared, and says so (`hasValue: false`). `removed`: a value the setting had is gone.
  */
-export function retypeSetting(graph: VisualGraph, key: string, type: string): VisualGraph {
+export function retypeSetting(graph: VisualGraph, key: string, type: string): { graph: VisualGraph; removed: boolean } {
   const setting = definitionOf(graph).settings.find(s => s.key === key)
-  if (!setting || setting.type === type) return graph
-  const masked = setting.secret === true && setting.hasValue === true && (setting.value === null || setting.value === undefined)
-  return updateSetting(graph, key, { type, value: valueFor(type, setting.value), ...(masked ? { hasValue: false } : {}) })
+  if (!setting || (setting.type ?? 'string') === type) return { graph, removed: false }
+  const masked = maskedSecret(setting)
+  const value = valueFor(type, setting.value)
+  const had = setting.value !== null && setting.value !== undefined
+  return { graph: updateSetting(graph, key, { type, value, ...(masked ? { hasValue: false } : {}) }), removed: masked || (had && value === null) }
 }
 
 /**
@@ -165,6 +189,17 @@ export function savedSecrets(sent: VisualGraph, document: Pick<EntityDocument, '
   })
 }
 
+/**
+ * What Save as a copy leaves out, said once it is saved: the copy is a new definition, so a secret that was not typed
+ * here has no saved value in it. Undefined when there is none.
+ */
+export function copyNotice(copied: VisualGraph): string | undefined {
+  const names = definitionOf(copied).settings.filter(maskedSecret).map(s => (typeof s.label === 'string' && s.label.trim()) || s.key)
+  if (!names.length) return
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+  return `The copy has no saved value for ${list}. Type ${names.length === 1 ? 'it' : 'them'} again.`
+}
+
 // ---- Device
 
 /** The device's details with `member` set, or left out when `value` is empty; the device's parent (`via`) stays as it is. */
@@ -180,6 +215,13 @@ export const setDevice = (graph: VisualGraph, device: DefinitionDevice | null): 
 
 const entityCodes = /^definition\.(entity(Key|Field|Domain|Option)|duplicateEntity)$/
 const settingCodes = /^definition\.(setting(Key|Type)|duplicateSetting|unknownSetting)$/
+/** The form's row a problem about no step is about: `entity:<key>` or `setting:<key>`, by its code and `inputId`. */
+export function problemRow(diagnostic: VisualDiagnostic): string | undefined {
+  const key = diagnostic.inputId, code = diagnostic.code ?? ''
+  if (diagnostic.nodeId || !key) return
+  if (entityCodes.test(code)) return `entity:${key}`
+  if (settingCodes.test(code)) return `setting:${key}`
+}
 /**
  * The problems about no step, by where the form shows them: an entity's or a setting's (by its key, `inputId`), and
  * the rest (the definition's own, and an entity or setting the form has no row for).
@@ -188,10 +230,10 @@ export function definitionProblems(diagnostics: VisualDiagnostic[], definition: 
   const entities = new Map<string, VisualDiagnostic[]>(), settings = new Map<string, VisualDiagnostic[]>(), others: VisualDiagnostic[] = []
   for (const diagnostic of diagnostics) {
     if (diagnostic.nodeId || diagnostic.severity <= 0) continue
-    const key = diagnostic.inputId ?? undefined, code = diagnostic.code ?? ''
-    const into = key && entityCodes.test(code) && definition.entities.some(e => e.key === key) ? entities
-      : key && settingCodes.test(code) && definition.settings.some(s => s.key === key) ? settings : undefined
-    if (into && key) into.set(key, [...(into.get(key) ?? []), diagnostic])
+    const row = problemRow(diagnostic), key = diagnostic.inputId ?? ''
+    const into = row?.startsWith('entity:') && definition.entities.some(e => e.key === key) ? entities
+      : row?.startsWith('setting:') && definition.settings.some(s => s.key === key) ? settings : undefined
+    if (into) into.set(key, [...(into.get(key) ?? []), diagnostic])
     else others.push(diagnostic)
   }
   return { entities, settings, others }

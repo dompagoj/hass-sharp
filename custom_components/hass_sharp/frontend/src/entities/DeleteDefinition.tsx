@@ -9,9 +9,9 @@ import { definitionsQueryKey, entityApi, entityError } from './api'
 /**
  * Delete at the bottom of a saved definition's form. It asks first, saying that its entities (and its device) go from
  * Home Assistant; then it deletes the saved revision and goes to the entities page. Not while there are unsaved
- * changes, a save, or a conflict to settle.
+ * changes, a save, or a conflict to settle (`blocked`); `hint` says why, when the person can do something about it.
  */
-export function DeleteDefinition(props: { document: { id: string; revision: number }; name: string; blocked: boolean; onError(text: string): void }) {
+export function DeleteDefinition(props: { document: { id: string; revision: number }; name: string; blocked: boolean; hint?: string; onError(text: string): void }) {
   const hass = useHass()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -33,10 +33,10 @@ export function DeleteDefinition(props: { document: { id: string; revision: numb
   }
   return (
     <div class="hs-def-delete">
-      <Button variant="danger" disabled={props.blocked} aria-describedby={props.blocked ? 'hs-def-delete-hint' : undefined} onClick={() => setAsking(true)}>
+      <Button variant="danger" disabled={props.blocked} aria-describedby={props.blocked && props.hint ? 'hs-def-delete-hint' : undefined} onClick={() => setAsking(true)}>
         Delete entity definition
       </Button>
-      <Show when={props.blocked}><small id="hs-def-delete-hint" class="hs-field-hint">Save or undo your changes before deleting it.</small></Show>
+      <Show when={props.blocked && props.hint}>{hint => <small id="hs-def-delete-hint" class="hs-field-hint">{hint()}</small>}</Show>
       <DeleteDefinitionDialog open={asking()} name={props.name} deleting={deleting()} onCancel={() => setAsking(false)} onConfirm={() => void confirm()} />
     </div>
   )
