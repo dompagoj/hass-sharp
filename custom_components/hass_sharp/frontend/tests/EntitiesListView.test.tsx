@@ -5,9 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { readFileSync } from 'node:fs'
 import { HassCtx } from '../src/context'
 import { EntitiesListView } from '../src/views/EntitiesListView'
-import { definitionPollInterval } from '../src/entities/DefinitionCard'
+import { definitionPollInterval, noteStarting } from '../src/entities/DefinitionCard'
 import { entityTexts } from '../src/entities/adapter'
-import { definitionsQueryKey } from '../src/entities/api'
+import { definitionsQueryKey, entityTypesQueryKey } from '../src/entities/api'
 import type { DefinitionBody, HomeDefinition, RegisteredEntity } from '../src/entities/model'
 import type { RecentRun } from '../src/visual/api'
 import { visualFixture, type FixtureEntityType } from './visual-fixture'
@@ -33,17 +33,18 @@ const cameraType: FixtureEntityType = {
 
 /**
  * The list at `/entities` over a new in-memory backend. `hold` delays the replies to these operations until released;
- * `refuse` makes Home Assistant refuse every entity request with that `{code, message}`.
+ * `refuse` makes Home Assistant refuse every entity request with that `{code, message}`; `failTypes` fails `types`.
  */
-function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string } } = {}) {
+function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string }; failTypes?: boolean } = {}) {
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
   const fixture = visualFixture({ entityTypes: [cameraType] })
   options.prepare?.(fixture)
   const held: (() => void)[] = []
   const release = () => held.splice(0).forEach(go => go())
-  const control = { refuse: options.refuse }
+  const control = { refuse: options.refuse, failTypes: options.failTypes ?? false }
   const callWS = async (message: any) => {
     if (message.type === 'hass_sharp/entities' && control.refuse) throw control.refuse
+    if (message.request?.operation === 'types' && control.failTypes) throw { code: 'entity_request_failed', message: 'Entity request failed; check integration logs' }
     if (options.hold?.includes(message.request?.operation)) await new Promise<void>(go => held.push(go))
     return fixture.callWS(message)
   }
@@ -72,7 +73,8 @@ const graph = (name: string) => ({ kind: 'graph' as const, graph: { version: 5, 
 const plug: DefinitionBody = {
   name: 'Plug', device: { manufacturer: 'Acme', model: 'P1' },
   settings: [{ key: 'token', type: 'string', label: 'Token', secret: true, value: 'hunter2' }, { key: 'room', type: 'string', label: 'Room', value: 'plainly-visible-value' }],
-  entities: [{ key: 'power', domain: 'sensor', name: 'Power' }, { key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'online', domain: 'binary_sensor' }],
+  entities: [{ key: 'power', domain: 'sensor', name: 'Power' }, { key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'online', domain: 'binary_sensor' },
+    { key: 'boost', domain: 'switch', name: 'Boost', enabledByDefault: false }],
   logic: graph('Plug'),
 }
 const camera: DefinitionBody = {
@@ -88,6 +90,9 @@ const run = (status: RecentRun['status'], minutes = 5): RecentRun => ({ runId: `
 function three(fixture: Fixture) {
   const entities = fixture.entities
   entities.seed('plug', plug)
+  // Running, with one entity Home Assistant has disabled (it is not enabled by default).
+  entities.registry.set('plug', [registered('plug:boost', 'switch.plug_boost', 'Boost', true), registered('plug:online', 'binary_sensor.plug_online', null),
+    registered('plug:power', 'sensor.plug_power', 'Power'), registered('plug:relay', 'switch.plug_relay', 'Relay')])
   entities.runs.set('plug', { recentRuns: [run('Succeeded', 30), run('Failed', 10), run('Succeeded', 2)], runsToday: 3, failedLastDay: 1, lastRunUtc: minutesAgo(2) })
   entities.controls.activation = 'failed'
   entities.controls.activationError = 'Could not reach the camera'
@@ -142,11 +147,13 @@ it('shows each definition: its name, how it works, its device, its status, its e
   expect(plugCard.querySelector('.hs-ent-card__device')?.textContent).toBe('Device')
   expect(status(plugCard)).toBe('Running')
   expect(error(plugCard)).toBeNull()
-  // The running definition's entities, with their Home Assistant ids; no state yet.
+  // The running definition's entities, with their Home Assistant ids; no state yet. Enabled ones first, each group by
+  // name; the one disabled in Home Assistant says so.
   expect(rows(plugCard)).toEqual([
+    ['online', 'Binary sensor', 'binary_sensor.plug_online', '—'],
     ['Power', 'Sensor', 'sensor.plug_power', '—'],
     ['Relay', 'Switch', 'switch.plug_relay', '—'],
-    ['online', 'Binary sensor', 'binary_sensor.plug_online', '—'],
+    ['Boost', 'Switch', 'switch.plug_boost', 'Disabled in Home Assistant'],
   ])
   expect(plugCard.querySelector('ul.hs-ent-card__entities')?.getAttribute('aria-label')).toBe('Entities of Plug')
   const dots = plugCard.querySelector('.hs-run-dots')!
@@ -160,10 +167,10 @@ it('shows each definition: its name, how it works, its device, its status, its e
   expect(status(cameraCard)).toBe('Failed')
   expect(error(cameraCard)).toBe('Could not reach the camera')
   expect(cameraCard.querySelector('.hs-ent-card__device')).toBeNull()
-  // In the registry's order (by unique id).
+  // Enabled first; a registry entry without a name goes by its key.
   expect(rows(cameraCard)).toEqual([
-    ['sensor.driveway_faces', 'Sensor', 'sensor.driveway_faces', 'Disabled in Home Assistant'],
     ['Driveway', 'Camera', 'camera.driveway', '—'],
+    ['faces', 'Sensor', 'sensor.driveway_faces', 'Disabled in Home Assistant'],
   ])
   // A class records no runs.
   expect(cameraCard.querySelector('.hs-run-dots, .hs-ent-card__runs-today')).toBeNull()
@@ -188,6 +195,8 @@ it('says why a definition is not running, starting, or running an older revision
     f.entities.controls.activation = 'notLoaded'
     f.entities.controls.activationError = 'The library cams does not compile'
     f.entities.seed('broken', { ...camera, name: 'Broken camera' })
+    f.entities.controls.activationError = 'Not active'
+    f.entities.seed('idle', { ...porch, name: 'Idle porch' })
     f.entities.controls.activation = 'running'
     f.entities.seed('gone', { name: 'Old class', settings: [], logic: { kind: 'class', type: 'library:old:NodeLib.Gone' } }, { liveEntities: [], status: 'setup' })
     f.entities.seed('stale', porch, { currentRevisionActive: false, activationError: 'Entity key light is used twice' })
@@ -202,6 +211,11 @@ it('says why a definition is not running, starting, or running an older revision
   expect(broken.classList.contains('hs-home-card--attention')).toBe(true)
   expect(broken.querySelector('.hs-ent-card__none')?.textContent).toBe('Its entities appear after it has started once.')
   expect(broken.querySelector('.hs-ent-row')).toBeNull()
+  // The backend's "Not active" is no reason: Not running alone.
+  const idle = card(root, 'idle')
+  expect(status(idle)).toBe('Not running')
+  expect(error(idle)).toBeNull()
+  expect(idle.textContent).not.toContain('Not active')
   // Starting, from a class no longer offered.
   const gone = card(root, 'gone')
   expect(status(gone)).toBe('Starting')
@@ -211,7 +225,10 @@ it('says why a definition is not running, starting, or running an older revision
   const stale = card(root, 'stale')
   expect(status(stale)).toBe('Running')
   expect(stale.querySelector('.hs-ent-card__stale')?.textContent).toBe('Changes not applied: Entity key light is used twice')
-  expect(stale.classList.contains('hs-home-card--attention')).toBe(true)
+  // A warning, tinted as one.
+  expect(stale.classList.contains('hs-home-card--attention')).toBe(false)
+  expect(stale.classList.contains('hs-ent-card--warning')).toBe(true)
+  expect(card(root, 'station').classList.contains('hs-ent-card--warning')).toBe(false)
   expect(card(root, 'older').querySelector('.hs-ent-card__stale')?.textContent).toBe('Changes not applied')
   expect(card(root, 'station').querySelector('.hs-ent-card__stale')).toBeNull()
   // Nine entities: six, then how many more.
@@ -226,17 +243,18 @@ it('shows live states through one subscription, resubscribes only when the entit
   await vi.waitFor(() => expect(subscribeMessage).toHaveBeenCalledTimes(1))
   // Every card's entities but the one disabled in Home Assistant, sorted.
   expect(subscriptions[0].message).toEqual({ type: 'subscribe_entities', entity_ids: ['binary_sensor.plug_online', 'camera.driveway', 'sensor.plug_power', 'switch.plug_relay', 'switch.porch'] })
+  expect(subscriptions[0].message.entity_ids).not.toContain('switch.plug_boost')
   subscriptions[0].push({ a: {
     'sensor.plug_power': { s: '42', a: { unit_of_measurement: 'W' } }, 'switch.plug_relay': { s: 'on', a: {} },
     'camera.driveway': { s: 'unavailable', a: {} }, 'switch.porch': { s: 'unknown', a: {} },
   } })
-  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['42', 'on', '—']))
-  expect(rows(card(root, 'camera')).map(r => r[3])).toEqual(['Disabled in Home Assistant', 'Unavailable'])
+  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['—', '42', 'on', 'Disabled in Home Assistant']))
+  expect(rows(card(root, 'camera')).map(r => r[3])).toEqual(['Unavailable', 'Disabled in Home Assistant'])
   expect(rows(card(root, 'porch')).map(r => r[3])).toEqual(['Unknown'])
   subscriptions[0].push({ c: { 'sensor.plug_power': { '+': { s: '43.5', lu: 2 } }, 'switch.plug_relay': { '+': { a: { icon: 'mdi:power' } } } } })
-  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['43.5', 'on', '—']))
+  await vi.waitFor(() => expect(rows(card(root, 'plug')).map(r => r[3])).toEqual(['—', '43.5', 'on', 'Disabled in Home Assistant']))
   subscriptions[0].push({ r: ['sensor.plug_power'] })
-  await vi.waitFor(() => expect(rows(card(root, 'plug'))[0][3]).toBe('—'))
+  await vi.waitFor(() => expect(rows(card(root, 'plug'))[1][3]).toBe('—'))
 
   // A refetch with the same entities keeps the subscription.
   await client.refetchQueries({ queryKey: [...definitionsQueryKey] })
@@ -286,8 +304,8 @@ it('turns a definition off and on from its card, with the entity wording on the 
   expect(status(card(root, 'porch'))).toBe('Off')
 })
 
-it('opens a definition from its menu and deletes one after the confirmation, moving focus to the next card', async () => {
-  const { root, fixture, history } = setup({ prepare: three })
+it('deletes after the confirmation, moving focus to the next card, and recovers from a refusal without a reload', async () => {
+  const { root, fixture } = setup({ prepare: three })
   await loaded(root)
   menu(root, 'Plug', 'Delete')
   const dialog = await vi.waitFor(() => { const found = root.querySelector('dialog[open]'); expect(found).not.toBeNull(); return found! })
@@ -296,22 +314,77 @@ it('opens a definition from its menu and deletes one after the confirmation, mov
   button(dialog, 'Cancel').click()
   await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
   expect(requests(fixture, 'delete')).toEqual([])
-  // A refusal stays in the dialog.
+
+  // Changed behind the page (a library save rebuilds definitions): said in plain words, the list read again, and a
+  // retry deletes the revision the list now has.
   fixture.entities.documents.get('plug')!.revision = 4
   menu(root, 'Plug', 'Delete')
+  let reads = requests(fixture, 'list').length
   button(root.querySelector('dialog[open]')!, 'Delete').click()
-  await vi.waitFor(() => expect(root.querySelector('dialog[open] [role="alert"]')?.textContent).toContain('Revision conflict; reload the current document'))
+  const alert = () => root.querySelector('dialog[open] [role="alert"]')
+  await vi.waitFor(() => expect(alert()?.textContent).toContain('This entity definition changed since the list was loaded. Reload the list, then delete it.'))
+  expect(alert()?.textContent).not.toContain('document')
+  expect(button(alert()!, 'Reload the list')).toBeDefined()
   expect(fixture.entities.documents.has('plug')).toBe(true)
-  button(root.querySelector('dialog[open]')!, 'Cancel').click()
-  await client.refetchQueries({ queryKey: [...definitionsQueryKey] })
-  menu(root, 'Plug', 'Delete')
+  await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(reads))
+  await vi.waitFor(() => expect(button(root.querySelector('dialog[open]')!, 'Delete').disabled).toBe(false))
   button(root.querySelector('dialog[open]')!, 'Delete').click()
   await vi.waitFor(() => expect(card(root, 'plug')).toBeNull())
-  expect(requests(fixture, 'delete').at(-1)).toEqual({ operation: 'delete', id: 'plug', expectedRevision: 4 })
+  expect(requests(fixture, 'delete').map(r => r.expectedRevision)).toEqual([1, 4])
   expect(fixture.entities.documents.has('plug')).toBe(false)
+  expect(root.querySelector('dialog[open]')).toBeNull()
   await vi.waitFor(() => expect(document.activeElement).toBe(card(root, 'porch').querySelector('.hs-home-card__link')))
+
+  // "Reload the list" closes the dialog and reads the list again; Delete then takes the new revision.
+  fixture.entities.documents.get('porch')!.revision = 9
+  menu(root, 'Porch light', 'Delete')
+  button(root.querySelector('dialog[open]')!, 'Delete').click()
+  await vi.waitFor(() => expect(alert()?.textContent).toContain('Reload the list, then delete it.'))
+  reads = requests(fixture, 'list').length
+  button(alert()!, 'Reload the list').click()
+  await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
+  await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(reads))
+  await vi.waitFor(() => expect(client.getQueryData<HomeDefinition[]>([...definitionsQueryKey])?.find(d => d.id === 'porch')?.revision).toBe(9))
+  menu(root, 'Porch light', 'Delete')
+  button(root.querySelector('dialog[open]')!, 'Delete').click()
+  await vi.waitFor(() => expect(card(root, 'porch')).toBeNull())
+  expect(requests(fixture, 'delete').at(-1)).toEqual({ operation: 'delete', id: 'porch', expectedRevision: 9 })
+
+  // Any other refusal: its message, and the list read again (here it no longer has the definition).
+  fixture.entities.documents.delete('camera')
+  menu(root, 'Driveway', 'Delete')
+  reads = requests(fixture, 'list').length
+  button(root.querySelector('dialog[open]')!, 'Delete').click()
+  await vi.waitFor(() => expect(alert()?.textContent).toBe('Could not delete it: Entity definition not found'))
+  await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(reads))
+  await vi.waitFor(() => expect(card(root, 'camera')).toBeNull())
+})
+
+it('opens a definition from its menu', async () => {
+  const { root, history } = setup({ prepare: three })
+  await loaded(root)
   menu(root, 'Driveway', 'Open')
   await vi.waitFor(() => expect(history.get()).toBe('/entities/camera'))
+})
+
+it('names a class it could not look up, and reads the classes and the list again after a node library is saved', async () => {
+  const { root, fixture, control } = setup({ prepare: three, failTypes: true })
+  await loaded(root)
+  const logic = () => card(root, 'camera').querySelector('.hs-ent-card__logic')
+  await vi.waitFor(() => expect(card(root, 'camera').querySelector('.hs-ent-card__hint')?.textContent).toBe('Could not load the class’s name.'))
+  expect(logic()?.textContent).toBe('Class')
+  expect(logic()?.getAttribute('title')).toBe('Could not load the class’s name.')
+  // The page still works.
+  expect(status(card(root, 'camera'))).toBe('Failed')
+  control.failTypes = false
+  const before = { list: requests(fixture, 'list').length, types: fixture.calls.filter(c => c.request?.operation === 'types').length }
+  window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
+  await vi.waitFor(() => expect(logic()?.textContent).toBe('Driveway camera'))
+  expect(card(root, 'camera').querySelector('.hs-ent-card__hint')).toBeNull()
+  expect(logic()?.hasAttribute('title')).toBe(false)
+  expect(requests(fixture, 'list').length).toBeGreaterThan(before.list)
+  expect(requests(fixture, 'types').length).toBeGreaterThan(0)
+  expect(client.getQueryState([...entityTypesQueryKey])?.status).toBe('success')
 })
 
 it('starts a new entity definition, named, built with nodes or from a class', async () => {
@@ -400,6 +473,17 @@ it('reads the list again every 5 s while a definition is starting or a run just 
   expect(definitionPollInterval([item({ status: 'setup', enabled: false })], at)).toBe(false)
   expect(definitionPollInterval([item({ recentRuns: [{ runId: '1', status: 'Running', startUtc: new Date(at - 60_000).toISOString(), durationMs: null }] })], at)).toBe(5000)
   expect(definitionPollInterval([item({ recentRuns: [{ runId: '1', status: 'Running', startUtc: new Date(at - 3_600_000).toISOString(), durationMs: null }] })], at)).toBe(30_000)
+  // Starting for more than 2 minutes (since the page first saw it starting): every 30 s, as for an old run.
+  const since = new Map<string, number>()
+  noteStarting(since, [item({ status: 'setup' })], at - 3 * 60_000)
+  expect(definitionPollInterval([item({ status: 'setup' })], at, since)).toBe(30_000)
+  expect(definitionPollInterval([item({ status: 'setup' })], at - 90_000, since)).toBe(5000)
+  noteStarting(since, [item({ status: 'setup' })], at)
+  expect(since.get('x')).toBe(at - 3 * 60_000)
+  expect(definitionPollInterval([item({ status: 'setup', recentRuns: [{ runId: '1', status: 'Running', startUtc: new Date(at - 60_000).toISOString(), durationMs: null }] })], at, since)).toBe(5000)
+  // Once it has started, it is forgotten: starting again counts from then.
+  noteStarting(since, [item({})], at)
+  expect(since.has('x')).toBe(false)
 })
 
 it('lays out for 360 px: one column of cards, entity rows that wrap, choices that stack', async () => {

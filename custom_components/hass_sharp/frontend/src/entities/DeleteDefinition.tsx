@@ -1,4 +1,4 @@
-import { createSignal, Show } from 'solid-js'
+import { createSignal, Show, type JSX } from 'solid-js'
 import { useNavigate } from '@solidjs/router'
 import { useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
@@ -44,9 +44,10 @@ export function DeleteDefinition(props: { document: { id: string; revision: numb
 
 /**
  * The confirmation before a definition is deleted, in the editor and on the entities page: what goes from Home
- * Assistant, Cancel and Delete. `error` is a refusal to show in it, when the owner keeps it open for one.
+ * Assistant, Cancel and Delete. `error` is a refusal to show in it (with what to do about it), when the owner keeps it
+ * open for one.
  */
-export function DeleteDefinitionDialog(props: { open: boolean; name: string; deleting: boolean; error?: string; onCancel(): void; onConfirm(): void }) {
+export function DeleteDefinitionDialog(props: { open: boolean; name: string; deleting: boolean; error?: JSX.Element; onCancel(): void; onConfirm(): void }) {
   return (
     <Dialog open={props.open} title="Delete this entity definition?" width="small" onClose={() => { if (!props.deleting) props.onCancel() }} footer={<>
       <Button disabled={props.deleting} onClick={() => props.onCancel()}>Cancel</Button>

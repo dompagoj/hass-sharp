@@ -60,6 +60,8 @@
 .hs-app .hs-ent-card__status--off { color: var(--hs-muted); }
 .hs-app .hs-ent-card .hs-home-card__health { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
 .hs-app .hs-ent-card .hs-home-card__health:has(.hs-ent-card__stale) { color: var(--hs-warning); }
+.hs-app .hs-ent-card--warning { border-color: color-mix(in srgb, var(--hs-warning) 50%, var(--hs-line)); background: color-mix(in srgb, var(--hs-warning) 5%, var(--hs-surface)); }
+.hs-app .hs-ent-card__hint { color: var(--hs-muted); font-size: 12px; }
 .hs-app .hs-ent-card__entities { display: grid; margin: 0; padding: 0; list-style: none; min-width: 0; border-top: 1px solid var(--hs-line); }
 .hs-app .hs-ent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px; min-width: 0; padding: 7px 0; border-bottom: 1px solid var(--hs-line); font-size: 13px; }
 .hs-app .hs-ent-row__name { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }

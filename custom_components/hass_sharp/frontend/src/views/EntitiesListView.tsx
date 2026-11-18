@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Index, Show, useContext } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show, useContext } from 'solid-js'
 import { useNavigate, type RouteSectionProps } from '@solidjs/router'
 import { useQuery, useQueryClient } from '@tanstack/solid-query'
 import { HassCtx } from '../context'
@@ -7,14 +7,11 @@ import { Dialog } from '../components/Dialog'
 import { startOfToday } from '../automations/model'
 import { focusSoon } from '../visual/soon'
 import { createNotice } from '../visual/TopBar'
-import { definitionsQueryKey, entityApi, entityError } from '../entities/api'
-import { DefinitionCard, definitionPollInterval, definitionsSummary, watchedEntityIds } from '../entities/DefinitionCard'
+import { definitionsQueryKey, EntityApiError, entityApi, entityError, entityTypesQueryKey } from '../entities/api'
+import { DefinitionCard, definitionPollInterval, definitionsSummary, noteStarting, watchedEntityIds } from '../entities/DefinitionCard'
 import { DeleteDefinitionDialog } from '../entities/DeleteDefinition'
 import { liveState } from '../entities/liveState'
 import type { HomeDefinition } from '../entities/model'
-
-/** The page's query of the classes node libraries offer, for a class definition's title. */
-const typesQueryKey = ['entity-types'] as const
 
 /** The two ways to build an entity definition, as "New entity definition" offers them. */
 const starts = [
@@ -41,11 +38,16 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   const [notice, showNotice] = createNotice()
 
   // ---- The list: one request for every card. Read again (see definitionPollInterval) only while the page is visible.
+  const startingSince = new Map<string, number>()
   const home = useQuery(() => ({
     queryKey: [...definitionsQueryKey],
     queryFn: () => api.home(startOfToday()),
     staleTime: 0,
-    refetchInterval: query => definitionPollInterval(query.state.data ?? [], Date.now()),
+    refetchInterval: query => {
+      const items = query.state.data ?? [], now = Date.now()
+      noteStarting(startingSince, items, now)
+      return definitionPollInterval(items, now, startingSince)
+    },
     refetchIntervalInBackground: false,
   }))
   const items = createMemo(() => [...(home.data ?? [])].sort(byName))
@@ -53,7 +55,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   const ids = createMemo(() => items().map(item => item.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, i) => id === b[i]) })
   // One request for the whole page, only when a definition is built from a class.
   const types = useQuery(() => ({
-    queryKey: [...typesQueryKey],
+    queryKey: [...entityTypesQueryKey],
     queryFn: () => api.types(),
     staleTime: 0,
     enabled: items().some(item => item.logic.kind === 'class'),
@@ -63,6 +65,13 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
     const type = item.logic.type
     return types.data.types.find(found => found.id === type)?.title ?? null
   }
+  // A node library save can change the classes offered and rebuild definitions (new revisions): both are read again.
+  const librariesChanged = () => {
+    void queryClient.invalidateQueries({ queryKey: [...entityTypesQueryKey] })
+    void queryClient.invalidateQueries({ queryKey: [...definitionsQueryKey] })
+  }
+  window.addEventListener('hass-sharp-libraries-changed', librariesChanged)
+  onCleanup(() => window.removeEventListener('hass-sharp-libraries-changed', librariesChanged))
   // One subscription for every card's entities.
   const states = liveState(hass, () => items().flatMap(watchedEntityIds))
 
@@ -112,9 +121,10 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
     }
   }
 
-  // ---- Delete, with the editor's confirmation; a refusal stays in it.
+  // ---- Delete, with the editor's confirmation. A refusal stays in it and the list is read again, so a retry deletes
+  // the revision the list has then; a conflict (changed since the list was read) says so and offers Reload the list.
   const [deleteItem, setDeleteItem] = createSignal<HomeDefinition>()
-  const [deleteError, setDeleteError] = createSignal<string>()
+  const [deleteError, setDeleteError] = createSignal<{ text: string; conflict: boolean }>()
   const [deleting, setDeleting] = createSignal(false)
   const askDelete = (item: HomeDefinition) => { setDeleteError(undefined); setDeleteItem(item) }
   const closeDelete = () => { if (!deleting()) { setDeleteItem(undefined); setDeleteError(undefined) } }
@@ -125,13 +135,18 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
     setDeleteError(undefined)
     try {
       const focusNext = focusAfter(item.id)
-      await api.remove(item.id, item.revision)
+      await api.remove(item.id, byId().get(item.id)?.revision ?? item.revision)
       await refresh()
       setDeleting(false)
       setDeleteItem(undefined)
       focusNext()
     } catch (error) {
-      setDeleteError(`Could not delete it: ${entityError(error)}`)
+      const conflict = error instanceof EntityApiError && error.code === 'conflict'
+      setDeleteError(conflict
+        ? { text: 'This entity definition changed since the list was loaded. Reload the list, then delete it.', conflict }
+        : { text: `Could not delete it: ${entityError(error)}`, conflict })
+      // Delete waits for the list, so a retry takes its revision.
+      await refresh().catch(() => {})
     } finally {
       setDeleting(false)
     }
@@ -191,6 +206,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
                   <DefinitionCard
                     item={item()}
                     classTitle={classTitle(item())}
+                    classFailed={types.isError}
                     states={states()}
                     admin={admin()}
                     busy={deleting()}
@@ -227,7 +243,11 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
           </fieldset>
         </form>
       </Dialog>
-      <DeleteDefinitionDialog open={!!deleteItem()} name={deleteItem()?.name ?? ''} deleting={deleting()} error={deleteError()}
+      <DeleteDefinitionDialog open={!!deleteItem()} name={deleteItem()?.name ?? ''} deleting={deleting()}
+        error={deleteError() && <>
+          {deleteError()!.text}
+          <Show when={deleteError()!.conflict}><Button onClick={() => { closeDelete(); void home.refetch() }}>Reload the list</Button></Show>
+        </>}
         onCancel={closeDelete} onConfirm={() => void confirmDelete()} />
     </section>
   )

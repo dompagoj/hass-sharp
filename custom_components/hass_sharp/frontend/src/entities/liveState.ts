@@ -53,13 +53,14 @@ export function liveState(hass: Pick<HomeAssistant, 'connection'>, entityIds: ()
       }
     }
     onCleanup(() => { closed = true; if (unsubscribe) close(unsubscribe) })
+    // Sent a moment later (a call that throws becomes a refusal), and not at all once cleaned up meanwhile.
     Promise.resolve()
-      .then(() => hass.connection.subscribeMessage<EntitiesEvent>(
+      .then(() => closed ? undefined : hass.connection.subscribeMessage<EntitiesEvent>(
         event => { if (!closed) setStates(current => applied(current, event)) },
         { type: 'subscribe_entities', entity_ids: ids },
       ))
       .then(
-        stop => { if (closed) close(stop); else unsubscribe = stop },
+        stop => { if (!stop) return; if (closed) close(stop); else unsubscribe = stop },
         () => { if (!closed) setStates({}) },
       )
   }))

@@ -110,3 +110,12 @@ it('subscribes to nothing without ids, and survives a refused subscription or on
   await settle()
   expect(none()).toEqual({})
 })
+
+it('does not subscribe at all when it is cleaned up before the subscription is sent', async () => {
+  const { hass, subscribeMessage } = connection()
+  // Its effect has run (the subscription is on its way), but the call has not been made yet.
+  const done = createRoot(dispose => { liveState(hass, () => ['light.a']); return dispose })
+  done()
+  await settle()
+  expect(subscribeMessage).not.toHaveBeenCalled()
+})

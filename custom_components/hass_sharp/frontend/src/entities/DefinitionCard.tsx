@@ -17,6 +17,8 @@ import { entityTypeLabel } from './NodePickers'
 const switchTitles = { on: entityTexts.enabledOn, off: entityTexts.enabledOff }
 /** What the backend says of a definition with nothing loaded and no error of its own. */
 const notActive = 'Not active'
+/** Beside "Class" when the classes could not be read. */
+const classNameFailed = 'Could not load the class’s name.'
 /** How many of a definition's entities its card lists before "and N more". */
 export const shownEntities = 6
 
@@ -35,26 +37,32 @@ export function definitionStatus(item: HomeDefinition): { label: string; tone: D
   if (item.currentRevisionActive) return { label: 'Running', tone: 'running' }
   return { label: 'Running', tone: 'running', stale: error ? `Changes not applied: ${error}` : 'Changes not applied' }
 }
-/** Whether the card is tinted: it is on and not running, or runs an older revision. */
-const needsAttention = (status: ReturnType<typeof definitionStatus>) => status.tone === 'failed' || status.tone === 'stopped' || !!status.stale
+/** The card's tint: a problem (on and not running), a warning (an older revision runs), or none. */
+const tint = (status: ReturnType<typeof definitionStatus>) =>
+  status.tone === 'failed' || status.tone === 'stopped' ? 'attention' : status.stale ? 'warning' : undefined
 
 /** An entity of a definition as its card lists it. */
 export interface CardEntity { key: string; name: string; domain: string; entityId: string | null; disabled: boolean }
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
 /**
  * A definition's entities: those it registered while running (or failed), else Home Assistant's entity registry's,
- * which keeps them while it is off or not loaded. A class definition that never started has neither.
+ * which keeps them while it is off or not loaded; a class definition that never started has neither. Whether Home
+ * Assistant has one disabled always comes from the registry. Each is named by its name (its own, else the one the
+ * definition gives it), else its key, else its entity id. Enabled ones come first, each group by name.
  */
 export function cardEntities(item: HomeDefinition): CardEntity[] {
   const declared = new Map((item.entities ?? []).map(entity => [entity.key, entity.name]))
-  const named = (key: string, name: string | null | undefined, entityId: string | null) => name || declared.get(key) || key || entityId || ''
-  if (item.liveEntities.length)
-    return item.liveEntities.map(e => ({ key: e.key, name: named(e.key, e.name, e.entityId), domain: e.domain, entityId: e.entityId, disabled: false }))
+  const registry = new Map(item.registeredEntities.map(entry => [entry.uniqueId, entry]))
+  const entity = (key: string, name: string | null | undefined, domain: string, entityId: string | null, disabled: boolean): CardEntity =>
+    ({ key, name: name || declared.get(key) || key || entityId || '', domain, entityId, disabled })
   const prefix = `${item.id}:`
-  return item.registeredEntities.map(e => {
-    const key = e.uniqueId.startsWith(prefix) ? e.uniqueId.slice(prefix.length) : e.uniqueId
-    // A registry entry has no key of the definition's: its name, else its entity id.
-    return { key, name: e.name || declared.get(key) || e.entityId, domain: e.domain, entityId: e.entityId, disabled: e.disabled }
-  })
+  const listed = item.liveEntities.length
+    ? item.liveEntities.map(e => entity(e.key, e.name, e.domain, e.entityId, registry.get(e.uniqueId)?.disabled === true))
+    : item.registeredEntities.map(e => {
+      const key = e.uniqueId.startsWith(prefix) ? e.uniqueId.slice(prefix.length) : e.uniqueId.slice(e.uniqueId.indexOf(':') + 1)
+      return entity(key, e.name, e.domain, e.entityId, e.disabled)
+    })
+  return listed.sort((a, b) => Number(a.disabled) - Number(b.disabled) || collator.compare(a.name, b.name))
 }
 /** The entity ids whose states a card shows: its listed entities that Home Assistant has enabled. */
 export const watchedEntityIds = (item: HomeDefinition) =>
@@ -70,13 +78,27 @@ function stateText(entity: CardEntity, states: LiveStates): { text: string; none
   return { text: state.state }
 }
 
+const starting = (item: HomeDefinition) => item.enabled && item.status === 'setup'
 /**
- * How often the entities page reads the list again: as the automations page does for runs, and every 5 s while a
- * definition that is on is still starting.
+ * Keeps in `since` when the page first saw each definition starting (`now` for one new to it), and forgets those no
+ * longer starting.
  */
-export function definitionPollInterval(items: readonly HomeDefinition[], now: number): number | false {
-  if (items.some(item => item.enabled && item.status === 'setup')) return 5_000
-  return pollInterval(items, now)
+export function noteStarting(since: Map<string, number>, items: readonly HomeDefinition[], now: number) {
+  const ids = new Set(items.filter(starting).map(item => item.id))
+  for (const id of since.keys()) if (!ids.has(id)) since.delete(id)
+  for (const id of ids) if (!since.has(id)) since.set(id, now)
+}
+/**
+ * How often the entities page reads the list again: as the automations page does for runs, and in the same way while a
+ * definition that is on is starting: every 5 s for the first 2 minutes since the page saw it starting (`since`, from
+ * {@link noteStarting}; one not in it counts from `now`), then every 30 s.
+ */
+export function definitionPollInterval(items: readonly HomeDefinition[], now: number, since: ReadonlyMap<string, number> = new Map()): number | false {
+  const runs = pollInterval(items, now)
+  const waiting = items.filter(starting)
+  if (!waiting.length) return runs
+  const start = waiting.some(item => now - (since.get(item.id) ?? now) < 120_000) ? 5_000 : 30_000
+  return runs === false ? start : Math.min(runs, start)
 }
 
 /** "3 entity definitions · 1 off · 4 runs today": zero parts after the first are left out. */
@@ -95,6 +117,8 @@ export function DefinitionCard(props: {
   item: HomeDefinition
   /** A class definition's class: its title, null when no node library offers it, undefined while not known. */
   classTitle?: string | null
+  /** The classes could not be read: a class definition says so beside "Class". */
+  classFailed?: boolean
   states: LiveStates
   admin: boolean
   /** Deleting it: its actions wait. */
@@ -111,10 +135,11 @@ export function DefinitionCard(props: {
   const entities = createMemo(() => cardEntities(props.item))
   const graph = () => props.item.logic.kind === 'graph'
   const logic = () => (graph() ? 'Nodes' : props.classTitle === null ? 'Class not found' : props.classTitle ?? 'Class')
+  const unnamed = () => !graph() && props.classTitle === undefined && !!props.classFailed
   return (
     <li
       class="hs-home-card hs-ent-card"
-      classList={{ 'hs-home-card--off': !props.item.enabled, 'hs-home-card--attention': props.item.enabled && needsAttention(status()) }}
+      classList={{ 'hs-home-card--off': !props.item.enabled, 'hs-home-card--attention': tint(status()) === 'attention', 'hs-ent-card--warning': tint(status()) === 'warning' }}
       data-definition={props.item.id}
     >
       <div class="hs-home-card__body">
@@ -123,7 +148,9 @@ export function DefinitionCard(props: {
         </h2>
         <div id={describedBy} class="hs-home-card__about">
           <p class="hs-ent-card__kind">
-            <span class="hs-ent-card__logic" classList={{ 'hs-ent-card__logic--missing': !graph() && props.classTitle === null }}>{logic()}</span>
+            <span class="hs-ent-card__logic" classList={{ 'hs-ent-card__logic--missing': !graph() && props.classTitle === null }}
+              title={unnamed() ? classNameFailed : undefined}>{logic()}</span>
+            <Show when={unnamed()}><small class="hs-ent-card__hint">{classNameFailed}</small></Show>
             <Show when={props.item.device}><span class="hs-home-chip hs-ent-card__device">Device</span></Show>
           </p>
           <p class={`hs-ent-card__status hs-ent-card__status--${status().tone}`}>{status().label}</p>

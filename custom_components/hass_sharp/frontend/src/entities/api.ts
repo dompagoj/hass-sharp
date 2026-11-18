@@ -42,6 +42,8 @@ export class EntityApiError extends VisualApiError {
 }
 /** The query key of every list of entity definitions (the entities page's): a save, a switch or a delete makes them stale. */
 export const definitionsQueryKey = ['entity-definitions'] as const
+/** The query key of the classes node libraries offer (`types`): a node library save makes it stale. */
+export const entityTypesQueryKey = ['entity-types'] as const
 
 /** What to tell the user about a failed request: as `visualError` does for automations. */
 export const entityError = visualError
