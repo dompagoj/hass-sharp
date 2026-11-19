@@ -612,7 +612,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('SharpDevice',description)
         # A types request that raises is a failed one too: the list is answered, and one warning says why, quoting no setting.
         async def raising(request,is_admin):
-            if request['operation']=='types': raise RuntimeError('the managed side went away')
+            # Its message holds a setting's value, so that the warning is seen to name the failure's type only.
+            if request['operation']=='types': raise RuntimeError('http://plug')
             return {'version':1,'ok':True,'result':documents[:1]}
         self.service.entities=AsyncMock(side_effect=raising)
         with self.assertLogs('custom_components.HassSharp',level='WARNING') as logged:
@@ -982,9 +983,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('the service call that sent the command succeeds',definitions)
         self.assertNotIn('as succeeded',definitions)
         # What a State follows, as the code works it out (Visual/StateDependencies.cs): never an Entity field step.
-        self.assertIn('the entity of a Has state or a Current state step, or of a Constant of an entity id type',definitions)
+        self.assertIn('such as the entity of a Has state or a Current state step, or of a Constant of an entity id type',definitions)
         self.assertNotIn('Entity field step',definitions)
         self.assertIn('own camera (it is refused at once)',definitions)
+        # The State step's own description says the same: an entity chosen in the steps it reads, not one another step reads.
+        state=result['catalog']['nodes']['entity_state']['description']
+        self.assertIn('chosen (not wired)',state); self.assertIn('such as Read entity, is not followed',state)
         self.assertEqual(result['guidance'],self.adapter.PROMPT)
         whole=(await self.call('get_node_schema',{'document':'entity'})).data['result']['catalog']
         self.assertEqual(set(whole['nodes']),set(result['catalog']['nodes']))

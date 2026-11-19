@@ -1695,7 +1695,7 @@
     "entity_state": {
       "label": "State",
       "category": "Entity",
-      "description": "Work out the state of one of this definition's entities from the values connected to it; it is worked out again each time an entity those values read changes.",
+      "description": "Work out the state of one of this definition's entities from the values connected to it; it is worked out again each time an entity chosen (not wired) in the value steps connected to it changes, such as in Has state or Current state; an entity read by another step, such as Read entity, is not followed.",
       "root": true,
       "documents": [
         "entity"

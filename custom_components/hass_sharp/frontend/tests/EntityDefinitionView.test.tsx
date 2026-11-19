@@ -526,6 +526,12 @@ it('starts a new definition named from the address, with one binary sensor named
     + 'A step that returns what it was given, such as a custom step or a service response, can still show it.')
   // The ten types, how a camera shows a frame, and what HTTP requests, downloads and restored state do.
   const help = document.querySelector('dialog[open]')!.textContent!
+  // Which entities a State follows (Visual/StateDependencies.cs): those chosen in the steps it reads, not any value wired in.
+  expect(help).toContain('A State step gives an entity its state: wire values into it, and it is worked out again whenever an entity chosen in a Has state or Current state step it reads changes (not one read by a step such as Read entity).')
+  expect(help).not.toContain('whenever one of them changes')
+  // A State's runs are recorded when its run history is turned on, as a trigger's are.
+  expect(help).toContain('a trigger or a State records them only when its run history is turned on')
+  expect(help).not.toContain('a State never does')
   expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light, a cover or a camera')
   expect(help).toContain('A camera shows the picture its last Show frame step gave it, such as one taken with Take a picture and drawn on. '
     + 'With a When a frame is needed step, its steps make a new picture when Home Assistant asks for one, which it does only while something is watching the camera or asks for its picture: nothing runs otherwise.')
