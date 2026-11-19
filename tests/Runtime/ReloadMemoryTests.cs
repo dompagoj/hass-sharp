@@ -355,16 +355,15 @@ static class ReloadMemoryTests
     {
         name = "Gauge",
         settings = new[] { new { key = "level", type = "number", value } },
-        entities = new object[] { new { key = "level", domain = "sensor" }, new { key = "relay", domain = "switch" }, new { key = "view", domain = "camera" } },
         logic = new { kind = "graph", graph = new JsonObject
         {
             ["version"] = 5, ["name"] = "Gauge",
-            ["nodes"] = new JsonArray(N("k", "setting", new { key = "level" }), N("s", "entity_state", new { entity = "level" }),
-                N("on", "entity_command", new { entity = "relay", command = "turn_on" }), N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) }),
+            ["nodes"] = new JsonArray(N("k", "setting", new { key = "level" }), VisualExecutionTests.Hub("s", "level", "sensor"),
+                VisualExecutionTests.Hub("relay", "relay", "switch"), N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) }),
                 N("setup", "entity_setup"), N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.memory") }),
                 N("show", "show_frame", new JsonObject { ["entity"] = "view", ["image"] = new JsonObject { ["kind"] = "unset" } }),
-                N("frame", "camera_frame", new { entity = "view" }), N("wait", "delay", new { seconds = Lit("number", 3600) })),
-            ["edges"] = new JsonArray(D("k", "s", "value"), E("on", "set"), E("setup", "snap"), E("snap", "show"), D("snap", "show", "image", "image"), E("frame", "wait")),
+                VisualExecutionTests.Hub("view", "view", "camera"), N("wait", "delay", new { seconds = Lit("number", 3600) })),
+            ["edges"] = new JsonArray(D("k", "s", "value"), E("relay", "set", "command:turn_on"), E("setup", "snap"), E("snap", "show"), D("snap", "show", "image", "image"), E("view", "wait", "frame")),
         } },
     };
 

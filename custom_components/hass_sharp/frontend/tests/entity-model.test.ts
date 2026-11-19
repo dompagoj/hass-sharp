@@ -13,10 +13,10 @@ const cases = fixtureCases as ValidationCase[]
 const fixtureGraph = (name: string) => structuredClone(cases.find(c => c.name === name)!.graph)
 const withoutDefinition = ({ definition: _definition, ...graph }: any) => graph as Graph
 
-/** The derived motion sensor: the shared fixture's graph, its definition as a body's entities. */
+/** The derived motion sensor: the shared fixture's graph, whose Entity node `s` declares it, so the body lists no entity. */
 const motion = (): DefinitionBody => {
   const graph = fixtureGraph('entity graph: derived binary sensor')
-  return { name: graph.name, device: null, settings: [], entities: graph.definition.entities, logic: { kind: 'graph', graph: withoutDefinition(graph) } }
+  return { name: graph.name, device: null, settings: [], entities: [], logic: { kind: 'graph', graph: withoutDefinition(graph) } }
 }
 const plugGraph = (): Graph => ({
   version: 5, name: 'Plug', nodes: [
@@ -270,8 +270,8 @@ describe('renaming an entity key', () => {
   })
   it('leaves an entity operand alone', () => {
     const graph = editorGraph(motion())
-    const renamed = renameEntityKey(graph, 'any_motion', 'motion')
-    expect(renamed.nodes.find(n => n.id === 's')!.config.entity).toBe('motion')
+    const renamed = renameEntityKey(graph, 'any_motion', 'motion', 's')
+    expect(renamed.nodes.find(n => n.id === 's')!.config.key).toBe('motion')
     expect(renamed.nodes.find(n => n.id === 'a')!.config.entity).toEqual(graph.nodes.find(n => n.id === 'a')!.config.entity)
   })
   it('refuses a key another entity has', () => {

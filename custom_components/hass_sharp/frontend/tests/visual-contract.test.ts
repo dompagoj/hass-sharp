@@ -67,11 +67,12 @@ describe('shared visual graph validation contract', () => {
     for (const d of diagnostics) expect(d.message, 'message wording').not.toMatch(jargon)
   })
 })
-// The shared fixture compares diagnostics sorted; the order of the later nodes a rule reports is pinned here and in the
-// runtime's --entity-graph-order, from one graph.
-it('rules allowing one node of a key report every later one in id order', () => {
-  const codes = ['node.singleton', 'state.duplicate', 'command.duplicate']
-  const got = contract.validateGraph(entityGraphOrder.graph as unknown as Graph).filter(d => codes.includes(d.code ?? '')).map(d => `${d.code} ${d.nodeId}`)
+// The shared fixture compares diagnostics sorted; the order of the later nodes a rule reports, and of an Entity node's
+// problems by pin, is pinned here and in the runtime's --entity-graph-order, from one graph.
+it('later nodes of a kind are reported in id order, of a key in graph order, and an Entity node\'s problems in its pins\' order', () => {
+  const codes = ['node.singleton', 'definition.duplicateEntity', 'entity.partialState', 'command.unhandled', 'camera.no_frame']
+  const got = contract.validateGraph(entityGraphOrder.graph as unknown as Graph).filter(d => codes.includes(d.code ?? ''))
+    .map(d => [d.code, d.nodeId, d.portId ?? d.inputId].filter(part => part != null).join(' '))
   expect(got).toEqual(entityGraphOrder.order)
 })
 it('missing layout is deterministic and supplied positions remain unchanged', () => {

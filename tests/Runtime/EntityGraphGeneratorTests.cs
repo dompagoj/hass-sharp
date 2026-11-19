@@ -5,11 +5,12 @@ using static VisualExecutionTests;
 
 /// <summary>
 /// What the generator emits for the roots of an entity definition's graph: one action and one <c>Run_&lt;hex&gt;</c>
-/// method per root, in id order. A State is worked out at startup and again, restarting, whenever an entity it reads
-/// changes: <see cref="StateDependencies.Of"/> names those entities, the ones chosen (not connected) on the entity id
-/// inputs of the value nodes upstream of it (<see cref="VisualNodeCatalog.ValueUpstream(JsonObject, string, VisualCatalogSnapshot)"/>).
-/// A When commanded flow is queued, a When started flow runs once, and neither is run by hand or at startup. A trigger
-/// keeps the action it has in an automation, and an automation's source does not change.
+/// method per root, in id order, and one of each per flow of an Entity node. An Entity node's state is worked out at
+/// startup and again, restarting, whenever an entity its values read changes: <see cref="StateDependencies.Of"/> names
+/// those entities, the ones chosen (not connected) on the entity id inputs of the value nodes upstream of it
+/// (<see cref="VisualNodeCatalog.ValueUpstream(JsonObject, string, VisualCatalogSnapshot)"/>). A command flow is queued,
+/// a When started flow runs once, and neither is run by hand or at startup. A trigger keeps the action it has in an
+/// automation, and an automation's source does not change.
 /// </summary>
 static class EntityGraphGeneratorTests
 {
@@ -24,13 +25,12 @@ static class EntityGraphGeneratorTests
             .Single(c => c!["name"]!.GetValue<string>() == name)!;
         return (fixture["graph"]!.AsObject(), fixture["catalogPatch"] is JsonObject patch ? VisualGraphContractTests.Patched(patch) : BuiltIn);
     }
-    /// <summary>An entity definition's graph: the nodes and wires, and a definition of these entities and settings.</summary>
-    static JsonObject Entity(JsonObject[] nodes, JsonObject[] edges, (string Key, string Domain)[] entities, params (string Key, string Type)[] settings) => new()
+    /// <summary>An entity definition's graph: the nodes, whose Entity nodes declare its entities, the wires, and a definition of these settings.</summary>
+    static JsonObject Entity(JsonObject[] nodes, JsonObject[] edges, params (string Key, string Type)[] settings) => new()
     {
         ["version"] = 5, ["name"] = "Entity", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges),
         ["definition"] = new JsonObject
         {
-            ["entities"] = new JsonArray(entities.Select(e => (JsonNode)new JsonObject { ["key"] = e.Key, ["domain"] = e.Domain }).ToArray()),
             ["settings"] = new JsonArray(settings.Select(s => (JsonNode)new JsonObject { ["key"] = s.Key, ["type"] = s.Type }).ToArray()),
         },
     };
@@ -38,7 +38,8 @@ static class EntityGraphGeneratorTests
     static JsonObject Is(string id, string entity) => N(id, "entity_is", new JsonObject { ["entity"] = Lit("entity_id", entity), ["state"] = Lit("string", "on") });
     static JsonObject Not(string id) => N(id, "not", new { value = Unset });
     static JsonObject Two(string id, string kind) => N(id, kind, new { left = Unset, right = Unset });
-    static JsonObject State(string id, string entity) => N(id, "entity_state", new { entity });
+    /// <summary>The binary sensor's Entity node <paramref name="id"/> of the key, its state worked out from the values wired to it.</summary>
+    static JsonObject State(string id, string key) => Hub(id, key, "binary_sensor");
     static string Ids(IEnumerable<JsonObject> nodes) => string.Join(", ", nodes.Select(n => n["id"]!.GetValue<string>()));
     static string Texts(IEnumerable<string> items) => "[" + string.Join(", ", items) + "]";
 
@@ -58,6 +59,15 @@ static class EntityGraphGeneratorTests
         $"{a.Method} {a.Mode} startup={a.Startup} manual={a.Manual} entities={Texts((a.Entities ?? []).Select(e => e.EntityId))} schedules={a.Schedules?.Length ?? 0} triggers={a.Triggers?.Length ?? 0}";
     static string Describe(string node, AutomationMode mode, bool startup, bool manual, params string[] entities) =>
         $"{VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = node })} {mode} startup={startup} manual={manual} entities={Texts(entities)} schedules=0 triggers=0";
+    /// <summary>The method of the Entity node <paramref name="node"/>'s flow on <paramref name="port"/>.</summary>
+    static string Method(string node, string port) => VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = node }, port);
+    /// <summary>The generated action line of an Entity node's flow, which is never run by hand.</summary>
+    static string Line(string node, string port, string mode, bool startup, params string[] entities) =>
+        $"{Action}nameof({Method(node, port)}),global::HassSharp.AutomationMode.{mode},Startup:{(startup ? "true" : "false")},Manual:false," +
+        $"Entities:[{string.Join(",", entities.Select(e => $"new global::HassSharp.EntityReference({JsonSerializer.Serialize(e)})"))}],Schedules:[],Triggers:[])";
+    /// <summary>An Entity node's flow as its compiled action describes it.</summary>
+    static string Described(string node, string port, AutomationMode mode, bool startup, params string[] entities) =>
+        $"{Method(node, port)} {mode} startup={startup} manual=False entities={Texts(entities)} schedules=0 triggers=0";
 
     /// <summary>
     /// GeneratedSourceCompiles: the preview's source compiles as an automation would (through <see cref="CodeCompiler"/>),
@@ -81,14 +91,20 @@ static class EntityGraphGeneratorTests
     }
     static void Same(IReadOnlyList<string> got, IReadOnlyList<string> want, string what) =>
         Check(got.SequenceEqual(want), $"{what}:\n  expected {string.Join("\n           ", want)}\n  got      {string.Join("\n           ", got)}");
-    /// <summary>Each root has a section of the source map for its action and one for its method, in root order.</summary>
-    static void Mapped(VisualPreview preview, string[] roots, string what)
+    /// <summary>
+    /// Each root, and each flow of an Entity node (a root with its port), has a section of the source map for its action
+    /// and one for its method, in root order.
+    /// </summary>
+    static void Mapped(VisualPreview preview, (string Node, string? Port)[] roots, string what)
     {
-        var mapped = preview.SourceMap.Select(m => m.NodeId).Where(roots.Contains).ToList();
-        Same(mapped, roots.Concat(roots).ToList(), $"{what}: the source map has each root's action, then each root's method");
-        foreach (var root in roots)
-            Check(preview.Source.Contains($"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = root })}() => __visual_run({JsonSerializer.Serialize(root)});", StringComparison.Ordinal),
-                $"{what}: root {root} has its Run method");
+        var ids = roots.Select(r => r.Node).ToList();
+        var mapped = preview.SourceMap.Select(m => m.NodeId).Where(ids.Contains).ToList();
+        Same(mapped, ids.Concat(ids).ToList(), $"{what}: the source map has each root's action, then each root's method");
+        foreach (var (root, port) in roots)
+            Check(preview.Source.Contains(port == null
+                ? $"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = root })}() => __visual_run({JsonSerializer.Serialize(root)});"
+                : $"public global::System.Threading.Tasks.Task {Method(root, port)}() => __visual_run({JsonSerializer.Serialize(root)},{JsonSerializer.Serialize(port)});", StringComparison.Ordinal),
+                $"{what}: root {root} {port} has its Run method");
     }
 
     [RuntimeSuite("--entity-graph-generator", Order = 11)]
@@ -107,7 +123,7 @@ static class EntityGraphGeneratorTests
             try { await test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"Entity graph generator: {failures.Count} failing:\n" + string.Join("\n", failures));
-        Console.WriteLine("PASS entity graph generator: one action and method per root in id order, State dependencies from chosen entities, triggers and automations unchanged");
+        Console.WriteLine("PASS entity graph generator: one action and method per root and per Entity node flow in id order, state dependencies from chosen entities, triggers and automations unchanged");
     }
 
     static async Task DerivedSensorHasOneRestartStartupActionWithBothSources()
@@ -115,10 +131,10 @@ static class EntityGraphGeneratorTests
         var graph = Case("entity graph: derived binary sensor");
         Same(StateDependencies.Of(graph, "s", BuiltIn), ["binary_sensor.motion_a", "binary_sensor.motion_b"], "the derived sensor depends on both sources");
         var preview = Preview(graph, "the derived sensor");
-        Same(ActionLines(preview), [ActionLine("s", "Restart", true, false, "binary_sensor.motion_a", "binary_sensor.motion_b")], "the derived sensor's one action");
-        Mapped(preview, ["s"], "the derived sensor");
-        Same(await Compiled(preview, "the derived sensor"), [Describe("s", AutomationMode.Restart, true, false, "binary_sensor.motion_a", "binary_sensor.motion_b")], "the derived sensor's compiled configuration");
-        Embeds(preview, graph, ["entity_state", "entity_is", "or"], "the derived sensor");
+        Same(ActionLines(preview), [Line("s", "state", "Restart", true, "binary_sensor.motion_a", "binary_sensor.motion_b")], "the derived sensor's one action");
+        Mapped(preview, [("s", "state")], "the derived sensor");
+        Same(await Compiled(preview, "the derived sensor"), [Described("s", "state", AutomationMode.Restart, true, "binary_sensor.motion_a", "binary_sensor.motion_b")], "the derived sensor's compiled configuration");
+        Embeds(preview, graph, ["entity", "entity_is", "or"], "the derived sensor");
     }
 
     /// <summary>
@@ -144,13 +160,12 @@ static class EntityGraphGeneratorTests
             [Is("a", "binary_sensor.ab"), Is("b", "binary_sensor.a_b"), Is("c", "binary_sensor.a1"), Is("d", "binary_sensor.ab"),
              Two("and1", "and"), Two("or1", "or"), Two("or2", "or"), Not("n1"), Not("n2"), State("s", "any")],
             [D("or1", "s", "is_on"), D("and1", "or1", "left"), D("or2", "or1", "right"), D("a", "and1", "left"), D("n1", "and1", "right"),
-             D("n2", "n1", "value"), D("c", "n2", "value"), D("b", "or2", "left"), D("d", "or2", "right")],
-            [("any", "binary_sensor")]);
+             D("n2", "n1", "value"), D("c", "n2", "value"), D("b", "or2", "left"), D("d", "or2", "right")]);
         string[] want = ["binary_sensor.a1", "binary_sensor.a_b", "binary_sensor.ab"];
         Same(StateDependencies.Of(graph, "s", BuiltIn), want, "a State's dependencies are its chosen entities, each once, in ordinal order");
         var preview = Preview(graph, "the deep State");
-        Same(ActionLines(preview), [ActionLine("s", "Restart", true, false, want)], "the deep State's action");
-        Same(await Compiled(preview, "the deep State"), [Describe("s", AutomationMode.Restart, true, false, want)], "the deep State's compiled configuration");
+        Same(ActionLines(preview), [Line("s", "state", "Restart", true, want)], "the deep State's action");
+        Same(await Compiled(preview, "the deep State"), [Described("s", "state", AutomationMode.Restart, true, want)], "the deep State's compiled configuration");
 
         // An entity input that is connected adds nothing, even with a chosen value left in its node: the value it is given
         // is read as it is. Only an input that takes nothing but entity ids is a reader's choice of entity.
@@ -160,7 +175,7 @@ static class EntityGraphGeneratorTests
              N("obj", "object_create", new JsonObject { ["fields"] = new JsonObject { ["id"] = Lit("entity_id", "binary_sensor.field") } }),
              Two("o", "or"), Two("o2", "or"), State("s", "any")],
             [D("k", "w", "entity"), D("w", "o", "left"), D("cmp", "o", "right"), D("o", "o2", "left"), D("obj", "o2", "right"), D("o2", "s", "is_on")],
-            [("any", "binary_sensor")], ("source", "string"));
+            ("source", "string"));
         Same(StateDependencies.Of(wired, "s", BuiltIn), [], "a connected entity input, a comparison of entity ids and an object field add no dependency");
 
         // The validator's state.dynamicSource case: the reader given its entity over a wire (from a Convert) adds none.
@@ -168,16 +183,16 @@ static class EntityGraphGeneratorTests
         Check(VisualGraphValidator.Validate(dynamic, BuiltIn).Any(d => d.Code == "state.dynamicSource" && d.NodeId == "is"), "the dynamic source case warns on its reader");
         Same(StateDependencies.Of(dynamic, "s", BuiltIn), [], "an entity given over a wire is no dependency");
         var dynamicPreview = Preview(dynamic, "the dynamic source case");
-        Same(ActionLines(dynamicPreview), [ActionLine("s", "Restart", true, false)], "the dynamic source case's action");
-        Same(await Compiled(dynamicPreview, "the dynamic source case"), [Describe("s", AutomationMode.Restart, true, false)], "the dynamic source case's compiled configuration");
+        Same(ActionLines(dynamicPreview), [Line("s", "state", "Restart", true)], "the dynamic source case's action");
+        Same(await Compiled(dynamicPreview, "the dynamic source case"), [Described("s", "state", AutomationMode.Restart, true)], "the dynamic source case's compiled configuration");
         // The same reader wired from an entity id Constant: the Constant's chosen entity is the dependency, so the
         // validators do not warn.
         var constantSource = Case("entity graph: an entity from a Constant is followed without a warning");
         Check(VisualGraphValidator.Validate(constantSource, BuiltIn).Count == 0, "a reader wired from an entity id Constant has no warning");
         Same(StateDependencies.Of(constantSource, "s", BuiltIn), ["binary_sensor.door"], "an entity id Constant's entity is a dependency");
         var constantPreview = Preview(constantSource, "the Constant source case");
-        Same(ActionLines(constantPreview), [ActionLine("s", "Restart", true, false, "binary_sensor.door")], "the Constant source case's action");
-        Same(await Compiled(constantPreview, "the Constant source case"), [Describe("s", AutomationMode.Restart, true, false, "binary_sensor.door")], "the Constant source case's compiled configuration");
+        Same(ActionLines(constantPreview), [Line("s", "state", "Restart", true, "binary_sensor.door")], "the Constant source case's action");
+        Same(await Compiled(constantPreview, "the Constant source case"), [Described("s", "state", AutomationMode.Restart, true, "binary_sensor.door")], "the Constant source case's compiled configuration");
         // A node library's or Custom C# value node's entity pin is a reader's like any other: chosen, it is a dependency;
         // wired (from a node that is not a Constant), it is none, and the validators warn on the node.
         var libraryChosen = Fixture("entity graph: an entity chosen on a library value node is followed without a warning");
@@ -198,29 +213,28 @@ static class EntityGraphGeneratorTests
         var setting = Case("entity graph: sensor state from a setting");
         Same(StateDependencies.Of(setting, "s", BuiltIn), [], "a State of a setting has no dependencies");
         var settingPreview = Preview(setting, "the setting State");
-        Embeds(settingPreview, setting, ["setting", "entity_state"], "the setting State");
-        Same(ActionLines(settingPreview), [ActionLine("s", "Restart", true, false)], "the setting State's action");
-        Same(await Compiled(settingPreview, "the setting State"), [Describe("s", AutomationMode.Restart, true, false)], "the setting State's compiled configuration");
-        var constant = Entity([N("s", "entity_state", new JsonObject { ["entity"] = "door", ["is_on"] = Lit("boolean", true) })], [], [("door", "binary_sensor")]);
-        Same(await Compiled(Preview(constant, "the constant State"), "the constant State"), [Describe("s", AutomationMode.Restart, true, false)], "the constant State's compiled configuration");
+        Embeds(settingPreview, setting, ["setting", "entity"], "the setting State");
+        Same(ActionLines(settingPreview), [Line("s", "state", "Restart", true)], "the setting State's action");
+        Same(await Compiled(settingPreview, "the setting State"), [Described("s", "state", AutomationMode.Restart, true)], "the setting State's compiled configuration");
+        var constant = Entity([Hub("s", "door", "binary_sensor", values: new JsonObject { ["is_on"] = Lit("boolean", true) })], []);
+        Same(await Compiled(Preview(constant, "the constant State"), "the constant State"), [Described("s", "state", AutomationMode.Restart, true)], "the constant State's compiled configuration");
 
         // One value node read by two States is a dependency of each.
-        var shared = Entity([Is("e", "binary_sensor.shared"), State("one", "first"), State("two", "second")], [D("e", "one", "is_on"), D("e", "two", "is_on")],
-            [("first", "binary_sensor"), ("second", "binary_sensor")]);
+        var shared = Entity([Is("e", "binary_sensor.shared"), State("one", "first"), State("two", "second")], [D("e", "one", "is_on"), D("e", "two", "is_on")]);
         Same(StateDependencies.Of(shared, "one", BuiltIn), ["binary_sensor.shared"], "the first State reads the shared value");
         Same(StateDependencies.Of(shared, "two", BuiltIn), ["binary_sensor.shared"], "the second State reads the shared value");
         var sharedPreview = Preview(shared, "two States of one value");
         Same(await Compiled(sharedPreview, "two States of one value"),
-            [Describe("one", AutomationMode.Restart, true, false, "binary_sensor.shared"), Describe("two", AutomationMode.Restart, true, false, "binary_sensor.shared")], "two States of one value");
+            [Described("one", "state", AutomationMode.Restart, true, "binary_sensor.shared"), Described("two", "state", AutomationMode.Restart, true, "binary_sensor.shared")], "two States of one value");
 
         // A chosen entity that is empty or not text is none; a graph of the wrong shape, or an unknown node, has none.
         var odd = Entity([N("x", "entity_is", new JsonObject { ["entity"] = Lit("entity_id", ""), ["state"] = Lit("string", "on") }),
                 N("y", "entity_is", new JsonObject { ["entity"] = Lit("entity_id", 3), ["state"] = Lit("string", "on") }),
                 N("z", "entity_current", new JsonObject { ["entity"] = new JsonObject { ["kind"] = "literal", ["type"] = "entity_id" } }), Two("o", "or"), Two("o2", "or"), State("s", "any")],
-            [D("x", "o", "left"), D("y", "o", "right"), D("o", "o2", "left"), D("z", "o2", "right"), D("o2", "s", "is_on")], [("any", "binary_sensor")]);
+            [D("x", "o", "left"), D("y", "o", "right"), D("o", "o2", "left"), D("z", "o2", "right"), D("o2", "s", "is_on")]);
         Same(StateDependencies.Of(odd, "s", BuiltIn), [], "an empty, number or missing entity id is no dependency");
         Same(StateDependencies.Of(odd, "missing", BuiltIn), [], "an unknown node has no dependencies");
-        foreach (var shape in new[] { """{"nodes":3,"edges":{}}""", """{"nodes":[null,1,{"id":"s"},{"id":"s","kind":"entity_state","config":{}}],"edges":[null,{"kind":"data","source":"q","target":"s"}]}""" })
+        foreach (var shape in new[] { """{"nodes":3,"edges":{}}""", """{"nodes":[null,1,{"id":"s"},{"id":"s","kind":"entity","config":{}}],"edges":[null,{"kind":"data","source":"q","target":"s"}]}""" })
             Same(StateDependencies.Of(JsonNode.Parse(shape)!.AsObject(), "s", BuiltIn), [], "a graph of the wrong shape has no dependencies: " + shape);
     }
 
@@ -229,21 +243,20 @@ static class EntityGraphGeneratorTests
     {
         static string Up(JsonObject graph, string id) => Ids(VisualNodeCatalog.ValueUpstream(graph, id, BuiltIn));
         // A chain, two value nodes deep, through a wire into an input the State has from its entity's domain (is_on).
-        var chain = Entity([Is("e", "binary_sensor.door"), Not("n1"), Not("n2"), State("s", "door")], [D("n1", "s", "is_on"), D("n2", "n1", "value"), D("e", "n2", "value")], [("door", "binary_sensor")]);
+        var chain = Entity([Is("e", "binary_sensor.door"), Not("n1"), Not("n2"), State("s", "door")], [D("n1", "s", "is_on"), D("n2", "n1", "value"), D("e", "n2", "value")]);
         Check(Up(chain, "s") == "n1, n2, e", $"a chain is walked to its end, each node before those it reads: {Up(chain, "s")}");
         // A diamond: the node both sides read is found once.
         var diamond = Entity([Is("e", "binary_sensor.door"), Not("l"), Not("r"), Two("and", "and"), State("s", "door")],
-            [D("and", "s", "is_on"), D("l", "and", "left"), D("r", "and", "right"), D("e", "l", "value"), D("e", "r", "value")], [("door", "binary_sensor")]);
+            [D("and", "s", "is_on"), D("l", "and", "left"), D("r", "and", "right"), D("e", "l", "value"), D("e", "r", "value")]);
         Check(Up(diamond, "s") == "and, l, e, r", $"a diamond's shared node is found once: {Up(diamond, "s")}");
         Same(StateDependencies.Of(diamond, "s", BuiltIn), ["binary_sensor.door"], "a diamond's shared entity is one dependency");
         // One value node read by two States is upstream of each.
-        var shared = Entity([Is("e", "binary_sensor.shared"), State("one", "first"), State("two", "second")], [D("e", "one", "is_on"), D("e", "two", "is_on")],
-            [("first", "binary_sensor"), ("second", "binary_sensor")]);
+        var shared = Entity([Is("e", "binary_sensor.shared"), State("one", "first"), State("two", "second")], [D("e", "one", "is_on"), D("e", "two", "is_on")]);
         Check(Up(shared, "one") == "e" && Up(shared, "two") == "e", $"a value node read by two States is upstream of each: {Up(shared, "one")} | {Up(shared, "two")}");
         // A step's output is read as it is: the walk stops there, and the entity the step reads is no dependency.
         var step = Entity(
             [N("t", "trigger", new { type = "manual" }), N("r", "read_entity", new JsonObject { ["entity"] = Lit("entity_id", "sensor.step") }), Is("e", "binary_sensor.kept"), Two("and", "and"), State("s", "door")],
-            [E("t", "r"), D("r", "and", "left"), D("e", "and", "right"), D("and", "s", "is_on")], [("door", "binary_sensor")]);
+            [E("t", "r"), D("r", "and", "left"), D("e", "and", "right"), D("and", "s", "is_on")]);
         Check(Up(step, "s") == "and, e", $"the walk stops at a step: {Up(step, "s")}");
         Same(StateDependencies.Of(step, "s", BuiltIn), ["binary_sensor.kept"], "a step's chosen entity is no dependency");
         // A Setting is a value node, upstream like any other, and chooses no entity.
@@ -258,22 +271,22 @@ static class EntityGraphGeneratorTests
              new JsonObject { ["id"] = "x", ["kind"] = "data", ["source"] = "e", ["target"] = "s", ["sourcePort"] = "", ["targetPort"] = "is_on" },
              new JsonObject { ["id"] = "y", ["kind"] = "data", ["source"] = "e", ["target"] = "s", ["sourcePort"] = "value", ["targetPort"] = "is_on", ["port"] = "next" },
              new JsonObject { ["id"] = "z", ["source"] = "e", ["target"] = "s", ["port"] = "next" },
-             D("ghost", "s", "is_on")], [("door", "binary_sensor")]);
+             D("ghost", "s", "is_on")]);
         Check(Up(rejected, "s") == "", $"wires the validators reject are not walked: {Up(rejected, "s")}");
         Same(StateDependencies.Of(rejected, "s", BuiltIn), [], "wires the validators reject bring no dependency");
     }
 
     static async Task CommandAndSetupRootsBecomeActions()
     {
-        // Roots of every kind come in id order: off, on, setup.
+        // Roots of every kind come in id order, an Entity node's flows in its pins' order: the relay's Turn on and Turn off, then setup.
         var graph = Case("entity graph: command and setup roots");
         var preview = Preview(graph, "the relay");
-        Same(ActionLines(preview), [ActionLine("off", "Queued", false, false), ActionLine("on", "Queued", false, false), ActionLine("setup", "Single", false, false)], "the relay's actions");
-        Mapped(preview, ["off", "on", "setup"], "the relay");
+        Same(ActionLines(preview), [Line("relay", "command:turn_on", "Queued", false), Line("relay", "command:turn_off", "Queued", false), ActionLine("setup", "Single", false, false)], "the relay's actions");
+        Mapped(preview, [("relay", "command:turn_on"), ("relay", "command:turn_off"), ("setup", null)], "the relay");
         Check(VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = "setup" }) == "Run_7365747570", "a root's method is Run_ and the hex of its id's UTF-8");
-        Embeds(preview, graph, ["entity_command", "entity_setup", "set_entity_state", "set_entity_available"], "the relay");
+        Embeds(preview, graph, ["entity", "entity_setup", "set_entity_state", "set_entity_available"], "the relay");
         Same(await Compiled(preview, "the relay"),
-            [Describe("off", AutomationMode.Queued, false, false), Describe("on", AutomationMode.Queued, false, false), Describe("setup", AutomationMode.Single, false, false)], "the relay's compiled configuration");
+            [Described("relay", "command:turn_on", AutomationMode.Queued, false), Described("relay", "command:turn_off", AutomationMode.Queued, false), Describe("setup", AutomationMode.Single, false, false)], "the relay's compiled configuration");
     }
 
     /// <summary>
@@ -284,19 +297,13 @@ static class EntityGraphGeneratorTests
     static async Task AnEntityNodesFlowsBecomeActions()
     {
         var graph = Entity(
-            [EntityNodeTests.Hub("cam", "door_cam", "camera"), EntityNodeTests.Hub("lamp", "lamp", "light"), Is("e", "binary_sensor.door"),
+            [Hub("cam", "door_cam", "camera"), Hub("lamp", "lamp", "light"), Is("e", "binary_sensor.door"),
              N("on", "log", new { value = Lit("string", "on") }), N("frame", "log", new { value = Lit("string", "frame") })],
-            [D("e", "lamp", "is_on"), E("lamp", "on", "command:turn_on"), E("cam", "frame", "frame")], []);
+            [D("e", "lamp", "is_on"), Flow("lamp", "command:turn_on", "on"), Flow("cam", "frame", "frame")]);
         Same(StateDependencies.Of(graph, "lamp", BuiltIn), ["binary_sensor.door"], "the lamp's state depends on the entity its value reads");
         var preview = Preview(graph, "the lamp and the camera");
-        static string Method(string node, string port) => VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = node }, port);
-        static string Line(string node, string port, string mode, bool startup, params string[] entities) =>
-            $"{Action}nameof({Method(node, port)}),global::HassSharp.AutomationMode.{mode},Startup:{(startup ? "true" : "false")},Manual:false," +
-            $"Entities:[{string.Join(",", entities.Select(e => $"new global::HassSharp.EntityReference({JsonSerializer.Serialize(e)})"))}],Schedules:[],Triggers:[])";
         // The nodes in id order, each node's flows in its order: state, then each command wired, then the frame.
         Same(ActionLines(preview), [Line("cam", "frame", "Single", false), Line("lamp", "state", "Restart", true, "binary_sensor.door"), Line("lamp", "command:turn_on", "Queued", false)], "the flows' actions");
-        static string Described(string node, string port, AutomationMode mode, bool startup, params string[] entities) =>
-            $"{Method(node, port)} {mode} startup={startup} manual=False entities={Texts(entities)} schedules=0 triggers=0";
         Same(await Compiled(preview, "the lamp and the camera"),
             [Described("cam", "frame", AutomationMode.Single, false), Described("lamp", "state", AutomationMode.Restart, true, "binary_sensor.door"), Described("lamp", "command:turn_on", AutomationMode.Queued, false)],
             "the flows' compiled configuration");
@@ -304,12 +311,11 @@ static class EntityGraphGeneratorTests
 
     static async Task ATriggerInAnEntityGraphKeepsItsOwnAction()
     {
-        // The polled door, with a State of a second entity reading the trigger flow's value node, and an entity trigger.
+        // The polled door, with an Entity node of a second entity whose state reads the trigger flow's value node, and an entity trigger.
         var graph = Case("entity graph: trigger root sets state");
         graph["nodes"]!.AsArray().Add(State("s", "door2"));
         graph["nodes"]!.AsArray().Add(N("u", "trigger", new { type = "entity", entity = "binary_sensor.window", mode = "Parallel" }));
         graph["edges"]!.AsArray().Add(D("is", "s", "is_on"));
-        graph["definition"]!["entities"]!.AsArray().Add(new JsonObject { ["key"] = "door2", ["domain"] = "binary_sensor" });
         var preview = Preview(graph, "the polled door");
         var lines = ActionLines(preview);
         // Each trigger's action is the one it has alone in an automation; the value node both read is the State's alone.
@@ -319,12 +325,12 @@ static class EntityGraphGeneratorTests
             var automation = new JsonObject { ["version"] = 5, ["name"] = "Alone", ["nodes"] = new JsonArray(trigger), ["edges"] = new JsonArray() };
             return ActionLines(Preview(automation, "trigger " + id + " in an automation")).Single();
         }
-        Same(lines, [ActionLine("s", "Restart", true, false, "binary_sensor.door"), Alone("t"), Alone("u")], "the polled door's actions, in id order");
+        Same(lines, [Line("s", "state", "Restart", true, "binary_sensor.door"), Alone("t"), Alone("u")], "the polled door's actions, in id order");
         Check(lines[1].Contains("Triggers:[new global::HassSharp.HomeAssistantTrigger(", StringComparison.Ordinal) && lines[1].Contains("Entities:[]", StringComparison.Ordinal), "the polled trigger keeps its native trigger and reads no entity");
         Check(lines[2].Contains("AutomationMode.Parallel,Startup:false,Manual:true,Entities:[new global::HassSharp.EntityReference(\"binary_sensor.window\")]", StringComparison.Ordinal), "the entity trigger keeps its mode, flags and entity");
-        Mapped(preview, ["s", "t", "u"], "the polled door");
+        Mapped(preview, [("s", "state"), ("t", null), ("u", null)], "the polled door");
         var compiled = await Compiled(preview, "the polled door");
-        Check(compiled.Count == 3 && compiled[0] == Describe("s", AutomationMode.Restart, true, false, "binary_sensor.door"), "the polled door's compiled State action: " + string.Join(" | ", compiled));
+        Check(compiled.Count == 3 && compiled[0] == Described("s", "state", AutomationMode.Restart, true, "binary_sensor.door"), "the polled door's compiled state action: " + string.Join(" | ", compiled));
         Check(compiled[1] == $"{VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = "t" })} Single startup=False manual=True entities=[] schedules=0 triggers=1", "the polled trigger's compiled action: " + compiled[1]);
         Check(compiled[2] == $"{VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = "u" })} Parallel startup=False manual=True entities=[binary_sensor.window] schedules=0 triggers=0", "the entity trigger's compiled action: " + compiled[2]);
     }

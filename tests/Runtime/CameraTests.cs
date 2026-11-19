@@ -674,16 +674,17 @@ static class CameraTests
         {
             name = "Lens",
             settings = Array.Empty<object>(),
-            entities = new[] { new { key = "lens", domain = "camera", name = "Lens", options = new { frame_interval = frameInterval } } },
-            logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Lens", ["nodes"] = new JsonArray(), ["edges"] = new JsonArray() } },
+            logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Lens", ["edges"] = new JsonArray(),
+                ["nodes"] = new JsonArray(VisualExecutionTests.Hub("lens", "lens", "camera", new JsonObject { ["name"] = "Lens", ["options"] = new JsonObject { ["frame_interval"] = JsonSerializer.SerializeToNode(frameInterval) } })) } },
         };
         foreach (var refused in new[] { 0.1, 100 })
         {
             var answer = JsonNode.Parse(await api.EntityRequest(JsonSerializer.Serialize(new { operation = "save", id = "lens", expectedRevision = 0, definition = Lens(refused) })))!;
-            var problem = answer["error"]?["detail"]?["diagnostics"]?.AsArray().SingleOrDefault();
+            // The one error; the camera's Entity node has no step on its frame pin, which is only warned of.
+            var problem = answer["error"]?["detail"]?["diagnostics"]?.AsArray().SingleOrDefault(d => d!["severity"]!.GetValue<int>() == 3);
             var shown = refused.ToString(System.Globalization.CultureInfo.InvariantCulture);
             Check(answer["ok"]!.GetValue<bool>() == false && answer["error"]!["code"]!.GetValue<string>() == "validation" && problem?["code"]?.GetValue<string>() == "definition.entityOption"
-                && problem["inputId"]?.GetValue<string>() == "lens" && problem["portId"]?.GetValue<string>() == "frame_interval"
+                && problem["nodeId"]?.GetValue<string>() == "lens" && problem["inputId"]?.GetValue<string>() == "option:frame_interval" && problem["portId"] == null
                 && problem["message"]?.GetValue<string>() == $"Seconds between frames of Lens takes a number from 0.5 to 60, not {shown}", $"a frame interval of {shown} is refused: " + answer.ToJsonString());
         }
         var saved = await ok(new { operation = "save", id = "lens", expectedRevision = 0, definition = Lens(2) });

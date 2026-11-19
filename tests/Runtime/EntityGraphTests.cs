@@ -146,22 +146,83 @@ static class EntityGraphTests
         ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph.DeepClone() },
     };
     static readonly object Unset = new { kind = "unset" };
-    static JsonObject State(string id, string entity, JsonObject? values = null)
-    {
-        var config = values ?? new JsonObject(); config["entity"] = entity;
-        return N(id, "entity_state", config);
-    }
+    /// <summary>
+    /// The Entity node of the listed entity <paramref name="entity"/>, with <paramref name="values"/> as its state values:
+    /// its type, name and settings are the listed entity's, which the request puts on it (<see cref="Placed"/>).
+    /// </summary>
+    static JsonObject State(string id, string entity, JsonObject? values = null) =>
+        N(id, "entity", new JsonObject { ["key"] = entity, ["arguments"] = values ?? new JsonObject() });
     static JsonObject SetState(string id, string entity, JsonObject values)
     {
         values["entity"] = entity;
         return N(id, "set_entity_state", values);
     }
     static JsonObject On(bool on) => new() { ["is_on"] = Lit("boolean", on) };
-    static JsonObject Command(string id, string entity, string command) => N(id, "entity_command", new { entity, command });
+    /// <summary>
+    /// A stand-in for the listed entity's <paramref name="command"/> pin, which never reaches the product: the request puts
+    /// the wires out of it on that pin of the entity's Entity node, and drops it (<see cref="Placed"/>).
+    /// </summary>
+    static JsonObject Command(string id, string entity, string command) => N(id, "pin", new { entity, port = "command:" + command });
+    /// <summary>
+    /// The definition as the editor sends it: each entity it lists is on an Entity node, and it lists none. The node is the
+    /// <see cref="State"/> of its key, else a new one of the key's id, placed first in the listed order (the order the
+    /// entities are registered in); it takes the listed entity's type, name and settings, named by its key when it has no
+    /// name and the definition no device. Each <see cref="Command"/> or <see cref="FrameNeeded"/> stand-in of its key is
+    /// that node's pin: the wires out of it start at the pin, a data wire at the pin's value. A stand-in's
+    /// <c>trackHistory</c>, and a State's, are the node's <c>history</c> switches. A definition already in that form, or of
+    /// no graph, is sent as it is.
+    /// </summary>
+    static JsonObject Placed(JsonObject definition)
+    {
+        if (definition["logic"]?["graph"] is not JsonObject graph || definition["entities"] is not JsonArray { Count: > 0 } listed) return definition;
+        static string? Text(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+        var nodes = graph["nodes"] as JsonArray ?? [];
+        var edges = (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
+        var hubs = new List<JsonObject>();
+        var kept = new JsonArray();
+        foreach (var entity in listed.OfType<JsonObject>())
+        {
+            var key = Text(entity, "key")!;
+            // An Entity node of the key already in that form declares it: the entity stays listed, as a read answer saved back lists it.
+            if (nodes.OfType<JsonObject>().Any(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] != null)) { kept.Add(entity.DeepClone()); continue; }
+            var state =nodes.OfType<JsonObject>().FirstOrDefault(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] == null);
+            var id = Text(state, "id") ?? key;
+            var config = new JsonObject();
+            foreach (var (name, value) in entity) if (value != null) config[name] = value.DeepClone();
+            if (definition["device"] is not JsonObject && config["name"] == null) config["name"] = key;
+            var history = new JsonObject();
+            var arguments = new JsonObject();
+            if (state != null)
+            {
+                foreach (var (name, value) in state["config"]!.AsObject())
+                    if (name == "trackHistory") history["state"] = value?.DeepClone();
+                    else if (name is "arguments") foreach (var (input, argument) in value!.AsObject()) arguments[input] = argument?.DeepClone();
+                nodes.Remove(state);
+            }
+            foreach (var pin in nodes.OfType<JsonObject>().Where(n => Text(n, "kind") == "pin" && Text(n["config"], "entity") == key).ToArray())
+            {
+                var port = Text(pin["config"], "port")!;
+                if (pin["config"]!["trackHistory"] is { } track) history[port == "frame" ? "frame" : "commands"] = track.DeepClone();
+                foreach (var edge in edges.Where(e => Text(e, "source") == Text(pin, "id")))
+                {
+                    edge["source"] = id;
+                    if (Text(edge, "kind") == "data") edge["sourcePort"] = port + ":" + Text(edge, "sourcePort");
+                    else edge["port"] = port;
+                }
+                nodes.Remove(pin);
+            }
+            config["history"] = history;
+            config["arguments"] = arguments;
+            hubs.Add(new JsonObject { ["id"] = id, ["kind"] = "entity", ["label"] = "", ["config"] = config });
+        }
+        for (var i = 0; i < hubs.Count; i++) nodes.Insert(i, hubs[i]);
+        definition["entities"] = kept;
+        return definition;
+    }
     static JsonObject Read(string id, string entity) => N(id, "read_entity", new JsonObject { ["entity"] = Lit("entity_id", entity) });
 
     /// <summary>The acceptance definition: a binary sensor on while motion A or motion B is (the shared fixture's graph).</summary>
-    static JsonObject Motion() => Definition("Any motion", EntityStoreTests.MotionGraph(), [.. EntityStoreTests.MotionEntities().Select(e => e!)]);
+    static JsonObject Motion() => Definition("Any motion", EntityStoreTests.MotionGraph(), []);
     /// <summary>Waits, no longer than 5 s, for a Custom C# node's <c>Entered</c> to be released once: its run has reached it.</summary>
     static async Task Reached(SemaphoreSlim entered, string what) => Check(await entered.WaitAsync(TimeSpan.FromSeconds(5)), "timed out waiting: " + what);
     /// <summary>A sensor whose value is <c>sensor.outside</c>'s state, as a number.</summary>
@@ -220,7 +281,13 @@ static class EntityGraphTests
             Api = new(Home.Root);
             await Api.Init();
         }
-        public async Task<JsonNode> Request(object request) => JsonNode.Parse(await Api.EntityRequest(JsonSerializer.Serialize(request)))!;
+        /// <summary>The request, with the definition it carries as the editor sends it (<see cref="Placed"/>).</summary>
+        public async Task<JsonNode> Request(object request)
+        {
+            var json = JsonSerializer.SerializeToNode(request)!.AsObject();
+            if (json["definition"] is JsonObject definition) json["definition"] = Placed((JsonObject)definition.DeepClone());
+            return JsonNode.Parse(await Api.EntityRequest(json.ToJsonString()))!;
+        }
         public async Task<JsonObject> Ok(object request)
         {
             var answer = await Request(request);
@@ -431,15 +498,17 @@ static class EntityGraphTests
     static async Task ACommandWithoutAFlowFails()
     {
         await using var rig = await Rig.Start("no-flow");
-        // The warning is the definition's, on no node: no node handles the command. It names the entity by its name and key.
-        static bool Unhandled(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2 && d["nodeId"] == null
-            && d["message"]!.GetValue<string>() == "Switch Relay (relay) does nothing on Turn on; add a When commanded step for it") == true;
+        // The warning is on the switch's Entity node, at the pin no step is connected to. It names the entity by its name.
+        static bool Unhandled(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2
+            && d["nodeId"]?.GetValue<string>() == "relay" && d["portId"]?.GetValue<string>() == "command:turn_on" && d["message"]!.GetValue<string>() == "Relay does nothing on Turn on: connect a step to Turn on") == true;
         var preview = await rig.Ok(new { operation = "preview", definition = Relay(turnOn: false) });
         Check(preview["valid"]!.GetValue<bool>() && Unhandled(preview["diagnostics"]), "the preview warns of the command no flow handles: " + preview["diagnostics"]?.ToJsonString());
+        // An entity of a device needs no name: one without is named by its key.
         var unnamed = Relay(turnOn: false);
         unnamed["entities"]![0]!.AsObject().Remove("name");
+        unnamed["device"] = new JsonObject();
         var byKey = (await rig.Ok(new { operation = "preview", definition = unnamed }))["diagnostics"]!.AsArray().Select(d => d!["message"]!.GetValue<string>()).ToArray();
-        Check(byKey.Contains("Switch relay does nothing on Turn on; add a When commanded step for it"), "an entity without a name is named by its key: " + string.Join(" | ", byKey));
+        Check(byKey.Contains("relay does nothing on Turn on: connect a step to Turn on"), "an entity without a name is named by its key: " + string.Join(" | ", byKey));
         var saved = await rig.Save("relay", Relay(turnOn: false));
         Check(Unhandled(saved["diagnostics"]) && saved["active"]!.GetValue<bool>(), "the save warns of the command no flow handles, and runs: " + saved.ToJsonString());
         await rig.Until("relay:relay", _ => true, "the switch starts");
@@ -451,7 +520,7 @@ static class EntityGraphTests
     /// <summary>A switch an Entity node declares, with Set state steps on its Turn on pin and, unless left out, its Turn off pin.</summary>
     static JsonObject RelayNode(bool turnOn = true)
     {
-        var nodes = new List<JsonObject> { EntityNodeTests.Hub("relay", "relay", "switch", new JsonObject { ["name"] = "Relay" }), SetState("set_off", "relay", On(false)) };
+        var nodes = new List<JsonObject> { Hub("relay", "relay", "switch", new JsonObject { ["name"] = "Relay" }), SetState("set_off", "relay", On(false)) };
         var edges = new List<JsonObject> { Pin("relay", "command:turn_off", "set_off") };
         if (turnOn) { nodes.Add(SetState("set_on", "relay", On(true))); edges.Add(Pin("relay", "command:turn_on", "set_on")); }
         return Definition("Relay", Graph("Relay", [.. nodes], [.. edges]), []);
@@ -508,7 +577,7 @@ static class EntityGraphTests
     static async Task ALightNodeTurnedOnWithoutABrightnessIsAtFull()
     {
         await using var rig = await Rig.Start("light-node");
-        var graph = Graph("Lamp", [EntityNodeTests.Hub("lamp", "lamp", "light", new JsonObject { ["name"] = "Lamp", ["options"] = new JsonObject { ["dimmable"] = true } }), SetState("bright", "lamp", On(true))],
+        var graph = Graph("Lamp", [Hub("lamp", "lamp", "light", new JsonObject { ["name"] = "Lamp", ["options"] = new JsonObject { ["dimmable"] = true } }), SetState("bright", "lamp", On(true))],
             Pin("lamp", "command:turn_on", "bright"), Data("lamp", "bright", "brightness", "command:turn_on:brightness"));
         await rig.Save("lamp", Definition("Lamp", graph, []));
         await rig.Until("lamp:lamp", _ => true, "the light starts");
@@ -818,7 +887,7 @@ static class EntityGraphTests
         motion["nodes"]!.AsArray().Add(N("tracked", "trigger", new { type = "entity", entity = "binary_sensor.motion_a", trackHistory = true }));
         motion["nodes"]!.AsArray().Add(N("say_tracked", "log", new { value = Lit("string", "tracked") }));
         motion["edges"]!.AsArray().Add(Next("tracked", "say_tracked"));
-        var saved = await rig.Save("both", Definition("Both", motion, [.. EntityStoreTests.MotionEntities().Select(e => e!), Entity("relay", "switch")]));
+        var saved = await rig.Save("both", Definition("Both", motion, [Entity("relay", "switch")]));
         var automationId = saved["document"]!["automationId"]!.GetValue<string>();
         await rig.Until("both:any_motion", _ => true, "the State");
         await rig.Change("binary_sensor.motion_a", "on");
@@ -828,11 +897,12 @@ static class EntityGraphTests
         Check(runs.Select(r => r["cause"]!.GetValue<string>()).Order(StringComparer.Ordinal).SequenceEqual(["Command", "Entity", "Setup"]), "the runs recorded: " + Lines(runs.Select(r => r.ToJsonString())));
         Check(runs.Single(r => r["cause"]!.GetValue<string>() == "Entity")["triggerNodeId"]!.GetValue<string>() == "tracked", "the trigger flow recorded is the one that turns its history on: " + Lines(runs.Select(r => r.ToJsonString())));
         var command = runs.Single(r => r["cause"]!.GetValue<string>() == "Command");
-        Check(command["status"]!.GetValue<string>() == "Succeeded" && command["visualId"]!.GetValue<string>() == "both" && command["triggerNodeId"]!.GetValue<string>() == "on"
+        Check(command["status"]!.GetValue<string>() == "Succeeded" && command["visualId"]!.GetValue<string>() == "both" && command["triggerNodeId"]!.GetValue<string>() == "relay"
             && command["visualRevision"]!.GetValue<long>() == 1 && command["hasTrace"]!.GetValue<bool>(), "the command's run: " + command.ToJsonString());
         Check(command["trigger"]!.ToJsonString().Contains("command", StringComparison.Ordinal), "the command run's trigger: " + command["trigger"]!.ToJsonString());
         var trace = JsonNode.Parse(rig.Api.GetRunTrace(command["runId"]!.GetValue<string>()))!;
-        Check(trace["snapshot"]!["graph"]!["definition"]!["entities"]!.AsArray().Count == 2 && trace["trace"] != null, "the command's trace has the graph with its definition: " + trace.ToJsonString()[..Math.Min(400, trace.ToJsonString().Length)]);
+        Check(trace["snapshot"]!["graph"]!["definition"] is JsonObject && trace["snapshot"]!["graph"]!["nodes"]!.AsArray().Count(n => n!["kind"]!.GetValue<string>() == "entity") == 2 && trace["trace"] != null,
+            "the command's trace has the graph with its definition and its two Entity nodes: " + trace.ToJsonString()[..Math.Min(400, trace.ToJsonString().Length)]);
     }
 
     /// <summary>Deleting a definition, built from nodes or a class, forgets its run history's identity: one saved again under its id starts anew.</summary>
@@ -1019,7 +1089,7 @@ static class EntityGraphTests
     static async Task AnEntityNodeCreatesItsEntity()
     {
         await using var rig = await Rig.Start("entity-node", ("sensor.button", "idle"));
-        var graph = Graph("Door", [EntityNodeTests.Hub("door", "door", "binary_sensor"), N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "door", On(true))], Next("t", "set"));
+        var graph = Graph("Door", [Hub("door", "door", "binary_sensor"), N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "door", On(true))], Next("t", "set"));
         var definition = Definition("Door", graph, []);
         definition.Remove("entities");
         var preview = await rig.Ok(new { operation = "preview", definition });
@@ -1228,8 +1298,9 @@ static class EntityGraphTests
         Check(classPreview["valid"]!.GetValue<bool>() && classPreview["sourceMap"]!.AsArray().Count == 1 && JsonNode.DeepEquals(classPreview["sourceMap"], classRead["sourceMap"]),
             "the class's preview maps its source as read does: " + classPreview["sourceMap"]!.ToJsonString() + " / " + classRead["sourceMap"]!.ToJsonString());
 
-        var noEntities = Motion(); noEntities["entities"] = new JsonArray();
-        var invalid = await rig.Ok(new { operation = "preview", definition = noEntities });
+        // Its Entity node without a name, and the definition without a device: not valid.
+        var unnamed = Motion(); unnamed["logic"]!["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "s")!["config"]!.AsObject().Remove("name");
+        var invalid = await rig.Ok(new { operation = "preview", definition = unnamed });
         Check(!invalid["valid"]!.GetValue<bool>() && invalid["sourceMap"] is JsonArray { Count: 0 } && invalid["source"]!.GetValue<string>() == "", "an invalid preview maps nothing: " + invalid.ToJsonString());
     }
 
@@ -1756,7 +1827,7 @@ static class EntityGraphTests
             "the value left out is logged: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
         await rig.Api.EntityCommand("lamp:lamp", "turn_on", null);
         var trace = JsonNode.Parse(rig.Api.GetRunTrace(CommandRuns(rig, automationId)[0]["runId"]!.GetValue<string>()))!;
-        Check(Step(trace, "on")["outputs"]?["brightness"] == null, "the flow got a brightness: " + Step(trace, "on").ToJsonString());
+        Check(NoBrightness(Step(trace, "lamp")), "the flow got a brightness: " + Step(trace, "lamp").ToJsonString());
     }
 
     /// <summary>A select whose option the new revision no longer lists starts unknown after the swap, and runs.</summary>
@@ -2231,6 +2302,8 @@ static class EntityGraphTests
     }
     // A value node is worked out for each step that reads it: its first event (the whole answer is checked for the secret).
     static JsonObject Step(JsonNode answer, string node) => answer["trace"]!["events"]!.AsArray().Select(e => e!.AsObject()).First(e => e["node"]!.GetValue<string>() == node);
+    /// <summary>Whether the Entity node's step in a command run gave its flow no brightness.</summary>
+    static bool NoBrightness(JsonObject step) => step["outputs"] is not JsonObject outputs || !outputs.Any(o => o.Key.EndsWith("brightness", StringComparison.Ordinal));
     /// <summary>A recorded port written as <c>***</c>, marked redacted, from the wire given (none for an output).</summary>
     static bool Hidden(JsonNode? port, string? node = null, string? from = null) =>
         port?["v"] is JsonValue v && v.GetValueKind() == JsonValueKind.String && v.GetValue<string>() == "***" && port["redacted"]?.GetValue<bool>() == true
@@ -2471,7 +2544,7 @@ static class EntityGraphTests
         await rig.Api.EntityCommand("lamps:plain", "turn_on", null);
         await rig.Until("lamps:plain", s => Is(s, "is_on", true) && Is(s, "brightness", null), "the light that cannot be dimmed is turned on, with no brightness");
         var trace = JsonNode.Parse(rig.Api.GetRunTrace(CommandRuns(rig, automationId)[0]["runId"]!.GetValue<string>()))!;
-        Check(Step(trace, "on")["outputs"]?["brightness"] == null, "no brightness was filled in for it: " + Step(trace, "on").ToJsonString());
+        Check(NoBrightness(Step(trace, "plain")), "no brightness was filled in for it: " + Step(trace, "plain").ToJsonString());
         await rig.Flush();
         var batches = rig.Batches;
         var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("lamps:wired", "turn_on", "{}"), "a flow reading a brightness its light cannot have");
@@ -2623,11 +2696,12 @@ static class EntityGraphTests
     static JsonObject Rect(string id) => N(id, "image_draw_rect", new JsonObject
         { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 2), ["y"] = Lit("number", 2), ["width"] = Lit("number", 20), ["height"] = Lit("number", 10) });
     static JsonObject ShowFrame(string id, string entity = "annotated") => N(id, "show_frame", new JsonObject { ["entity"] = entity, ["image"] = JsonSerializer.SerializeToNode(Unset) });
+    /// <summary>A stand-in for the camera's frame pin, as <see cref="Command"/> is for a command's (<see cref="Placed"/>).</summary>
     static JsonObject FrameNeeded(string id, bool? trackHistory = null)
     {
-        var config = new JsonObject { ["entity"] = "annotated" };
+        var config = new JsonObject { ["entity"] = "annotated", ["port"] = "frame" };
         if (trackHistory is { } track) config["trackHistory"] = track;
-        return N(id, "camera_frame", config);
+        return N(id, "pin", config);
     }
     static JsonNode Camera() => Entity("annotated", "camera", new { name = "Annotated" });
     /// <summary>
@@ -2676,7 +2750,7 @@ static class EntityGraphTests
         var traced = await Frame(rig);
         var runs = rig.History(automationId);
         Check(runs.Length == 1 && runs[0]["cause"]!.GetValue<string>() == "Frame" && runs[0]["status"]!.GetValue<string>() == "Succeeded"
-            && runs[0]["triggerNodeId"]!.GetValue<string>() == "frame" && runs[0]["hasTrace"]!.GetValue<bool>(), "the frame made is recorded: " + Lines(runs.Select(r => r.ToJsonString())));
+            && runs[0]["triggerNodeId"]!.GetValue<string>() == "annotated" && runs[0]["hasTrace"]!.GetValue<bool>(), "the frame made is recorded: " + Lines(runs.Select(r => r.ToJsonString())));
         Check(runs[0]["trigger"]!.ToJsonString().Contains("annotated", StringComparison.Ordinal), "the run's trigger names the camera: " + runs[0]["trigger"]!.ToJsonString());
         var text = rig.Api.GetRunTrace(runs[0]["runId"]!.GetValue<string>());
         var shown = JsonNode.Parse(text)!["trace"]!["events"]!.AsArray().Single(e => e!["node"]!.GetValue<string>() == "show")!["inputs"]!["image"]!;

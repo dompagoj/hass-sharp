@@ -32432,11 +32432,17 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "any_motion"
-          },
-          "label": "State ▸ any motion"
+            "key": "any_motion",
+            "domain": "binary_sensor",
+            "name": "Any motion",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
+          }
         }
       ],
       "edges": [
@@ -32466,13 +32472,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "any_motion",
-            "domain": "binary_sensor",
-            "name": "Any motion"
-          }
-        ],
         "settings": []
       }
     },
@@ -32484,15 +32483,19 @@
     "graph": {
       "version": 5,
       "name": "Nothing yet",
-      "nodes": [],
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": [
           {
             "key": "delay",
@@ -32510,6 +32513,15 @@
       "version": 5,
       "name": "Polled door",
       "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
         {
           "id": "t",
           "kind": "trigger",
@@ -32562,12 +32574,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -32581,11 +32587,12 @@
       "name": "Relay",
       "nodes": [
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "relay",
+          "kind": "entity",
           "config": {
-            "entity": "relay",
-            "command": "turn_on"
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay"
           }
         },
         {
@@ -32598,14 +32605,6 @@
               "type": "boolean",
               "value": true
             }
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_off"
           }
         },
         {
@@ -32652,16 +32651,16 @@
       ],
       "edges": [
         {
-          "id": "on:next:on_set",
-          "source": "on",
+          "id": "relay:command:turn_on:on_set",
+          "source": "relay",
           "target": "on_set",
-          "port": "next"
+          "port": "command:turn_on"
         },
         {
-          "id": "off:next:off_set",
-          "source": "off",
+          "id": "relay:command:turn_off:off_set",
+          "source": "relay",
           "target": "off_set",
-          "port": "next"
+          "port": "command:turn_off"
         },
         {
           "id": "setup:next:available",
@@ -32677,12 +32676,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "relay",
-            "domain": "switch"
-          }
-        ],
         "settings": []
       }
     },
@@ -32704,9 +32697,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "level"
+            "key": "level",
+            "domain": "sensor",
+            "name": "Level",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -32721,12 +32721,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "level",
-            "domain": "sensor"
-          }
-        ],
         "settings": [
           {
             "key": "offset",
@@ -32746,25 +32740,23 @@
       "nodes": [
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "status",
-            "value": {
-              "kind": "literal",
-              "type": "string",
-              "value": "idle"
+            "key": "status",
+            "domain": "sensor",
+            "name": "Status",
+            "arguments": {
+              "value": {
+                "kind": "literal",
+                "type": "string",
+                "value": "idle"
+              }
             }
           }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "status",
-            "domain": "sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -32798,9 +32790,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "copy"
+            "key": "copy",
+            "domain": "sensor",
+            "name": "Copy",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -32823,12 +32822,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "copy",
-            "domain": "sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -32843,41 +32836,39 @@
       "nodes": [
         {
           "id": "s1",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "front",
-            "is_on": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": true
+            "key": "front",
+            "domain": "binary_sensor",
+            "name": "Front",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
             }
           }
         },
         {
           "id": "s2",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "back",
-            "is_on": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": false
+            "key": "back",
+            "domain": "binary_sensor",
+            "name": "Back",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": false
+              }
             }
           }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "front",
-            "domain": "binary_sensor"
-          },
-          {
-            "key": "back",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -32899,9 +32890,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "door"
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -32916,12 +32914,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": [
           {
             "key": "mode",
@@ -32945,25 +32937,23 @@
       "nodes": [
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "door",
-            "is_on": {
-              "kind": "literal",
-              "type": "string",
-              "value": "on"
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "string",
+                "value": "on"
+              }
             }
           }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33013,6 +33003,15 @@
       "name": "Loose",
       "nodes": [
         {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
           "id": "set",
           "kind": "set_entity_state",
           "config": {
@@ -33027,12 +33026,6 @@
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33051,6 +33044,15 @@
       "version": 5,
       "name": "Step reads",
       "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -33115,12 +33117,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33186,15 +33182,19 @@
     "graph": {
       "version": 5,
       "name": "Settings",
-      "nodes": [],
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": [
           {
             "key": "delay",
@@ -33220,15 +33220,19 @@
     "graph": {
       "version": 5,
       "name": "Settings",
-      "nodes": [],
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": [
           {
             "key": "when",
@@ -33402,10 +33406,12 @@
       "name": "Automation",
       "nodes": [
         {
-          "id": "s",
-          "kind": "entity_state",
+          "id": "door",
+          "kind": "entity",
           "config": {
-            "entity": "door"
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
           }
         }
       ],
@@ -33414,7 +33420,7 @@
     "valid": false,
     "messages": [
       "At least one trigger is required",
-      "State only works in the graph of an entity definition; delete it from this automation"
+      "Door only works in the graph of an entity definition; delete it from this automation"
     ],
     "codes": [
       "graph.noTrigger",
@@ -33428,6 +33434,15 @@
       "name": "Setups",
       "nodes": [
         {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
           "id": "b",
           "kind": "entity_setup",
           "config": {}
@@ -33440,12 +33455,6 @@
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33465,6 +33474,15 @@
       "name": "Setups",
       "nodes": [
         {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
           "id": "m",
           "kind": "entity_setup",
           "config": {}
@@ -33482,12 +33500,6 @@
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33502,7 +33514,7 @@
     ]
   },
   {
-    "name": "code root.incoming: order wire into a state",
+    "name": "code root.incoming: order wire into an Entity node",
     "graph": {
       "version": 5,
       "name": "Wired",
@@ -33514,13 +33526,17 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "door",
-            "is_on": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": true
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
             }
           }
         }
@@ -33534,19 +33550,13 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
     "valid": false,
     "nodeId": "s",
     "messages": [
-      "State starts a flow of its own, so no step order wire can lead into it; remove this wire"
+      "Door starts a flow of its own, so no step order wire can lead into it; remove this wire"
     ],
     "codes": [
       "root.incoming"
@@ -33559,21 +33569,36 @@
       "name": "Window",
       "nodes": [
         {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "set_entity_state",
           "config": {
             "entity": "window"
           }
         }
       ],
-      "edges": [],
+      "edges": [
+        {
+          "id": "setup:next:s",
+          "source": "setup",
+          "target": "s",
+          "port": "next"
+        }
+      ],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33594,21 +33619,36 @@
       "name": "Blank",
       "nodes": [
         {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "set_entity_state",
           "config": {
             "entity": ""
           }
         }
       ],
-      "edges": [],
+      "edges": [
+        {
+          "id": "setup:next:s",
+          "source": "setup",
+          "target": "s",
+          "port": "next"
+        }
+      ],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -33777,9 +33817,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "level"
+            "key": "level",
+            "domain": "sensor",
+            "name": "Level",
+            "arguments": {
+              "value": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -33794,12 +33841,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "level",
-            "domain": "sensor"
-          }
-        ],
         "settings": [
           {
             "key": "offset",
@@ -33825,6 +33866,15 @@
       "name": "Blank setting",
       "nodes": [
         {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
           "id": "k",
           "kind": "setting",
           "config": {
@@ -33834,12 +33884,6 @@
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": [
           {
             "key": "delay",
@@ -34007,9 +34051,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "closed"
+            "key": "closed",
+            "domain": "binary_sensor",
+            "name": "Closed",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -34040,12 +34091,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "closed",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -34053,7 +34098,7 @@
     "warning": "gets its entity over a wire",
     "warningNodeId": "is",
     "messages": [
-      "Has state gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Entity instead"
+      "Has state gets its entity over a wire, so Closed is not worked out again when that entity changes; choose the entity in Entity instead"
     ],
     "codes": [
       "state.dynamicSource"
@@ -34102,9 +34147,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "closed"
+            "key": "closed",
+            "domain": "binary_sensor",
+            "name": "Closed",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -34135,12 +34187,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "closed",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -34240,9 +34286,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "bright"
+            "key": "bright",
+            "domain": "binary_sensor",
+            "name": "Bright",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -34265,12 +34318,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "bright",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -34278,7 +34325,7 @@
     "warning": "gets its entity over a wire",
     "warningNodeId": "bright",
     "messages": [
-      "Is bright gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Light instead"
+      "Is bright gets its entity over a wire, so Bright is not worked out again when that entity changes; choose the entity in Light instead"
     ],
     "codes": [
       "state.dynamicSource"
@@ -34351,9 +34398,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "lit"
+            "key": "lit",
+            "domain": "binary_sensor",
+            "name": "Lit",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -34376,12 +34430,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lit",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -34389,7 +34437,7 @@
     "warning": "gets its entity over a wire",
     "warningNodeId": "lit",
     "messages": [
-      "Is lit gets its entity over a wire, so State is not worked out again when that entity changes; choose the entity in Lamp instead"
+      "Is lit gets its entity over a wire, so Lit is not worked out again when that entity changes; choose the entity in Lamp instead"
     ],
     "codes": [
       "state.dynamicSource"
@@ -34456,9 +34504,16 @@
         },
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
           "config": {
-            "entity": "bright"
+            "key": "bright",
+            "domain": "binary_sensor",
+            "name": "Bright",
+            "arguments": {
+              "is_on": {
+                "kind": "unset"
+              }
+            }
           }
         }
       ],
@@ -34473,12 +34528,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "bright",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": []
       }
     },
@@ -34490,25 +34539,29 @@
     "graph": {
       "version": 5,
       "name": "Relay",
-      "nodes": [],
-      "edges": [],
-      "definition": {
-        "entities": [
-          {
+      "nodes": [
+        {
+          "id": "relay",
+          "kind": "entity",
+          "config": {
             "key": "relay",
             "domain": "switch",
             "name": "Relay"
           }
-        ],
+        }
+      ],
+      "edges": [],
+      "definition": {
         "settings": []
       }
     },
     "valid": true,
     "warning": "does nothing on",
-    "warningNodeId": null,
+    "warningNodeId": "relay",
+    "warningPortId": "command:turn_on",
     "messages": [
-      "Switch Relay (relay) does nothing on Turn off; add a When commanded step for it",
-      "Switch Relay (relay) does nothing on Turn on; add a When commanded step for it"
+      "Relay does nothing on Turn off: connect a step to Turn off",
+      "Relay does nothing on Turn on: connect a step to Turn on"
     ],
     "codes": [
       "command.unhandled",
@@ -34516,14 +34569,33 @@
     ]
   },
   {
-    "name": "entity graph: a light's State with only its On value",
+    "name": "entity graph: a light's Entity node with only its On value",
     "graph": {
       "version": 5,
       "name": "Lamp",
       "nodes": [
         {
           "id": "s",
-          "kind": "entity_state",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "options": {
+              "dimmable": false
+            },
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
+            }
+          }
+        },
+        {
+          "id": "lit",
+          "kind": "set_entity_state",
           "config": {
             "entity": "lamp",
             "is_on": {
@@ -34534,33 +34606,33 @@
           }
         },
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "dark",
+          "kind": "set_entity_state",
           "config": {
             "entity": "lamp",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "lamp",
-            "command": "turn_off"
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
           }
         }
       ],
-      "edges": [],
+      "edges": [
+        {
+          "id": "s:command:turn_on:lit",
+          "source": "s",
+          "target": "lit",
+          "port": "command:turn_on"
+        },
+        {
+          "id": "s:command:turn_off:dark",
+          "source": "s",
+          "target": "dark",
+          "port": "command:turn_off"
+        }
+      ],
       "definition": {
-        "entities": [
-          {
-            "key": "lamp",
-            "domain": "light",
-            "options": {
-              "dimmable": false
-            }
-          }
-        ],
         "settings": []
       }
     },
@@ -34640,11 +34712,15 @@
       "name": "Lamp",
       "nodes": [
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "lamp",
+          "kind": "entity",
           "config": {
-            "entity": "lamp",
-            "command": "turn_on"
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "options": {
+              "dimmable": true
+            }
           }
         },
         {
@@ -34657,14 +34733,6 @@
               "type": "number",
               "value": 128
             }
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "lamp",
-            "command": "turn_off"
           }
         },
         {
@@ -34682,28 +34750,19 @@
       ],
       "edges": [
         {
-          "id": "on:next:dim",
-          "source": "on",
+          "id": "lamp:command:turn_on:dim",
+          "source": "lamp",
           "target": "dim",
-          "port": "next"
+          "port": "command:turn_on"
         },
         {
-          "id": "off:next:dark",
-          "source": "off",
+          "id": "lamp:command:turn_off:dark",
+          "source": "lamp",
           "target": "dark",
-          "port": "next"
+          "port": "command:turn_off"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lamp",
-            "domain": "light",
-            "options": {
-              "dimmable": true
-            }
-          }
-        ],
         "settings": []
       }
     },
@@ -34717,11 +34776,12 @@
       "name": "Relay",
       "nodes": [
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "relay",
+          "kind": "entity",
           "config": {
-            "entity": "relay",
-            "command": "turn_on"
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay"
           }
         },
         {
@@ -34730,31 +34790,23 @@
           "config": {
             "entity": "relay"
           }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_off"
-          }
         }
       ],
       "edges": [
         {
-          "id": "on:next:set",
-          "source": "on",
+          "id": "relay:command:turn_on:set",
+          "source": "relay",
           "target": "set",
-          "port": "next"
+          "port": "command:turn_on"
+        },
+        {
+          "id": "relay:command:turn_off:set",
+          "source": "relay",
+          "target": "set",
+          "port": "command:turn_off"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "relay",
-            "domain": "switch"
-          }
-        ],
         "settings": []
       }
     },
@@ -34768,24 +34820,18 @@
     ]
   },
   {
-    "name": "code entity.stateless: State and Set state on a button",
+    "name": "code entity.stateless: Set state on a button",
     "graph": {
       "version": 5,
       "name": "Chime",
       "nodes": [
         {
-          "id": "s",
-          "kind": "entity_state",
+          "id": "chime",
+          "kind": "entity",
           "config": {
-            "entity": "chime"
-          }
-        },
-        {
-          "id": "press",
-          "kind": "entity_command",
-          "config": {
-            "entity": "chime",
-            "command": "press"
+            "key": "chime",
+            "domain": "button",
+            "name": "Chime"
           }
         },
         {
@@ -34798,19 +34844,13 @@
       ],
       "edges": [
         {
-          "id": "press:next:set",
-          "source": "press",
+          "id": "chime:command:press:set",
+          "source": "chime",
           "target": "set",
-          "port": "next"
+          "port": "command:press"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "chime",
-            "domain": "button"
-          }
-        ],
         "settings": []
       }
     },
@@ -34818,26 +34858,29 @@
     "nodeId": "set",
     "inputId": "entity",
     "messages": [
-      "A button has no state to set",
       "A button has no state to set"
     ],
     "codes": [
-      "entity.stateless",
       "entity.stateless"
     ]
   },
   {
-    "name": "entity graph: When commanded hands a number's value to Set state",
+    "name": "entity graph: a number's Set value hands its value to Set state",
     "graph": {
       "version": 5,
       "name": "Target",
       "nodes": [
         {
-          "id": "set",
-          "kind": "entity_command",
+          "id": "target",
+          "kind": "entity",
           "config": {
-            "entity": "target",
-            "command": "set_value"
+            "key": "target",
+            "domain": "number",
+            "name": "Target",
+            "options": {
+              "min": 5,
+              "max": 30
+            }
           }
         },
         {
@@ -34850,31 +34893,21 @@
       ],
       "edges": [
         {
-          "id": "set:next:show",
-          "source": "set",
+          "id": "target:command:set_value:show",
+          "source": "target",
           "target": "show",
-          "port": "next"
+          "port": "command:set_value"
         },
         {
-          "id": "set.value:show.value",
+          "id": "target.command:set_value:value:show.value",
           "kind": "data",
-          "source": "set",
+          "source": "target",
           "target": "show",
-          "sourcePort": "value",
+          "sourcePort": "command:set_value:value",
           "targetPort": "value"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "target",
-            "domain": "number",
-            "options": {
-              "min": 5,
-              "max": 30
-            }
-          }
-        ],
         "settings": []
       }
     },
@@ -34882,25 +34915,21 @@
     "noDiagnostics": true
   },
   {
-    "name": "code port.unknownOutput: When commanded gives no value its command does not have",
+    "name": "code port.unknownOutput: a command gives no value it does not have",
     "graph": {
       "version": 5,
       "name": "Lamp",
       "nodes": [
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "lamp",
+          "kind": "entity",
           "config": {
-            "entity": "lamp",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "lamp",
-            "command": "turn_off"
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "options": {
+              "dimmable": true
+            }
           }
         },
         {
@@ -34913,35 +34942,32 @@
       ],
       "edges": [
         {
-          "id": "off:next:dim",
-          "source": "off",
+          "id": "lamp:command:turn_on:dim",
+          "source": "lamp",
           "target": "dim",
-          "port": "next"
+          "port": "command:turn_on"
         },
         {
-          "id": "off.brightness:dim.brightness",
-          "kind": "data",
-          "source": "off",
+          "id": "lamp:command:turn_off:dim",
+          "source": "lamp",
           "target": "dim",
-          "sourcePort": "brightness",
+          "port": "command:turn_off"
+        },
+        {
+          "id": "lamp.command:turn_off:brightness:dim.brightness",
+          "kind": "data",
+          "source": "lamp",
+          "target": "dim",
+          "sourcePort": "command:turn_off:brightness",
           "targetPort": "brightness"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lamp",
-            "domain": "light",
-            "options": {
-              "dimmable": true
-            }
-          }
-        ],
         "settings": []
       }
     },
     "valid": false,
-    "nodeId": "off",
+    "nodeId": "lamp",
     "messages": [
       "Unknown data output port"
     ],
@@ -34956,11 +34982,15 @@
       "name": "Lamp",
       "nodes": [
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "lamp",
+          "kind": "entity",
           "config": {
-            "entity": "lamp",
-            "command": "turn_on"
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "options": {
+              "dimmable": true
+            }
           }
         },
         {
@@ -34976,40 +35006,41 @@
           }
         },
         {
-          "id": "off",
-          "kind": "entity_command",
+          "id": "dark",
+          "kind": "set_entity_state",
           "config": {
             "entity": "lamp",
-            "command": "turn_off"
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
           }
         }
       ],
       "edges": [
         {
-          "id": "on:next:dim",
-          "source": "on",
+          "id": "lamp:command:turn_on:dim",
+          "source": "lamp",
           "target": "dim",
-          "port": "next"
+          "port": "command:turn_on"
         },
         {
-          "id": "on.brightness:dim.brightness",
+          "id": "lamp:command:turn_off:dark",
+          "source": "lamp",
+          "target": "dark",
+          "port": "command:turn_off"
+        },
+        {
+          "id": "lamp.command:turn_on:brightness:dim.brightness",
           "kind": "data",
-          "source": "on",
+          "source": "lamp",
           "target": "dim",
-          "sourcePort": "brightness",
+          "sourcePort": "command:turn_on:brightness",
           "targetPort": "brightness"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lamp",
-            "domain": "light",
-            "options": {
-              "dimmable": true
-            }
-          }
-        ],
         "settings": []
       }
     },
@@ -35023,11 +35054,15 @@
       "name": "Lamp",
       "nodes": [
         {
-          "id": "on",
-          "kind": "entity_command",
+          "id": "lamp",
+          "kind": "entity",
           "config": {
-            "entity": "lamp",
-            "command": "turn_on"
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "options": {
+              "dimmable": true
+            }
           }
         },
         {
@@ -35038,40 +35073,41 @@
           }
         },
         {
-          "id": "off",
-          "kind": "entity_command",
+          "id": "dark",
+          "kind": "set_entity_state",
           "config": {
             "entity": "lamp",
-            "command": "turn_off"
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
           }
         }
       ],
       "edges": [
         {
-          "id": "on:next:dim",
-          "source": "on",
+          "id": "lamp:command:turn_on:dim",
+          "source": "lamp",
           "target": "dim",
-          "port": "next"
+          "port": "command:turn_on"
         },
         {
-          "id": "on.brightness:dim.is_on",
+          "id": "lamp:command:turn_off:dark",
+          "source": "lamp",
+          "target": "dark",
+          "port": "command:turn_off"
+        },
+        {
+          "id": "lamp.command:turn_on:brightness:dim.is_on",
           "kind": "data",
-          "source": "on",
+          "source": "lamp",
           "target": "dim",
-          "sourcePort": "brightness",
+          "sourcePort": "command:turn_on:brightness",
           "targetPort": "is_on"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lamp",
-            "domain": "light",
-            "options": {
-              "dimmable": true
-            }
-          }
-        ],
         "settings": []
       }
     },
@@ -35088,6 +35124,15 @@
       "version": 5,
       "name": "Too many",
       "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
         {
           "id": "a",
           "kind": "setting",
@@ -35112,12 +35157,6 @@
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
         "settings": [
           {
             "key": "delay",
@@ -35719,6 +35758,15 @@
       "name": "Model",
       "nodes": [
         {
+          "id": "power",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        },
+        {
           "id": "setup",
           "kind": "entity_setup",
           "config": {}
@@ -35774,13 +35822,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power"
-          }
-        ],
         "settings": [
           {
             "key": "host",
@@ -35803,6 +35844,15 @@
       "version": 5,
       "name": "Model",
       "nodes": [
+        {
+          "id": "power",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -35904,13 +35954,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power"
-          }
-        ],
         "settings": [
           {
             "key": "host",
@@ -36045,6 +36088,15 @@
       "name": "Porch camera",
       "nodes": [
         {
+          "id": "porch",
+          "kind": "entity",
+          "config": {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        },
+        {
           "id": "setup",
           "kind": "entity_setup",
           "config": {}
@@ -36167,13 +36219,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "porch",
-            "domain": "sensor",
-            "name": "Porch"
-          }
-        ],
         "settings": []
       }
     },
@@ -36325,6 +36370,15 @@
       "version": 5,
       "name": "Porch camera",
       "nodes": [
+        {
+          "id": "porch",
+          "kind": "entity",
+          "config": {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -36707,13 +36761,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "porch",
-            "domain": "sensor",
-            "name": "Porch"
-          }
-        ],
         "settings": []
       }
     },
@@ -36736,6 +36783,15 @@
       "version": 5,
       "name": "Porch camera",
       "nodes": [
+        {
+          "id": "porch",
+          "kind": "entity",
+          "config": {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -36858,13 +36914,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "porch",
-            "domain": "sensor",
-            "name": "Porch"
-          }
-        ],
         "settings": []
       }
     },
@@ -36883,6 +36932,15 @@
       "version": 5,
       "name": "Porch camera",
       "nodes": [
+        {
+          "id": "porch",
+          "kind": "entity",
+          "config": {
+            "key": "porch",
+            "domain": "sensor",
+            "name": "Porch"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -36926,13 +36984,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "porch",
-            "domain": "sensor",
-            "name": "Porch"
-          }
-        ],
         "settings": []
       }
     },
@@ -36946,17 +36997,21 @@
     "codes": []
   },
   {
-    "name": "camera: a graph camera makes its frame when one is needed: When a frame is needed, Take a picture, Draw rectangle, Draw text, Show frame",
+    "name": "camera: a graph camera makes its frame when one is needed: its frame pin, Take a picture, Draw rectangle, Draw text, Show frame",
     "graph": {
       "version": 5,
       "name": "Annotated",
       "nodes": [
         {
-          "id": "frame",
-          "kind": "camera_frame",
+          "id": "annotated",
+          "kind": "entity",
           "config": {
-            "entity": "annotated",
-            "trackHistory": false
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated",
+            "history": {
+              "frame": false
+            }
           }
         },
         {
@@ -37036,10 +37091,10 @@
       ],
       "edges": [
         {
-          "id": "frame:next:snap",
-          "source": "frame",
+          "id": "annotated:frame:snap",
+          "source": "annotated",
           "target": "snap",
-          "port": "next"
+          "port": "frame"
         },
         {
           "id": "snap:next:show",
@@ -37073,13 +37128,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "annotated",
-            "domain": "camera",
-            "name": "Annotated"
-          }
-        ],
         "settings": []
       }
     },
@@ -37094,6 +37142,15 @@
       "version": 5,
       "name": "Pushed",
       "nodes": [
+        {
+          "id": "annotated",
+          "kind": "entity",
+          "config": {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -37144,13 +37201,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "annotated",
-            "domain": "camera",
-            "name": "Annotated"
-          }
-        ],
         "settings": []
       }
     },
@@ -37160,16 +37210,35 @@
     "codes": []
   },
   {
-    "name": "code camera.entity: Show frame and When a frame is needed name an entity that is not a camera, by its name",
+    "name": "code camera.entity: Show frame names an entity that is not a camera, by its name, else its key",
     "graph": {
       "version": 5,
       "name": "Not cameras",
       "nodes": [
         {
-          "id": "frame",
-          "kind": "camera_frame",
+          "id": "lens",
+          "kind": "entity",
           "config": {
-            "entity": "power"
+            "key": "lens",
+            "domain": "camera",
+            "name": "Lens"
+          }
+        },
+        {
+          "id": "power",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor"
           }
         },
         {
@@ -37192,20 +37261,44 @@
               "kind": "unset"
             }
           }
+        },
+        {
+          "id": "show_power",
+          "kind": "show_frame",
+          "config": {
+            "entity": "power",
+            "image": {
+              "kind": "unset"
+            }
+          }
         }
       ],
       "edges": [
         {
-          "id": "frame:next:snap",
-          "source": "frame",
+          "id": "lens:frame:snap",
+          "source": "lens",
           "target": "snap",
+          "port": "frame"
+        },
+        {
+          "id": "snap:next:show_power",
+          "source": "snap",
+          "target": "show_power",
           "port": "next"
         },
         {
-          "id": "snap:next:show",
-          "source": "snap",
+          "id": "show_power:next:show",
+          "source": "show_power",
           "target": "show",
           "port": "next"
+        },
+        {
+          "id": "snap.image:show_power.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "show_power",
+          "sourcePort": "image",
+          "targetPort": "image"
         },
         {
           "id": "snap.image:show.image",
@@ -37217,28 +37310,12 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lens",
-            "domain": "camera",
-            "name": "Lens"
-          },
-          {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power"
-          },
-          {
-            "key": "door",
-            "domain": "binary_sensor",
-            "name": null
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
-    "nodeId": "frame",
+    "nodeId": "show_power",
     "inputId": "entity",
     "messages": [
       "Lens never shows a frame: add a Show frame step for it",
@@ -37257,6 +37334,15 @@
       "version": 5,
       "name": "No camera",
       "nodes": [
+        {
+          "id": "power",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        },
         {
           "id": "setup",
           "kind": "entity_setup",
@@ -37307,13 +37393,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power"
-          }
-        ],
         "settings": []
       }
     },
@@ -37419,10 +37498,20 @@
       "name": "Never shown",
       "nodes": [
         {
-          "id": "frame",
-          "kind": "camera_frame",
+          "id": "annotated",
+          "kind": "entity",
           "config": {
-            "entity": "annotated"
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        },
+        {
+          "id": "yard",
+          "kind": "entity",
+          "config": {
+            "key": "yard",
+            "domain": "camera"
           }
         },
         {
@@ -37439,31 +37528,21 @@
       ],
       "edges": [
         {
-          "id": "frame:next:say",
-          "source": "frame",
+          "id": "annotated:frame:say",
+          "source": "annotated",
           "target": "say",
-          "port": "next"
+          "port": "frame"
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "annotated",
-            "domain": "camera",
-            "name": "Annotated"
-          },
-          {
-            "key": "yard",
-            "domain": "camera",
-            "name": null
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": true,
     "warning": "never shows a frame",
-    "warningNodeId": null,
+    "warningNodeId": "annotated",
+    "warningPortId": "frame",
     "messages": [
       "Annotated never shows a frame: add a Show frame step for it",
       "yard never shows a frame: add a Show frame step for it"
@@ -37474,16 +37553,18 @@
     ]
   },
   {
-    "name": "camera: State, Set state and When commanded keep their refusals for a camera",
+    "name": "camera: Set state keeps its refusal for a camera",
     "graph": {
       "version": 5,
       "name": "Lens",
       "nodes": [
         {
-          "id": "state",
-          "kind": "entity_state",
+          "id": "lens",
+          "kind": "entity",
           "config": {
-            "entity": "lens"
+            "key": "lens",
+            "domain": "camera",
+            "name": "Lens"
           }
         },
         {
@@ -37496,14 +37577,6 @@
           "kind": "set_entity_state",
           "config": {
             "entity": "lens"
-          }
-        },
-        {
-          "id": "cmd",
-          "kind": "entity_command",
-          "config": {
-            "entity": "lens",
-            "command": "frame"
           }
         },
         {
@@ -37557,32 +37630,21 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "lens",
-            "domain": "camera",
-            "name": "Lens"
-          }
-        ],
         "settings": []
       }
     },
     "valid": false,
-    "nodeId": "cmd",
-    "inputId": "command",
+    "nodeId": "set",
+    "inputId": "entity",
     "messages": [
-      "A camera has no state to set",
-      "A camera has no state to set",
-      "Entity lens takes no commands; choose a switch, button, number, select, text, light or cover entity instead"
+      "A camera has no state to set"
     ],
     "codes": [
-      "definition.unknownCommand",
-      "entity.stateless",
       "entity.stateless"
     ]
   },
   {
-    "name": "camera: When a frame is needed and Show frame only work in an entity definition",
+    "name": "camera: an Entity node and Show frame only work in an entity definition",
     "graph": {
       "version": 5,
       "name": "Frames",
@@ -37595,10 +37657,12 @@
           }
         },
         {
-          "id": "frame",
-          "kind": "camera_frame",
+          "id": "annotated",
+          "kind": "entity",
           "config": {
-            "entity": "annotated"
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
           }
         },
         {
@@ -37624,9 +37688,9 @@
     "valid": false,
     "nodeId": "show",
     "messages": [
+      "Annotated only works in the graph of an entity definition; delete it from this automation",
       "Image is required",
-      "Show frame only works in the graph of an entity definition; delete it from this automation",
-      "When a frame is needed only works in the graph of an entity definition; delete it from this automation"
+      "Show frame only works in the graph of an entity definition; delete it from this automation"
     ],
     "codes": [
       "node.document",

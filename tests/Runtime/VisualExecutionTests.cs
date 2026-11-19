@@ -9,6 +9,19 @@ static class VisualExecutionTests
     internal static JsonObject N(string id,string kind, object? cfg=null) => new(){["id"]=id,["kind"]=kind,["config"]=cfg is JsonObject j ? j : JsonSerializer.SerializeToNode(cfg ?? new{})};
     internal static JsonObject E(string source,string target,string port="next") => new(){["id"]=Guid.NewGuid().ToString(),["source"]=source,["target"]=target,["port"]=port};
     internal static JsonObject D(string source,string target,string targetPort,string sourcePort="value") => new(){["id"]=Guid.NewGuid().ToString(),["kind"]="data",["source"]=source,["target"]=target,["sourcePort"]=sourcePort,["targetPort"]=targetPort};
+    /// <summary>
+    /// An Entity node of the key and type, named by its key, with these settings in place of its own and, when given,
+    /// <paramref name="values"/> as its state values (<c>config.arguments</c>).
+    /// </summary>
+    internal static JsonObject Hub(string id, string key, string domain, JsonObject? more = null, JsonObject? values = null)
+    {
+        var config = new JsonObject { ["key"] = key, ["domain"] = domain, ["name"] = key, ["options"] = new JsonObject(), ["history"] = new JsonObject(), ["arguments"] = new JsonObject() };
+        foreach (var (name, value) in more ?? []) config[name] = value?.DeepClone();
+        if (values != null) config["arguments"] = values.DeepClone();
+        return new JsonObject { ["id"] = id, ["kind"] = "entity", ["label"] = "", ["config"] = config };
+    }
+    /// <summary>A step order wire from the Entity node's execution pin <paramref name="port"/> (<c>command:&lt;command&gt;</c>, <c>frame</c>) to <paramref name="target"/>.</summary>
+    internal static JsonObject Flow(string hub, string port, string target) => E(hub, target, port);
     /// <summary>A manual trigger, then the nodes; the steps among them are chained in order, value nodes stay out of the run order.</summary>
     internal static JsonObject G(params JsonObject[] nodes)
     {

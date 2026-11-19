@@ -34,13 +34,6 @@ static class EntityNodeTests
         return Task.CompletedTask;
     }
 
-    /// <summary>An Entity node of the key and type, named by its key, with these settings in place of its own.</summary>
-    internal static JsonObject Hub(string id, string key, string domain, JsonObject? more = null)
-    {
-        var config = new JsonObject { ["key"] = key, ["domain"] = domain, ["name"] = key, ["options"] = new JsonObject(), ["history"] = new JsonObject(), ["arguments"] = new JsonObject() };
-        foreach (var (name, value) in more ?? []) config[name] = value?.DeepClone();
-        return new JsonObject { ["id"] = id, ["kind"] = "entity", ["label"] = "", ["config"] = config };
-    }
     static JsonObject Graph(JsonArray? listed, params JsonObject[] nodes)
     {
         var definition = new JsonObject { ["settings"] = new JsonArray() };

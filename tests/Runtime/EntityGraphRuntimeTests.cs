@@ -70,24 +70,20 @@ static class EntityGraphRuntimeTests
         _ => value.GetType().Name + ":" + Convert.ToString(value, CultureInfo.InvariantCulture),
     };
 
-    /// <summary>An entity definition's graph: the nodes and wires, and a definition of these entities and settings.</summary>
-    static JsonObject Entity(JsonObject[] nodes, JsonObject[] edges, (string Key, string Domain)[] entities, params (string Key, string Type)[] settings) => new()
+    /// <summary>An entity definition's graph: the nodes, whose Entity nodes declare its entities, the wires, and a definition of these settings.</summary>
+    static JsonObject Entity(JsonObject[] nodes, JsonObject[] edges, params (string Key, string Type)[] settings) => new()
     {
         ["version"] = 5, ["name"] = "Entity", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges),
         ["definition"] = new JsonObject
         {
-            ["entities"] = new JsonArray(entities.Select(e => (JsonNode)new JsonObject { ["key"] = e.Key, ["domain"] = e.Domain }).ToArray()),
             ["settings"] = new JsonArray(settings.Select(s => (JsonNode)new JsonObject { ["key"] = s.Key, ["type"] = s.Type }).ToArray()),
         },
     };
     static readonly object Unset = new { kind = "unset" };
     static JsonObject Is(string id, string entity, string state = "on") => N(id, "entity_is", new JsonObject { ["entity"] = Lit("entity_id", entity), ["state"] = Lit("string", state) });
     static JsonObject Current(string id, string entity) => N(id, "entity_current", new JsonObject { ["entity"] = Lit("entity_id", entity) });
-    static JsonObject State(string id, string entity, JsonObject? values = null)
-    {
-        var config = values ?? new JsonObject(); config["entity"] = entity;
-        return N(id, "entity_state", config);
-    }
+    /// <summary>The Entity node <paramref name="id"/> of the key and type whose state is worked out from <paramref name="values"/> and the values wired to it.</summary>
+    static JsonObject State(string id, string key, string domain, JsonObject? values = null) => Hub(id, key, domain, values);
     static JsonObject SetState(string id, string entity, JsonObject? values = null)
     {
         var config = values ?? new JsonObject(); config["entity"] = entity;
@@ -96,9 +92,8 @@ static class EntityGraphRuntimeTests
     static JsonObject Setting(string id, string key) => N(id, "setting", new { key });
     /// <summary>The acceptance graph: a binary sensor on while either of two motion sensors is.</summary>
     static JsonObject AnyMotion() => Entity(
-        [Is("a", "binary_sensor.motion_a"), Is("b", "binary_sensor.motion_b"), N("or", "or", new { left = Unset, right = Unset }), State("s", "any_motion")],
-        [D("a", "or", "left"), D("b", "or", "right"), D("or", "s", "is_on")],
-        [("any_motion", "binary_sensor")]);
+        [Is("a", "binary_sensor.motion_a"), Is("b", "binary_sensor.motion_b"), N("or", "or", new { left = Unset, right = Unset }), State("s", "any_motion", "binary_sensor")],
+        [D("a", "or", "left"), D("b", "or", "right"), D("or", "s", "is_on")]);
 
     /// <summary>A graph's class, compiled once, whose root methods each test runs as often as it needs.</summary>
     sealed class Compiled : IDisposable
@@ -126,8 +121,8 @@ static class EntityGraphRuntimeTests
         /// <see cref="VisualNodeCatalog.FlowMethod"/>) as <see cref="Run(string, IDefinitionRuntime?, CancellationToken, IRunTraceSink?)"/>
         /// runs a root, with <paramref name="payload"/> as its trigger (a command's, with its data), else a manual one.
         /// </summary>
-        public Task Run(string root, string port, FakeDefinition definition, JsonElement? payload = null, IRunTraceSink? sink = null) =>
-            Invoke(VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = root }, port), definition, default, sink, payload ?? TriggerPayload.Manual());
+        public Task Run(string root, string port, IDefinitionRuntime? definition, JsonElement? payload = null, IRunTraceSink? sink = null, CancellationToken token = default) =>
+            Invoke(VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = root }, port), definition, token, sink, payload ?? TriggerPayload.Manual());
         async Task Invoke(string method, IDefinitionRuntime? definition, CancellationToken token, IRunTraceSink? sink, JsonElement payload)
         {
             var prior = InvocationContext.Current;
@@ -222,9 +217,9 @@ static class EntityGraphRuntimeTests
         }
         finally { PyInterop.Entity = entity; PyInterop.Log = log; PyInterop.BeginCameraSnapshot = cameras; UserScriptManager.CurrentTrigger.Value = trigger; States.Clear(); }
         if (failures.Count > 0) throw new Exception($"Entity graph runtime: {failures.Count} failing:\n" + string.Join("\n", failures));
-        Console.WriteLine("PASS entity graph runtime: State sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
+        Console.WriteLine("PASS entity graph runtime: an Entity node's state sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
-        Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy and round a position that is not whole, a picture is traced and logged as a short text, never its bytes, and goes into an object as that text; When a frame is needed runs the steps after it and Show frame hands its picture to the definition");
+        Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy and round a position that is not whole, a picture is traced and logged as a short text, never its bytes, and goes into an object as that text; a camera's frame flow runs the steps after its pin and Show frame hands its picture to the definition");
         Console.WriteLine("PASS entity graph runtime: an Entity node works out its state from its wired and set values, or marks its entity unavailable, runs the steps on each wired command and its frame pin with the command's values, and its wired flows are its roots");
         Console.WriteLine("PASS entity graph runtime: HTTP request names a host it cannot connect to, gives no body for a HEAD, follows redirects itself without handing its headers to another host, refuses a header before sending, and reads an empty or compressed answer; Download file hides a secret's address and checksum");
     }
@@ -232,9 +227,9 @@ static class EntityGraphRuntimeTests
     /// <summary>A State hands its inputs to the definition, then marks the entity available.</summary>
     static async Task StateNodeSetsStateFromItsInputs()
     {
-        using var compiled = await Compiled.Of(Entity([State("s", "door", new JsonObject { ["is_on"] = Lit("boolean", true) })], [], [("door", "binary_sensor")]), "a State of a chosen value");
+        using var compiled = await Compiled.Of(Entity([State("s", "door", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", true) })], []), "a State of a chosen value");
         var definition = new FakeDefinition();
-        await compiled.Run("s", definition);
+        await compiled.Run("s", "state", definition);
         Same(definition.Calls, ["state door is_on=bool:true", "available door yes"], "the State sets the state, then the availability");
     }
 
@@ -246,7 +241,7 @@ static class EntityGraphRuntimeTests
         {
             States["binary_sensor.motion_a"] = a ? "on" : "off"; States["binary_sensor.motion_b"] = b ? "on" : "off";
             var definition = new FakeDefinition();
-            await compiled.Run("s", definition);
+            await compiled.Run("s", "state", definition);
             Same(definition.Calls, [$"state any_motion is_on=bool:{(a || b ? "true" : "false")}", "available any_motion yes"], $"motion A {States["binary_sensor.motion_a"]}, motion B {States["binary_sensor.motion_b"]}");
         }
     }
@@ -258,16 +253,15 @@ static class EntityGraphRuntimeTests
     static async Task StateNodeMarksTheEntityUnavailableWhenASourceIsMissing()
     {
         var graph = Entity(
-            [Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "copy")],
-            [D("cur", "f", "entity"), D("f", "s", "value")],
-            [("copy", "sensor")]);
+            [Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "copy", "sensor")],
+            [D("cur", "f", "entity"), D("f", "s", "value")]);
         using var compiled = await Compiled.Of(graph, "a sensor copying another");
         var definition = new FakeDefinition();
-        var error = await Fails(() => compiled.Run("s", definition), "a State reading a missing entity");
+        var error = await Fails(() => compiled.Run("s", "state", definition), "a State reading a missing entity");
         Check(error.Message.Contains("Entity 'sensor.outside' is unavailable.", StringComparison.Ordinal), "the run fails with the unavailable message: " + error.Message);
         Same(definition.Calls, ["available copy no"], "a State that cannot be worked out marks its entity unavailable, and sets no state");
         States["sensor.outside"] = "21.5";
-        await compiled.Run("s", definition);
+        await compiled.Run("s", "state", definition);
         Same(definition.Calls, ["available copy no", "state copy value=double:21.5", "available copy yes"], "once the source appears, the State sets the state and marks the entity available");
     }
 
@@ -279,10 +273,10 @@ static class EntityGraphRuntimeTests
             ["source"] = "public static class CustomNode\n{\n    [Node(\"Wait\", Pure = true)]\n    public static async Task<bool> Run(CancellationToken token)\n    {\n        await Task.Delay(-1, token);\n        return true;\n    }\n}",
             ["arguments"] = new JsonObject(),
         });
-        using var compiled = await Compiled.Of(Entity([wait, State("s", "door")], [D("wait", "s", "is_on", "result")], [("door", "binary_sensor")]), "a State waiting on its input");
+        using var compiled = await Compiled.Of(Entity([wait, State("s", "door", "binary_sensor")], [D("wait", "s", "is_on", "result")]), "a State waiting on its input");
         var definition = new FakeDefinition();
         using var cancel = new CancellationTokenSource(); cancel.CancelAfter(100);
-        var error = await Fails(() => compiled.Run("s", definition, cancel.Token), "a cancelled State");
+        var error = await Fails(() => compiled.Run("s", "state", definition, token: cancel.Token), "a cancelled State");
         Check(error is OperationCanceledException, "the cancelled run ends cancelled, not failed: " + error.GetType().Name + ": " + error.Message);
         Same(definition.Calls, [], "a cancelled State neither sets the state nor marks the entity unavailable");
     }
@@ -298,12 +292,12 @@ static class EntityGraphRuntimeTests
             ["source"] = "public static class CustomNode\n{\n    public static CancellationTokenSource? Source;\n    [Node(\"Cancel\", Pure = true)]\n    public static bool Run()\n    {\n        Source!.Cancel();\n        return true;\n    }\n}",
             ["arguments"] = new JsonObject(),
         });
-        using var compiled = await Compiled.Of(Entity([cancel, State("s", "door")], [D("cancel", "s", "is_on", "result")], [("door", "binary_sensor")]), "a State cancelled by its input");
+        using var compiled = await Compiled.Of(Entity([cancel, State("s", "door", "binary_sensor")], [D("cancel", "s", "is_on", "result")]), "a State cancelled by its input");
         using var source = new CancellationTokenSource();
         var field = compiled.Assembly.GetTypes().Select(t => t.GetField("Source")).Single(f => f != null)!;
         field.SetValue(null, source);
         var definition = new FakeDefinition();
-        var error = await Fails(() => compiled.Run("s", definition, source.Token), "a State cancelled before publishing");
+        var error = await Fails(() => compiled.Run("s", "state", definition, token: source.Token), "a State cancelled before publishing");
         Check(error is OperationCanceledException, "the run ends cancelled: " + error.GetType().Name + ": " + error.Message);
         Same(definition.Calls, [], "a State cancelled before publishing neither sets the state nor changes the availability");
     }
@@ -316,12 +310,11 @@ static class EntityGraphRuntimeTests
     {
         var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
         var graph = Entity(
-            [Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "copy")],
-            [D("cur", "f", "entity"), D("f", "s", "value")],
-            [("copy", "sensor")]);
+            [Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "copy", "sensor")],
+            [D("cur", "f", "entity"), D("f", "s", "value")]);
         using var compiled = await Compiled.Of(graph, "a sensor copying a missing one");
         var definition = new FakeDefinition { FailUnavailable = true };
-        var error = await Fails(() => compiled.Run("s", definition), "a State whose unavailable marking fails");
+        var error = await Fails(() => compiled.Run("s", "state", definition), "a State whose unavailable marking fails");
         Check(error.Message.Contains("Entity 'sensor.outside' is unavailable.", StringComparison.Ordinal) && error.GetBaseException().Message == "Entity 'sensor.outside' is unavailable.",
             "the run fails with the State's own error, as the run record shows it: " + error.Message + " / " + error.GetBaseException().Message);
         Same(definition.Calls, ["available copy no"], "the State tried to mark its entity unavailable");
@@ -336,15 +329,14 @@ static class EntityGraphRuntimeTests
     static async Task SecretSettingIsRedactedInTheTrace()
     {
         var graph = Entity(
-            [Setting("k1", "password"), State("s1", "label"), Setting("k2", "name"), State("s2", "plain")],
+            [Setting("k1", "password"), State("s1", "label", "sensor"), Setting("k2", "name"), State("s2", "plain", "sensor")],
             [D("k1", "s1", "value"), D("k2", "s2", "value")],
-            [("label", "sensor"), ("plain", "sensor")],
             ("password", "string"), ("name", "string"));
         using var compiled = await Compiled.Of(graph, "States of a secret and a plain setting");
         var definition = new FakeDefinition { Settings = { ["password"] = "hunter2", ["name"] = "kitchen" }, Secrets = { "password" } };
         var secret = new TraceSink(); var plain = new TraceSink();
-        await compiled.Run("s1", definition, sink: secret);
-        await compiled.Run("s2", definition, sink: plain);
+        await compiled.Run("s1", "state", definition, sink: secret);
+        await compiled.Run("s2", "state", definition, sink: plain);
         Same(definition.Calls, ["state label value=string:hunter2", "available label yes", "state plain value=string:kitchen", "available plain yes"], "each State gets its setting's real value");
         var redacted = secret.Event("k1")["outputs"]?["value"];
         Check(JsonNode.DeepEquals(redacted, JsonNode.Parse("""{"type":"string","v":"***","redacted":true}""")), "the secret setting's value is redacted in the trace: " + redacted?.ToJsonString());
@@ -362,20 +354,19 @@ static class EntityGraphRuntimeTests
         var messages = new System.Collections.Concurrent.ConcurrentQueue<string>(); PyInterop.Log = (_, m) => messages.Enqueue(m);
         const string Secret = "fake-secret-hunter2";
         var graph = Entity(
-            [N("on", "entity_command", new { entity = "relay", command = "turn_on" }), Setting("tok", "token"), Setting("flag", "armed"), Setting("door", "door"),
+            [Hub("relay", "relay", "switch"), Setting("tok", "token"), Setting("flag", "armed"), Setting("door", "door"),
              N("list", "array_create", new JsonObject { ["items"] = new JsonArray(new JsonObject { ["kind"] = "unset" }) }),
              N("loop", "foreach", new JsonObject { ["items"] = new JsonObject { ["kind"] = "unset" }, ["itemType"] = "string" }), N("say", "log", new { value = Unset }),
              N("i", "if", new { value = Unset }), N("is", "entity_is", new JsonObject { ["entity"] = new JsonObject { ["kind"] = "unset" }, ["state"] = Lit("string", "on") }),
              N("as_id", "convert", new { type = "entity_id", value = Unset }), N("yes", "log", new { value = Unset })],
-            [E("on", "loop"), E("loop", "say", "body"), E("loop", "i"), E("i", "yes", "true"),
+            [Flow("relay", "command:turn_on", "loop"), E("loop", "say", "body"), E("loop", "i"), E("i", "yes", "true"),
              D("tok", "list", "item:0"), D("list", "loop", "items"), D("loop", "say", "value", "item"), D("flag", "i", "value"), D("door", "as_id", "value"), D("as_id", "is", "entity"), D("is", "yes", "value")],
-            [("relay", "switch")],
             ("token", "string"), ("armed", "boolean"), ("door", "string"));
         using var compiled = await Compiled.Of(graph, "a loop over a secret and a condition of one");
         States["binary_sensor.secret_door"] = "on";
         var definition = new FakeDefinition { Settings = { ["token"] = Secret, ["armed"] = true, ["door"] = "binary_sensor.secret_door" }, Secrets = { "token", "armed", "door" } };
         var sink = new TraceSink();
-        await compiled.Run("on", definition, sink: sink);
+        await compiled.Run("relay", "command:turn_on", definition, sink: sink);
         var text = sink.Final.ToJsonString();
         Check(!text.Contains("hunter2", StringComparison.Ordinal) && !text.Contains("secret_door", StringComparison.Ordinal), $"the trace quotes a secret ({text.Length} characters)");
         Check(messages.SequenceEqual(["***", "True"]), "the Log of the item writes ***, the Log of a true or false writes it: " + string.Join(" | ", messages.Select(m => m.Length > 8 ? $"text({m.Length})" : m)));
@@ -397,17 +388,17 @@ static class EntityGraphRuntimeTests
         {
             States["binary_sensor.motion_b"] = b;
             var definition = new FakeDefinition();
-            await compiled.Run("s", definition);
+            await compiled.Run("s", "state", definition);
             Same(definition.Calls, [$"state any_motion is_on=bool:{(b == "on" ? "true" : "false")}", "available any_motion yes"], $"motion A missing, motion B {b}");
         }
         // Unavailable is a state like any other: asked for, it is equal.
-        using var asked = await Compiled.Of(Entity([Is("u", "binary_sensor.motion_b", "unavailable"), State("s", "gone")], [D("u", "s", "is_on")], [("gone", "binary_sensor")]), "a State of an unavailable entity");
+        using var asked = await Compiled.Of(Entity([Is("u", "binary_sensor.motion_b", "unavailable"), State("s", "gone", "binary_sensor")], [D("u", "s", "is_on")]), "a State of an unavailable entity");
         var unavailable = new FakeDefinition();
-        await asked.Run("s", unavailable);
+        await asked.Run("s", "state", unavailable);
         Same(unavailable.Calls, ["state gone is_on=bool:true", "available gone yes"], "Has state unavailable is true for an unavailable entity");
         States.Remove("binary_sensor.motion_b");
         var missing = new FakeDefinition();
-        await asked.Run("s", missing);
+        await asked.Run("s", "state", missing);
         Same(missing.Calls, ["state gone is_on=bool:false", "available gone yes"], "Has state unavailable is false for a missing entity");
     }
 
@@ -418,7 +409,7 @@ static class EntityGraphRuntimeTests
         States["binary_sensor.motion_a"] = "off"; States["binary_sensor.motion_b"] = "off";
         UserScriptManager.CurrentTrigger.Value = new(new() { EntityId = "binary_sensor.motion_a", State = "on" });
         var definition = new FakeDefinition();
-        await compiled.Run("s", definition);
+        await compiled.Run("s", "state", definition);
         Same(definition.Calls, ["state any_motion is_on=bool:true", "available any_motion yes"], "the triggering entity's own state is read");
     }
 
@@ -427,30 +418,28 @@ static class EntityGraphRuntimeTests
     {
         static JsonObject Available(string id, bool available) => N(id, "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", available) });
         var graph = Entity(
-            [N("on", "entity_command", new { entity = "relay", command = "turn_on" }), SetState("on_set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+            [Hub("relay", "relay", "switch"), SetState("on_set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
              N("setup", "entity_setup"), Available("up", true), SetState("first", "relay", new JsonObject { ["is_on"] = Lit("boolean", false) }), Available("down", false)],
-            [E("on", "on_set"), E("setup", "up"), E("up", "first"), E("first", "down")],
-            [("relay", "switch")]);
+            [Flow("relay", "command:turn_on", "on_set"), E("setup", "up"), E("up", "first"), E("first", "down")]);
         using var compiled = await Compiled.Of(graph, "a switch with a command and a setup");
         var definition = new FakeDefinition();
         await compiled.Run("setup", definition);
         Same(definition.Calls, ["available relay yes", "state relay is_on=bool:false", "available relay no"], "When started runs its steps in order");
         definition.Calls.Clear();
-        await compiled.Run("on", definition);
-        Same(definition.Calls, ["state relay is_on=bool:true"], "When commanded sets the state and nothing else");
+        await compiled.Run("relay", "command:turn_on", definition);
+        Same(definition.Calls, ["state relay is_on=bool:true"], "Turn on sets the state and nothing else");
     }
 
     /// <summary>A state set by a step stays set when a later step fails; the run fails, and the entity is not marked unavailable.</summary>
     static async Task StateSetBeforeALaterFailingStepStaysSet()
     {
         var graph = Entity(
-            [N("on", "entity_command", new { entity = "relay", command = "turn_on" }), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+            [Hub("relay", "relay", "switch"), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
              N("read", "read_entity", new JsonObject { ["entity"] = Lit("entity_id", "sensor.gone") })],
-            [E("on", "set"), E("set", "read")],
-            [("relay", "switch")]);
+            [Flow("relay", "command:turn_on", "set"), E("set", "read")]);
         using var compiled = await Compiled.Of(graph, "a command that fails after setting the state");
         var definition = new FakeDefinition();
-        var error = await Fails(() => compiled.Run("on", definition), "a command whose later step fails");
+        var error = await Fails(() => compiled.Run("relay", "command:turn_on", definition), "a command whose later step fails");
         Check(error.Message.Contains("Entity 'sensor.gone' is unavailable.", StringComparison.Ordinal), "the run fails with the later step's error: " + error.Message);
         Same(definition.Calls, ["state relay is_on=bool:true"], "the state set before the failure stays set, and nothing marks the entity unavailable");
     }
@@ -459,13 +448,12 @@ static class EntityGraphRuntimeTests
     static async Task SettingGivesItsValueAsItsType()
     {
         var graph = Entity(
-            [Setting("k1", "name"), State("s1", "label"), Setting("k2", "flag"), State("s2", "flag_copy"), Setting("k3", "level"), State("s3", "level_copy")],
+            [Setting("k1", "name"), State("s1", "label", "sensor"), Setting("k2", "flag"), State("s2", "flag_copy", "binary_sensor"), Setting("k3", "level"), State("s3", "level_copy", "sensor")],
             [D("k1", "s1", "value"), D("k2", "s2", "is_on"), D("k3", "s3", "value")],
-            [("label", "sensor"), ("flag_copy", "binary_sensor"), ("level_copy", "sensor")],
             ("name", "string"), ("flag", "boolean"), ("level", "number"));
         using var compiled = await Compiled.Of(graph, "States of settings");
         var definition = new FakeDefinition { Settings = { ["name"] = "kitchen", ["flag"] = true, ["level"] = 4.5 } };
-        foreach (var root in new[] { "s1", "s2", "s3" }) await compiled.Run(root, definition);
+        foreach (var root in new[] { "s1", "s2", "s3" }) await compiled.Run(root, "state", definition);
         Same(definition.Calls, ["state label value=string:kitchen", "available label yes", "state flag_copy is_on=bool:true", "available flag_copy yes", "state level_copy value=double:4.5", "available level_copy yes"],
             "each Setting gives its value as its type");
     }
@@ -474,14 +462,13 @@ static class EntityGraphRuntimeTests
     static async Task SensorStateAcceptsNumberAndText()
     {
         var graph = Entity(
-            [State("n", "count", new JsonObject { ["value"] = Lit("number", 3) }), State("t", "mode", new JsonObject { ["value"] = Lit("string", "21.5") }),
-             Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" }), State("w", "copy")],
-            [D("cur", "f", "entity"), D("f", "w", "value")],
-            [("count", "sensor"), ("mode", "sensor"), ("copy", "sensor")]);
+            [State("n", "count", "sensor", new JsonObject { ["value"] = Lit("number", 3) }), State("t", "mode", "sensor", new JsonObject { ["value"] = Lit("string", "21.5") }),
+             Current("cur", "sensor.outside"), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" }), State("w", "copy", "sensor")],
+            [D("cur", "f", "entity"), D("f", "w", "value")]);
         using var compiled = await Compiled.Of(graph, "sensors of numbers and text");
         States["sensor.outside"] = "12";
         var definition = new FakeDefinition();
-        foreach (var root in new[] { "n", "t", "w" }) await compiled.Run(root, definition);
+        foreach (var root in new[] { "n", "t", "w" }) await compiled.Run(root, "state", definition);
         Same(definition.Calls, ["state count value=double:3", "available count yes", "state mode value=string:21.5", "available mode yes", "state copy value=string:12", "available copy yes"],
             "a number stays a number and text stays text");
     }
@@ -505,8 +492,8 @@ static class EntityGraphRuntimeTests
     }
 
     /// <summary>
-    /// Every entity node needs the definition of the run in progress; without one it fails, saying so. A State, When
-    /// commanded and When started fail as the run starts. A Setting, Set state and Set available are each reached on
+    /// Every entity node needs the definition of the run in progress; without one it fails, saying so. An Entity node's
+    /// state, command and frame flows and When started fail as the run starts. A Setting, Set state and Set available are each reached on
     /// their own: under a trigger of an entity definition's graph, after a step that runs first, as a run the runner has
     /// not given a definition would reach them.
     /// </summary>
@@ -517,23 +504,22 @@ static class EntityGraphRuntimeTests
         static JsonObject Manual(string id) => N(id, "trigger", new { type = "manual" });
         static JsonObject Said(string id, string text) => N(id, "log", new { value = Lit("string", text) });
         var graph = Entity(
-            [State("s", "door", new JsonObject { ["is_on"] = Lit("boolean", true) }),
-             N("on", "entity_command", new { entity = "relay", command = "turn_on" }), SetState("on_set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+            [State("s", "door", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", true) }),
+             Hub("relay", "relay", "switch"), SetState("on_set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
              N("setup", "entity_setup"), N("setup_up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
              Manual("t1"), Setting("k", "name"), N("show", "log", new { value = Unset }),
              Manual("t2"), Said("before_set", "before set"), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
              Manual("t3"), Said("before_up", "before available"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
              Manual("t4"), Said("before_picture", "before picture"), Snapshot("picture", "camera.porch"),
-             N("frame", "camera_frame", new { entity = "lens" }), Said("framed", "framed")],
-            [E("on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up"),
-             E("t4", "before_picture"), E("before_picture", "picture"), E("frame", "framed")],
-            [("door", "binary_sensor"), ("relay", "switch"), ("lens", "camera")],
+             Hub("lens", "lens", "camera"), Said("framed", "framed")],
+            [Flow("relay", "command:turn_on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up"),
+             E("t4", "before_picture"), E("before_picture", "picture"), Flow("lens", "frame", "framed")],
             ("name", "string"));
         using var compiled = await Compiled.Of(graph, "entity nodes of every kind");
-        foreach (var root in new[] { "s", "on", "setup", "frame" })
+        foreach (var (root, port) in new[] { ("s", "state"), ("relay", "command:turn_on"), ("setup", null), ("lens", "frame") })
         {
-            var error = await Fails(() => compiled.Run(root, null), $"root {root} without a definition");
-            Check(error is InvalidOperationException && error.Message == Message, $"root {root} fails as it starts, saying it needs a definition: {error.GetType().Name}: {error.Message}");
+            var error = await Fails(() => port == null ? compiled.Run(root, null) : compiled.Run(root, port, null), $"root {root} {port} without a definition");
+            Check(error is InvalidOperationException && error.Message == Message, $"root {root} {port} fails as it starts, saying it needs a definition: {error.GetType().Name}: {error.Message}");
         }
         var setting = await Fails(() => compiled.Run("t1", null), "a Setting without a definition");
         Check(setting is InvalidOperationException && setting.Message == "Setting (used by Log): " + Message, "the Setting fails itself, named with the step reading it: " + setting.Message);
@@ -573,15 +559,13 @@ static class EntityGraphRuntimeTests
     static async Task SetStateHandsOverOnlyWhatItIsGiven()
     {
         var graph = Entity(
-            [N("on", "entity_command", new { entity = "lamp", command = "turn_on" }), Setting("lvl", "level"), SetState("dim", "lamp"),
-             N("off", "entity_command", new { entity = "lamp", command = "turn_off" }), State("s", "blind", new JsonObject { ["position"] = Lit("number", 40) })],
-            [E("on", "dim"), D("lvl", "dim", "brightness")],
-            [("lamp", "light"), ("blind", "cover")],
+            [Hub("lamp", "lamp", "light"), Setting("lvl", "level"), SetState("dim", "lamp"), State("s", "blind", "cover", new JsonObject { ["position"] = Lit("number", 40) })],
+            [Flow("lamp", "command:turn_on", "dim"), D("lvl", "dim", "brightness")],
             ("level", "number"));
         using var compiled = await Compiled.Of(graph, "a Set state of a secret brightness");
         var definition = new FakeDefinition { Settings = { ["level"] = 128.0 }, Secrets = { "level" } };
         var sink = new TraceSink();
-        await compiled.Run("on", definition, sink: sink);
+        await compiled.Run("lamp", "command:turn_on", definition, sink: sink);
         Same(definition.Calls, ["state lamp brightness=double:128"], "only the brightness is handed over");
         Same(definition.Hidden, ["lamp.brightness"], "the brightness from a secret is handed over as hidden");
         var traced = sink.Event("dim")["inputs"]?["brightness"];
@@ -589,7 +573,7 @@ static class EntityGraphRuntimeTests
             "the secret brightness is traced hidden, from its wire: " + (traced is JsonObject o ? string.Join(",", o.Select(p => p.Key)) : "none"));
         Check(sink.Event("dim")["inputs"]?["is_on"] == null, "a value the step is not given is traced: " + sink.Event("dim")["inputs"]?.ToJsonString());
         definition.Calls.Clear();
-        await compiled.Run("s", definition);
+        await compiled.Run("s", "state", definition);
         Same(definition.Calls, ["state blind position=double:40", "available blind yes"], "a State hands over the optional values it is given");
     }
 
@@ -626,13 +610,14 @@ static class EntityGraphRuntimeTests
         return node;
     }
     static JsonObject Field(string id, string pointer, string type) => N(id, "get_field", new { pointer, type, value = Unset });
-    static readonly (string, string)[] Readings = [("reading", "sensor"), ("count", "sensor")];
+    /// <summary>The two sensors a request feeds, as Entity nodes of their keys.</summary>
+    static JsonObject[] Readings() => [Hub("reading", "reading", "sensor"), Hub("count", "count", "sensor")];
     /// <summary>When started, then the steps in order: the graph of a sensor fed by a request.</summary>
     static JsonObject Started(JsonObject[] nodes, JsonObject[] edges, params (string Key, string Type)[] settings)
     {
         var steps = nodes.Where(n => !VisualNodeCatalog.IsPure(VisualNodeCatalog.Root["nodes"]?[n["kind"]!.GetValue<string>()])).Select(n => n["id"]!.GetValue<string>()).ToArray();
         var flow = new[] { "setup" }.Concat(steps).ToArray();
-        return Entity([N("setup", "entity_setup"), .. nodes], [.. flow.Zip(flow.Skip(1), (a, b) => E(a, b)).Where(e => !edges.Any(x => x["port"] != null && x["source"]!.GetValue<string>() == e["source"]!.GetValue<string>())), .. edges], Readings, settings);
+        return Entity([N("setup", "entity_setup"), .. nodes, .. Readings()], [.. flow.Zip(flow.Skip(1), (a, b) => E(a, b)).Where(e => !edges.Any(x => x["port"] != null && x["source"]!.GetValue<string>() == e["source"]!.GetValue<string>())), .. edges], settings);
     }
     static string Traced(JsonNode? port) => port?["v"]?.ToJsonString() ?? "none";
 
@@ -884,7 +869,7 @@ static class EntityGraphRuntimeTests
         var graph = Entity(
             [N("t", "trigger", new { type = "manual" }), Setting("pin", "pin"), N("cmp", "compare", new { @operator = "gt", left = Unset, right = Lit("number", 5) }), N("show", "log", new { value = Unset })],
             [E("t", "show"), D("pin", "cmp", "left"), D("cmp", "show", "value")],
-            [("reading", "sensor")], ("pin", "string"));
+            ("pin", "string"));
         var types = new Dictionary<string, Type> { ["boolean"] = typeof(bool), ["number"] = typeof(double), ["string"] = typeof(string), ["any"] = typeof(object) };
         async Task<Exception> Run(params string[] secrets)
         {
@@ -1337,8 +1322,8 @@ static class EntityGraphRuntimeTests
         JsonObject Show(string id) => N(id, "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) });
         foreach (var (typed, x) in new[] { (10.5, 11), (-0.5, -1), (10.4, 10), (2.0, 2) })
         {
-            using var compiled = await Compiled.Of(Entity([N("setup", "entity_setup"), Snapshot("snap", "camera.porch"), Rect("rect", typed), Show("show")],
-                [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")], [("lens", "camera")]), $"a rectangle at {typed}");
+            using var compiled = await Compiled.Of(Entity([N("setup", "entity_setup"), Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect", typed), Show("show")],
+                [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")]), $"a rectangle at {typed}");
             var definition = new FakeDefinition();
             await compiled.Run("setup", definition);
             var drawn = Drawn(definition.Frames.Single()).Single();
@@ -1353,8 +1338,8 @@ static class EntityGraphRuntimeTests
         });
         var wired = Rect("rect");
         wired["config"]!["width"] = JsonSerializer.SerializeToNode(Unset);
-        using var through = await Compiled.Of(Entity([N("setup", "entity_setup"), Snapshot("snap", "camera.porch"), value, wired, Show("show")],
-            [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("value", "rect", "width", "result"), D("rect", "show", "image", "image")], [("lens", "camera")]), "a rectangle of a wired width");
+        using var through = await Compiled.Of(Entity([N("setup", "entity_setup"), Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), value, wired, Show("show")],
+            [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("value", "rect", "width", "result"), D("rect", "show", "image", "image")]), "a rectangle of a wired width");
         var field = through.Assembly.GetTypes().Select(t => t.GetField("Value")).Single(f => f != null)!;
         foreach (var (given, width) in new[] { (10.5, 11), (-0.5, -1), (10.4, 10) })
         {
@@ -1406,7 +1391,7 @@ static class EntityGraphRuntimeTests
     }
 
     /// <summary>
-    /// When a frame is needed runs the steps after it, as a When started flow does, and Show frame hands the picture wired
+    /// A camera's frame flow runs the steps after its pin, as a When started flow does, and Show frame hands the picture wired
     /// to it to its definition for the camera it names; a run already cancelled shows nothing.
     /// </summary>
     static async Task ShowFrameHandsThePictureToTheDefinition()
@@ -1414,10 +1399,10 @@ static class EntityGraphRuntimeTests
         var picture = Picture();
         var asked = Cameras((ok, _) => ok(picture));
         using var compiled = await Compiled.Of(Entity(
-            [N("frame", "camera_frame", new { entity = "lens" }), Snapshot("snap", "camera.porch"), Rect("rect"), N("show", "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) })],
-            [E("frame", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")], [("lens", "camera")]), "a frame flow");
+            [Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect"), N("show", "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) })],
+            [Flow("lens", "frame", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")]), "a frame flow");
         var definition = new FakeDefinition { DefinitionId = "lens" };
-        await compiled.Run("frame", definition);
+        await compiled.Run("lens", "frame", definition);
         Same(definition.Calls, ["frame lens 1 drawing(s)"], "Show frame hands the picture with its rectangle to the definition");
         Same(asked, ["lens camera.porch"], "the picture is taken under the definition's id");
         var shown = definition.Frames.Single().ToJpeg();
@@ -1426,27 +1411,16 @@ static class EntityGraphRuntimeTests
         using var cancel = new CancellationTokenSource();
         cancel.Cancel();
         definition = new FakeDefinition();
-        await Fails(() => compiled.Run("frame", definition, cancel.Token), "a frame flow cancelled before it starts");
+        await Fails(() => compiled.Run("lens", "frame", definition, token: cancel.Token), "a frame flow cancelled before it starts");
         Same(definition.Calls, [], "a cancelled run shows no frame");
     }
 
     // ---- Entity nodes ----
 
-    /// <summary>An Entity node (<see cref="EntityNodeTests.Hub"/>) with <paramref name="values"/> set on it as its state values, when given.</summary>
-    static JsonObject Hub(string id, string key, string domain, JsonObject? values = null, JsonObject? more = null)
-    {
-        var hub = EntityNodeTests.Hub(id, key, domain, more);
-        if (values != null) hub["config"]!["arguments"] = values;
-        return hub;
-    }
-    /// <summary>A step order wire from the Entity node's execution pin <paramref name="port"/> to <paramref name="target"/>.</summary>
-    static JsonObject Flow(string hub, string port, string target) => E(hub, target, port);
-    /// <summary>An entity definition's graph that lists no entities: its Entity nodes declare them.</summary>
-    static JsonObject Nodes(JsonObject[] nodes, params JsonObject[] edges) => new()
-    {
-        ["version"] = 5, ["name"] = "Entity", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges),
-        ["definition"] = new JsonObject { ["entities"] = new JsonArray(), ["settings"] = new JsonArray() },
-    };
+    /// <summary>An Entity node (<see cref="VisualExecutionTests.Hub"/>) with <paramref name="values"/> set on it as its state values, when given.</summary>
+    static JsonObject Hub(string id, string key, string domain, JsonObject? values = null, JsonObject? more = null) => VisualExecutionTests.Hub(id, key, domain, more, values);
+    /// <summary>An entity definition's graph of these nodes and wires, without settings.</summary>
+    static JsonObject Nodes(JsonObject[] nodes, params JsonObject[] edges) => Entity(nodes, edges);
     static JsonObject Constant(string id, bool value) => N(id, "constant", new { type = "boolean", value = Lit("boolean", value) });
     static JsonObject Said(string id) => N(id, "log", new { value = Lit("string", id) });
 

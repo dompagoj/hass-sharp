@@ -133,7 +133,7 @@ static class EntityDomainTests
                 var graph = new JsonObject
                 {
                     ["version"] = 5, ["name"] = "Values", ["edges"] = new JsonArray(), ["definition"] = new JsonObject { ["settings"] = new JsonArray(), ["device"] = new JsonObject() },
-                    ["nodes"] = new JsonArray(EntityNodeTests.Hub("e", "e", domain, new() { ["arguments"] = arguments })),
+                    ["nodes"] = new JsonArray(VisualExecutionTests.Hub("e", "e", domain, new() { ["arguments"] = arguments })),
                 };
                 return VisualGraphValidator.Validate(graph).Where(d => d.Code == "entity.partialState").Select(d => d.InputId!).ToList();
             }
@@ -160,7 +160,7 @@ static class EntityDomainTests
         // An automation reading entities with the nodes it may use (Has state, Current state) embeds no more than before.
         var reads = JsonNode.Parse("""{"version":5,"name":"Reads","nodes":[{"id":"t","kind":"trigger","config":{"type":"manual"}},{"id":"is","kind":"entity_is","config":{"entity":{"kind":"literal","type":"entity_id","value":"light.kitchen"},"state":{"kind":"literal","type":"string","value":"on"}}},{"id":"i","kind":"if","config":{"value":{"kind":"unset"}}}],"edges":[{"id":"t:i","source":"t","target":"i"},{"id":"is:i","kind":"data","source":"is","target":"i","sourcePort":"value","targetPort":"value"}]}""")!.AsObject();
         Check(!VisualGenerator.EmbeddedCatalog(reads, VisualCatalogSnapshot.BuiltIn).ContainsKey("entityDomains"), "an automation using Has state embeds no entityDomains");
-        var entity = JsonNode.Parse("""{"version":5,"name":"Entity","nodes":[{"id":"s","kind":"entity_state","config":{"entity":"door","is_on":{"kind":"literal","type":"boolean","value":true}}}],"edges":[],"definition":{"entities":[{"key":"door","domain":"binary_sensor"}],"settings":[]}}""")!.AsObject();
+        var entity = JsonNode.Parse("""{"version":5,"name":"Entity","nodes":[{"id":"door","kind":"entity","config":{"key":"door","domain":"binary_sensor","name":"Door","arguments":{"is_on":{"kind":"literal","type":"boolean","value":true}}}}],"edges":[],"definition":{"settings":[]}}""")!.AsObject();
         var embedded = VisualGenerator.EmbeddedCatalog(entity, VisualCatalogSnapshot.BuiltIn);
         Check(embedded["entityDomains"] != null && JsonNode.DeepEquals(embedded["entityDomains"], VisualNodeCatalog.Root["entityDomains"]),"an entity graph's embedded catalog keeps entityDomains whole");
         // A definition that is not an object leaves the graph an automation: it generates what the graph without the key
@@ -186,19 +186,21 @@ static class EntityDomainTests
     }
 
     /// <summary>
-    /// The rules that allow one node of a key report every later one in id order, in both validators (the shared fixture
-    /// compares diagnostics sorted, so it cannot hold the order): the editor's copy is pinned to the same order in
-    /// <c>frontend/tests/visual-contract.test.ts</c>.
+    /// The order both validators report in (the shared fixture compares diagnostics sorted, so it cannot hold it): a
+    /// kind a graph holds once reports every later node in id order, an Entity node's key every later node of it in the
+    /// graph's order, and an Entity node's problems come in its pins' order (state values, commands, frame). The editor's
+    /// copy is pinned to the same order in <c>frontend/tests/visual-contract.test.ts</c>.
     /// </summary>
     [RuntimeSuite("--entity-graph-order", Order = 11)]
     public static Task LaterNodesAreReportedInIdOrder()
     {
         var graph = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "entity-graph-order.json")))!.AsObject();
         var got = VisualGraphValidator.Validate(graph["graph"]!.AsObject(), VisualCatalogSnapshot.BuiltIn)
-            .Where(d => d.Code is "node.singleton" or "state.duplicate" or "command.duplicate").Select(d => $"{d.Code} {d.NodeId}").ToList();
+            .Where(d => d.Code is "node.singleton" or "definition.duplicateEntity" or "entity.partialState" or "command.unhandled" or "camera.no_frame")
+            .Select(d => string.Join(" ", new[] { d.Code, d.NodeId, d.PortId ?? d.InputId }.OfType<string>())).ToList();
         var want = graph["order"]!.AsArray().Select(x => x!.GetValue<string>()).ToList();
-        Check(got.SequenceEqual(want), $"later nodes are reported in id order: expected [{string.Join(", ", want)}], got [{string.Join(", ", got)}]");
-        Console.WriteLine($"PASS entity graph order: {want.Count} later nodes reported in id order");
+        Check(got.SequenceEqual(want), $"the problems are reported in order: expected [{string.Join(", ", want)}], got [{string.Join(", ", got)}]");
+        Console.WriteLine($"PASS entity graph order: {want.Count} problems of later nodes and of an Entity node's pins reported in order");
         return Task.CompletedTask;
     }
 }

@@ -86,12 +86,12 @@ static class EntityApiTests
     { var wire = VisualExecutionTests.D(source, target, targetPort, sourcePort); wire["id"] = $"{source}.{sourcePort}:{target}.{targetPort}"; return wire; }
     static JsonObject Graph(string name, JsonObject[] nodes, params JsonObject[] edges) =>
         new() { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) };
-    static JsonObject GraphDefinition(string name, JsonObject graph, params (string Key, string Domain)[] entities) => new()
+    /// <summary>A graph definition with an Entity node, of the key's id and named by its key, for each of <paramref name="entities"/>.</summary>
+    static JsonObject GraphDefinition(string name, JsonObject graph, params (string Key, string Domain)[] entities)
     {
-        ["name"] = name, ["settings"] = new JsonArray(),
-        ["entities"] = new JsonArray(entities.Select(e => (JsonNode)new JsonObject { ["key"] = e.Key, ["domain"] = e.Domain }).ToArray()),
-        ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph },
-    };
+        foreach (var (key, domain) in entities) graph["nodes"]!.AsArray().Add(VisualExecutionTests.Hub(key, key, domain));
+        return new() { ["name"] = name, ["settings"] = new JsonArray(), ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph } };
+    }
 
     /// <summary>
     /// <c>run</c> runs a graph definition's Trigger step by hand, as Run now runs an automation's: answered with a run id
@@ -200,7 +200,7 @@ static class EntityApiTests
         }
         const string twice = "public static class CustomNode\n{\n    [Node(\"Twice\", Pure = true)]\n    public static double Run(double value) => value * 2;\n}";
         var code = N("twice", "custom", new JsonObject { ["source"] = twice, ["arguments"] = new JsonObject { ["value"] = Lit("number", 3), ["gone"] = Lit("number", 1) } });
-        var definition = GraphDefinition("Twice", Graph("Twice", [code, N("s", "entity_state", new { entity = "level" })], Data("twice", "s", "value", "result")), ("level", "sensor"));
+        var definition = GraphDefinition("Twice", Graph("Twice", [code, VisualExecutionTests.Hub("s", "level", "sensor")], Data("twice", "s", "value", "result")));
         static bool Removed(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["nodeId"]?.GetValue<string>() == "twice" && d["severity"]!.GetValue<int>() == 2
             && d["message"]!.GetValue<string>() == "Removed the value of Gone: the code no longer has that input") == true;
 

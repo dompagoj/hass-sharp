@@ -78,16 +78,30 @@ static class EntityStoreTests
     static DefinitionBody GraphBody(JsonObject? graph, JsonArray? entities, List<DefinitionSetting>? settings = null, string name = "Any motion") =>
         new(name, null, settings, entities, new DefinitionLogic("graph", null, graph));
 
-    /// <summary>The acceptance graph: a binary sensor that is on while either of two motion sensors is (the shared fixture's case).</summary>
+    /// <summary>
+    /// The acceptance graph: a binary sensor that is on while either of two motion sensors is (the shared fixture's case),
+    /// whose Entity node <c>s</c> declares it.
+    /// </summary>
     internal static JsonObject MotionGraph() => DefinitionGraph.Decompose(JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "visual-graph-validation.json")))!.AsArray()
         .Single(c => c!["name"]!.GetValue<string>() == "entity graph: derived binary sensor")!["graph"]!.AsObject());
+    /// <summary>The entities the acceptance graph's Entity node declares, as a definition's read answer lists them.</summary>
     internal static JsonArray MotionEntities() => [Entity("any_motion", "binary_sensor", new { name = "Any motion" })];
-    static DefinitionBody Motion() => GraphBody(MotionGraph(), MotionEntities());
-    /// <summary>A sensor whose value is a setting, through <paramref name="through"/> when given (a value node reading <c>value</c>).</summary>
-    static JsonObject LevelGraph(string? through = null) => through == null
-        ? Graph("Level", [N("k", "setting", new { key = "offset" }), N("s", "entity_state", new { entity = "level" })], D("k", "s", "value"))
-        : Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", through, new { arguments = new { } }), N("s", "entity_state", new { entity = "level" })], D("k", "h", "value"), D("h", "s", "value", "result"));
+    static DefinitionBody Motion() => GraphBody(MotionGraph(), null);
+    /// <summary>
+    /// A sensor whose value is a setting, through <paramref name="through"/> when given (a value node reading <c>value</c>):
+    /// the Entity node <c>s</c> of the key <c>level</c>, with <paramref name="more"/> in place of its own settings.
+    /// </summary>
+    static JsonObject LevelGraph(string? through = null, object? more = null)
+    {
+        var level = Hub("s", "level", "sensor", more == null ? null : JsonSerializer.SerializeToNode(more)!.AsObject());
+        return through == null
+            ? Graph("Level", [N("k", "setting", new { key = "offset" }), level], D("k", "s", "value"))
+            : Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", through, new { arguments = new { } }), level], D("k", "h", "value"), D("h", "s", "value", "result"));
+    }
+    /// <summary>A listed sensor of the key <c>level</c>, for the checks of a listed entity's own document.</summary>
     static JsonArray LevelEntities(object? more = null) => [Entity("level", "sensor", more)];
+    static JsonObject Hub(string id, string key, string domain, JsonObject? more = null, JsonObject? values = null) => VisualExecutionTests.Hub(id, key, domain, more, values);
+    static JsonObject Flow(string hub, string port, string target) { var wire = VisualExecutionTests.Flow(hub, port, target); wire["id"] = $"{hub}:{port}:{target}"; return wire; }
     static string Method(string id) => VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = id });
 
     internal const string Maths = "public static class Maths { [Node(\"Half\", Pure = true)] public static double Half(double value) => value / 2; }";
@@ -98,6 +112,7 @@ static class EntityStoreTests
         var failures = new List<string>();
         foreach (var (name, test) in new (string, Action)[] {
             (nameof(GraphDefinitionSavesAndReadsBack), () => GraphDefinitionSavesAndReadsBack(snapshot)),
+            (nameof(AStoredGraphOfEntityNodesRegeneratesItsSavedSource), () => AStoredGraphOfEntityNodesRegeneratesItsSavedSource(snapshot)),
             (nameof(ComposeAndDecomposeAreInverse), ComposeAndDecomposeAreInverse),
             (nameof(ComposeCarriesNoSettingValuesOrSecrets), () => ComposeCarriesNoSettingValuesOrSecrets(snapshot)),
             (nameof(GraphDocumentChecks), () => GraphDocumentChecks(snapshot)),
@@ -126,30 +141,58 @@ static class EntityStoreTests
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
             var graph = MotionGraph();
             graph["comment"] = "kept as written";
-            var saved = store.Save("motion", GraphBody(graph, MotionEntities()), 0, snapshot, "g1");
+            var saved = store.Save("motion", GraphBody(graph, null), 0, snapshot, "g1");
             Check(saved.Revision == 1 && saved.Source.Contains("public class VisualAutomation : global::HassSharp.Automation", StringComparison.Ordinal)
                 && saved.SourceMap.Any(m => m.NodeId == "s"), "the acceptance definition is saved at revision 1 with the graph's source: " + saved.Source.Length);
             var read = store.Read("motion")!;
             Check(read is { Revision: 1, Logic.Kind: "graph", Logic.Type: null } && read.Logic.Graph is { } stored && !stored.ContainsKey("definition")
                 && stored["comment"]?.GetValue<string>() == "kept as written" && read.Source == saved.Source, "the stored graph has no definition and keeps its unknown keys: " + read.Logic.Graph?.ToJsonString());
             Check(read.Logic.Graph!["nodes"]!.AsArray().All(n => n!["position"] is JsonObject), "the store fills the graph's layout as an automation's");
-            Check(JsonNode.DeepEquals(read.Entities, MotionEntities()) && read.Settings.Count == 0 && read.Device == null, "the entities read back as written: " + read.Entities?.ToJsonString());
+            Check(JsonNode.DeepEquals(read.Entities, MotionEntities()) && read.Settings.Count == 0 && read.Device == null, "the entities read back as its Entity node declares them: " + read.Entities?.ToJsonString());
             var file = File.ReadAllText(store.FilePath("motion"));
             Check(!file.Contains("\"definition\"", StringComparison.Ordinal), "the file holds no composed definition: " + file);
             // The source embeds the graph with its definition composed from the document.
             var preview = new DefinitionGenerator().Preview(read.Body, snapshot);
-            Check(preview.Valid && preview.Source == saved.Source && preview.Graph?["definition"] is JsonObject definition && JsonNode.DeepEquals(definition["entities"], MotionEntities())
+            Check(preview.Valid && preview.Source == saved.Source && preview.Graph?["definition"] is JsonObject definition && definition["entities"] is JsonArray { Count: 0 }
+                && JsonNode.DeepEquals(DefinitionGraph.Entities(preview.Graph, snapshot), MotionEntities())
                 && preview.Source.Contains(VisualGenerator.Pieces(preview.Graph.ToJsonString()), StringComparison.Ordinal) && preview.EmbeddedCatalog?["entityDomains"] is JsonObject,
                 "the read definition previews to the saved source, with the composed graph and its catalog");
 
-            // A definition a client puts into the graph is never trusted: the document's entities replace it.
+            // A definition a client puts into the graph is never trusted: the document's own replaces it.
             var forged = MotionGraph();
             forged["comment"] = "kept as written";
             forged["definition"] = new JsonObject { ["entities"] = new JsonArray(Entity("evil", "switch")), ["settings"] = new JsonArray() };
-            var resaved = store.Save("motion", GraphBody(forged, MotionEntities()), 1, snapshot, "g1");
+            var resaved = store.Save("motion", GraphBody(forged, null), 1, snapshot, "g1");
             Check(resaved.Source == saved.Source && !resaved.Logic.Graph!.ContainsKey("definition") && !File.ReadAllText(store.FilePath("motion")).Contains("evil", StringComparison.Ordinal),
                 "a client's definition in the graph is discarded");
             Console.WriteLine("PASS entity store: a graph definition saves at revision 1 with its source, its graph stored without the definition, laid out and with its unknown keys");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// A stored definition lists the entities its Entity nodes declare (a read answer has them), and Compose leaves a
+    /// listed entity of a node's key out: the stored document, and its read answer saved back, regenerate the source it
+    /// was saved with, so a restart has nothing to write again. A listed entity of another key is composed as given.
+    /// </summary>
+    static void AStoredGraphOfEntityNodesRegeneratesItsSavedSource(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("regenerated");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            var saved = store.Save("motion", GraphBody(MotionGraph(), null), 0, snapshot, "g1");
+            var read = store.Read("motion")!;
+            Check(JsonNode.DeepEquals(read.Entities, MotionEntities()), "the stored document lists the node's entity: " + read.Entities?.ToJsonString());
+            Check(JsonNode.DeepEquals(DefinitionGraph.Compose(read.Body), DefinitionGraph.Compose(GraphBody(read.Logic.Graph, null))),
+                "a listed entity of a node's key is left out of the composed graph: " + DefinitionGraph.Compose(read.Body)["definition"]?.ToJsonString());
+            var preview = new DefinitionGenerator().Preview(read.Body, snapshot);
+            Check(preview.Valid && preview.Source == saved.Source, "the stored document regenerates the source it was saved with");
+            Check(!store.RefreshDerived("motion", 1, preview.Source, preview.SourceMap, "g1"), "so regenerating it, as a restart does, writes nothing");
+            Check(store.Save("motion", read.Body, 1, snapshot, "g1").Source == saved.Source, "its read answer saved back has the same source");
+            var other = DefinitionGraph.Compose(GraphBody(MotionGraph(), [Entity("extra", "sensor"), Entity("any_motion", "binary_sensor")]));
+            Check(other["definition"]?["entities"]?.ToJsonString() == """[{"key":"extra","domain":"sensor"}]""", "a listed entity of another key is composed as given: " + other["definition"]?.ToJsonString());
+            Console.WriteLine("PASS entity store: a stored graph of Entity nodes, and its read answer saved back, regenerate the source it was saved with");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -158,11 +201,12 @@ static class EntityStoreTests
     {
         var graph = MotionGraph();
         var before = graph.ToJsonString();
-        var body = GraphBody(graph, MotionEntities(), [Typed("threshold", "number", "3"), Typed("host", "string")]);
+        var body = GraphBody(graph, null, [Typed("threshold", "number", "3"), Typed("host", "string")]);
         var composed = DefinitionGraph.Compose(body);
         Check(graph.ToJsonString() == before, "Compose leaves the body's graph as it was");
-        Check(JsonNode.DeepEquals(composed["definition"], JsonNode.Parse("""{"entities":[{"key":"any_motion","domain":"binary_sensor","name":"Any motion"}],"settings":[{"key":"threshold","type":"number"},{"key":"host","type":"string"}]}""")),
-            "the definition is the document's entities and each setting's key and type: " + composed["definition"]?.ToJsonString());
+        Check(JsonNode.DeepEquals(composed["definition"], JsonNode.Parse("""{"entities":[],"settings":[{"key":"threshold","type":"number"},{"key":"host","type":"string"}]}""")),
+            "the definition is each setting's key and type, and lists no entity, its Entity node declaring it: " + composed["definition"]?.ToJsonString());
+        Check(JsonNode.DeepEquals(DefinitionGraph.Entities(composed, VisualCatalogSnapshot.BuiltIn), MotionEntities()), "the composed graph's entities are its Entity node's: " + DefinitionGraph.Entities(composed, VisualCatalogSnapshot.BuiltIn).ToJsonString());
         Check(JsonNode.DeepEquals(DefinitionGraph.Decompose(composed), graph), "Decompose gives the graph back");
         Check(composed.ContainsKey("definition"), "Decompose leaves the composed graph as it was");
         var forged = (JsonObject)graph.DeepClone();
@@ -170,13 +214,13 @@ static class EntityStoreTests
         Check(JsonNode.DeepEquals(DefinitionGraph.Compose(body with { Logic = body.Logic with { Graph = forged } }), composed), "Compose replaces a definition the graph has");
         Check(JsonNode.DeepEquals(DefinitionGraph.Compose(body with { Logic = body.Logic with { Graph = DefinitionGraph.Decompose(composed) } }), composed), "composing a decomposed graph again gives the same graph");
         Check(JsonNode.DeepEquals(DefinitionGraph.Compose(GraphBody(graph, null))["definition"], JsonNode.Parse("""{"entities":[],"settings":[]}""")), "no entities and no settings compose to empty lists");
-        Console.WriteLine("PASS entity store: Compose writes the document's entities and settings into the graph, and Decompose takes them out again");
+        Console.WriteLine("PASS entity store: Compose writes the document's settings into the graph beside its Entity nodes, and Decompose takes them out again");
     }
 
     static void ComposeCarriesNoSettingValuesOrSecrets(VisualCatalogSnapshot snapshot)
     {
         var generator = new DefinitionGenerator();
-        DefinitionBody Level(List<DefinitionSetting> settings, JsonArray? entities = null) => GraphBody(LevelGraph(), entities ?? LevelEntities(new { name = "Level", options = new { unit = "W" } }), settings, "Level");
+        DefinitionBody Level(List<DefinitionSetting> settings, object? entity = null) => GraphBody(LevelGraph(more: entity ?? new { name = "Level", options = new { unit = "W" } }), null, settings, "Level");
         List<DefinitionSetting> Settings(string password, string offset, string offsetType = "number") =>
             [Typed("password", "string", password, label: "Device password", secret: true), Typed("offset", offsetType, offset, label: "Offset")];
         var body = Level(Settings("\"hunter2\"", "2.5"));
@@ -190,11 +234,11 @@ static class EntityStoreTests
         Check(generator.Preview(Level(Settings("\"hunter2\"", "\"2.5\"", "string")), snapshot) is { Valid: true } retyped && retyped.Source != preview.Source, "changing a setting's type changes the source");
         Check(generator.Preview(Level([.. Settings("\"hunter2\"", "2.5"), Typed("extra", "boolean")]), snapshot).Source != preview.Source, "adding a setting changes the source");
         Check(generator.Preview(Level([Typed("password", "string", "\"hunter2\""), Typed("shift", "number")]) with
-            { Logic = new("graph", null, Graph("Level", [N("k", "setting", new { key = "shift" }), N("s", "entity_state", new { entity = "level" })], D("k", "s", "value"))) }, snapshot) is { Valid: true } renamed
+            { Logic = new("graph", null, Graph("Level", [N("k", "setting", new { key = "shift" }), Hub("s", "level", "sensor", new JsonObject { ["name"] = "Level", ["options"] = new JsonObject { ["unit"] = "W" } })], D("k", "s", "value"))) }, snapshot) is { Valid: true } renamed
             && renamed.Source != preview.Source, "renaming a setting changes the source");
-        Check(generator.Preview(Level(Settings("\"hunter2\"", "2.5"), LevelEntities(new { name = "Power level", options = new { unit = "W" } })), snapshot).Source != preview.Source,
+        Check(generator.Preview(Level(Settings("\"hunter2\"", "2.5"), new { name = "Power level", options = new { unit = "W" } }), snapshot).Source != preview.Source,
             "changing an entity's name changes the source");
-        Check(generator.Preview(Level(Settings("\"hunter2\"", "2.5"), LevelEntities(new { name = "Level", options = new { unit = "kW" } })), snapshot).Source != preview.Source,
+        Check(generator.Preview(Level(Settings("\"hunter2\"", "2.5"), new { name = "Level", options = new { unit = "kW" } }), snapshot).Source != preview.Source,
             "changing an entity's option changes the source");
         Console.WriteLine("PASS entity store: the composed graph and the source carry each setting's key and type only; a value change keeps the source, a change of type, settings or entities does not");
     }
@@ -210,8 +254,10 @@ static class EntityStoreTests
             Check(diagnostic is { Severity: 3, NodeId: null } && diagnostic.Code == code && diagnostic.InputId == input && named.All(n => diagnostic.Message.Contains(n, StringComparison.Ordinal)),
                 $"{code}: expected input {input} and a message naming {string.Join(", ", named)}: {Codes(preview)}");
         }
-        DefinitionBody With(params JsonObject[] entities) => GraphBody(MotionGraph(), [.. entities, Entity("any_motion", "binary_sensor")]);
-        DefinitionBody Level(object? more = null, List<DefinitionSetting>? settings = null) => GraphBody(LevelGraph(), LevelEntities(more), settings ?? [Typed("offset", "number")], "Level");
+        // A listed entity's own checks, of a graph that has no node: a graph's entity is an Entity node, which the validator checks.
+        DefinitionBody With(params JsonObject[] entities) => GraphBody(Graph("Listed", []), [.. entities, Entity("any_motion", "binary_sensor")]);
+        DefinitionBody Level(object? more = null) => GraphBody(Graph("Listed", []), LevelEntities(more), [Typed("offset", "number")], "Level");
+        DefinitionBody Settings(List<DefinitionSetting> settings) => GraphBody(LevelGraph(), null, settings, "Level");
 
         Only(GraphBody(Graph("Empty", []), null), "definition.entitiesRequired", null);
         Only(GraphBody(Graph("Empty", []), []), "definition.entitiesRequired", null);
@@ -278,15 +324,15 @@ static class EntityStoreTests
             "null description fields are none, and a member no check names is kept as given");
         foreach (var category in new[] { "config", "diagnostic" })
             Check(generator.Preview(Level(new { entityCategory = category, enabledByDefault = false }), snapshot).Valid, $"the category {category} is accepted");
-        Only(Level(settings: [Typed("offset", null)]), "definition.settingType", "offset", "offset");
-        Only(Level(settings: [Typed("offset", "integer")]), "definition.settingType", "offset", "offset", "integer");
-        Only(Level(settings: [Typed("offset", "number", "\"x\"")]), "definition.settingType", "offset", "offset");
-        Only(Level(settings: [Typed("offset", "number"), Typed("eco", "boolean", "\"yes\"")]), "definition.settingType", "eco", "eco");
-        Only(Level(settings: [Typed("offset", "number"), Typed("host", "string", "5", label: "Host name")]), "definition.settingType", "host", "Host name");
-        Only(Level(settings: [Typed("offset", "number"), Typed("offset", "number")]), "definition.duplicateSetting", "offset", "offset");
-        Only(Level(settings: [Typed("offset", "number"), Typed("", "number")]), "definition.settingKey", null);
-        Only(Level(settings: [Typed("offset", "number"), Typed(" ", "number")]), "definition.settingKey", null);
-        Only(Level(settings: [Typed("offset", "number"), null!]), "definition.settingKey", null);
+        Only(Settings([Typed("offset", null)]), "definition.settingType", "offset", "offset");
+        Only(Settings([Typed("offset", "integer")]), "definition.settingType", "offset", "offset", "integer");
+        Only(Settings([Typed("offset", "number", "\"x\"")]), "definition.settingType", "offset", "offset");
+        Only(Settings([Typed("offset", "number"), Typed("eco", "boolean", "\"yes\"")]), "definition.settingType", "eco", "eco");
+        Only(Settings([Typed("offset", "number"), Typed("host", "string", "5", label: "Host name")]), "definition.settingType", "host", "Host name");
+        Only(Settings([Typed("offset", "number"), Typed("offset", "number")]), "definition.duplicateSetting", "offset", "offset");
+        Only(Settings([Typed("offset", "number"), Typed("", "number")]), "definition.settingKey", null);
+        Only(Settings([Typed("offset", "number"), Typed(" ", "number")]), "definition.settingKey", null);
+        Only(Settings([Typed("offset", "number"), null!]), "definition.settingKey", null);
         Check(!generator.Preview(Body(kind: "graph", type: null), snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
         Console.WriteLine("PASS entity store: each problem of a graph definition's document gives its code, at the entity or setting it names");
 
@@ -368,7 +414,7 @@ static class EntityStoreTests
     /// <summary>The graph composed for a definition with a device marks it with an empty <c>device</c>, so that its entities need no names of their own.</summary>
     static void ADeviceMarksTheGraph()
     {
-        var body = GraphBody(MotionGraph(), MotionEntities());
+        var body = GraphBody(MotionGraph(), null);
         Check(DefinitionGraph.Compose(body)["definition"] is JsonObject without && !without.ContainsKey("device"), "without a device, the definition has no device key");
         var device = body with { Device = new DefinitionDevice("Acme", "Motion", null, null, null, null, null) };
         Check(DefinitionGraph.Compose(device)["definition"]?["device"] is JsonObject { Count: 0 }, "with one, its device is an empty object: " + DefinitionGraph.Compose(device)["definition"]?.ToJsonString());
@@ -405,9 +451,9 @@ static class EntityStoreTests
             ("one entity of each type, no options but those needed", GraphBody(Graph("All", []), [Entity("bell", "button"), Entity("target", "number"),
                 Entity("mode", "select", new { options = new { options = new[] { "low" } } }), Entity("code", "text"), Entity("lamp", "light"), Entity("blind", "cover")])),
             ("a min alone, a max alone", GraphBody(Graph("All", []), [Entity("low", "number", new { options = new { min = 99.5 } }), Entity("high", "text", new { options = new { max = 1, min = (int?)null } })])),
-            ("every setting type", GraphBody(LevelGraph(), LevelEntities(), [Typed("offset", "number", "1.5"), Typed("host", "string", "\"a\"", label: "Host", secret: true), Typed("eco", "boolean", "false"), Typed("blank", "string", "null")], "Level")),
+            ("every setting type", GraphBody(LevelGraph(), null, [Typed("offset", "number", "1.5"), Typed("host", "string", "\"a\"", label: "Host", secret: true), Typed("eco", "boolean", "false"), Typed("blank", "string", "null")], "Level")),
             ("a key of 40 characters", GraphBody(Graph("All", []), [Entity("a" + new string('_', 39), "binary_sensor")])),
-            ("an entity and a setting of one key", GraphBody(LevelGraph(), LevelEntities(), [Typed("offset", "number"), Typed("level", "string")], "Level")),
+            ("an entity and a setting of one key", GraphBody(LevelGraph(), null, [Typed("offset", "number"), Typed("level", "string")], "Level")),
         };
         foreach (var (what, body) in documents)
         {
@@ -426,9 +472,12 @@ static class EntityStoreTests
         try
         {
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            store.Save("motion", Motion(), 0, snapshot, "g1");
-            var refused = Throws<DefinitionValidationException>(() => store.Save("motion", GraphBody(MotionGraph(), [Entity("other", "binary_sensor")]), 1, snapshot, "g1"), "saving without the State's entity");
-            Check(refused.Preview.Diagnostics.Any(d => d is { Code: "definition.unknownEntity", NodeId: "s", Severity: 3 }) && refused.Preview.Source == "", "the State node is named: " + Codes(refused.Preview));
+            // A When started flow sets the door's state; the door's Entity node is then replaced by another entity's.
+            JsonObject Door(string key) => Graph("Door", [Hub(key, key, "binary_sensor"), N("setup", "entity_setup"),
+                N("set", "set_entity_state", new JsonObject { ["entity"] = "door", ["is_on"] = Lit("boolean", true) })], E("setup", "set"));
+            store.Save("motion", GraphBody(Door("door"), null), 0, snapshot, "g1");
+            var refused = Throws<DefinitionValidationException>(() => store.Save("motion", GraphBody(Door("other"), null), 1, snapshot, "g1"), "saving without the Set state's entity");
+            Check(refused.Preview.Diagnostics.Any(d => d is { Code: "definition.unknownEntity", NodeId: "set", Severity: 3 }) && refused.Preview.Source == "", "the Set state node is named: " + Codes(refused.Preview));
             Check(store.Read("motion")!.Revision == 1, "the refused save changed nothing");
             Console.WriteLine("PASS entity store: removing an entity a node still names is refused at that node, and nothing is written");
         }
@@ -440,11 +489,11 @@ static class EntityStoreTests
         var directory = TempDirectory("warnings");
         try
         {
-            // A switch with no flow for turn_off: valid, with the validator's warning on it.
-            var body = GraphBody(Graph("Relay", [N("on", "entity_command", new { entity = "relay", command = "turn_on" }),
-                N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) })], E("on", "set")), [Entity("relay", "switch")], name: "Relay");
+            // A switch with no step on Turn off: valid, with the validator's warning on its pin.
+            var body = GraphBody(Graph("Relay", [Hub("relay", "relay", "switch"),
+                N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) })], Flow("relay", "command:turn_on", "set")), null, name: "Relay");
             var preview = new DefinitionGenerator().Preview(body, snapshot);
-            Check(preview.Valid && preview.Source.Length > 0 && preview.Diagnostics.Any(d => d is { Code: "command.unhandled", Severity: 2 }), "the warning comes back with a valid preview: " + Codes(preview));
+            Check(preview.Valid && preview.Source.Length > 0 && preview.Diagnostics.Any(d => d is { Code: "command.unhandled", Severity: 2, NodeId: "relay", PortId: "command:turn_off" }), "the warning comes back with a valid preview: " + Codes(preview));
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
             store.Save("relay", body, 0, snapshot, "g1", null, out var saved);
             Check(saved.Diagnostics.Any(d => d.Code == "command.unhandled") && store.Read("relay")?.Revision == 1, "the save stores it and gives its warnings");
@@ -456,23 +505,24 @@ static class EntityStoreTests
     static void RootsListSetupCommandsAndStates(VisualCatalogSnapshot snapshot)
     {
         var graph = Graph("Relay and motion", [
-            N("on", "entity_command", new { entity = "relay", command = "turn_on" }), N("on_set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) }),
-            N("off", "entity_command", new { entity = "relay", command = "turn_off" }), N("off_set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", false) }),
+            Hub("relay", "relay", "switch"), N("on_set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) }),
+            N("off_set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", false) }),
             N("setup", "entity_setup"), N("first", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
-            N("m2", "entity_state", new JsonObject { ["entity"] = "motion", ["is_on"] = Lit("boolean", false) }),
-            N("m1", "entity_state", new JsonObject { ["entity"] = "door", ["is_on"] = Lit("boolean", true) }),
+            Hub("m2", "motion", "binary_sensor", values: new JsonObject { ["is_on"] = Lit("boolean", false) }),
+            Hub("m1", "door", "binary_sensor", values: new JsonObject { ["is_on"] = Lit("boolean", true) }),
             N("t", "trigger", new { type = "manual" }), N("poll", "set_entity_state", new JsonObject { ["entity"] = "motion", ["is_on"] = Lit("boolean", true) })],
-            E("on", "on_set"), E("off", "off_set"), E("setup", "first"), E("t", "poll"));
-        var body = GraphBody(graph, [Entity("relay", "switch"), Entity("motion", "binary_sensor"), Entity("door", "binary_sensor")], name: "Relay");
+            Flow("relay", "command:turn_on", "on_set"), Flow("relay", "command:turn_off", "off_set"), E("setup", "first"), E("t", "poll"));
+        var body = GraphBody(graph, null, name: "Relay");
         var preview = new DefinitionGenerator().Preview(body, snapshot);
         Check(preview.Valid && preview.Diagnostics.Count == 0, "the graph is valid: " + Codes(preview));
         var roots = DefinitionGraph.Roots(preview.Graph!, snapshot);
+        static string Flowing(string node, string port) => VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = node }, port);
         Check(roots.Setup == Method("setup"), "the setup method: " + roots.Setup);
-        Check(roots.Commands.Count == 2 && roots.Commands["relay:turn_on"] == Method("on") && roots.Commands["relay:turn_off"] == Method("off"),
+        Check(roots.Commands.Count == 2 && roots.Commands["relay:turn_on"] == Flowing("relay", "command:turn_on") && roots.Commands["relay:turn_off"] == Flowing("relay", "command:turn_off"),
             "the commands, by entity and command: " + string.Join(", ", roots.Commands.Select(c => c.Key + "=" + c.Value)));
-        Check(roots.States.SequenceEqual([Method("m1"), Method("m2")]), "the states, in id order, without the trigger: " + string.Join(", ", roots.States));
+        Check(roots.States.SequenceEqual([Flowing("m1", "state"), Flowing("m2", "state")]), "the states, in id order, without the trigger: " + string.Join(", ", roots.States));
         Check(preview.Source.Contains($"Task {Method("t")}()", StringComparison.Ordinal) && !roots.States.Contains(Method("t")) && !roots.Commands.Values.Contains(Method("t")), "the trigger is the automation's to run");
-        var none = DefinitionGraph.Roots(DefinitionGraph.Compose(GraphBody(Graph("Nothing", []), [Entity("a", "sensor")])), snapshot);
+        var none = DefinitionGraph.Roots(DefinitionGraph.Compose(GraphBody(Graph("Nothing", [Hub("a", "a", "sensor")]), null)), snapshot);
         Check(none.Setup == null && none.Commands.Count == 0 && none.States.Count == 0, "a graph without roots has none");
         Console.WriteLine("PASS entity store: Roots names the setup, command and state methods as the generator does, and leaves triggers out");
     }
@@ -503,7 +553,7 @@ static class EntityStoreTests
         try
         {
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            DefinitionBody Level(params DefinitionSetting[] settings) => GraphBody(LevelGraph(), LevelEntities(), [Typed("offset", "number", "4"), .. settings], "Level");
+            DefinitionBody Level(params DefinitionSetting[] settings) => GraphBody(LevelGraph(), null, [Typed("offset", "number", "4"), .. settings], "Level");
             var created = store.Save("level", Level(Typed("token", "string", label: "Token", secret: true) with { Keep = true }), 0, snapshot, "g1");
             Check(created.Settings[1] is { Key: "token", Value: null, Keep: false, Secret: true }, "keep in a new definition stores no value");
             store.Save("level", Level(Typed("token", "string", "\"hunter2\"", label: "Token", secret: true)), 1, snapshot, "g1");
@@ -537,7 +587,7 @@ static class EntityStoreTests
             Check(first.Valid && second.Valid && gone.Valid, "the libraries compile");
             var half = first.Snapshot.Root["nodes"]!.AsObject().Single(n => n.Key.StartsWith("library:maths:", StringComparison.Ordinal)).Key;
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            var body = GraphBody(LevelGraph(half), LevelEntities(), [Typed("offset", "number", "4")], "Level");
+            var body = GraphBody(LevelGraph(half), null, [Typed("offset", "number", "4")], "Level");
             var check = new DefinitionGenerator().Preview(body, first.Snapshot);
             Check(check.Valid, "the library graph is valid: " + Codes(check));
             var saved = store.Save("level", body, 0, first.Snapshot, "g1");

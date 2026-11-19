@@ -152,9 +152,8 @@ static class EntityStartupTests
         {
             name = "Graph power",
             settings = Array.Empty<object>(),
-            entities = new[] { new { key = "power", domain = "sensor", name = "Power" } },
             logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Graph power", ["edges"] = new JsonArray(),
-                ["nodes"] = new JsonArray(N("p", "entity_state", new JsonObject { ["entity"] = "power", ["value"] = Lit("number", 42) })) } },
+                ["nodes"] = new JsonArray(VisualExecutionTests.Hub("p", "power", "sensor", new JsonObject { ["name"] = "Power" }, new JsonObject { ["value"] = Lit("number", 42) })) } },
         };
         var first = new HassSharpManager(home.Root);
         try
@@ -295,9 +294,8 @@ static class EntityStartupTests
         {
             name = "Graph download",
             settings = Array.Empty<object>(),
-            entities = new[] { new { key = "model", domain = "sensor", name = "Model" } },
             logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Graph download", ["edges"] = new JsonArray(E("setup", "download")),
-                ["nodes"] = new JsonArray(N("setup", "entity_setup"), N("download", "download_file", new JsonObject { ["url"] = Lit("string", closed + "/model.bin"), ["sha256"] = Lit("string", new string('0', 64)) })) } },
+                ["nodes"] = new JsonArray(VisualExecutionTests.Hub("model", "model", "sensor", new JsonObject { ["name"] = "Model" }), N("setup", "entity_setup"), N("download", "download_file", new JsonObject { ["url"] = Lit("string", closed + "/model.bin"), ["sha256"] = Lit("string", new string('0', 64)) })) } },
         };
         const string refused = "The file from 127.0.0.1 could not be downloaded: Connection refused";
         var reasons = new Dictionary<string, (string Name, string Reason)>

@@ -581,12 +581,13 @@ static class EntityToolsTests
         return node;
     }
     static JsonObject SetState(string id, string entity, JsonObject values) { values["entity"] = entity; return N(id, "set_entity_state", values); }
+    /// <summary>The Entity node of the key <paramref name="key"/>, named by its key, whose id is <c>entity_</c> and the key.</summary>
+    static JsonObject Entity(string key, string domain) => Hub("entity_" + key, key, domain);
     static object GraphDefinition(string name, JsonObject[] nodes, JsonObject[] edges, params (string Key, string Domain)[] entities) => new
     {
         name,
         settings = Array.Empty<object>(),
-        entities = entities.Select(e => new { key = e.Key, domain = e.Domain, name = e.Key }).ToArray(),
-        logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) } },
+        logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray([.. entities.Select(e => Entity(e.Key, e.Domain)), .. nodes]), ["edges"] = new JsonArray(edges) } },
     };
     static async Task<JsonObject> Ok(HassSharpManager api, object body)
     {
@@ -621,10 +622,8 @@ static class EntityToolsTests
                 N("power", "get_field", new { pointer = "/apower", type = "number", value = new { kind = "unset" } }),
                 N("output", "get_field", new { pointer = "/output", type = "boolean", value = new { kind = "unset" } }),
                 SetState("set_power", "power", new JsonObject()), SetState("set_relay", "relay", new JsonObject()),
-                N("on", "entity_command", new { entity = "relay", command = "turn_on" }),
                 Request("post", server.Url("/rpc/Switch.Set"), new JsonObject { ["method"] = "POST", ["responseType"] = "object", ["body"] = Lit("object", new { id = 0, on = true }) }),
                 SetState("set_on", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
-                N("off", "entity_command", new { entity = "relay", command = "turn_off" }),
                 Request("post_off", server.Url("/rpc/Switch.Set"), new JsonObject { ["method"] = "POST", ["responseType"] = "object", ["body"] = Lit("object", new { id = 0, on = false }) }),
                 SetState("set_off", "relay", new JsonObject { ["is_on"] = Lit("boolean", false) }),
             ];
@@ -632,7 +631,7 @@ static class EntityToolsTests
             [
                 Next("poll", "status"), Next("status", "set_power"), Next("set_power", "set_relay"),
                 Data("status", "power", "value", "body"), Data("status", "output", "value", "body"), Data("power", "set_power", "value"), Data("output", "set_relay", "is_on"),
-                Next("on", "post"), Next("post", "set_on"), Next("off", "post_off"), Next("post_off", "set_off"),
+                Flow("entity_relay", "command:turn_on", "post"), Next("post", "set_on"), Flow("entity_relay", "command:turn_off", "post_off"), Next("post_off", "set_off"),
             ];
             var saved = await Ok(api, new { operation = "save", id = "plug", expectedRevision = 0, definition = GraphDefinition("Plug", nodes, edges, ("power", "sensor"), ("relay", "switch")) });
             Check(saved["active"]!.GetValue<bool>() && saved["document"]!["status"]!.GetValue<string>() == "running", "the plug runs: " + saved.ToJsonString());

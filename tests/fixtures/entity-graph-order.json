@@ -1,87 +1,71 @@
 {
-  "description": "One entity graph whose later States, When commanded and When started nodes are not in id order when grouped by key; both validators report them in id order (see EntityDomainTests and visual-contract.test.ts).",
+  "description": "One entity graph whose later When started nodes are not in id order, whose Entity nodes repeat keys out of id order, and whose Entity nodes have problems on several pins; both validators report the later When started nodes in id order, a repeated key on each later node in the graph's order, and an Entity node's problems in its pins' order: its state values, then its commands in its type's order, then its frame (see EntityDomainTests and visual-contract.test.ts).",
   "graph": {
     "version": 5,
     "name": "Order",
     "nodes": [
       {
-        "id": "a",
-        "kind": "entity_state",
+        "id": "lamp",
+        "kind": "entity",
         "config": {
-          "entity": "door",
-          "is_on": {
-            "kind": "literal",
-            "type": "boolean",
-            "value": true
+          "key": "lamp",
+          "domain": "light",
+          "name": "Lamp",
+          "options": {
+            "dimmable": true
+          },
+          "arguments": {
+            "brightness": {
+              "kind": "literal",
+              "type": "number",
+              "value": 128
+            }
           }
+        }
+      },
+      {
+        "id": "cam",
+        "kind": "entity",
+        "config": {
+          "key": "cam",
+          "domain": "camera",
+          "name": "Camera"
         }
       },
       {
         "id": "b",
-        "kind": "entity_state",
+        "kind": "entity",
         "config": {
-          "entity": "window",
-          "is_on": {
-            "kind": "literal",
-            "type": "boolean",
-            "value": true
-          }
+          "key": "door",
+          "domain": "binary_sensor",
+          "name": "Front door"
         }
       },
       {
-        "id": "c",
-        "kind": "entity_state",
+        "id": "a",
+        "kind": "entity",
         "config": {
-          "entity": "window",
-          "is_on": {
-            "kind": "literal",
-            "type": "boolean",
-            "value": true
-          }
+          "key": "window",
+          "domain": "binary_sensor",
+          "name": "Window"
         }
       },
       {
         "id": "d",
-        "kind": "entity_state",
+        "kind": "entity",
         "config": {
-          "entity": "door",
-          "is_on": {
-            "kind": "literal",
-            "type": "boolean",
-            "value": true
-          }
+          "key": "door",
+          "domain": "binary_sensor",
+          "name": "Back door"
         }
       },
       {
-        "id": "p",
-        "kind": "entity_command",
+        "id": "c",
+        "kind": "entity",
         "config": {
-          "entity": "relay",
-          "command": "turn_on"
-        }
-      },
-      {
-        "id": "q",
-        "kind": "entity_command",
-        "config": {
-          "entity": "relay",
-          "command": "turn_off"
-        }
-      },
-      {
-        "id": "r",
-        "kind": "entity_command",
-        "config": {
-          "entity": "relay",
-          "command": "turn_off"
-        }
-      },
-      {
-        "id": "s",
-        "kind": "entity_command",
-        "config": {
-          "entity": "relay",
-          "command": "turn_on"
+          "key": "window",
+          "domain": "binary_sensor",
+          "name": "Side window"
         }
       },
       {
@@ -102,29 +86,17 @@
     ],
     "edges": [],
     "definition": {
-      "entities": [
-        {
-          "key": "door",
-          "domain": "binary_sensor"
-        },
-        {
-          "key": "window",
-          "domain": "binary_sensor"
-        },
-        {
-          "key": "relay",
-          "domain": "switch"
-        }
-      ],
       "settings": []
     }
   },
   "order": [
+    "entity.partialState lamp is_on",
     "node.singleton m",
     "node.singleton z",
-    "state.duplicate c",
-    "state.duplicate d",
-    "command.duplicate r",
-    "command.duplicate s"
+    "command.unhandled lamp command:turn_on",
+    "command.unhandled lamp command:turn_off",
+    "camera.no_frame cam frame",
+    "definition.duplicateEntity d key",
+    "definition.duplicateEntity c key"
   ]
 }

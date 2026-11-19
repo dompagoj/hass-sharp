@@ -38,16 +38,15 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 458, PAIRS = 2744, ACCEPTED = 899, BY_VALIDATION = 1845, SERVICES_ACCEPTED = 836, SERVICES_BY_VALIDATION = 1908
+const GRAPHS = 462, PAIRS = 2792, ACCEPTED = 904, BY_VALIDATION = 1888, SERVICES_ACCEPTED = 841, SERVICES_BY_VALIDATION = 1951
 const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',
   'select property: a chain past the graph limit answers the limit alone: past the graph limit',
-  // Entity definitions' graphs with no node yet (their definitions are what the cases check).
-  ...['entity graph: empty graph is valid', 'code definition.invalid: unknown domain', 'code definition.invalid: repeated key', 'code definition.invalid: repeated setting key',
-    'code definition.invalid: setting of an unknown type', 'code definition.invalid: entity without a domain', 'code command.unhandled: switch without flows'].map(name => `${name}: no node has an id and config`),
+  // Entity definitions' graphs with no node yet: the cases of a listed entity's own rules (their definitions are what the cases check).
+  ...['code definition.invalid: unknown domain', 'code definition.invalid: repeated key', 'code definition.invalid: entity without a domain'].map(name => `${name}: no node has an id and config`),
   'code graph.limit: entity graph past the limit: past the graph limit', 'code definition.invalid: entities that are not a list: no node has an id and config']
-const RICH: Totals = { graphs: 40, pairs: 346, accepted: 107, rejected: 239, byValidation: 239, fallbacks: [], skipped: [] }
+const RICH: Totals = { graphs: 40, pairs: 347, accepted: 107, rejected: 240, byValidation: 240, fallbacks: [], skipped: [] }
 const parts = (message?: string) => [...new Set(message?.split('; ') ?? [])].sort()
 
 interface Totals { graphs: number; pairs: number; accepted: number; rejected: number; byValidation: number; fallbacks: string[]; skipped: string[] }
