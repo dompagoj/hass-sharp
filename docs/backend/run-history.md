@@ -52,10 +52,13 @@ set up.
   `visualRevision` identify the visual trigger and document revision that ran. They
   are `null` only in rows kept from hand-written C# automations, which are no
   longer loaded.
-- `cause` is `Startup`, `Entity`, `Manual`, `Schedule` or `HomeAssistantTrigger`.
+- `cause` is `Startup`, `Entity`, `Manual`, `Schedule` or `HomeAssistantTrigger`,
+  and for an [entity definition](entity-definitions.md#runs-and-traces) also
+  `Command`, `Setup` or `Frame`.
 - `trigger` is a parsed object summarising what fired the run:
   `{kind, platform?, id?, description?, entityId?, from?, to?, eventType?, scheduleId?, planned?}`
-  with `kind` one of `ha`, `entity`, `schedule`, `manual` or `startup`. It is built
+  with `kind` one of `ha`, `entity`, `schedule`, `manual` or `startup` (or, for a
+  definition, `command`, `setup` or `frame`). It is built
   from the normalised trigger payload, is at most 2,048 characters as JSON, and
   shortens long strings rather than ever becoming invalid JSON.
 - `status` is Pending, Running, Succeeded, Failed, Cancelled, Skipped,

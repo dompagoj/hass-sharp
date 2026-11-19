@@ -1,17 +1,19 @@
 # HassSharp
 
 HassSharp is a Home Assistant custom integration for building automations as
-graphs. It runs .NET inside the Home Assistant process through Python.NET: each
+graphs, and entities of your own whose behaviour comes from a graph or a C#
+class. It runs .NET inside the Home Assistant process through Python.NET: each
 saved graph is turned into C#, compiled with Roslyn and loaded without restarting
 Home Assistant.
 
 Guides: [Writing visual automations](docs/writing-visual-automations.md) ·
+[Custom entities](docs/custom-entities.md) ·
 [Custom node libraries](docs/node-libraries.md) · [MCP authoring](docs/mcp-authoring.md) ·
 [Scheduling](docs/scheduling.md)
 
 ## The panel
 
-Open **HassSharp** in the sidebar. It has two pages:
+Open **HassSharp** in the sidebar. It has three pages:
 
 - **Automations** shows a card for each saved automation: a thumbnail of its
   graph, what starts it, its recent runs and whether it has problems. Search,
@@ -21,7 +23,13 @@ Open **HassSharp** in the sidebar. It has two pages:
   A card's menu renames the automation, duplicates it (the copy starts off),
   shows its runs, or deletes it. **New automation** asks for a name and opens
   the node editor on a new draft.
-- **Node library** holds your own C# files of reusable nodes.
+- **Entities** shows a card for each entity definition. A definition creates
+  entities in Home Assistant (binary sensors, sensors, switches, buttons, numbers,
+  selects, texts, lights, covers and cameras), optionally grouped as a device, and
+  works out what they do with steps or with a C# class from a node library.
+  **New entity definition** asks for a name and which of the two. See
+  [Custom entities](docs/custom-entities.md).
+- **Node library** holds your own C# files of reusable nodes and entity classes.
 
 ## The node editor
 
@@ -62,7 +70,8 @@ HassSharp registers an LLM API with Home Assistant. Home Assistant's built-in MC
 Server serves it to MCP clients, and any conversation agent an administrator
 configures with it gets the same tools. An administrator's client or agent can
 discover entities and nodes, preview, save and run graphs, turn automations on
-and off, edit node libraries and read run history and traces, through the same
+and off, build entity definitions, edit node libraries and read run history and
+traces, through the same
 revision-checked services as the panel. See [MCP authoring](docs/mcp-authoring.md).
 
 ### Security
@@ -70,13 +79,15 @@ revision-checked services as the panel. See [MCP authoring](docs/mcp-authoring.m
 - The API is available to every conversation agent and MCP client an
   administrator selects it for, not only the MCP Server, and only administrators
   can use it.
-- Saving an automation or a node library compiles C# and runs it inside Home
-  Assistant's process, with its privileges. Treat the tools that change things as
+- Saving an automation, an entity definition or a node library compiles C# and
+  runs it inside Home Assistant's process, with its privileges. Treat the tools that change things as
   code execution. For an agent that must not change anything, use an MCP Server
   entry with **Read only** enabled.
 - What the tools return goes to the model's provider: discovered entities
   (whether or not they are exposed to assistants, with only a few attributes),
-  service descriptions, graphs and their C#, and run errors and trace values.
+  service descriptions, graphs and their C#, entity definitions, and run errors
+  and trace values. A secret setting's value is never returned, but a secret typed
+  into a conversation reaches the provider: enter secrets in the panel.
 - Trace values under secret-looking names are redacted, by name only: this is a
   safeguard, not a security boundary.
 
@@ -104,8 +115,8 @@ the .NET 11 SDK into the integration directory, so it needs internet access and
 takes longer than later starts. If the download fails, the log says so; restart
 Home Assistant to try again.
 
-Automations and node libraries are stored in Home Assistant's
-`.storage/hass_sharp/` directory. Earlier versions also loaded hand-written `.cs`
+Automations, entity definitions and node libraries are stored in Home
+Assistant's `.storage/hass_sharp/` directory. Earlier versions also loaded hand-written `.cs`
 automations from the integration's `user_scripts/` folder. Those are no longer
 loaded: if the folder still holds `.cs` files, HassSharp logs one line saying so
 and leaves the files as they are.

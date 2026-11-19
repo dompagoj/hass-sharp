@@ -6,7 +6,12 @@ and any conversation agent an administrator configures with it (OpenAI, Anthropi
 Google, Ollama and others) gets the same tools. There is no separate HassSharp MCP
 server or port. The local Compose image is pinned to
 `homeassistant/home-assistant:2026.11.1`. Read [Security](#security) before
-giving the API to an agent.
+giving the API to an agent. The tools build two kinds of document: automations
+(`list`, `read`, `preview`, `save` and the rest) and
+[entity definitions](custom-entities.md), which create Home Assistant entities
+(the `entities_*` tools; see [Entity definitions](#entity-definitions)). An
+automation and a definition may have the same id: each tool reads and changes only
+its own kind.
 
 Add **MCP Server** under Settings → Devices & services if it is not already
 configured. Open its options and select **HassSharp** from the available LLM APIs
@@ -43,15 +48,17 @@ tool invocation, including direct calls and cached tools.
 - **Who can use it.** Every MCP client and every conversation agent an
   administrator selects the API for, not only the MCP Server. Each instance and
   each tool call checks that the conversation's user is an administrator.
-- **What a change can do.** `save` and `library_save` compile C# and load it into
-  Home Assistant's own process, with its privileges: the configuration directory
+- **What a change can do.** `save`, `entities_save` and `library_save` compile C#
+  and load it into Home Assistant's own process, with its privileges: the configuration directory
   with `secrets.yaml` and the `.storage` tokens, the network and every service.
   Static constructors run when the code is activated. Treat these tools as code
-  execution. Agents do not ask before a tool call; the API prompt tells the model
+  execution. `entities_save` also creates entities and a device in Home Assistant.
+  Agents do not ask before a tool call; the API prompt tells the model
   to change nothing unless the user asks for it in the conversation, and that is
   advice to the model, not a control.
 - **Read only.** Give an agent that must not change anything an MCP Server entry
   with **Read only** enabled. That removes `save`, `set_enabled`, `delete`, `run`,
+  `entities_save`, `entities_set_enabled`, `entities_delete`, `entities_run`,
   `library_save` and `library_delete`. A conversation agent given the API gets
   every tool, the changing ones included.
 - **What leaves the house.** Tool results go to the model's provider: entity ids,
@@ -60,6 +67,13 @@ tool invocation, including direct calls and cached tools.
   values. Discovery returns only a few attributes of each entity (see step 3), so
   a camera's `access_token` and an `entity_picture` URL with a token stay in Home
   Assistant.
+- **Secret settings.** A definition's secret setting's value never leaves the
+  server: every answer has it as `value: null, secret: true, hasValue`, and the API
+  refuses to pass on an answer that carries one ("The answer held the value of a
+  secret setting, so it was not passed on…"). A secret typed into a conversation
+  reaches the assistant's provider all the same: enter secrets in the HassSharp
+  panel, and let the assistant send the setting back as it was answered. No tool
+  returns a camera's picture.
 - **Injected text.** Entity names and attributes, service descriptions, errors and
   trace values come from devices and integrations. The prompt tells the model they
   are data and never instructions, but a model can still be misled by them.
@@ -80,7 +94,9 @@ tool descriptions summarise the workflow below and the entity typing rule.
 1. Call `get_capabilities` once. It returns graph version 5, the actual merged
    built-in/custom catalog, the authoring rules as `semantics` (execution and data
    edges, types and refinement, trigger outputs, the Call service node, run
-   history, C#) and complete example graphs that validate and compile.
+   history, C#) and complete example graphs that validate and compile. Pass
+   `document: "entity"` for entity definitions instead; see
+   [Entity definitions](#entity-definitions).
 2. Call `get_node_schema({kind})` for each node kind you add. It returns the node,
    the type table, `parametricTypes` and limits. For `trigger` it adds the
    `triggerOutputs` table. For `service`, pass `service` (`domain.service`) to get
@@ -96,7 +112,8 @@ tool descriptions summarise the workflow below and the entity typing rule.
    of the property `config.property` names, of the value wired into that input. A
    type entry's `properties` (`{name, type, nullable, description?}`) are in the
    type table that `get_node_schema` and `get_capabilities` return, and in a Custom
-   C# node's `config.signature.types`. Without `kind` it returns the whole catalog.
+   C# node's `config.signature.types`. Without `kind` it returns the whole catalog;
+   `document: "entity"` gives a definition's steps instead.
 3. Use `discover` to find entities, services, devices, areas or installed trigger
    descriptions. Supply `kind`, optional `query`, `offset` (default 0) and `limit`
    (default 50, maximum 100); entities and services also take `domain`.
@@ -181,8 +198,10 @@ input is `connectable: false` in the catalog, so no data edge may end at it. See
 Tool arguments are strict: unknown fields and wrong types are rejected. Revisions
 and pagination values must be integers (booleans are not accepted). Stable IDs
 match `[a-z0-9][a-z0-9_-]{0,79}`. All tools require administrator privileges.
-Read-only MCP mode removes save, set_enabled, delete, run, library_save and
-library_delete; `trace` and `history` stay available.
+Read-only MCP mode removes save, set_enabled, delete, run, entities_save,
+entities_set_enabled, entities_delete, entities_run, library_save and
+library_delete; `trace`, `history` and `entities_history` stay available. Of the 26
+tools, 16 remain.
 
 A failed replacement can leave an older generation running. Document `active`
 means some generation is active; **`currentRevisionActive`** means the saved
@@ -192,6 +211,64 @@ checks/dispatches under the same managed authoring gate as saves and library
 mutations. A stale active generation cannot run as though it were the newer saved
 graph. Trigger method identities are `Run_` plus uppercase UTF-8 hexadecimal of
 the trigger node ID; clients should pass `triggerId`, not construct method names.
+
+## Entity definitions
+
+The `entities_*` tools do for [entity definitions](custom-entities.md) what the
+document tools do for automations, through the panel's own API
+([entity definitions API](backend/entity-definitions.md)). Results use the same
+envelope; validation, conflicts and revisions work as above.
+
+1. Call `get_capabilities({document:"entity"})`. The catalog then holds the steps a
+   definition may use and its `entityDomains` (each entity type's state values,
+   commands and options), `semantics` gains `definitions` (the rules) and `examples`
+   is `{definitions:[…]}`: complete definitions that validate, the five in
+   [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json),
+   the class one with its library source. `get_node_schema({kind, document:"entity"})`
+   adds `entityDomains` for `entity_state`, `set_entity_state` and `entity_command`,
+   whose ports come from the domain of the entity they name.
+2. `entities_types({})` lists the classes the node libraries offer:
+   `{id, title, description, kind, domain, settings:[{key, label, description, type,
+   secret, options, minimum, maximum}]}`. A class is written with `library_save`.
+3. `entities_list({})` summarises every definition without its graph: `{id, name,
+   revision, enabled, status, activationError, logic, device, entities:[{key,
+   domain, name, entityId}], triggers:[{triggerId, label?, type, config, manual,
+   runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`;
+   `logic` is `"graph"` or the class's type id; `device` whether it makes a device.
+   `entities_read({id})` returns one complete document, with its `revision`,
+   `source`, `automationId` and `registeredEntities`. Read before every edit, and
+   send back only `name`, `device`, `settings`, `entities` and `logic`.
+4. `entities_preview({definition})` validates and compiles a definition, `{name,
+   device?, settings?, entities?, logic}` with `logic` `{kind:"graph", graph}` or
+   `{kind:"class", type}`, without creating anything. It returns `valid`,
+   `diagnostics`, `source` and, for a graph, `graph` with each Custom C# step's pins
+   worked out (no settings come back).
+5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
+   creates or updates its entities, returning `saved`, `document`, `active` and
+   `activationError`. `enabled` is only for a new definition; `new` is not an id. An
+   entity's key is permanent: changing it makes a new entity. A secret setting is
+   sent back as answered to keep its value, with a new `value` to replace it, or
+   with `value: null` and no `hasValue` to clear it.
+6. `entities_set_enabled({id, enabled})` turns a definition on or off (off, its
+   entities stay as unavailable) and returns `enabled`, `active` and
+   `activationError`. `entities_delete({id, expectedRevision})` deletes it and
+   removes its entities and device.
+7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
+   one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
+   command runs when the entity's service is called, a State follows the entities
+   it reads, and When started runs when the definition starts.
+8. `entities_history({id, status?, offset?, limit?})` returns the definition's runs
+   as `history` does an automation's; `trace` reads any run of either. When
+   commanded and When started record their runs unless their `trackHistory` is
+   false; a Trigger, a State and When a frame is needed only when it is true (a
+   Trigger's default is the opposite of an automation's); a run started with
+   `entities_run` is always recorded. A graph that `trace` returns with
+   `graph: true` carries the definition without its settings' values: it is not a
+   definition to save.
+
+When commanded steps must finish within 30 seconds, or the service call that sent
+the command fails. A run that reaches a Stop step is Stopped, not failed: a command
+it handled succeeds and a When started flow that stops lets the definition start.
 
 ## Libraries
 
@@ -207,11 +284,17 @@ generation when handling delayed results. Preview never executes the methods.
 
 `library_save({id,name,source,expectedRevision})` creates, edits or renames a source;
 `library_delete({id,expectedRevision})` removes it. Both validate the remaining
-libraries and **all saved graphs**, including C# references, before committing.
+libraries, **all saved graphs** and every entity definition, including C#
+references, before committing.
 Every successful library mutation advances every graph revision because generated
 graphs embed the complete library snapshot. Refresh graph documents after changes.
 Results contain `saved`, `document`, `deleted`, `generation`, `catalog` and
-`automations:[{id,saved,document,active,activationError}]`. Compilation/dependency
+`automations:[{id,saved,document,active,activationError}]`, and for entity
+definitions `definitions:[{id,saved,document,active,activationError,enabled}]` and
+`invalidDefinitions:[{id,name,diagnostics,running,message}]` (those that already had
+errors and are left as they are). A save that would break a working definition is
+refused, with those definitions under `definitions` in its validation detail.
+Compilation/dependency
 errors and revision conflicts preserve their structured details. Persistence may
 succeed while activation fails for a graph; inspect each activation result.
 

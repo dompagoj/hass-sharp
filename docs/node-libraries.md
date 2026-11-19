@@ -553,13 +553,31 @@ help with named parameters, formatting, and cross-file go-to-definition. Drafts 
 immutable multi-file workspaces. The frontend discards obsolete responses using
 model/workspace identities; the saved catalog generation differs from the draft
 source generation. A rejected save keeps the prior source and the active graphs. A
-successful save, rename or delete recompiles all graphs and advances their revisions.
+successful save, rename or delete recompiles all graphs and entity definitions and
+advances their revisions, and is rejected when it would break one that works.
 A graph that has errors with the new code is not rebuilt: the response lists it under
-`invalid`, with its diagnostics, `running`, and a `message`. If a copy of it is
+`invalid` (a definition under `invalidDefinitions`), with its diagnostics, `running`,
+and a `message`. If a copy of it is
 running, that copy is still running the previous version, with the previous library
 code, until the graph is fixed and saved; otherwise it is not running.
 Deleting a type or method that is still in use is rejected with dependency
 diagnostics.
+
+## Entity classes
+
+A node library can also hold the classes that [entity definitions](custom-entities.md)
+create: a public, concrete, non-generic top-level class with a public constructor
+that takes nothing, deriving from `SharpDevice` (a device with several entities) or
+from one typed entity such as `SharpSwitch` or `SharpCamera`. It needs no `[Node]`
+method, and a library may hold classes and node methods side by side. Each such
+class is offered under **Use a class from the node library** when a definition is
+created; its type id is `library:<source id>:NodeLib.<type>`, such as
+`library:example_plug:NodeLib.SmartPlug`. Its `[Setting]` properties are the values
+each definition fills in.
+
+[Custom entities](custom-entities.md#classes) has a complete class, the base
+classes, settings, the life cycle (`Setup`, `Start`, `Stop`), timers, entity tracks,
+HTTP, downloads and cameras.
 
 ## Scope snapshots
 
