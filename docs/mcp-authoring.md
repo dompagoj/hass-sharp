@@ -247,14 +247,19 @@ envelope; validation, conflicts and revisions work as above.
 4. `entities_preview({definition})` validates and compiles a definition, `{name,
    device?, settings?, entities?, logic}` with `logic` `{kind:"graph", graph}` or
    `{kind:"class", type}`, without creating anything. It returns `valid`,
-   `diagnostics`, `source`, `sourceMap` and, for a graph, `graph` with each Custom
-   C# step's pins worked out (no settings come back).
+   `diagnostics` and, for a graph, `graph` with each Custom C# step's pins worked
+   out (no settings come back). Unlike the panel's API, it leaves out the generated
+   `source` and `sourceMap`, and so does a refusal for errors (`validation`) from it
+   or from `entities_save`, whose detail is the preview; `entities_read` has a saved
+   definition's `source`.
 5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
-   creates or updates its entities, returning `saved`, `document`, `active` and
-   `activationError`. `enabled` is only for a new definition; `new` is not an id. An
-   entity's key is permanent: changing it makes a new entity. A secret setting is
-   sent back as answered to keep its value, with a new `value` to replace it, or
-   with `value: null` and no `hasValue` to clear it.
+   creates or updates its entities, returning `saved`, `document` (as
+   `entities_read` gives it, without `source` and `sourceMap`), `active`,
+   `activationError` and, when the save has warnings, `diagnostics`. `enabled` is
+   only for a new definition; `new` is not an id. An entity's key is permanent:
+   changing it makes a new entity. A secret setting is sent back as answered to
+   keep its value, with a new `value` to replace it, or with `value: null` and no
+   `hasValue` to clear it.
 6. `entities_set_enabled({id, enabled})` turns a definition on or off (off, its
    entities stay as unavailable) and returns `enabled`, `active` and
    `activationError`. `entities_delete({id, expectedRevision})` deletes it and

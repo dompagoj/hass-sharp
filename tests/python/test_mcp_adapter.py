@@ -548,10 +548,28 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.entities.return_value=refused
         result=await self.call('entities_run',{'id':'porch','triggerId':'poll'})
         self.assertTrue(result.error); self.assertEqual(result.data,refused)
-        # A preview answer is passed on as preview's is: valid, diagnostics, source and the graph with derived pins.
-        preview={'version':1,'ok':True,'result':{'valid':True,'diagnostics':[],'source':'class X {}','sourceMap':[],'graph':self.GRAPH}}
-        self.service.entities.return_value=preview
-        self.assertEqual((await self.call('entities_preview',{'definition':self.DEFINITION})).data,preview)
+        # A preview answer is passed on without the generated source and its map (entities_read has a saved one's):
+        # valid, diagnostics and the graph with derived pins.
+        diagnostic={'severity':2,'code':'entity.unknown','nodeId':'n1','message':'No such entity'}
+        self.service.entities.return_value={'version':1,'ok':True,'result':{'valid':True,'diagnostics':[diagnostic],'source':'class X {}','sourceMap':[{'nodeId':'n1'}],'graph':self.GRAPH}}
+        self.assertEqual((await self.call('entities_preview',{'definition':self.DEFINITION})).data,
+                         {'version':1,'ok':True,'result':{'valid':True,'diagnostics':[diagnostic],'graph':self.GRAPH}})
+        # So is a save's document, and the preview a refusal for errors carries; the save's warnings stay.
+        document=self.entity_document()
+        self.service.entities.return_value={'version':1,'ok':True,'result':{'id':'porch','saved':True,'document':document,'active':True,'activationError':None,'diagnostics':[diagnostic]}}
+        saved=(await self.call('entities_save',{'id':'porch','expectedRevision':4,'definition':self.DEFINITION})).data['result']
+        self.assertEqual(saved['diagnostics'],[diagnostic])
+        self.assertEqual(saved['document']['revision'],document['revision'])
+        self.assertFalse({'source','sourceMap'}&set(saved['document']),saved['document'].keys())
+        for name,args in (('entities_preview',{'definition':self.DEFINITION}),('entities_save',{'id':'porch','expectedRevision':4,'definition':self.DEFINITION})):
+            error={'severity':3,'code':'type.mismatch','nodeId':'n1','message':'Wrong type'}
+            self.service.entities.return_value={'version':1,'ok':False,'error':{'code':'validation','detail':{'valid':False,'diagnostics':[error],'source':'class X {}','sourceMap':[]}}}
+            result=await self.call(name,args)
+            self.assertTrue(result.error,name)
+            self.assertEqual(result.data['error'],{'code':'validation','detail':{'valid':False,'diagnostics':[error]}},name)
+        # A refusal whose detail is words is passed on as it is.
+        self.service.entities.return_value={'version':1,'ok':False,'error':{'code':'conflict','detail':'The definition changed'}}
+        self.assertEqual((await self.call('entities_save',{'id':'porch','expectedRevision':4,'definition':self.DEFINITION})).data['error']['detail'],'The definition changed')
 
     async def test_entities_list_is_a_summary(self):
         document=self.entity_document()
@@ -760,6 +778,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
               'and so is enabled'],['for an automation']),
             ('entities_save',save({**self.DEFINITION,'enabled':False}),['remove enabled, which an entities_read answer adds',
              'id and expectedRevision (the revision read) are arguments of their own, and so is enabled: false saves a new definition off'],['for an automation']),
+            # A preview takes no id, revision or enabled: it is not told they are arguments of their own.
+            ('entities_preview',{'definition':stored},['Send as definition only','entities_preview takes only the definition'],['arguments of their own','so is enabled']),
+            ('preview',{'graph':stored},['for an entity definition use entities_preview','Send as definition only','entities_preview takes only the definition'],
+             ['arguments of their own','so is enabled']),
             # 5. A trace graph copied into logic: its settings have no values, so they come from entities_read.
             ('entities_save',save(in_logic(composed)),['The graph inside logic holds only version, name, nodes and edges: remove its definition',*trace_says],
              ['at the top','for an automation']),
@@ -920,10 +942,13 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 not from_read or traced,
                 # 6. "at the top of the definition": every key the graphs have that the top has not (null and [] hold nothing), and only those.
                 sorted(moved)==sorted(f.movable if analysed and not traced else []) and len(moved)==len(set(moved)),
-                # 7. A stored document: the keys to remove, and that id, expectedRevision and enabled are arguments of their own.
+                # 7. A stored document: the keys to remove, and, to a save, that id, expectedRevision and enabled are arguments of
+                # their own; a preview takes none of them, so it is told that it takes only the definition.
                 ('Send as definition only' in hint)==bool(analysed and f.stored) and not (analysed and f.stored and not (
                     'remove '+', '.join(sorted(f.stored))+', which an entities_read answer adds' in hint
-                    and 'id and expectedRevision (the revision read) are arguments of their own' in hint and ('so is enabled' in hint)==('enabled' in f.stored))),
+                    and ('id and expectedRevision (the revision read) are arguments of their own' in hint and ('so is enabled' in hint)==('enabled' in f.stored)
+                         if name.endswith('save') else 'entities_preview takes only the definition' in hint
+                         and 'arguments of their own' not in hint and 'so is enabled' not in hint))),
                 # 8. The right tool under the wrong argument's name is told the argument's name, not sent to the other family.
                 as_graph==(not entity and sent=='definition' and f is not None and f.automation_like) and not (as_graph and use_entities)
                 and (not as_definition or entity and sent=='graph' and not (f is not None and (f.automation_like or f.trace_top)))
@@ -1015,11 +1040,26 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('entities_'+twin,descriptions[twin],twin)
             self.assertIn('automation',descriptions['entities_'+twin],twin)
         self.assertIn('List the C# classes in the node library that an entity definition can use (logic.kind class), each with its type id and settings.',descriptions['entities_types'])
-        self.assertIn('A secret setting\'s value is never returned (value null, hasValue true).',descriptions['entities_read'])
+        self.assertIn('A secret setting\'s value is never returned (value null, and hasValue says whether one is stored).',descriptions['entities_read'])
+        # Neither answers the generated source: entities_read does, for a saved definition.
+        self.assertNotIn('generated source',descriptions['entities_preview'])
+        self.assertIn("(no settings come back); entities_read has a saved definition's source.",descriptions['entities_preview'])
+        self.assertIn('Returns saved, document (as entities_read gives it, without source and sourceMap), active, activationError and diagnostics',descriptions['entities_save'])
+        self.assertIn('false saves it off, and it creates its entities the first time it is turned on',descriptions['entities_save'])
+        self.assertIn('and a frame\'s (When a frame is needed) only when its step has trackHistory true',descriptions['entities_history'])
         self.assertIn('Send a secret setting back unchanged to keep its value, with a new value to replace it, or with value null and no hasValue to clear it. Ask the user first.',descriptions['entities_save'])
         self.assertIn('A new id uses expectedRevision 0 (new is not an id).',descriptions['entities_save'])
         self.assertIn('A command is not run this way: call the entity\'s service in Home Assistant.',descriptions['entities_run'])
-        self.assertIn('While off its entities stay in Home Assistant as unavailable. Ask the user first.',descriptions['entities_set_enabled'])
+        self.assertIn('While off, the entities it has created stay in Home Assistant as unavailable; a definition saved off creates its entities the first time it is turned on. Ask the user first.',
+                      descriptions['entities_set_enabled'])
         self.assertIn('remove its entities and device from Home Assistant. Ask the user first.',descriptions['entities_delete'])
+
+    def test_the_llm_tools_platform_adds_no_tools_to_any_api(self):
+        # Home Assistant asks every integration's llm platform for tools on each build of an API; HassSharp's tools are
+        # its own API's (register), so it gives none, to the Assist API or to its own.
+        from homeassistant.core import is_callback
+        self.assertTrue(is_callback(self.adapter.async_get_tools))
+        for api_id in ('assist',self.adapter.API_ID):
+            self.assertIsNone(self.adapter.async_get_tools(self.hass,self.context,api_id),api_id)
 
 if __name__=='__main__': unittest.main()

@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import probatio as p
+from homeassistant.core import callback
 from homeassistant.helpers import area_registry, device_registry, llm, trigger
 from homeassistant.helpers.json import JSONEncoder
 
@@ -157,13 +158,13 @@ SPECS = {
 ENTITY_SPECS = {
     "entities_types": ({}, "List the C# classes in the node library that an entity definition can use (logic.kind class), each with its type id and settings. Each type has id (the logic.type to send), title, description, kind (device or entity), domain and settings [{key, label, description, type, secret, options, minimum, maximum}]: a definition of that class sends a value for each as {key, value}. A class is written in a node library source (library_save), as a class deriving from SharpDevice (a device with its entities) or from one typed entity such as SharpSensor or SharpSwitch; get_capabilities with document \"entity\" has a complete example."),
     "entities_list": ({}, "Summarise every saved entity definition, without its graph: id, name, revision, enabled (its on/off switch), status (running; setup, still starting; failed; or off), activationError (why it is not running, or null), logic (\"graph\", or the class's type id), device (whether it makes a Home Assistant device: it gives device details, or its class derives from SharpDevice; for a class no node library offers any more, whether it gives device details), entities [{key, domain, name, entityId}] (entityId is the id Home Assistant gave the entity, or null while it has none) and triggers [{triggerId, label, type, config, manual, runnable}], its Trigger steps, which entities_run takes. Read one with entities_read before editing it. For automations use list."),
-    "entities_read": (ID_FIELD, "Read one saved entity definition: its name, device, settings, entities and logic (the graph, or the class's type id), revision (pass it as expectedRevision when saving), generated source, status and activationError, automationId (the key of its run history), registeredEntities (its entities as Home Assistant has registered them, with their entity ids) and triggers. Read before every edit, and send back only name, device, settings, entities and logic as the definition. A secret setting's value is never returned (value null, hasValue true). For an automation use read."),
-    "entities_preview": ({p.Required("definition"): DEFINITION}, "Validate and compile a complete entity definition without saving or creating anything in Home Assistant. definition is {name, device?, settings?, entities?, logic} with logic {kind: \"graph\", graph} (a graph of the steps get_capabilities lists for document \"entity\") or {kind: \"class\", type} (a type id from entities_types). Each Custom C# step's pins (config.signature) are first worked out from its code. Returns valid, diagnostics (nodeId, inputId, message; severity 3 is an error, 2 a warning), the generated source and, for a graph, graph: the graph with those pins (no settings come back). Fix every error here before entities_save. For an automation graph use preview."),
-    "entities_save": ({**REV_FIELDS, p.Required("definition"): DEFINITION, p.Optional("enabled"): bool}, "Save an entity definition and create or update its entities in Home Assistant. definition is what entities_preview takes, with each Custom C# step's pins worked out from its code as preview does; enabled is only for a new definition (false saves it off). A new id uses expectedRevision 0 (new is not an id). An existing one uses the revision from entities_read; a conflict means it changed meanwhile, so read again rather than retrying. Errors block the save; a saved definition that is on starts its steps, which can control devices. An entity's key is permanent: changing it makes a new entity. Send a secret setting back unchanged to keep its value, with a new value to replace it, or with value null and no hasValue to clear it. Ask the user first. Returns saved, document (as entities_read gives it), active and activationError. For an automation use save."),
-    "entities_set_enabled": ({**ID_FIELD, p.Required("enabled"): bool}, "Turn an entity definition on or off. While off its entities stay in Home Assistant as unavailable. Ask the user first. Its revision does not change; the result has enabled, active and activationError. For an automation use set_enabled."),
+    "entities_read": (ID_FIELD, "Read one saved entity definition: its name, device, settings, entities and logic (the graph, or the class's type id), revision (pass it as expectedRevision when saving), generated source, status and activationError, automationId (the key of its run history), registeredEntities (its entities as Home Assistant has registered them, with their entity ids) and triggers. Read before every edit, and send back only name, device, settings, entities and logic as the definition. A secret setting's value is never returned (value null, and hasValue says whether one is stored). For an automation use read."),
+    "entities_preview": ({p.Required("definition"): DEFINITION}, "Validate and compile a complete entity definition without saving or creating anything in Home Assistant. definition is {name, device?, settings?, entities?, logic} with logic {kind: \"graph\", graph} (a graph of the steps get_capabilities lists for document \"entity\") or {kind: \"class\", type} (a type id from entities_types). Each Custom C# step's pins (config.signature) are first worked out from its code. Returns valid, diagnostics (nodeId, inputId, message; severity 3 is an error, 2 a warning) and, for a graph, graph: the graph with those pins (no settings come back); entities_read has a saved definition's source. Fix every error here before entities_save. For an automation graph use preview."),
+    "entities_save": ({**REV_FIELDS, p.Required("definition"): DEFINITION, p.Optional("enabled"): bool}, "Save an entity definition and create or update its entities in Home Assistant. definition is what entities_preview takes, with each Custom C# step's pins worked out from its code as preview does; enabled is only for a new definition (false saves it off, and it creates its entities the first time it is turned on). A new id uses expectedRevision 0 (new is not an id). An existing one uses the revision from entities_read; a conflict means it changed meanwhile, so read again rather than retrying. Errors block the save; a saved definition that is on starts its steps, which can control devices. An entity's key is permanent: changing it makes a new entity. Send a secret setting back unchanged to keep its value, with a new value to replace it, or with value null and no hasValue to clear it. Ask the user first. Returns saved, document (as entities_read gives it, without source and sourceMap), active, activationError and diagnostics (the save's warnings, when it has any). For an automation use save."),
+    "entities_set_enabled": ({**ID_FIELD, p.Required("enabled"): bool}, "Turn an entity definition on or off. While off, the entities it has created stay in Home Assistant as unavailable; a definition saved off creates its entities the first time it is turned on. Ask the user first. Its revision does not change; the result has enabled, active and activationError. For an automation use set_enabled."),
     "entities_delete": (REV_FIELDS, "Delete an entity definition at its exact revision and remove its entities and device from Home Assistant. Ask the user first. For an automation use delete."),
     "entities_run": ({**ID_FIELD, p.Required("triggerId"): str}, "Run one Trigger step of a saved, running entity definition now. triggerId is the Trigger step's id; entities_list and entities_read show which are runnable (the definition on, running its saved revision). The run is recorded whatever the step's history setting. It can control devices: ask the user first. Returns runId; then call entities_history and trace. A command is not run this way: call the entity's service in Home Assistant. A State follows the entities it reads, and When started runs when the definition starts. For an automation use run."),
-    "entities_history": ({**ID_FIELD, p.Optional("status"): [p.In(RUN_STATUSES)], **PAGE}, f"Run history of one entity definition, newest first. Command and setup runs are recorded unless their step has trackHistory false; a Trigger's runs only when its step has trackHistory true (off by default in a definition), and a State's only when its step has trackHistory true; a run started with entities_run is always recorded. Runs are as history gives them (runId, status, error, trigger, triggerNodeId, actionLabel, timing, hasTrace), optionally only those with the given statuses; call trace with a runId. A page also ends before about {PAGE_BYTES // 1024} KiB; nextOffset says where the next one starts (null after the last run; after a full page the next can be empty). A token= value in an error is removed. For an automation use history."),
+    "entities_history": ({**ID_FIELD, p.Optional("status"): [p.In(RUN_STATUSES)], **PAGE}, f"Run history of one entity definition, newest first. Command and setup runs are recorded unless their step has trackHistory false; a Trigger's runs only when its step has trackHistory true (off by default in a definition), a State's only when its step has trackHistory true, and a frame's (When a frame is needed) only when its step has trackHistory true; a run started with entities_run is always recorded. Runs are as history gives them (runId, status, error, trigger, triggerNodeId, actionLabel, timing, hasTrace), optionally only those with the given statuses; call trace with a runId. A page also ends before about {PAGE_BYTES // 1024} KiB; nextOffset says where the next one starts (null after the last run; after a full page the next can be empty). A token= value in an error is removed. For an automation use history."),
 }
 TOOLS = {**SPECS, **ENTITY_SPECS}
 MUTATIONS = {"save", "set_enabled", "delete", "run", "library_save", "library_delete",
@@ -289,7 +290,23 @@ class HassSharpTool(llm.Tool):
                 result["result"] = [definition_summary(document, kinds) for document in data]
             for document in [data] if operation == "read" else [data.get("document")] if operation == "save" else []:
                 drop_node_sizes(document)
+        if operation in ("preview", "save"):
+            drop_generated_source(result)
         return result
+
+
+def drop_generated_source(response):
+    """An entities_preview or entities_save answer without the generated source and its map, which are most of its size
+    and of no use to an assistant (a diagnostic names its step): from a preview, a save's document, and the preview
+    that a refusal for errors (validation) carries. entities_read keeps them."""
+    refusal = response.get("error")
+    result = response.get("result") if response.get("ok") else refusal.get("detail") if isinstance(refusal, dict) else None
+    if not isinstance(result, dict):
+        return
+    for answered in (result, result.get("document")):
+        if isinstance(answered, dict):
+            answered.pop("source", None)
+            answered.pop("sourceMap", None)
 
 
 async def class_kinds(service_api, documents):
@@ -389,7 +406,7 @@ def entity_tool_hints(operation, args):
         lead = None if "graph" not in args else takes if kind == "trace" else f"{takes}: send it as definition, not graph"
     else:
         return [f'{takes}, or logic: {{kind: "class", type}} for a C# class']
-    return [*([lead] if lead else []), *(definition_hints(document) if isinstance(document, dict) else [])]
+    return [*([lead] if lead else []), *(definition_hints(document, operation) if isinstance(document, dict) else [])]
 
 
 def automation_tool_hints(operation, args):
@@ -399,7 +416,7 @@ def automation_tool_hints(operation, args):
     takes = f"{operation} takes an automation graph: {{version, name, nodes, edges}}"
     if kind == "definition":
         return [f"{takes}; for an entity definition use entities_{operation}, which takes it as definition: {{name, entities, logic}}",
-                *definition_hints(document)]
+                *definition_hints(document, operation)]
     if kind == "automation" and "definition" in args:
         return [f"{takes}: send {'it' if 'nodes' in document or 'edges' in document else 'its graph'} as graph, not definition"]
     # A trace graph (or a document holding one) is a definition's, never an automation, but it is no definition either.
@@ -407,9 +424,10 @@ def automation_tool_hints(operation, args):
     return graph_hints(document) if traced else []
 
 
-def definition_hints(definition):
+def definition_hints(definition, operation):
     """The sentences for a definition put together wrongly, in this order: where its graph goes, the keys a read
-    answer adds, what its graphs hold, and its logic's kind."""
+    answer adds, what its graphs hold, and its logic's kind. `operation` is the tool it was sent to: a save (save or
+    entities_save) takes id, expectedRevision and enabled as arguments of their own, a preview none of them."""
     sentences = []
     logic = definition.get("logic")
     top_graph, flat = "graph" in definition, "nodes" in definition or "edges" in definition
@@ -429,9 +447,11 @@ def definition_hints(definition):
     # version beside nodes and edges is the graph's own.
     if stored := [key for key in STORED_DOCUMENT_KEYS if key in definition and not (key == "version" and flat)]:
         sentences.append("Send as definition only name, device, settings, entities and logic: remove " + ", ".join(sorted(stored))
-                         + ", which an entities_read answer adds; id and expectedRevision (the revision read) are arguments of their own"
-                         + (", and so is enabled: false saves a new definition off, and entities_set_enabled turns a saved one on or off"
-                            if "enabled" in stored else ""))
+                         + ", which an entities_read answer adds; "
+                         + ("id and expectedRevision (the revision read) are arguments of their own"
+                            + (", and so is enabled: false saves a new definition off, and entities_set_enabled turns a saved one on or off"
+                               if "enabled" in stored else "")
+                            if operation.endswith("save") else "entities_preview takes only the definition"))
     sentences += graph_hints(definition)
     if isinstance(logic, dict) and logic.get("kind") not in ("graph", "class"):
         sentences.append('logic.kind is "graph" (with graph, a graph of the steps get_capabilities lists for document "entity") '
@@ -707,3 +727,9 @@ def register(hass, state):
     if not state.ready:
         raise RuntimeError("Cannot register HassSharp before initialization")
     state.unregister = llm.async_register_api(hass, HassSharpAPI(hass, state))
+
+
+@callback
+def async_get_tools(hass, llm_context, api_id):
+    """Home Assistant's LLM tools platform: HassSharp adds no tools to another API; its own are the HassSharp API's."""
+    return None
