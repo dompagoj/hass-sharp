@@ -66,8 +66,9 @@ definition envelope"), `storage` (the file could not be read or written) and
   `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
   swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is
   `{definition:"<id>"}` or `{deviceId:"<Home Assistant device id>"}`. `via` is not
-  checked on save; when the device is set up, a parent Home Assistant does not have
-  is left out. For a class, each field given overrides the class's own.
+  checked on save, and a cycle is not refused either; when the device is set up, a
+  parent Home Assistant does not have is left out. For a class, each field given
+  overrides the class's own.
 - `settings`: for a graph `{key, label?, type, value, secret?}` with `type`
   `string`, `boolean` or `number`; for a class `{key, value}`, one per `[Setting]`
   property the class declares (a value null leaves the property's own).
@@ -139,8 +140,9 @@ definition's `Start()`; one still starting is answered with status `setup`. The
 answer's `diagnostics` are the preview's warnings.
 
 **set_enabled** turns a saved definition on or off without a new revision. Turned
-on, it is rebuilt against the libraries as saved now; off, it is unloaded and its
-entities stay in Home Assistant as unavailable.
+on, it is rebuilt against the libraries as saved now; off, it is unloaded and the
+entities it has created stay in Home Assistant as unavailable. A definition saved
+off (`enabled: false`) creates its entities the first time it is turned on.
 
 **delete** removes the file, the run history's identity, the entities' stored
 states, and the entities and the device in Home Assistant. Removing the entities has

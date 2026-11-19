@@ -73,8 +73,11 @@ tool invocation, including direct calls and cached tools.
   value of a secret setting, so it was not passed on…"). A secret typed into a
   conversation reaches the assistant's provider all the same: enter secrets in the
   HassSharp panel, and let the assistant send the setting back as it was answered.
-  No tool returns a camera's picture. A trace can still show a true or false worked
-  out from a secret, or what a step it was given returns; see [custom
+  The host and port of an address that comes from a secret setting are not secret:
+  failures, traces and the download log line name them (see [custom
+  entities](custom-entities.md#secrets)). No tool returns a camera's picture. A
+  trace can still show a true or false worked out from a secret, or what a step it
+  was given returns; see [custom
   entities](custom-entities.md#run-history-and-traces).
 - **Injected text.** Entity names and attributes, service descriptions, errors and
   trace values come from devices and integrations. The prompt tells the model they
@@ -256,12 +259,14 @@ envelope; validation, conflicts and revisions work as above.
    creates or updates its entities, returning `saved`, `document` (as
    `entities_read` gives it, without `source` and `sourceMap`), `active`,
    `activationError` and, when the save has warnings, `diagnostics`. `enabled` is
-   only for a new definition; `new` is not an id. An entity's key is permanent:
+   only for a new definition (`false` saves it off, and it creates its entities the
+   first time it is turned on); `new` is not an id. An entity's key is permanent:
    changing it makes a new entity. A secret setting is sent back as answered to
    keep its value, with a new `value` to replace it, or with `value: null` and no
    `hasValue` to clear it.
-6. `entities_set_enabled({id, enabled})` turns a definition on or off (off, its
-   entities stay as unavailable) and returns `enabled`, `active` and
+6. `entities_set_enabled({id, enabled})` turns a definition on or off (off, the
+   entities it has created stay as unavailable; a definition saved off creates its
+   entities the first time it is turned on) and returns `enabled`, `active` and
    `activationError`. `entities_delete({id, expectedRevision})` deletes it and
    removes its entities and device.
 7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,

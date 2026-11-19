@@ -50,11 +50,13 @@ export const classDefinitionCode = 'class_definition'
 
 /**
  * A saved definition as the editor holds it. Off is said by `enabled`: an answer's "Not active" for a definition the
- * person turned off is not an activation problem to show.
+ * person turned off is not an activation problem to show, and its saved revision, unloaded while it is off, is no
+ * reason to save it again (an automation that is off stays loaded; a save of an off definition would not start it).
  */
 const held = (document: EntityDocument): EntityEditorDocument => ({
   ...document,
   activationError: document.enabled ? document.activationError : null,
+  currentRevisionActive: document.enabled ? document.currentRevisionActive : true,
   graph: editorGraph(document),
 })
 const result = (saved: EntitySaveResult) => ({ ...saved, document: held(saved.document) })

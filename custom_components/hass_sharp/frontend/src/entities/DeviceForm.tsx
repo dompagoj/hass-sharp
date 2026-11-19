@@ -4,7 +4,7 @@ import { HassCtx } from '../context'
 import { useLoadedRegistry } from '../registry'
 import type { VisualGraph } from '../visual/graph'
 import { SearchSelect } from '../visual/widgets/SearchSelect'
-import { entityApi, entityTypesQueryKey } from './api'
+import { definitionsQueryKey, entityApi, entityTypesQueryKey } from './api'
 import { definitionOf, setDevice, withDetail, withVia } from './definitionEdits'
 import { SelectField, SwitchField, TextField } from './formFields'
 import type { DefinitionDevice, DefinitionSummary, EntityType } from './model'
@@ -71,8 +71,8 @@ function parentSources() {
   const hass = useContext(HassCtx)
   if (!hass || !useContext(QueryClientContext)) return { definitions: () => undefined, types: () => undefined }
   const api = entityApi(hass)
-  // Not under the lists' key: a save or a delete here does not change which others are devices.
-  const definitions = useQuery(() => ({ queryKey: ['entity-definition-parents'], queryFn: () => api.list(), staleTime: 30_000 }))
+  // Under the lists' key, which every save, delete and switch makes stale: a device definition saved since is offered.
+  const definitions = useQuery(() => ({ queryKey: [...definitionsQueryKey, 'parents'], queryFn: () => api.list(), staleTime: 30_000 }))
   const classes = () => (definitions.data ?? []).some(d => d.logic.kind === 'class')
   // Only for a definition built from a class: whether it is a device is its class's.
   const types = useQuery(() => ({ queryKey: [...entityTypesQueryKey], queryFn: () => api.types(), staleTime: 0, enabled: classes() }))
@@ -117,7 +117,9 @@ function DeviceParent(props: { device: DefinitionDevice | null; onChange(device:
   }
   const value = () => (picking() || deviceId() !== undefined ? deviceChoice : named() !== undefined ? definitionChoice(named()!) : '')
   const ownDevices = () => new Set((registry()?.entities ?? []).filter(e => props.ownEntityIds.includes(e.entity_id) && e.device_id).map(e => e.device_id))
-  const devices = () => (registry()?.devices ?? []).filter(d => !ownDevices().has(d.id)).map(d => ({ value: d.id, label: d.name ?? d.id }))
+  // Each with its area, as a step's device picker shows it.
+  const devices = () => (registry()?.devices ?? []).filter(d => !ownDevices().has(d.id))
+    .map(d => ({ value: d.id, label: d.name ?? d.id, detail: d.area_id ? registry()?.area(d.area_id)?.name : undefined }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.value.localeCompare(b.value))
   const pickerId = createUniqueId(), pendingId = `${pickerId}-pending`
   /** While no device is picked yet, what the device is still part of (it is saved so until one is). */

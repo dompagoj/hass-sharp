@@ -370,6 +370,10 @@ it('opens a definition that is off without an activation alert, saying it is off
   expect(root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.checked).toBe(false)
   expect(root.textContent).not.toContain('Saved, but not activated')
   expect(inspector(root).querySelector('.hs-insp-off')).not.toBeNull()
+  // Off, its saved revision is not loaded, which is no reason to save it again: saving it would not start it.
+  expect(root.querySelector('.hs-save-chip__text')!.textContent).toBe('Saved')
+  expect(button(root, 'Save').getAttribute('aria-disabled')).toBe('true')
+  expect(button(root, 'Save').title).toBe('Nothing to save: every change is saved')
   // Its entities are still known from Home Assistant's registry.
   expect(entityRow(root, 'relay').querySelector('.hs-def-row__id code')!.textContent).toBe('switch.plug_relay')
 })
@@ -382,7 +386,8 @@ it('deletes a saved definition after a confirmation that says its entities leave
   expect(dialog.textContent).toContain('Plug and its entities are removed from Home Assistant, with their device if it has one. This cannot be undone.')
   button(dialog, 'Delete').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities'))
-  expect(fixture.entities.requests.at(-1)).toEqual({ operation: 'delete', id: 'plug', expectedRevision: 1 })
+  // The lists read again after it (Part of's among them).
+  expect(fixture.entities.requests.filter(r => r.operation === 'delete')).toEqual([{ operation: 'delete', id: 'plug', expectedRevision: 1 }])
   expect(fixture.entities.documents.has('plug')).toBe(false)
   expect(root.querySelector('h1')!.textContent).toBe('Entities')
 })
@@ -527,11 +532,16 @@ it('starts a new definition named from the address, with one binary sensor named
   // The ten types, how a camera shows a frame, and what HTTP requests, downloads and restored state do.
   const help = document.querySelector('dialog[open]')!.textContent!
   // Which entities a State follows (Visual/StateDependencies.cs): those chosen in the steps it reads, not any value wired in.
-  expect(help).toContain('A State step gives an entity its state: wire values into it, and it is worked out again whenever an entity chosen in a Has state or Current state step it reads changes (not one read by a step such as Read entity).')
+  expect(help).toContain('A State step gives an entity its state: wire values into it, and it is worked out again whenever an entity chosen in a step it reads, such as Has state or Current state, changes (not one read by a step such as Read entity).')
   expect(help).not.toContain('whenever one of them changes')
-  // A State's runs are recorded when its run history is turned on, as a trigger's are.
-  expect(help).toContain('a trigger or a State records them only when its run history is turned on')
+  // A State's runs are recorded when its run history is turned on, as a trigger's and a frame's are; a command's and a
+  // start's unless it is turned off.
+  expect(help).toContain('When commanded and When started record their runs, listed under Runs, unless their run history is turned off; '
+    + 'a trigger, a State or a When a frame is needed records them only when it is turned on, and a trigger also when it is started with Run now.')
   expect(help).not.toContain('a State never does')
+  // Off, the entities it made stay unavailable; one saved off has made none yet.
+  expect(help).toContain('Turned off, the definition\'s entities stay in Home Assistant as unavailable; deleting it removes them. '
+    + 'A definition saved off, such as a copy, creates its entities the first time it is turned on.')
   expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light, a cover or a camera')
   expect(help).toContain('A camera shows the picture its last Show frame step gave it, such as one taken with Take a picture and drawn on. '
     + 'With a When a frame is needed step, its steps make a new picture when Home Assistant asks for one, which it does only while something is watching the camera or asks for its picture: nothing runs otherwise.')
@@ -1528,12 +1538,13 @@ it('describes the Trigger step for a definition in the step library and the insp
 })
 
 // ---- Part of: the device a definition's device is connected through.
-const device = (id: string, name: string) => ({ id, name, area_id: null })
-/** The registry with a device for the plug's relay, and two Home Assistant devices. */
+const device = (id: string, name: string, area_id: string | null = null) => ({ id, name, area_id })
+/** The registry with a device for the plug's relay, and two Home Assistant devices, one of them in an area. */
 const devicesRegistry = () => ({
   ...registry,
   entities: [...registry.entities, { ...registryEntity('switch.plug_relay', 'Relay'), device_id: 'plug-device' as string | null }],
-  devices: [device('zigbee', 'Zigbee coordinator'), device('plug-device', 'Plug'), device('attic', 'Attic router')],
+  areas: [{ area_id: 'loft', name: 'Loft', floor_id: null }],
+  devices: [device('zigbee', 'Zigbee coordinator'), device('plug-device', 'Plug'), device('attic', 'Attic router', 'loft')],
 })
 const partOf = (root: Element) => control(root.querySelector('[aria-label="Device"]')!, 'via') as HTMLSelectElement
 const shownChoices = (select: HTMLSelectElement) => [...select.options].map(o => o.textContent)
@@ -1550,9 +1561,12 @@ it('makes the device part of another definition that is a device, or of a Home A
   choose(partOf(root), 'definition:hub')
   expect(json(root).definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub' } })
   expect(json(root).definition.device.via).toEqual({ definition: 'hub' })
+  // A device definition saved since the list was read (well within its 30 s) is offered once a save makes the lists stale.
+  fixture.entities.seed('router', { ...newGraphDefinition('Router'), device: {} })
   button(root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub' } }))
   await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  await vi.waitFor(() => expect(shownChoices(partOf(root))).toEqual(['Nothing', 'Bridge', 'Hub', 'Router', 'A Home Assistant device…']))
   dispose!(); document.body.innerHTML = ''
   const again = await openPlug(undefined, fixture, devicesRegistry())
   await vi.waitFor(() => expect(partOf(again.root).value).toBe('definition:hub'))
@@ -1570,7 +1584,9 @@ it('makes the device part of another definition that is a device, or of a Home A
   expect(again.root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
   picker().click()
   const options = () => [...again.root.querySelectorAll<HTMLElement>('[aria-label="Device"] [role="option"]')]
-  expect(options().map(o => o.textContent)).toEqual(['Attic router', 'Zigbee coordinator'])
+  expect(options().map(o => o.querySelector('span')!.textContent)).toEqual(['Attic router', 'Zigbee coordinator'])
+  // Each with its area, as the device picker of a step shows it.
+  expect(options().map(o => o.querySelector('small')?.textContent ?? null)).toEqual(['Loft', null])
   options()[1].click()
   expect(json(again.root).definition.device.via).toEqual({ deviceId: 'zigbee' })
   expect(partOf(again.root).value).toBe('device')

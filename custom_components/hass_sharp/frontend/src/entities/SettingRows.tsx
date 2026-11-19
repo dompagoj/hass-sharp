@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, Index, on, Show } from 'solid-js'
+import { batch, createEffect, createSignal, createUniqueId, Index, on, Show } from 'solid-js'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { settingTypes, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
@@ -122,8 +122,11 @@ function SettingRow(props: { setting: DefinitionSetting; rows: SettingRowsProps;
                 const problem = settingKeyProblem(to, others())
                 if (problem) return problem
                 const from = key()
-                rows.commit(renameSetting(rows.graph, from, to))
-                props.onRenamed(from, to)
+                // Together, as an entity's key: the row stays open, and its fields (and the focus) with it.
+                batch(() => {
+                  rows.commit(renameSetting(rows.graph, from, to))
+                  props.onRenamed(from, to)
+                })
               }} />
           </Show>
           <TextField name="label" label="Label" text={text(props.setting.label)} placeholder="Not set" hint="How the Setting step names it."

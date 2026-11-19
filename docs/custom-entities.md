@@ -42,8 +42,8 @@ either sensor changes. Use two binary sensors of your own where these steps name
    the step (or drag it onto the canvas). In its **Entity** field, pick
    `binary_sensor.hallway_motion`. Its **State** is already `on`.
 5. Add a second **Has state** step and pick `binary_sensor.kitchen_motion`.
-6. Add an **Or** step and a **State** step. The State's **Entity** is already Any
-   motion, the definition's only entity.
+6. Add an **Or** step (under **Logic**) and a **State** step (under **Entity**). The
+   State's **Entity** is already Any motion, the definition's only entity.
 7. Wire the values: drag from the first Has state's **Result** to Or's **First
    value**, from the second Has state's **Result** to Or's **Second value**, and from
    Or's **Result** to State's **On**.
@@ -52,8 +52,9 @@ either sensor changes. Use two binary sensors of your own where these steps name
    Assistant. Its key can no longer change.
 
 As a document, the definition you built is this one, apart from the ids, labels and
-positions the panel chooses, and the State's **Track in run history**, which the panel
-writes out as off. It is the example "Motion in either room" in
+positions the panel chooses, the State's **Track in run history**, which the panel
+writes out as off, and its **On**, which the panel writes as `{"kind": "unset"}`
+beside the wire into it. It is the example "Motion in either room" in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json):
 
 <!-- example: Motion in either room -->
@@ -205,7 +206,8 @@ in when it first adds it) are shown there.
 
 **Part of** says which device this one is connected through, such as a hub: Nothing,
 another entity definition that is a device, or **A Home Assistant device…**, which
-offers the devices Home Assistant has. HassSharp does not check it when you save.
+offers the devices Home Assistant has. HassSharp does not check it when you save, and
+a cycle (two devices each part of the other) is not refused either.
 When the device is set up, a parent Home Assistant does not have is left out, and
 clears an earlier link.
 
@@ -562,7 +564,9 @@ steps to trace.
   running".
 - Each card on the **Entities** page, and the editor's top bar, has an on/off
   switch. A definition that is on starts again whenever Home Assistant starts.
-- Turned off, the definition's entities stay in Home Assistant as unavailable.
+- Turned off, the definition's entities stay in Home Assistant as unavailable. A
+  definition saved off (a copy, or a new one saved with `enabled: false` through
+  MCP) creates its entities the first time it is turned on.
 - **Delete** is in a card's menu and, as **Delete entity definition**, at the bottom
   of the definition's form. Deleting removes the entities and the device, the run
   history and the entities' stored states, and cannot be undone.

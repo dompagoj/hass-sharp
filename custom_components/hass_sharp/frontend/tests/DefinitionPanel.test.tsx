@@ -143,11 +143,25 @@ describe('the entities', () => {
     expect(key.value).toBe('Motion!')
     expect(row.textContent).toContain('Lower-case letters, digits and underscores, starting with a letter; at most 40 characters.')
     expect(definition(current()).entities[0].key).toBe('any_motion')
-    type(key, 'motion')
+    // Taken with Enter, the new key leaves the row open under it with the same fields, and the focus in the key's.
+    const typeSelect = control(row, 'domain')
+    key.focus()
+    key.value = 'motion'
+    key.dispatchEvent(new Event('input', { bubbles: true }))
+    key.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(definition(current()).entities[0].key).toBe('motion')
     expect(current().nodes[0].config.entity).toBe('motion')
-    // The row stays open under its new key.
-    expect(entityRow(el, 'motion').querySelector('[data-field="key"]')).not.toBeNull()
+    expect(control(entityRow(el, 'motion'), 'key')).toBe(key)
+    expect(document.activeElement).toBe(key)
+    // Taken as the focus moves on (Tab, or a click into the next field), the field moved to keeps it.
+    key.value = 'movement'
+    key.dispatchEvent(new Event('input', { bubbles: true }))
+    typeSelect.focus()
+    expect(definition(current()).entities[0].key).toBe('movement')
+    expect(typeSelect.isConnected).toBe(true)
+    expect(document.activeElement).toBe(typeSelect)
+    history.undo()
+    expect(current().nodes[0].config.entity).toBe('motion')
     history.undo()
     expect(current().nodes[0].config.entity).toBe('any_motion')
   })
@@ -380,6 +394,28 @@ describe('the settings', () => {
     expect(definition(graph()).settings.map(s => s.key)).toEqual(['Host name', 'password'])
     type(control(row, 'label'), '  Address  ')
     expect(definition(graph()).settings[0].label).toBe('Address')
+  })
+
+  it('keeps the row open, with the same fields and the focus where it was, when a setting\'s key is renamed', () => {
+    const { el, graph } = mount(editorGraph(plug()))
+    const row = expand(settingRow(el, 'host'))
+    const key = control(row, 'key'), label = control(row, 'label')
+    // Taken with Enter: the focus stays in the key's field.
+    key.focus()
+    key.value = 'address'
+    key.dispatchEvent(new Event('input', { bubbles: true }))
+    key.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(definition(graph()).settings[0].key).toBe('address')
+    expect(control(settingRow(el, 'address'), 'key')).toBe(key)
+    expect(document.activeElement).toBe(key)
+    // Taken as the focus moves on to the next field: that field keeps it.
+    key.value = 'hostname'
+    key.dispatchEvent(new Event('input', { bubbles: true }))
+    label.focus()
+    expect(definition(graph()).settings[0].key).toBe('hostname')
+    expect(label.isConnected).toBe(true)
+    expect(control(settingRow(el, 'hostname'), 'label')).toBe(label)
+    expect(document.activeElement).toBe(label)
   })
 
   it('says when a new type removed a setting\'s value, and not when the value fits it', () => {

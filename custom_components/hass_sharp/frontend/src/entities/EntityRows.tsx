@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, For, Index, Match, on, Show, Switch } from 'solid-js'
+import { batch, createEffect, createSignal, createUniqueId, For, Index, Match, on, Show, Switch } from 'solid-js'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { entityTypeLabel, words, type ConfigSpec, type VisualCatalogSnapshot } from '../visual/contract'
@@ -171,8 +171,12 @@ function EntityRow(props: {
                 const problem = keyProblem(value, others())
                 if (problem) return problem
                 const from = key()
-                rows.commit(renameEntityKey(rows.graph, from, value))
-                props.onRenamed(from, value)
+                // Together: the row's open state follows the key before the body is drawn again, so the body stays, and
+                // the field that has the focus (or is being given it) with it.
+                batch(() => {
+                  rows.commit(renameEntityKey(rows.graph, from, value))
+                  props.onRenamed(from, value)
+                })
               }} />
           </Show>
           <SelectField name="domain" label="Type" value={props.entity.domain} choices={typeChoices()} onChange={retype}
