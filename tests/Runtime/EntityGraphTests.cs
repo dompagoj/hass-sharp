@@ -2634,13 +2634,14 @@ static class EntityGraphTests
     /// <summary>
     /// A frame flow still running at the time limit is cancelled (its run records why): the request gets the last good
     /// frame, the next one starts a flow of its own, and once the picture comes again the camera makes frames again.
-    /// The time limit is 0.2 s here.
+    /// The time limit is 0.2 s for the flows whose picture never comes, and the usual one for the others: on a slow
+    /// machine a flow that makes its frame can take longer than 0.2 s, and only one that hangs must pass the limit.
     /// </summary>
     static async Task AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers()
     {
         await using var rig = await Rig.Start("frame-late", ("camera.front", "idle"));
         CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(20);
-        CameraFrames.MakeLimit = TimeSpan.FromMilliseconds(200);
+        var limit = CameraFrames.MakeLimit;
         var (front, black) = (Front(), Front(black: true));
         var answer = 0;
         // 1: Home Assistant never answers.
@@ -2649,6 +2650,8 @@ static class EntityGraphTests
         var automationId = saved["document"]!["automationId"]!.GetValue<string>();
         await rig.Started("annotated");
         var good = await Frame(rig);
+        // Each attempt takes the limit as it begins.
+        CameraFrames.MakeLimit = TimeSpan.FromMilliseconds(200);
         Volatile.Write(ref answer, 1);
         JsonObject[] Cancelled() => rig.History(automationId).Where(r => r["status"]!.GetValue<string>() == "Cancelled").ToArray();
         for (var i = 1; i <= 2; i++)
@@ -2664,6 +2667,7 @@ static class EntityGraphTests
         Check(rig.Home.Pictures().Length == 3, $"the second request started a flow of its own: {rig.Home.Pictures().Length} pictures");
         Check(Cancelled().All(r => r["error"]?.GetValue<string>() == "Took longer than 0.2 s"), "the runs say why they were cancelled: " + Lines(Cancelled().Select(r => r.ToJsonString())));
         Check(Problems(rig).SequenceEqual(["Annotated: Annotated could not make a frame: it took longer than 0.2 s"]), "the time limit is logged once: " + Lines(Problems(rig)));
+        CameraFrames.MakeLimit = limit;
         Volatile.Write(ref answer, 2);
         await Task.Delay(30);
         var again = await Frame(rig);
