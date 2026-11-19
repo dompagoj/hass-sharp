@@ -38,8 +38,8 @@ either sensor changes. Use two binary sensors of your own where these steps name
    definition. Open its row and set **Name** to `Any motion`, **Key** to
    `any_motion` and **Device class** to `motion`. Leave **Type** as Binary sensor.
    A text field takes its change when you leave it or press Enter.
-4. In the **Steps** library on the left, search for `Has state` and click it to add
-   the step (or drag it onto the canvas). In its **Entity** field, pick
+4. In the **Steps** library on the left, search for `Has state` and drag it onto the
+   canvas. In its **Entity** field, pick
    `binary_sensor.hallway_motion`. Its **State** is already `on`.
 5. Add a second **Has state** step and pick `binary_sensor.kitchen_motion`.
 6. Add an **Or** step (under **Logic**) and a **State** step (under **Entity**). The

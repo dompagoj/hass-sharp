@@ -101,14 +101,9 @@ it('finds library steps by their kind id as well as their name', () => {
   for (const [query, label] of [['xor', 'Exclusive or'], ['foreach', 'For each']]) {
     search.value = query
     search.dispatchEvent(new Event('input', { bubbles: true }))
-    expect([...host.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label'))).toEqual([`Add ${label}`])
+    expect([...host.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label'))).toEqual([label])
   }
 })
-function dragEvent(type: string, data: DataTransfer, clientX = 0, clientY = 0) {
-  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
-  Object.defineProperty(event, 'dataTransfer', { value: data })
-  return event
-}
 
 it('entity picker keyboard selection works inside the editor shortcut boundary', async () => {
   const host = root()

@@ -99,6 +99,8 @@
 .hs-app .hs-lib__item { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 8px; width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--hs-text); font: inherit; text-align: left; cursor: grab; transition: background var(--hs-motion) ease-out; }
 .hs-app .hs-lib__item:hover { background: var(--hs-soft); }
 .hs-app .hs-lib__item:active { cursor: grabbing; }
+/* The step the panel describes. */
+.hs-app .hs-lib__item[aria-pressed="true"] { border-color: color-mix(in oklab, var(--hs-cat, var(--hs-accent)) 45%, transparent); background: color-mix(in oklab, var(--hs-cat, var(--hs-accent)) 10%, var(--hs-surface)); }
 .hs-app .hs-lib__item:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: -1px; }
 .hs-app .hs-lib__icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: var(--hs-cat, var(--hs-accent)); background: color-mix(in oklab, var(--hs-cat, var(--hs-accent)) 13%, var(--hs-surface)); }
 .hs-app .hs-lib__text { display: grid; min-width: 0; }

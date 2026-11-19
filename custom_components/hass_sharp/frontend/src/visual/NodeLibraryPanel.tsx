@@ -15,8 +15,10 @@ export interface NodeLibraryPanelProps {
   /** Narrowed to a rail: an expand button and "Add step". */
   collapsed: boolean
   onCollapsedChange(collapsed: boolean): void
-  /** A step clicked (or chosen with Enter): the page adds it at the centre of the view. `label` is its library name. */
-  onAdd(kind: NodeKind, label: string): void
+  /** A step clicked (or chosen with Enter or Space): the page describes it; `undefined` when the described one is clicked again. */
+  onPreview(kind: NodeKind | undefined): void
+  /** The kind the page describes: its item shows pressed. */
+  previewed?: NodeKind
   /** "Add step": the canvas's quick-add palette (the library's stand-in on narrow screens and in the rail). */
   onQuickAdd(): void
   disabled?: boolean
@@ -25,7 +27,7 @@ export interface NodeLibraryPanelProps {
 /**
  * The step library at the left of the editor: a search over every step (by name, kind id, description and
  * category), the steps grouped by category with the category's icon and colour, each with its name and one line of
- * description. Click adds a step at the centre of the view, drag places it on the canvas. It narrows to a rail; on
+ * description. Click describes a step in the right panel, drag places it on the canvas. It narrows to a rail; on
  * narrow screens only its "Add step" button shows (CSS), which opens quick-add.
  */
 export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
@@ -87,7 +89,7 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
             value={search()}
             onInput={event => setSearch(event.currentTarget.value)}
           />
-          <p class="hs-lib__hint">Click to add · drag onto the canvas</p>
+          <p class="hs-lib__hint">Click for details · drag onto the canvas</p>
           <div class="hs-lib__list">
             <For each={groups()}>
               {(group, index) => (
@@ -107,10 +109,11 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
                               type="button"
                               class="hs-lib__item"
                               style={{ '--hs-cat': identity.color }}
-                              aria-label={`Add ${item.label}`}
+                              aria-label={item.label}
                               aria-describedby={describedBy}
+                              aria-pressed={props.previewed === item.kind}
                               draggable={true}
-                              onClick={() => props.onAdd(item.kind, item.label)}
+                              onClick={() => props.onPreview(props.previewed === item.kind ? undefined : item.kind)}
                               onDragStart={event => {
                                 event.dataTransfer?.setData(NODE_DRAG_TYPE, item.kind)
                                 if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'

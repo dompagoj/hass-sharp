@@ -19,7 +19,7 @@ import { createFullscreen, createFullscreenPage, FullscreenButton } from './full
 import { media } from './media'
 import { createVisualSession } from './session'
 import { visualError, type VisualDiagnostic, type VisualDocument } from './api'
-import { createNodeAt, serializeGraph, type NodeKind } from './graph'
+import { serializeGraph, type NodeKind } from './graph'
 import { graphDocument } from './contract'
 import { automationAdapter, type EditorAdapter, type EditorContext, type EditorDocument } from './adapter'
 import { runHistoryInterval } from '../components/runDispatch'
@@ -235,17 +235,19 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
       }, editor)
   }
 
-  // ---- Step library, and adding a step.
+  // ---- Step library: a click describes a step in the panel (a drag or quick-add adds one).
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false)
   const [quickAddRequest, setQuickAddRequest] = createSignal(0)
-  const addStep = (kind: NodeKind, label?: string) => {
-    const next = createNodeAt(graph(), kind, flow?.placeAtCentre() ?? { x: 60, y: 100 }, undefined, session.catalog())
-    if (next === graph()) {
-      flow?.notify(`Cannot add ${label ?? 'that step'}: this Home Assistant does not offer it.`)
-      return
-    }
-    commit(next)
-    choose(next.nodes.at(-1)!.id)
+  /** The kind of step the panel describes, until anything is selected or the description is closed. */
+  const [previewKind, setPreviewKind] = createSignal<NodeKind>()
+  const preview = (kind: NodeKind | undefined) => {
+    if (!kind) return setPreviewKind(undefined)
+    // Nothing stays selected behind the description, so Delete never removes a step that is not shown.
+    flow?.deselect()
+    choose(undefined)
+    setPreviewKind(kind)
+    // Focus stays on the library item.
+    openPanel(false)
   }
 
   // ---- The bottom drawer.
@@ -536,7 +538,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           document={graphDocument(graph())}
           collapsed={libraryCollapsed()}
           onCollapsedChange={setLibraryCollapsed}
-          onAdd={addStep}
+          onPreview={preview}
+          previewed={previewKind()}
           onQuickAdd={() => setQuickAddRequest(value => value + 1)}
         />
         <div class="hs-canvas-area">
@@ -546,7 +549,10 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             addStepRequest={quickAddRequest()}
             selectedId={selectedId()}
             onSelect={choose}
-            onSelectionChange={(ids, edge) => setSelection({ ids, edge })}
+            onSelectionChange={(ids, edge) => {
+              setSelection({ ids, edge })
+              if (ids.length || edge) setPreviewKind(undefined)
+            }}
             onChange={commit}
             diagnostics={session.diagnostics()}
             fitViewKey={loads() || undefined}
@@ -576,6 +582,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           open={panelOpen()}
           onClose={() => setPanelOpen(false)}
           onOpen={() => openPanel()}
+          preview={previewKind()}
+          onPreviewClose={() => setPreviewKind(undefined)}
           onDuplicate={ids => inPanel(() => flow?.duplicate(ids) ?? [])}
           onEditCode={editCode}
           onNotice={text => flow?.notify(text, { keep: true })}

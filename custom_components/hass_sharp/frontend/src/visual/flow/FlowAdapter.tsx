@@ -59,7 +59,7 @@ export interface FlowAdapterProps {
   trace?: FlowTrace
   /** Rendered at the end of the canvas toolbar (the editor page's "Full screen" button). */
   toolbarExtra?: JSX.Element
-  /** Receives the canvas's own actions for the page around it (the inspector's Duplicate, the library's click-to-add). */
+  /** Receives the canvas's own actions for the page around it (the inspector's Duplicate, the library's description). */
   controls?(controls: FlowControls): void
   /**
    * Opens the code editor of a Custom C# node: its card's "Edit code" ("View code" when read only) control, a
@@ -74,8 +74,8 @@ export interface FlowAdapterProps {
 export interface FlowControls {
   /** Duplicates the steps the way the canvas's Duplicate does (below any card in the way) and returns the copies' ids. */
   duplicate(ids: string[]): string[]
-  /** Where a step added at the centre of the view goes: there, or below the cards in the way. */
-  placeAtCentre(): { x: number; y: number }
+  /** Clears the selection: the steps and the wire (the step library describing a step). */
+  deselect(): void
   /** Pans, if needed, so the step's card is visible above `bottom` (a client y, such as the top of a bottom sheet). */
   reveal(id: string, bottom: number): void
   /**
@@ -901,7 +901,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   }
   props.controls?.({
     duplicate: duplicateSteps,
-    placeAtCentre: () => placeNew(toFlow(centre())),
+    deselect: () => select([]),
     notify,
     reveal: (id, bottom) => {
       const card = [...canvas.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.getAttribute('data-id') === id)

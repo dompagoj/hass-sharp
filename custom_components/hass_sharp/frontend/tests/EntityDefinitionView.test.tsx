@@ -9,6 +9,7 @@ import { nodeCatalog } from '../src/visual/contract'
 import { newGraphDefinition, type DefinitionBody } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
 import { icons } from '../src/visual/icons'
+import { dropStep } from './library'
 
 // The entity definition editor in the panel, against the in-memory entity API: a definition is built, saved, read
 // back, switched, deleted and recovered entirely through the page.
@@ -140,16 +141,16 @@ it('builds the derived motion sensor from a new definition through the page, and
   rename(root, 'Any motion')
   const ids: string[] = []
   for (const [entity, text] of [['binary_sensor.motion_a', 'Has state ▸ motion A'], ['binary_sensor.motion_b', 'Has state ▸ motion B']]) {
-    button(root, 'Add Has state').click()
+    dropStep(root, 'Has state')
     ids.push(lastStep(root))
     await pickEntity(root, entity)
     label(root, text)
   }
-  button(root, 'Add Or').click()
+  dropStep(root, 'Or')
   ids.push(lastStep(root))
   label(root, '')
   // The definition's only entity is chosen for a new State (ruling R12).
-  button(root, 'Add State').click()
+  dropStep(root, 'State')
   ids.push(lastStep(root))
   label(root, 'State ▸ any motion')
   wire(root, ids[0], 'value', ids[2], 'left')
@@ -258,12 +259,12 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   type(control(row, 'value'), 'hunter2')
 
   // A time pattern polls; it sets the power.
-  button(root, 'Add Trigger').click()
+  dropStep(root, 'Trigger')
   const poll = lastStep(root)
   button(inspector(root), 'Change trigger type').click()
   ;[...inspector(root).querySelectorAll<HTMLElement>('.hs-when__choice')].find(c => c.textContent?.includes('Time pattern'))!.click()
   type(inspector(root).querySelector<HTMLInputElement>('input[aria-label="Minutes"]')!, '/10')
-  button(root, 'Add Set state').click()
+  dropStep(root, 'Set state')
   const setPower = lastStep(root)
   // Its only value is ready to fill: a Set state of an entity with one state value is for that value.
   await pickOption(root, 'entity', 'Power')
@@ -273,11 +274,11 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   // Turning the relay on and off: a When commanded each, the relay pre-chosen (the only entity that takes commands).
   const commands: string[] = []
   for (const command of ['Turn on', 'Turn off']) {
-    button(root, 'Add When commanded').click()
+    dropStep(root, 'When commanded')
     const when = lastStep(root)
     commands.push(when)
     if (command === 'Turn off') await pickOption(root, 'command', 'Turn off')
-    button(root, 'Add Set state').click()
+    dropStep(root, 'Set state')
     const set = lastStep(root)
     await pickOption(root, 'entity', 'Relay')
     // A new Set state of a switch opens On, as it is saved; Off is one click.
@@ -652,14 +653,14 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
   // Each step is added with its title as its label; the example's steps have none, so the label is cleared.
   const ids: string[] = []
   // The power's State: 42 W.
-  button(root, 'Add State').click()
+  dropStep(root, 'State')
   ids.push(lastStep(root))
   label(root, '')
   await pickOption(root, 'entity', 'Power')
   choose(inspector(root).querySelector<HTMLSelectElement>('[data-input-id="value"] select[aria-label="Value kind"]')!, 'number')
   type(inspector(root).querySelector<HTMLInputElement>('[data-input-id="value"] input[aria-label="Value"]')!, '42')
   // The online State: on.
-  button(root, 'Add State').click()
+  dropStep(root, 'State')
   ids.push(lastStep(root))
   label(root, '')
   await pickOption(root, 'entity', 'online')
@@ -667,12 +668,12 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
   // Turn on and Turn off, each setting the relay (the only entity that takes commands, so chosen for them).
   for (const [command, on] of [['Turn on', true], ['Turn off', false]] as const) {
     deselect(root)
-    button(root, 'Add When commanded').click()
+    dropStep(root, 'When commanded')
     const when = lastStep(root)
     ids.push(when)
     label(root, '')
     if (command === 'Turn off') await pickOption(root, 'command', 'Turn off')
-    button(root, 'Add Set state').click()
+    dropStep(root, 'Set state')
     const set = lastStep(root)
     ids.push(set)
     label(root, '')
@@ -1161,7 +1162,7 @@ it('blocks Save while a required option is empty or a number option is not a num
   expect(control(entityRow(root, 'level'), 'option:min').getAttribute('aria-invalid')).toBe('true')
   expect(button(root, 'Save').disabled).toBe(true)
   // Kept while a step is selected, and when the form shows again (the step's adding then undone).
-  button(root, 'Add State').click()
+  dropStep(root, 'State')
   deselect(root)
   expect(control(expand(entityRow(root, 'level')), 'option:min').value).toBe('5,5')
   undo(root)
@@ -1344,11 +1345,11 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   control(entityRow(root, 'lamp'), 'option:dimmable').click()
   addTyped(root, 'level', 'number')
   // A number's Set value: its value an output of When commanded, into Set state's Value.
-  button(root, 'Add When commanded').click()
+  dropStep(root, 'When commanded')
   const set = lastStep(root)
   await pickOption(root, 'entity', 'level')
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Value'])
-  button(root, 'Add Set state').click()
+  dropStep(root, 'Set state')
   const setLevel = lastStep(root)
   await pickOption(root, 'entity', 'level')
   // One state value: ready to fill, as it is all the step sets.
@@ -1357,11 +1358,11 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   flow(root, set, setLevel)
   // The light's Turn on: its brightness an output, into Set state's optional Brightness; On set when the light was chosen.
   deselect(root)
-  button(root, 'Add When commanded').click()
+  dropStep(root, 'When commanded')
   const on = lastStep(root)
   await pickOption(root, 'entity', 'Lamp')
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Brightness'])
-  button(root, 'Add Set state').click()
+  dropStep(root, 'Set state')
   const setOn = lastStep(root)
   await pickOption(root, 'entity', 'Lamp')
   expect(inspector(root).querySelector('[data-input-id="is_on"] .hs-insp-unset')).toBeNull()
@@ -1373,11 +1374,11 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   flow(root, on, setOn)
   // Turn off sets On alone.
   deselect(root)
-  button(root, 'Add When commanded').click()
+  dropStep(root, 'When commanded')
   const off = lastStep(root)
   await pickOption(root, 'entity', 'Lamp')
   await pickOption(root, 'command', 'Turn off')
-  button(root, 'Add Set state').click()
+  dropStep(root, 'Set state')
   const setOff = lastStep(root)
   await pickOption(root, 'entity', 'Lamp')
   const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
@@ -1421,7 +1422,7 @@ it('shows the reason a definition that is on could not start, beside Failed', as
 it('adds HTTP request and Download file to an entity definition, with forms that read as their settings say', async () => {
   const { root } = setup('/entities/new?name=Plug')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  button(root, 'Add HTTP request').click()
+  dropStep(root, 'HTTP request')
   const field = (id: string) => inspector(root).querySelector<HTMLElement>(`[data-input-id="${id}"]`)!
   const fields = () => [...inspector(root).querySelectorAll<HTMLElement>('[data-input-id]')].map(f => f.dataset.inputId)
   expect(fields()).toEqual(['method', 'responseType', 'timeout', 'failOnStatus', 'hideResponse', 'url', 'headers', 'body'])
@@ -1436,7 +1437,7 @@ it('adds HTTP request and Download file to an entity definition, with forms that
   expect(['url', 'headers', 'body'].map(id => field(id).textContent?.includes(id === 'url' ? 'URL' : id === 'headers' ? 'Headers' : 'Body'))).toEqual([true, true, true])
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Status', 'Body', 'Headers'])
   deselect(root)
-  button(root, 'Add Download file').click()
+  dropStep(root, 'Download file')
   expect(fields()).toEqual(['name', 'url', 'sha256'])
   expect(field('sha256').textContent).toContain('SHA-256 checksum')
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Path'])
@@ -1519,7 +1520,7 @@ it('offers Run now only while the saved definition runs, without unsaved changes
   // Never saved.
   page = setup('/entities/new?name=Poller')
   await vi.waitFor(() => expect(button(page.root, 'Save').disabled).toBe(false))
-  button(page.root, 'Add Trigger').click()
+  dropStep(page.root, 'Trigger')
   await vi.waitFor(() => expect(runNow(page.root)).not.toBeNull())
   expect(runNow(page.root)!.disabled).toBe(true)
   expect(runNow(page.root)!.title).toBe('Save the entity definition to run this step')
@@ -1568,7 +1569,7 @@ it('offers Run now only while the saved definition runs, without unsaved changes
 it('describes the Trigger step for a definition in the step library and the inspector, and says Run now is recorded', async () => {
   const { root } = await openPlug(f => f.entities.seed('plug', pollingPlug()))
   const described = 'Run the steps after it when something happens, at a set time or on an interval.'
-  expect(root.querySelector('.hs-lib__item[aria-label="Add Trigger"] small')!.textContent).toBe(described)
+  expect(root.querySelector('.hs-lib__item[aria-label="Trigger"] small')!.textContent).toBe(described)
   press(card(root, 'poll'))
   await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-desc')?.textContent).toBe(described))
   const history = [...inspector(root).querySelectorAll<HTMLLabelElement>('label')].find(l => l.querySelector('strong')?.textContent === 'Track in run history')!

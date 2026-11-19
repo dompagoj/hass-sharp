@@ -33,12 +33,12 @@ it('the automation palette leaves out the entity-only steps and keeps the entity
 
 it('the step library of an automation lists no entity-only step', () => {
   const root = host()
-  dispose = render(() => <NodeLibraryPanel collapsed={false} onCollapsedChange={() => {}} onAdd={() => {}} onQuickAdd={() => {}} />, root)
+  dispose = render(() => <NodeLibraryPanel collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
   const offered = new Set([...root.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label')))
-  for (const kind of entityOnly) expect(offered, kind).not.toContain(`Add ${label(kind)}`)
-  expect(offered).toContain(`Add ${label('entity_is')}`)
-  expect(offered).toContain(`Add ${label('entity_current')}`)
-  expect(offered).toContain(`Add ${label('http_request')}`)
+  for (const kind of entityOnly) expect(offered, kind).not.toContain(label(kind))
+  expect(offered).toContain(label('entity_is'))
+  expect(offered).toContain(label('entity_current'))
+  expect(offered).toContain(label('http_request'))
 })
 
 it('quick-add in an automation lists no entity-only step', () => {
@@ -55,9 +55,9 @@ const entityKinds = [...entityOnly, 'entity_is', 'entity_current', 'trigger', 'l
 
 it('the step library of an entity definition lists its steps and every automation step', () => {
   const root = host()
-  dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onAdd={() => {}} onQuickAdd={() => {}} />, root)
+  dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
   const offered = new Set([...root.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label')))
-  for (const kind of entityKinds) expect(offered, kind).toContain(`Add ${label(kind)}`)
+  for (const kind of entityKinds) expect(offered, kind).toContain(label(kind))
 })
 
 it('quick-add in an entity definition lists its steps and every automation step', () => {
@@ -75,8 +75,8 @@ it.each([
   expect(nodeCatalog.nodes.trigger.description).toBe('Start the automation when something happens, at a set time, or when you run it.')
   expect(catalogPalette(nodeCatalog, document).find(item => item.kind === 'trigger')!.description).toBe(description)
   const root = host()
-  dispose = render(() => <NodeLibraryPanel document={document} collapsed={false} onCollapsedChange={() => {}} onAdd={() => {}} onQuickAdd={() => {}} />, root)
-  expect(root.querySelector('.hs-lib__item[aria-label="Add Trigger"] small')!.textContent).toBe(description)
+  dispose = render(() => <NodeLibraryPanel document={document} collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
+  expect(root.querySelector('.hs-lib__item[aria-label="Trigger"] small')!.textContent).toBe(description)
   dispose()
   dispose = render(() => <QuickAdd document={document} x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)
   const option = root.querySelector('[role="option"][aria-label="Create Trigger"]')!
@@ -121,7 +121,7 @@ it('an automation keeps the catalog\'s order', () => {
 
 it('the step library and quick-add of an entity definition both start with the Entity group', () => {
   const root = host()
-  dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onAdd={() => {}} onQuickAdd={() => {}} />, root)
+  dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
   expect(root.querySelector('.hs-lib__category')!.textContent).toBe('Entity')
   dispose()
   dispose = render(() => <QuickAdd document="entity" x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)

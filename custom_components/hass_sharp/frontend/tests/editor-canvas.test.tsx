@@ -9,6 +9,7 @@ import { analyzeGraph } from '../src/visual/contract'
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { visualFixture } from './visual-fixture'
+import { dragEvent, libraryItem } from './library'
 const VisualEditor = (props: { name: string }) => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={ { ...visualFixture(), user: { is_admin: true } } as any}><RealVisualEditor {...props} /></HassCtx.Provider></QueryClientProvider>
 
 let dispose: (() => void) | undefined
@@ -349,14 +350,14 @@ it('opens a focused keyboard chooser and cancels without creating anything', asy
 it('drops palette nodes at flow coordinates accounting for pan and zoom', () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   const data = new DataTransfer()
-  button(host, 'Add Delay').dispatchEvent(dragEvent('dragstart', data))
+  libraryItem(host, 'Delay').dispatchEvent(dragEvent('dragstart', data))
   const canvas = host.querySelector('[aria-label="Automation canvas"]')!
   // On empty space: exactly at the pointer.
   canvas.dispatchEvent(dragEvent('drop', data, 160, 470))
   expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 600 } })
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   // On the trigger's card (at 60, 100; unmeasured cards count as 260 × 120): 40 px below it instead.
-  button(host, 'Add Delay').dispatchEvent(dragEvent('dragstart', data))
+  libraryItem(host, 'Delay').dispatchEvent(dragEvent('dragstart', data))
   canvas.dispatchEvent(dragEvent('drop', data, 160, 170))
   expect(json(host).nodes.at(-1)).toMatchObject({ kind: 'delay', position: { x: 200, y: 100 + 120 + 40 } })
 })
@@ -431,13 +432,6 @@ it('offers valid steps after an output drag and undoes node plus branch in one o
   button(host, 'Redo').click(); expect(json(host)).toEqual(after)
 })
 
-// happy-dom exposes DragEvent as Event and omits DataTransfer/coordinates.
-function dragEvent(type: string, data: DataTransfer, clientX = 0, clientY = 0) {
-  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
-  Object.defineProperty(event, 'dataTransfer', { value: data })
-  return event
-}
-
 it('does not open a chooser after panning, node drags, resize or drops outside the canvas', async () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   const pane = host.querySelector('.solid-flow__pane')!
@@ -446,7 +440,7 @@ it('does not open a chooser after panning, node drags, resize or drops outside t
   pane.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, clientX: 80, clientY: 80 }))
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()
   const data = new DataTransfer()
-  button(host, 'Add Delay').dispatchEvent(dragEvent('dragstart', data))
+  libraryItem(host, 'Delay').dispatchEvent(dragEvent('dragstart', data))
   document.body.dispatchEvent(dragEvent('drop', data, 1000, 1000))
   expect(json(host).nodes).toHaveLength(3)
   expect(host.querySelector('[aria-label="Search steps"]')).toBeNull()

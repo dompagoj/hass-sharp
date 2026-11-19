@@ -13,6 +13,7 @@ import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { visualFixture } from './visual-fixture'
 import { viewportWidth } from './media-fixture'
+import { dropStep, libraryItem } from './library'
 const VisualEditor = (props: { name: string }) => <QueryClientProvider client={new QueryClient()}><HassCtx.Provider value={ { ...visualFixture(), user: { is_admin: true } } as any}><RealVisualEditor {...props} /></HassCtx.Provider></QueryClientProvider>
 
 let dispose: (() => void) | undefined
@@ -120,11 +121,6 @@ const narrowScreen = () => vi.stubGlobal('matchMedia', (query: string) => ({
 }))
 const json = (host: Element) => { button(host, 'Graph JSON').click(); return JSON.parse(host.querySelector('pre[aria-label="Graph JSON"]')!.textContent!) }
 const focusNode = (host: Element, id: string) => host.querySelector(`[data-id="${id}"]`)!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
-function dragEvent(type: string, data: DataTransfer, clientX = 0, clientY = 0) {
-  const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY })
-  Object.defineProperty(event, 'dataTransfer', { value: data })
-  return event
-}
 
 it('opens visual help from the "⋯" menu without changing the graph, and gives focus back to the menu', async () => {
   const host = root(); dispose = render(() => <VisualEditor name="Help" />, host)
@@ -338,29 +334,37 @@ it('keeps the mobile drawer open when a shared-code diagnostic shows its source 
   expect(host.querySelector('[data-source-line="1"]')!.getAttribute('aria-current')).toBe('true')
 })
 
-it('filters the step library by name, kind id or description, and a click adds the step as one undo step', async () => {
+it('filters the step library by name, kind id or description; a click describes a step and a drop adds it as one undo step', async () => {
   const { host } = mount()
   const search = host.querySelector<HTMLInputElement>('input[aria-label="Search the step library"]')!
   search.value = 'xor'; search.dispatchEvent(new Event('input', { bubbles: true }))
   const labels = () => [...host.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label'))
   expect(labels().length).toBeGreaterThan(0)
   // "xor" is the kind id of Exclusive or.
-  expect(labels()).toEqual(['Add Exclusive or'])
+  expect(labels()).toEqual(['Exclusive or'])
   // Keywords: Constant is also found as "set value" and "literal", the names people may know it by.
   for (const query of ['constant', 'set value', 'literal']) {
     search.value = query; search.dispatchEvent(new Event('input', { bubbles: true }))
-    expect(labels(), query).toContain('Add Constant')
+    expect(labels(), query).toContain('Constant')
   }
   search.value = 'no step is called this'; search.dispatchEvent(new Event('input', { bubbles: true }))
   expect(host.querySelector('.hs-lib')!.textContent).toContain('No step matches that search.')
   search.value = 'delay'; search.dispatchEvent(new Event('input', { bubbles: true }))
-  expect(labels()).toContain('Add Delay')
+  expect(labels()).toContain('Delay')
   expect(host.querySelector('.hs-lib__item')!.getAttribute('draggable')).toBe('true')
-  button(host, 'Add Delay').click()
+  // A click describes the step and adds nothing.
+  libraryItem(host, 'Delay').click()
+  expect(json(host).nodes).toHaveLength(3)
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('true')
+  expect(host.querySelector('[aria-label="Step details"] h2')!.textContent).toBe('Delay')
+  // A drag adds it, selects it and ends the preview.
+  dropStep(host, 'Delay')
   const graph = json(host)
   expect(graph.nodes).toHaveLength(4)
   expect(graph.nodes[3].kind).toBe('delay')
   expect(host.querySelector<HTMLInputElement>('input[aria-label="Node label"]')!.value).toBe('Delay')
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
   button(host, 'Undo').click()
   expect(json(host).nodes).toHaveLength(3)
   // Collapsing to the rail keeps focus on the library.
@@ -369,6 +373,92 @@ it('filters the step library by name, kind id or description, and a click adds t
   await vi.waitFor(() => expect(document.activeElement).toBe(button(host, 'Show step library')))
   button(host, 'Show step library').click()
   await vi.waitFor(() => expect(document.activeElement).toBe(host.querySelector('input[aria-label="Search the step library"]')))
+})
+
+it('a library click with a step selected shows the details and leaves nothing selected to delete', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__node')).not.toBeNull())
+  host.querySelector<HTMLElement>('.solid-flow__node')!.click()
+  await vi.waitFor(() => expect(host.querySelector('.hs-insp-node')).not.toBeNull())
+  const before = json(host).nodes.length
+  libraryItem(host, 'Delay').click()
+  expect(host.querySelector('.hs-insp-node')).toBeNull()
+  expect(host.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  host.querySelector('.hs-flow')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+  expect(json(host).nodes).toHaveLength(before)
+})
+
+it('a library click also clears a selection of several steps, so Delete removes none of them', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__node')).not.toBeNull())
+  const click = (id: string, init: MouseEventInit = {}) => {
+    const card = host.querySelector(`.solid-flow__node[data-id="${id}"]`)!
+    card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, view: window, ...init }))
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, view: window, ...init }))
+    card.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, view: window, ...init }))
+  }
+  click('trigger-1'); click('service-1', { shiftKey: true })
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Selection"]')).not.toBeNull())
+  libraryItem(host, 'Delay').click()
+  expect(host.querySelector('[aria-label="Selection"]')).toBeNull()
+  expect(host.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  host.querySelector('.hs-flow')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+  expect(json(host).nodes).toHaveLength(3)
+})
+
+it('the details stay while the search hides their item, and go when the item is clicked again or a step is selected', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  libraryItem(host, 'Delay').click()
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search the step library"]')!
+  search.value = 'constant'; search.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(host.querySelector('[aria-label="Step details"] h2')!.textContent).toBe('Delay')
+  search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true }))
+  libraryItem(host, 'Delay').click()
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+  libraryItem(host, 'Delay').click()
+  host.querySelector<HTMLElement>('.solid-flow__node')!.click()
+  await vi.waitFor(() => expect(host.querySelector('.hs-insp-node')).not.toBeNull())
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+})
+
+it('Enter on a focused library item shows its details and keeps focus on the item', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const item = libraryItem(host, 'Delay')
+  item.focus()
+  item.click() // what Enter and Space do on a button
+  expect(host.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  expect(host.ownerDocument.activeElement).toBe(item)
+})
+
+it('"Close details" ends the preview, releases the library item and gives it focus back', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  libraryItem(host, 'Delay').click()
+  button(host, 'Close details').click()
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
+  await vi.waitFor(() => expect(document.activeElement).toBe(libraryItem(host, 'Delay')))
+})
+
+it('on a narrow screen a library click opens the sheet on the details, with a step selected before or not', async () => {
+  viewportWidth(800)
+  const { host } = mount()
+  const panel = inspectorOf(host)
+  expect(panel.dataset.open).toBe('false')
+  libraryItem(host, 'Delay').focus()
+  libraryItem(host, 'Delay').click()
+  expect(panel.dataset.open).toBe('true')
+  button(host, 'Close panel').click()
+  expect(panel.dataset.open).toBe('false')
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
+  await settle() // the sheet's close gives focus back to the canvas
+  focusNode(host, 'service-1')
+  expect(panel.querySelector('.hs-insp-node')).not.toBeNull()
+  libraryItem(host, 'Delay').focus()
+  libraryItem(host, 'Delay').click()
+  expect(panel.dataset.open).toBe('true')
+  expect(panel.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  await settle()
+  expect(document.activeElement).toBe(libraryItem(host, 'Delay'))
 })
 
 it('goes full screen with the browser API, folds the library and drawer away, and follows the browser leaving it', async () => {
@@ -581,7 +671,7 @@ it('keeps a narrow screen\'s sheet open for a selection made inside it, and focu
 it('leaves a narrow screen\'s sheet closed for keys and clicks in a card\'s own inputs; Enter on the card opens it (item A)', async () => {
   narrowScreen()
   const { host } = mount()
-  button(host, 'Add Delay').click()
+  dropStep(host, 'Delay')
   const id = json(host).nodes.at(-1).id
   const panel = inspectorOf(host)
   expect(panel.dataset.open).toBe('false')
@@ -726,11 +816,11 @@ it('cancels a keyboard connection with Escape without leaving the maximised page
   } finally { HTMLElement.prototype.requestFullscreen = original }
 })
 
-it('places a step added from the library below a card at the centre of the view', () => {
+it('places a step dropped from the library onto a card below that card', () => {
   const { host } = mount()
-  button(host, 'Add Delay').click()
+  dropStep(host, 'Delay')
   const first = json(host).nodes.at(-1)
-  button(host, 'Add Delay').click()
+  dropStep(host, 'Delay')
   const second = json(host).nodes.at(-1)
   expect(second.id).not.toBe(first.id)
   expect(second.position.x).toBe(first.position.x)
