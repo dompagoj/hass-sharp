@@ -1,4 +1,4 @@
-import type { Graph, GraphDefinition, JsonValue } from '../visual/contract'
+import { declaredEntities, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
 import type { HomeAutomation, SourceRange } from '../visual/api'
 
 /**
@@ -164,8 +164,10 @@ const editorDefinition = (graph: Graph) => graph.definition as unknown as Editor
  */
 export function editorGraph(body: DefinitionBody): Graph {
   if (body.logic.kind !== 'graph') throw new Error('A class definition has no editor graph; edit its body')
+  // An entity an Entity node of the graph declares is edited on its node, not listed (the answer lists it too).
+  const declared = new Set(declaredEntities(body.logic.graph).map(d => d.entity.key))
   const definition: EditorDefinition = {
-    entities: structuredClone(body.entities ?? []),
+    entities: structuredClone((body.entities ?? []).filter(e => !declared.has(e.key))),
     settings: structuredClone(body.settings ?? []),
     device: structuredClone(body.device ?? null),
   }

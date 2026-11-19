@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, definitionEntity, definitionSettings, entityCommandLabel, entityDomain, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityCommandLabel, entityDomain, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -252,7 +252,7 @@ function kindText(ctx: Context): string | undefined {
       const entity = definitionEntityName(ctx), command = text(config.command)
       if (!entity) return
       // A command its type has as the catalog labels it; one it does not have as it is.
-      const catalog = definitionCatalog(ctx), commands = entityDomain(catalog, text(config.entity))?.commands
+      const catalog = definitionCatalog(ctx.catalog, ctx.graph), commands = entityDomain(catalog, text(config.entity))?.commands
       const label = command && record(commands) && Object.hasOwn(commands, command)
         ? entityCommandLabel(catalog, text(definitionEntity(catalog, text(config.entity))?.domain), command) : command
       return `When commanded ▸ ${entity}${label ? `: ${label}` : ''}`
@@ -260,7 +260,7 @@ function kindText(ctx: Context): string | undefined {
     // A setting by its label; never its value, which may be a secret.
     case 'setting': {
       const key = text(config.key)
-      return key ? `Setting ▸ ${text(definitionSettings(definitionCatalog(ctx)).find(s => s.key === key)?.label) || key}` : undefined
+      return key ? `Setting ▸ ${text(definitionSettings(definitionCatalog(ctx.catalog, ctx.graph)).find(s => s.key === key)?.label) || key}` : undefined
     }
     case 'entity_is': {
       const entity = homeEntity(ctx), state = operandState(ctx)
@@ -299,13 +299,10 @@ function typedAddress(ctx: Context): URL | undefined {
   } catch { return undefined }
 }
 const entityStepWords: Record<string, string> = { entity_state: 'State', set_entity_state: 'Set state', set_entity_available: 'Set available', camera_frame: 'When a frame is needed', show_frame: 'Show frame' }
-/** The catalog with the definition of the graph the step is in: lifted already (the canvas), or from the graph. */
-const definitionCatalog = (ctx: Context): VisualCatalogSnapshot =>
-  !ctx.catalog.definition && record(ctx.graph?.definition) ? { ...ctx.catalog, definition: ctx.graph.definition } : ctx.catalog
 /** The definition's entity the step names, by its name, else its key (also a key the definition no longer has). */
 function definitionEntityName(ctx: Context): string | undefined {
   const key = text(ctx.node.config.entity)
-  return key ? text(definitionEntity(definitionCatalog(ctx), key)?.name) || key : undefined
+  return key ? text(definitionEntity(definitionCatalog(ctx.catalog, ctx.graph), key)?.name) || key : undefined
 }
 /**
  * The Home Assistant entity a Has state or Current state reads: the one typed in, by the name Home Assistant gives it

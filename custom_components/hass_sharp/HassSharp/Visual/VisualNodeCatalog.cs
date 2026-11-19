@@ -40,6 +40,39 @@ public static class VisualNodeCatalog
     internal static bool IsRoot(JsonObject node, VisualCatalogSnapshot? snapshot) => Text(node, "kind") == "trigger" || Flag(Spec(node, snapshot), "root");
     /// <summary>Whether a graph may hold at most one node of the kind (<c>"singleton": true</c>).</summary>
     internal static bool IsSingleton(JsonNode? spec) => Flag(spec, "singleton");
+    /// <summary>Whether a node of the kind declares one of its definition's <paramref name="what"/> (<c>"declares": "entity"</c>).</summary>
+    internal static bool Declares(JsonNode? spec, string what) => Text(spec, "declares") == what;
+    /// <summary>
+    /// The entity an Entity node declares, as a definition lists one (the shape <see cref="SharpDomains.Create"/> reads):
+    /// a copy of its settings without its run history and state values; empty when its config is not an object.
+    /// </summary>
+    internal static JsonObject EntityDescription(JsonObject node)
+    {
+        if (node["config"] is not JsonObject config) return [];
+        var entity = (JsonObject)config.DeepClone();
+        entity.Remove("history"); entity.Remove("arguments");
+        return entity;
+    }
+    /// <summary>
+    /// The entities the graph's nodes declare (<see cref="Declares"/>), each with its node's id, in the order of the graph's
+    /// <c>nodes</c>; none for a graph of the wrong shape. Mirrored by <c>declaredEntities</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static IEnumerable<(string NodeId, JsonObject Entity)> DeclaredEntities(JsonObject graph, JsonObject catalog)
+    {
+        foreach (var raw in graph["nodes"] as JsonArray ?? [])
+            if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "entity")) yield return (Text(node, "id"), EntityDescription(node));
+    }
+    /// <summary>
+    /// The definition's entities as a graph gives them: those <paramref name="definition"/> lists (none without a list)
+    /// whose key no node declares, in their order, then the ones its nodes declare (<see cref="DeclaredEntities"/>).
+    /// </summary>
+    static JsonArray DerivedEntities(JsonObject definition, JsonObject graph, JsonObject catalog)
+    {
+        var declared = DeclaredEntities(graph, catalog).Select(d => d.Entity).ToList();
+        var keys = declared.Select(e => Text(e, "key")).ToHashSet(StringComparer.Ordinal);
+        var listed = (definition["entities"] as JsonArray ?? []).Where(e => !(e is JsonObject entity && entity["key"] is JsonValue k && k.TryGetValue<string>(out var key) && keys.Contains(key)));
+        return new JsonArray([.. listed.Select(e => e?.DeepClone()), .. declared]);
+    }
     /// <summary>
     /// The kind of document a graph is: <c>entity</c> when it has an object <c>definition</c> (an entity definition's
     /// logic, its entities and settings composed into it), else <c>automation</c>.
@@ -152,8 +185,9 @@ public static class VisualNodeCatalog
     /// <c>types</c> whose id the catalog does not have. Each node lists what its own compile knows a type converts to and
     /// from, so the entries of one id are merged: the first node's entry, with <c>assignableTo</c> and
     /// <c>assignableFrom</c> the union of every node's (in node order). The order of the nodes never changes what is
-    /// accepted. The catalog itself when there are none, and for a graph past the catalog's limits: the validator answers
-    /// that graph with <c>graph.limit</c> alone, and nothing is merged or resolved for it, whoever asks.
+    /// accepted. An entity graph's <c>definition</c> is carried too, its <c>entities</c> those the graph gives
+    /// (<see cref="DerivedEntities"/>). The catalog itself when there are none, and for a graph past the catalog's limits:
+    /// the validator answers that graph with <c>graph.limit</c> alone, and nothing is merged or resolved for it, whoever asks.
     /// </summary>
     internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
     {
@@ -181,7 +215,13 @@ public static class VisualNodeCatalog
         var merged = (JsonObject)catalog.DeepClone();
         foreach (var (id, entry) in added.ToArray()) { added.Remove(id); merged["types"]![id] = entry; }
         if (selecting.Count > 0) ResolveOutputs(merged, graph);
-        if (definition != null) { merged["definition"] = definition.DeepClone(); ResolveSettings(merged, graph); }
+        if (definition != null)
+        {
+            var copy = (JsonObject)definition.DeepClone();
+            copy["entities"] = DerivedEntities(definition, graph, catalog);
+            merged["definition"] = copy;
+            ResolveSettings(merged, graph);
+        }
         return merged;
     }
     /// <summary>

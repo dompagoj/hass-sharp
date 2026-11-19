@@ -341,8 +341,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                     compiledConversions.Add(Text(node,"id"),(ClrExpression(from.Symbol),ClrExpression(to.Symbol)));
             }
             // Every node that starts a flow of its own, in id order: an automation's triggers, and an entity graph's triggers,
-            // States, When commanded and When started steps alike.
-            var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
+            // States, When commanded and When started steps alike. An Entity node only declares an entity: no action runs it.
+            var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)&&!VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n,snapshot),"entity")).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
             // Internal identifiers are deterministic and cannot shadow authored identifiers.
             var authored=graph.ToJsonString()+string.Join("\n",snapshot.Sources.Select(s=>s.Source));var prefix="__visual_";while(authored.Contains(prefix,StringComparison.Ordinal))prefix+="x";
             var embedded=EmbeddedCatalog(graph,snapshot);var embeddedTypes=embedded["types"]!.AsObject();

@@ -78,7 +78,8 @@ public partial class HassSharpManager
         var catalog = document.EmbeddedCatalog ?? VisualGenerator.EmbeddedCatalog(graph, SavedLibraries(services).Preview.Snapshot).ToJsonString();
         var snapshot = VisualCatalogSnapshot.BuiltIn.WithRoot(JsonNode.Parse(catalog)!.AsObject());
         var roots = DefinitionGraph.Roots(graph, snapshot);
-        var triggers = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot))
+        // An Entity node declares an entity and starts no flow of its own.
+        var triggers = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot) && !VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n, snapshot), "entity"))
             .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"),
                 VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null, TrackHistory(n, snapshot)), StringComparer.Ordinal);
         var script = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
@@ -90,7 +91,7 @@ public partial class HassSharpManager
         script.VisualGraph = graph.ToJsonString();
         script.VisualCatalog = catalog;
         script.Definition = new(document.Id, document.Name, document.Device, document.Settings)
-            { Entities = (JsonArray?)document.Entities?.DeepClone() ?? [], Roots = roots };
+            { Entities = DefinitionGraph.Entities(graph, snapshot), Roots = roots };
         return script;
     }
 

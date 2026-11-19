@@ -1692,6 +1692,100 @@
         5
       ]
     },
+    "entity": {
+      "label": "Entity",
+      "category": "Entity",
+      "description": "One entity this definition creates in Home Assistant. Connect values to its state on the left; steps connected to a command on the right run when Home Assistant sends it.",
+      "root": true,
+      "declares": "entity",
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "argumentStorage": "arguments",
+      "config": {
+        "key": {
+          "type": "string",
+          "label": "Key",
+          "description": "What the entity is called inside this definition and in its unique id."
+        },
+        "domain": {
+          "type": "string",
+          "required": true,
+          "default": "binary_sensor",
+          "label": "Type",
+          "description": "The kind of entity, such as sensor or switch."
+        },
+        "name": {
+          "type": "string",
+          "label": "Name",
+          "description": "The name Home Assistant shows for it."
+        },
+        "icon": {
+          "type": "string",
+          "label": "Icon",
+          "description": "A Material Design icon, such as mdi:motion-sensor."
+        },
+        "deviceClass": {
+          "type": "string",
+          "label": "Device class",
+          "description": "A Home Assistant device class, for example motion."
+        },
+        "entityCategory": {
+          "type": "string",
+          "enum": [
+            "config",
+            "diagnostic"
+          ],
+          "label": "Category",
+          "description": "Config and diagnostic entities are listed apart on the device's page."
+        },
+        "enabledByDefault": {
+          "type": "boolean",
+          "default": true,
+          "label": "Enabled by default",
+          "description": "Off: Home Assistant adds it turned off, to be turned on in its settings."
+        },
+        "options": {
+          "type": "object",
+          "default": {},
+          "label": "Options",
+          "description": "The settings of its type, such as a sensor's unit."
+        },
+        "history": {
+          "type": "object",
+          "default": {},
+          "label": "Run history",
+          "description": "Which of its flows record their runs: state, commands, frame."
+        },
+        "arguments": {
+          "type": "object",
+          "default": {},
+          "label": "State values",
+          "description": "The state values set on the node instead of connected."
+        }
+      },
+      "inputs": {},
+      "outputs": {},
+      "execution": [],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "sensor",
+        "binary sensor",
+        "switch",
+        "light",
+        "cover",
+        "button",
+        "number",
+        "select",
+        "text",
+        "camera",
+        "state",
+        "command"
+      ]
+    },
     "entity_state": {
       "label": "State",
       "category": "Entity",

@@ -47,6 +47,8 @@ static class EntityGraphTests
             (nameof(ASensorWithAUnitTakesNumericText), ASensorWithAUnitTakesNumericText),
             (nameof(SensorValuesAreCheckedAsHomeAssistantTakesThem), SensorValuesAreCheckedAsHomeAssistantTakesThem),
             (nameof(ATriggerFlowInADefinitionCanSetState), ATriggerFlowInADefinitionCanSetState),
+            (nameof(AnEntityNodeCreatesItsEntity), AnEntityNodeCreatesItsEntity),
+            (nameof(APreviewWithoutAnyEntityAsksForOne), APreviewWithoutAnyEntityAsksForOne),
             (nameof(AnUnknownSourceIsWarnedOfInPreviewAndSave), AnUnknownSourceIsWarnedOfInPreviewAndSave),
             (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried),
             (nameof(AnAutomationSentWithADefinitionStaysAnAutomation), AnAutomationSentWithADefinitionStaysAnAutomation),
@@ -934,6 +936,53 @@ static class EntityGraphTests
         await rig.Change("sensor.button", "pressed");
         await rig.Flush();
         Check(rig.Pushed("button:last", batches).LastOrDefault() is { } set && Is(set, "value", "pressed"), "the trigger flow set the state: " + Lines(rig.Home.Pushes().Skip(batches)));
+    }
+
+    /// <summary>
+    /// A definition that lists no entities and declares one with an Entity node creates it: the preview asks for no entity,
+    /// the save stores and answers the node's entity, syncs it, and a Set state naming it sets it; the answer saved back
+    /// unchanged answers the same entities.
+    /// </summary>
+    static async Task AnEntityNodeCreatesItsEntity()
+    {
+        await using var rig = await Rig.Start("entity-node", ("sensor.button", "idle"));
+        var graph = Graph("Door", [EntityNodeTests.Hub("door", "door", "binary_sensor"), N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "door", On(true))], Next("t", "set"));
+        var definition = Definition("Door", graph, []);
+        definition.Remove("entities");
+        var preview = await rig.Ok(new { operation = "preview", definition });
+        Check(preview["valid"]!.GetValue<bool>() && !preview["diagnostics"]!.AsArray().Any(d => d!["code"]?.GetValue<string>() == "definition.entitiesRequired"),
+            "the preview is valid and asks for no entity: " + preview["diagnostics"]!.ToJsonString());
+        await rig.Save("door", definition);
+        var read = await rig.Read("door");
+        var entities = read["entities"]!.AsArray();
+        Check(entities.Count == 1 && entities[0]!["key"]!.GetValue<string>() == "door" && entities[0]!["domain"]!.GetValue<string>() == "binary_sensor" && entities[0]!["name"]!.GetValue<string>() == "door",
+            "the read answer's entities are the node's: " + entities.ToJsonString());
+        var sync = JsonNode.Parse(rig.Home.Syncs("door").Last())!;
+        Check(sync["entities"]!.AsArray().Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["door:door"]), "the home syncs the node's entity: " + sync.ToJsonString());
+        await rig.Until("door:door", _ => true, "the binary sensor starts");
+        var batches = rig.Batches;
+        await rig.Change("sensor.button", "pressed");
+        await rig.Flush();
+        Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
+        var back = new JsonObject
+        {
+            ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
+            ["entities"] = read["entities"]!.DeepClone(), ["logic"] = read["logic"]!.DeepClone(),
+        };
+        var again = await rig.Save("door", back, read["revision"]!.GetValue<long>());
+        Check(JsonNode.DeepEquals(again["document"]!["entities"], read["entities"]), "the read answer saved back answers the same entities: " + again["document"]!["entities"]!.ToJsonString());
+    }
+
+    /// <summary>A definition that neither lists an entity nor has an Entity node is asked for one, and for nothing else.</summary>
+    static async Task APreviewWithoutAnyEntityAsksForOne()
+    {
+        await using var rig = await Rig.Start("no-entity");
+        var definition = Definition("Nothing", Graph("Nothing", []), []);
+        definition.Remove("entities");
+        var preview = await rig.Ok(new { operation = "preview", definition });
+        var errors = preview["diagnostics"]!.AsArray().Where(d => d!["severity"]!.GetValue<int>() == 3).ToArray();
+        Check(!preview["valid"]!.GetValue<bool>() && errors.Length == 1 && errors[0]!["code"]!.GetValue<string>() == "definition.entitiesRequired",
+            "the one error asks for an entity: " + preview["diagnostics"]!.ToJsonString());
     }
 
     /// <summary>A source Home Assistant does not have is warned of, on its node, in the preview and in the save's answer; the definition still runs.</summary>

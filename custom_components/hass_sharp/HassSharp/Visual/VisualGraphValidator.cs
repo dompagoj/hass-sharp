@@ -626,13 +626,13 @@ public static class VisualGraphValidator
         bool EntityGraph => document == "entity";
         static bool IsText(JsonNode? value) => value is JsonValue v && v.TryGetValue<string>(out _);
         /// <summary>
-        /// The definition a graph carries: an object with a list of entities, each with a text key and domain, and a list of
-        /// settings, each with a text key and type; each entity of a domain <c>entityDomains</c> describes, each setting of a
-        /// type a setting can have, and no key twice in either list.
+        /// The definition a graph carries: an object with a list of entities (or none, when Entity nodes declare them all),
+        /// each with a text key and domain, and a list of settings, each with a text key and type; each entity of a domain
+        /// <c>entityDomains</c> describes, each setting of a type a setting can have, and no key twice in either list.
         /// </summary>
         void Definition(JsonNode? definition)
         {
-            if (definition is not JsonObject d || d["entities"] is not JsonArray entities || d["settings"] is not JsonArray settings ||
+            if (definition is not JsonObject d || (d.ContainsKey("entities") ? d["entities"] : new JsonArray()) is not JsonArray entities || d["settings"] is not JsonArray settings ||
                 !entities.All(e => e is JsonObject o && IsText(o["key"]) && IsText(o["domain"])) || !settings.All(s => s is JsonObject o && IsText(o["key"]) && IsText(o["type"])))
             { Error(null, Words.DefinitionUnreadable, code: "definition.invalid"); return; }
             var domains = Root["entityDomains"] as JsonObject ?? [];

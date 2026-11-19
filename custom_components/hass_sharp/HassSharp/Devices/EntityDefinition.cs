@@ -224,8 +224,11 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             // A graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its definition.
             // A valid preview had logic to preview.
             var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
+            // A graph's entities are stored as its Entity nodes and its list give them together, so a read answer saved back
+            // is saved as it was (a listed entity of a node's key is the node's).
+            var entities = graphLogic ? DefinitionGraph.Entities(preview.Graph!, catalog) : (JsonArray?)body.Entities?.DeepClone();
             var document = new EntityDefinitionDocument(1, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
-                (JsonArray?)body.Entities?.DeepClone(), logic, preview.Source, preview.SourceMap)
+                entities, logic, preview.Source, preview.SourceMap)
                 { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow, EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
             Directory.CreateDirectory(directory);
             VisualStore.Write(path, document);

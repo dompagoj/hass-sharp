@@ -41,6 +41,13 @@ internal static class DefinitionGraph
         return graph;
     }
 
+    /// <summary>
+    /// The entities of a composed graph (<see cref="Compose"/>), as a copy: the ones it lists whose key no Entity node
+    /// declares, then the ones its Entity nodes declare (<see cref="VisualNodeCatalog.WithGraphTypes"/>), the first of each key.
+    /// </summary>
+    internal static JsonArray Entities(JsonObject composed, VisualCatalogSnapshot snapshot) =>
+        new([.. VisualNodeCatalog.DefinitionItems(VisualNodeCatalog.WithGraphTypes(snapshot.Root, composed), "entities").Select(e => e.DeepClone())]);
+
     /// <summary>A copy of the graph without its <c>definition</c>; every other key is kept.</summary>
     internal static JsonObject Decompose(JsonObject graph)
     {

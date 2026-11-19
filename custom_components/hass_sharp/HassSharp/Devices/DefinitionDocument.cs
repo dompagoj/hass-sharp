@@ -24,7 +24,8 @@ internal static class DefinitionDocument
     static readonly string[] Categories = ["config", "diagnostic"];
 
     /// <summary>
-    /// Every problem of the document, in a fixed order: it has a graph and at least one entity; each entity has a key of
+    /// Every problem of the document, in a fixed order: it has a graph and at least one entity, listed or declared by an
+    /// Entity node of its graph; each listed entity whose key no Entity node declares has a key of
     /// its own of the form entity keys take, its description fields of their types, a domain the catalog's
     /// <c>entityDomains</c> describes and only options that domain takes, each of its type, and every option it needs
     /// (<see cref="Options"/>); each setting has a key of its own and a type a graph reads, and a value of that type or
@@ -36,11 +37,15 @@ internal static class DefinitionDocument
         if (body.Logic!.Graph == null) error("definition.graph", "Give the definition a graph: its logic is a graph of nodes, and none was given", null);
         var domains = catalog["entityDomains"] as JsonObject ?? [];
         var entities = body.Entities ?? [];
-        if (entities.Count == 0) error("definition.entitiesRequired", "Add an entity: a definition built from nodes creates the entities it lists, and lists none", null);
+        var nodes = body.Logic!.Graph is { } graph ? VisualNodeCatalog.DeclaredEntities(graph, catalog).ToList() : [];
+        var declared = nodes.Select(d => VisualNodeCatalog.Text(d.Entity, "key")).ToHashSet(StringComparer.Ordinal);
+        if (entities.Count == 0 && nodes.Count == 0) error("definition.entitiesRequired", "Add an entity: a definition built from nodes creates the entities it lists, and lists none", null);
         var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (item, index) in entities.Select((e, i) => (e, i + 1)))
         {
             if (item is not JsonObject entity) { error("definition.entityKey", $"Entity {index} is not an entity: give each entity a key and a domain", null); continue; }
+            // An entity an Entity node declares is checked on its node.
+            if (IsText(entity["key"], out var declaredKey) && declared.Contains(declaredKey)) continue;
             if (!IsText(entity["key"], out var key))
             {
                 error("definition.entityKey", $"Give entity {index} a key, such as {(index == 1 ? "power" : "power_" + index)}", null);

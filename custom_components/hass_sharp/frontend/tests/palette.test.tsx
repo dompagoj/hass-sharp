@@ -125,5 +125,5 @@ it('the step library and quick-add of an entity definition both start with the E
   expect(root.querySelector('.hs-lib__category')!.textContent).toBe('Entity')
   dispose()
   dispose = render(() => <QuickAdd document="entity" x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)
-  expect(root.querySelector('[role="option"]')!.getAttribute('aria-label')).toBe(`Create ${label('entity_state')}`)
+  expect(root.querySelector('[role="option"]')!.getAttribute('aria-label')).toBe(`Create ${label('entity')}`)
 })

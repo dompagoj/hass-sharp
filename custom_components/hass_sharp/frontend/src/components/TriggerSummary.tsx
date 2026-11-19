@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import type { RunTrigger } from '../types'
-import { effectiveTriggerMethod, entityCommandLabel, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
+import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
 import { nodeTitle } from '../visual/flow/flowModel'
 
 /**
@@ -16,10 +16,12 @@ export interface TriggerNames {
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 /** The names of a graph's definition (an entity definition's graph), with the catalog's entity types; none for an automation's. */
 export function definitionNames(graph: Graph | undefined, catalog: VisualCatalogSnapshot | undefined): TriggerNames | undefined {
-  const definition = graph?.definition as unknown
-  if (!record(definition) || !Array.isArray(definition.entities)) return
-  const entities = definition.entities.filter(record).filter((entity): entity is { key: string } => typeof entity.key === 'string')
+  if (!record(graph?.definition)) return
   const known = catalog ?? nodeCatalog
+  // The entities it lists and the ones its Entity nodes declare.
+  const listed: unknown = definitionCatalog(known, graph).definition?.entities
+  if (!Array.isArray(listed)) return
+  const entities = listed.filter(record).filter((entity): entity is { key: string } => typeof entity.key === 'string')
   const roots: Record<string, string> = {}
   for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) if (record(node) && typeof node.id === 'string' && isRoot(node, known)) roots[effectiveTriggerMethod(node)] = nodeTitle(node, known)
   return { entities, domains: catalog?.entityDomains, roots }

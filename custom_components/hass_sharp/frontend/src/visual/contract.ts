@@ -46,7 +46,7 @@ export interface OutputSpec { label?: string; type: string; description?: string
  * domain of the definition's entity `config.entity` names (see `dataInputs`); `dynamicOutputs: 'command'` gives it the
  * data values of its entity's command `config.command` (see `commandOutputs`).
  */
-export interface NodeSpec { root?: boolean; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
+export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities. */ declares?: 'entity'; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
 export interface PropertySpec { name: string; type: string; nullable: boolean; description?: string }
 /** `listed: false`: a type the type lists (Constant, Convert, loops) leave out, such as an enum of the entity classes. */
@@ -211,8 +211,45 @@ function definitionItems(catalog: VisualCatalogSnapshot, list: 'entities' | 'set
     if (record(item) && typeof item.key === 'string' && !keys.has(item.key)) { keys.add(item.key); items.push(item) }
   return items
 }
+/**
+ * The entity an Entity node declares, as a definition lists one: a copy of its settings without its run history and
+ * state values. Mirrors `VisualNodeCatalog.EntityDescription`.
+ */
+export function entityDescription(node: GraphNode): Record<string, unknown> {
+  if (!record(node.config)) return {}
+  const { history: _history, arguments: _arguments, ...entity } = structuredClone(node.config)
+  return entity
+}
+/**
+ * The entities the graph's nodes declare (a kind with `declares: 'entity'`), each with its node's id, in the order of
+ * the graph's `nodes`; none for a graph of the wrong shape. Mirrors `VisualNodeCatalog.DeclaredEntities`.
+ */
+export function declaredEntities(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; entity: Record<string, unknown> }[] {
+  return (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record)
+    .filter(node => nodeSpec(node.kind, catalog)?.declares === 'entity')
+    .map(node => ({ nodeId: text(node.id), entity: entityDescription(node as unknown as GraphNode) }))
+}
+/**
+ * The definition's entities as a graph gives them: those its `definition` lists (none without a list) whose key no node
+ * declares, in their order, then the ones its nodes declare. Mirrors `VisualNodeCatalog.DerivedEntities`.
+ */
+function derivedEntities(definition: Record<string, unknown>, graph: unknown, catalog: VisualCatalogSnapshot): GraphDefinition['entities'] {
+  const declared = declaredEntities(graph, catalog).map(d => d.entity)
+  const keys = new Set(declared.map(e => text(e.key)))
+  const listed = (Array.isArray(definition.entities) ? definition.entities as unknown[] : []).filter(e => !(record(e) && typeof e.key === 'string' && keys.has(e.key)))
+  return structuredClone([...listed, ...declared]) as GraphDefinition['entities']
+}
+/**
+ * The catalog with the definition of the graph a step is in: the catalog as it is when it has one already (the canvas
+ * lifted it), else with the graph's definition and the entities the graph gives (its list and its Entity nodes); the
+ * catalog as it is for an automation's graph.
+ */
+export function definitionCatalog(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
+  if (catalog.definition || !record(graph) || !record(graph.definition)) return catalog
+  return { ...catalog, definition: { ...structuredClone(graph.definition), entities: derivedEntities(graph.definition, graph, catalog) } as unknown as GraphDefinition }
+}
 /** The definition's entity with this key. */
-export const definitionEntity = (catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
+export const definitionEntity =(catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
 /** The `entityDomains` entry of the definition's entity with this key; undefined for an unknown entity or domain. */
 export function entityDomain(catalog: VisualCatalogSnapshot, key: string): EntityDomainSpec | undefined {
   const domain = text(definitionEntity(catalog, key)?.domain)
@@ -377,7 +414,8 @@ export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot 
  * id are merged: the first node's entry, with `assignableTo` and `assignableFrom` the union of every node's (in node
  * order). The order of the nodes never changes what is accepted. The catalog itself when there are none, and for a
  * graph past the catalog's limits: the validator answers that graph with `graph.limit` alone, and nothing is merged or
- * resolved for it, whoever asks. Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
+ * resolved for it, whoever asks. An entity graph's `definition` is carried too, its `entities` those the graph gives
+ * (its list and its Entity nodes). Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
  * their entries alone.
  */
 export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
@@ -403,7 +441,10 @@ export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): 
   if (!Object.keys(added).length && !selecting.length && !definition) return catalog
   const merged: VisualCatalogSnapshot = { ...catalog, types: Object.keys(added).length ? Object.assign(Object.create(null), catalog.types, added) : catalog.types }
   if (selecting.length) resolveOutputs(merged, graph)
-  if (definition) { merged.definition = structuredClone(definition); resolveSettings(merged, graph) }
+  if (definition) {
+    merged.definition = { ...structuredClone(definition), entities: derivedEntities(definition as unknown as Record<string, unknown>, graph, catalog) }
+    resolveSettings(merged, graph)
+  }
   return merged
 }
 /**
@@ -1497,12 +1538,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   graphRules()
   return analysis(true)
   /**
-   * The definition a graph carries: an object with a list of entities, each with a text key and domain, and a list of
-   * settings, each with a text key and type; each entity of a domain `entityDomains` describes, each setting of a type a
-   * setting can have, and no key twice in either list. Mirrors `VisualGraphValidator` `Definition`.
+   * The definition a graph carries: an object with a list of entities (or none, when Entity nodes declare them all), each
+   * with a text key and domain, and a list of settings, each with a text key and type; each entity of a domain
+   * `entityDomains` describes, each setting of a type a setting can have, and no key twice in either list. Mirrors
+   * `VisualGraphValidator` `Definition`.
    */
   function checkDefinition(definition: unknown) {
-    const entities = record(definition) ? definition.entities : undefined, settings = record(definition) ? definition.settings : undefined
+    const entities = record(definition) ? (definition.entities === undefined ? [] : definition.entities) : undefined, settings = record(definition) ? definition.settings : undefined
     if (!Array.isArray(entities) || !Array.isArray(settings) || !entities.every(e => record(e) && typeof e.key === 'string' && typeof e.domain === 'string') ||
       !settings.every(s => record(s) && typeof s.key === 'string' && typeof s.type === 'string')) { error(null, words.definitionUnreadable, undefined, undefined, 'definition.invalid'); return }
     const domains = record(catalog.entityDomains) ? catalog.entityDomains : {}
@@ -1596,7 +1638,8 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   const storage = spec.argumentStorage === 'arguments' ? (config.arguments ??= {}) as Record<string, unknown> : config
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
   // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12).
-  const named = spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(graph, kind, spec, { ...catalog, definition: graph.definition }) : {}
+  // An Entity node names nothing: its key is its own.
+  const named = spec.documents?.includes('entity') && !spec.declares && graphDocument(graph) === 'entity' ? prefilled(graph, kind, spec, definitionCatalog(catalog, graph)) : {}
   // A Custom C# node is titled by its method until someone names it.
   return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...(spec.dynamicInputs === 'custom' ? {} : { label: spec.label }), config: { ...config, ...named } }] })
 }
