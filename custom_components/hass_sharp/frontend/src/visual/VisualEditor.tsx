@@ -294,6 +294,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
       if (target) {
         leaveDrawer()
         choose(undefined)
+        setPreviewKind(undefined)
         openPanel(false)
         setLocated({ target })
         return

@@ -9,7 +9,7 @@ import { nodeCatalog } from '../src/visual/contract'
 import { newGraphDefinition, type DefinitionBody } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
 import { icons } from '../src/visual/icons'
-import { dropStep } from './library'
+import { dropStep, libraryItem } from './library'
 
 // The entity definition editor in the panel, against the in-memory entity API: a definition is built, saved, read
 // back, switched, deleted and recovered entirely through the page.
@@ -862,6 +862,24 @@ it('shows a save refused with a setting\'s problem on its row, and the Problems 
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'Setting host is not a text')!.click()
   await vi.waitFor(() => expect(document.activeElement).toBe(control(settingRow(root, 'host'), 'key')))
   expect(inspector(root).querySelector('.hs-insp-node')).toBeNull()
+})
+
+it('a Problems-tab choice about the definition ends a step\'s description and shows its row', async () => {
+  const { root, fixture } = await openPlug()
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  fixture.entities.controls.diagnostics = [{ nodeId: null, inputId: 'host', portId: null, code: 'definition.settingType', severity: 3, message: 'Setting host is not a text', startLine: null, startColumn: null } as any]
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(settingRow(root, 'host').textContent).toContain('Setting host is not a text'))
+  settingRow(root, 'host').querySelector<HTMLButtonElement>('.hs-def-row__head')!.click()
+  libraryItem(root, 'Delay').click()
+  expect(inspector(root).querySelector('[aria-label="Step details"]')).not.toBeNull()
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'Setting host is not a text')!.click()
+  await vi.waitFor(() => expect(inspector(root).querySelector('[aria-label="Step details"]')).toBeNull())
+  expect(libraryItem(root, 'Delay').getAttribute('aria-pressed')).toBe('false')
+  await vi.waitFor(() => expect(document.activeElement).toBe(control(settingRow(root, 'host'), 'key')))
+  expect(settingRow(root, 'host').querySelector('.hs-def-row__head')!.getAttribute('aria-expanded')).toBe('true')
 })
 
 // ---- The Runs tab: the definition's runs, in its words, each linked to its run's page under /entities.

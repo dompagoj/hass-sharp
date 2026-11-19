@@ -70,7 +70,7 @@ export interface FlowAdapterProps {
   label?: string
 }
 
-/** What the page may ask of the canvas: the same placement the canvas uses for its own additions. */
+/** What the page may ask of the canvas: its own Duplicate, a cleared selection, a pan and its notice. */
 export interface FlowControls {
   /** Duplicates the steps the way the canvas's Duplicate does (below any card in the way) and returns the copies' ids. */
   duplicate(ids: string[]): string[]
@@ -79,8 +79,8 @@ export interface FlowControls {
   /** Pans, if needed, so the step's card is visible above `bottom` (a client y, such as the top of a bottom sheet). */
   reveal(id: string, bottom: number): void
   /**
-   * Shows a message in the canvas's notice (why a step could not be added, for example) for a few seconds. One to
-   * `keep` (what a change removed) stays until it is dismissed or the graph changes again.
+   * Shows a message in the canvas's notice for a few seconds. One to `keep` (what a change in the panel removed, for
+   * example) stays until it is dismissed or the graph changes again.
    */
   notify(text: string, options?: { keep?: boolean }): void
 }
