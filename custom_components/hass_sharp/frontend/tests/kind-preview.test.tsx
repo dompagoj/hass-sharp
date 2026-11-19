@@ -4,7 +4,7 @@ import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { Inspector, type InspectorProps } from '../src/visual/Inspector'
-import { createGraph } from '../src/visual/graph'
+import { addNode, connectNodes, createGraph } from '../src/visual/graph'
 import { nodeCatalog } from '../src/visual/contract'
 import { nodeIdentity } from '../src/visual/icons'
 
@@ -39,14 +39,27 @@ function mount(props: Partial<InspectorProps>, options: { pressed?: boolean } = 
   return root
 }
 
-it('describes a kind: label, category, the whole description, its pins and how to add it', () => {
+/** The rows of a pin list in the details: each pin's name, the type its chip names (none for a flow pin) and its description. */
+const rows = (panel: Element, list: string) =>
+  [...panel.querySelectorAll(`[aria-label="${list}"] li`)].map(row => [
+    row.querySelector('.hs-insp-output__name')!.textContent,
+    row.querySelector('.hs-type-chip__name')?.textContent,
+    row.querySelector('.hs-insp-output__desc')?.textContent,
+  ])
+
+it('describes a kind: label, category, the whole description, how to add it and then its pins', () => {
   const root = mount({ preview: 'delay' })
   const panel = root.querySelector('[aria-label="Step details"]')!
   expect(panel.querySelector('h2')!.textContent).toBe(nodeCatalog.nodes.delay.label)
   expect(panel.querySelector('.hs-insp-kind')!.textContent).toContain(nodeIdentity('delay', nodeCatalog).label)
   expect(panel.textContent).toContain(nodeCatalog.nodes.delay.description)
-  expect([...panel.querySelectorAll('[aria-label="Inputs"] li')].length).toBeGreaterThan(0)
-  expect(panel.querySelector('.hs-insp-hint')!.textContent).toBe('Drag onto the canvas, or press A.')
+  // How to add it comes right after the description, before the pins.
+  const hint = panel.querySelector('.hs-insp-hint')!
+  expect(hint.textContent).toBe('Drag onto the canvas, or use + on the canvas (A).')
+  expect(panel.querySelector('.hs-insp-desc')!.nextElementSibling).toBe(hint)
+  // A value pin names its type; a flow pin has no type chip.
+  expect(rows(panel, 'Inputs')).toEqual([['Seconds', 'Number', 'How long to wait, up to about 49 days.']])
+  expect(rows(panel, 'Outputs')).toEqual([['Next', undefined, undefined], ['On error', undefined, undefined]])
   expect(panel.querySelector('input, select, textarea')).toBeNull()
   expect(root.querySelector('[aria-label="Automation overview"], .hs-insp-overview')).toBeNull()
 })
@@ -57,10 +70,20 @@ it('says an entity definition\'s Trigger in its own words', () => {
 })
 
 it('a selected step, several steps or a wire come before the preview', () => {
-  const graph = createGraph('Hall')
-  const root = mount({ preview: 'delay', graph, selected: graph.nodes[0], selectedIds: [graph.nodes[0].id] })
-  expect(root.querySelector('[aria-label="Step details"]')).toBeNull()
-  expect(root.querySelector('.hs-insp-node')).not.toBeNull()
+  let graph = createGraph('Hall')
+  graph = addNode(graph, 'delay', 'delay-1')
+  graph = connectNodes(graph, graph.nodes[0].id, 'delay-1')
+  const step = mount({ preview: 'delay', graph, selected: graph.nodes[0], selectedIds: [graph.nodes[0].id] })
+  expect(step.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(step.querySelector('.hs-insp-node')).not.toBeNull()
+  dispose?.()
+  const many = mount({ preview: 'delay', graph, selectedIds: [graph.nodes[0].id, 'delay-1'] })
+  expect(many.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(many.querySelector('[aria-label="Selection"]')).not.toBeNull()
+  dispose?.()
+  const wire = mount({ preview: 'delay', graph, selectedEdgeId: graph.edges[0].id })
+  expect(wire.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(wire.querySelector('[aria-label="Flow wire"]')).not.toBeNull()
 })
 
 it('falls back to the overview when the catalog has no such kind', () => {
@@ -109,4 +132,42 @@ it('Close details puts focus back on the library item that showed the kind', asy
   close.focus()
   close.click()
   await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-lib__item')))
+})
+
+it('Close details puts focus on the canvas when the library item that showed the kind is gone', async () => {
+  const [kind, setKind] = createSignal<string | undefined>('delay')
+  const root = mount({ get preview() { return kind() }, onPreviewClose: () => { setKind(undefined); root.querySelector('.hs-lib__item')!.remove() } }, { pressed: true })
+  const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')!
+  close.focus()
+  close.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-flow')))
+})
+
+it('Escape inside the details ends them as Close details does, and gives focus back to the library item', async () => {
+  const [kind, setKind] = createSignal<string | undefined>('delay')
+  const root = mount({ get preview() { return kind() }, onPreviewClose: () => { setKind(undefined); root.querySelector('.hs-lib__item')!.setAttribute('aria-pressed', 'false') } }, { pressed: true })
+  const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')!
+  close.focus()
+  const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+  close.dispatchEvent(escape)
+  expect(escape.defaultPrevented).toBe(true)
+  expect(kind()).toBeUndefined()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-lib__item')))
+})
+
+it('as a sheet, Close panel gives focus back to the library item that showed the kind; with a step selected, to the canvas', async () => {
+  const [kind, setKind] = createSignal<string | undefined>('delay')
+  const root = mount({ get preview() { return kind() }, docked: false, onPreviewClose: () => { setKind(undefined); root.querySelector('.hs-lib__item')!.setAttribute('aria-pressed', 'false') } }, { pressed: true })
+  const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close panel"]')!
+  close.focus()
+  close.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-lib__item')))
+  dispose?.()
+  document.body.innerHTML = ''
+  const graph = createGraph('Hall')
+  const step = mount({ preview: 'delay', graph, selected: graph.nodes[0], selectedIds: [graph.nodes[0].id], docked: false }, { pressed: true })
+  const closeStep = step.querySelector<HTMLButtonElement>('button[aria-label="Close panel"]')!
+  closeStep.focus()
+  closeStep.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(step.querySelector('.hs-flow')))
 })

@@ -238,6 +238,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   // ---- Step library: a click describes a step in the panel (a drag or quick-add adds one).
   const [libraryCollapsed, setLibraryCollapsed] = createSignal(false)
   const [quickAddRequest, setQuickAddRequest] = createSignal(0)
+  /** Opens the canvas's quick-add (the library's "Add step", A on a library item or in a step's description). */
+  const quickAdd = () => setQuickAddRequest(value => value + 1)
   /** The kind of step the panel describes, until anything is selected or the description is closed. */
   const [previewKind, setPreviewKind] = createSignal<NodeKind>()
   const preview = (kind: NodeKind | undefined) => {
@@ -541,7 +543,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           onCollapsedChange={setLibraryCollapsed}
           onPreview={preview}
           previewed={previewKind()}
-          onQuickAdd={() => setQuickAddRequest(value => value + 1)}
+          onQuickAdd={quickAdd}
         />
         <div class="hs-canvas-area">
           <FlowAdapter
@@ -585,6 +587,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           onOpen={() => openPanel()}
           preview={previewKind()}
           onPreviewClose={() => setPreviewKind(undefined)}
+          onQuickAdd={quickAdd}
           onDuplicate={ids => inPanel(() => flow?.duplicate(ids) ?? [])}
           onEditCode={editCode}
           onNotice={text => flow?.notify(text, { keep: true })}

@@ -11,12 +11,14 @@ export interface KindPreviewProps {
   graph: VisualGraph
   catalog: VisualCatalogSnapshot
   onClose(): void
+  /** A pressed in the details: the canvas's quick-add, as A on the canvas opens it. */
+  onQuickAdd?(): void
 }
 
 /**
  * What a kind of step is, read only, for the step library: its header as {@link NodeConfig} has it, its whole
- * description for this graph's document, the pins a new step of it would have and how to add one. Nothing here adds
- * a step. A kind the catalog does not have renders nothing.
+ * description for this graph's document, how to add one and the pins a new step of it would have. Nothing here adds
+ * a step; A opens quick-add and Escape closes the details. A kind the catalog does not have renders nothing.
  */
 export function KindPreview(props: KindPreviewProps) {
   const spec = () => (Object.hasOwn(props.catalog.nodes, props.kind) ? props.catalog.nodes[props.kind] : undefined)
@@ -37,6 +39,7 @@ export function KindPreview(props: KindPreviewProps) {
     <li class="hs-insp-output">
       <span class="hs-insp-output__name">{current.label}</span>
       <Show when={current.kind === 'data'}><TypeChip text={current.typeName ?? 'Any value'} color={current.color} list={current.list} /></Show>
+      <Show when={current.description}><small class="hs-insp-output__desc">{current.description}</small></Show>
     </li>
   )
   const pins = (label: string, list: PinView[]) => (
@@ -48,10 +51,20 @@ export function KindPreview(props: KindPreviewProps) {
     </Show>
   )
 
+  const keydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      props.onClose()
+    } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a' && props.onQuickAdd) {
+      event.preventDefault()
+      props.onQuickAdd()
+    }
+  }
+
   return (
     <Show when={spec()}>
       {current => (
-        <section class="hs-insp-preview" aria-label="Step details" style={{ '--hs-cat': identity().color }}>
+        <section class="hs-insp-preview" aria-label="Step details" style={{ '--hs-cat': identity().color }} onKeyDown={keydown}>
           <header class="hs-insp-head">
             <span class="hs-insp-head__icon" title={identity().label}><Glyph paths={identity().icon} /></span>
             <div class="hs-insp-head__titles">
@@ -63,9 +76,9 @@ export function KindPreview(props: KindPreviewProps) {
             </button>
           </header>
           <p class="hs-insp-desc hs-insp-desc--open">{stepDescription(props.kind, current().description, graphDocument(props.graph))}</p>
+          <p class="hs-muted hs-insp-hint">Drag onto the canvas, or use + on the canvas (A).</p>
           {pins('Inputs', inputs())}
           {pins('Outputs', outputs())}
-          <p class="hs-muted hs-insp-hint">Drag onto the canvas, or press A.</p>
         </section>
       )}
     </Show>

@@ -28,6 +28,9 @@
 .hs-app .hs-insp-preview { display: grid; gap: 16px; min-width: 0; }
 .hs-app .hs-insp-preview .hs-insp-title { display: flex; align-items: center; margin: 0; padding: 0; border: 0; }
 .hs-app .hs-insp-preview .hs-insp-output { grid-template-columns: minmax(0, 1fr) auto; }
+/* Read only: a pin row takes no hover background and always shows its description. */
+.hs-app .hs-insp-preview .hs-insp-output:hover { background: none; }
+.hs-app .hs-insp-preview .hs-insp-output__desc { display: block; grid-column: 1 / -1; }
 .hs-app .hs-insp-more, .hs-app .hs-insp-link { flex: none; padding: 0; border: 0; background: none; color: var(--hs-accent); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
 /* Problems: one callout each; one with a field focuses it. */

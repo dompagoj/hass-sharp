@@ -15,11 +15,14 @@ export interface NodeLibraryPanelProps {
   /** Narrowed to a rail: an expand button and "Add step". */
   collapsed: boolean
   onCollapsedChange(collapsed: boolean): void
-  /** A step clicked (or chosen with Enter or Space): the page describes it; `undefined` when the described one is clicked again. */
+  /**
+   * A step clicked (or chosen with Enter or Space): the page describes it; `undefined` when the described one is
+   * clicked again (not by a double-click's second click) or Escape is pressed on it.
+   */
   onPreview(kind: NodeKind | undefined): void
   /** The kind the page describes: its item shows pressed. */
   previewed?: NodeKind
-  /** "Add step": the canvas's quick-add palette (the library's stand-in on narrow screens and in the rail). */
+  /** "Add step" or A on an item: the canvas's quick-add palette (the library's stand-in on narrow screens and in the rail). */
   onQuickAdd(): void
   disabled?: boolean
 }
@@ -113,7 +116,19 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
                               aria-describedby={describedBy}
                               aria-pressed={props.previewed === item.kind}
                               draggable={true}
-                              onClick={() => props.onPreview(props.previewed === item.kind ? undefined : item.kind)}
+                              // A double-click's second click (detail 2) keeps the details; Enter and Space give 0.
+                              onClick={event => props.onPreview(props.previewed === item.kind && event.detail < 2 ? undefined : item.kind)}
+                              onKeyDown={event => {
+                                // A opens quick-add, as on the canvas; Escape ends this item's details.
+                                const plain = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+                                if (plain && event.key.toLowerCase() === 'a') {
+                                  event.preventDefault()
+                                  props.onQuickAdd()
+                                } else if (event.key === 'Escape' && props.previewed === item.kind) {
+                                  event.preventDefault()
+                                  props.onPreview(undefined)
+                                }
+                              }}
                               onDragStart={event => {
                                 event.dataTransfer?.setData(NODE_DRAG_TYPE, item.kind)
                                 if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'

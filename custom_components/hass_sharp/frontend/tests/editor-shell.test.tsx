@@ -439,6 +439,91 @@ it('"Close details" ends the preview, releases the library item and gives it foc
   await vi.waitFor(() => expect(document.activeElement).toBe(libraryItem(host, 'Delay')))
 })
 
+const quickAddOf = (host: Element) => host.querySelector('[role="dialog"][aria-label="Add a step"]')
+
+it('A on a focused library item opens quick-add, as A on the canvas does', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const item = libraryItem(host, 'Delay')
+  item.focus()
+  item.click()
+  expect(key(item, 'a').defaultPrevented).toBe(true)
+  await vi.waitFor(() => expect(quickAddOf(host)).not.toBeNull())
+})
+
+it('A with focus on "Close details" opens quick-add', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  libraryItem(host, 'Delay').click()
+  const close = button(host, 'Close details')
+  close.focus()
+  expect(key(close, 'a').defaultPrevented).toBe(true)
+  await vi.waitFor(() => expect(quickAddOf(host)).not.toBeNull())
+})
+
+it('a typed in the library\'s search field, or A with a modifier key on an item, does not open quick-add', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search the step library"]')!
+  search.focus()
+  expect(key(search, 'a').defaultPrevented).toBe(false)
+  expect(key(libraryItem(host, 'Delay'), 'a', { ctrlKey: true }).defaultPrevented).toBe(false)
+  await settle()
+  expect(quickAddOf(host)).toBeNull()
+})
+
+it('a double-click on a library item keeps its details; a single click again ends them', () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const click = (detail: number) => libraryItem(host, 'Delay').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail }))
+  click(1); click(2)
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('true')
+  expect(host.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  click(1)
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+})
+
+it('Escape on the pressed library item ends its details and keeps focus there; with no details shown it leaves Escape alone', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const item = libraryItem(host, 'Delay')
+  item.focus()
+  expect(key(item, 'Escape').defaultPrevented).toBe(false)
+  item.click()
+  expect(key(item, 'Escape').defaultPrevented).toBe(true)
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
+  await settle()
+  expect(document.activeElement).toBe(libraryItem(host, 'Delay'))
+  expect(key(item, 'Escape').defaultPrevented).toBe(false)
+})
+
+it('a library click with a wire selected clears the wire\'s selection, so Delete removes nothing', async () => {
+  // Wires are drawn once the cards have a size.
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(570)
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  await vi.waitFor(() => expect(host.querySelector('.solid-flow__edge')).not.toBeNull())
+  const before = json(host)
+  host.querySelector('.solid-flow__edge')!.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+  await vi.waitFor(() => expect(inspectorOf(host).querySelector('.hs-insp-wire')).not.toBeNull())
+  libraryItem(host, 'Delay').click()
+  expect(inspectorOf(host).querySelector('.hs-insp-wire')).toBeNull()
+  expect(host.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  key(host.querySelector('.hs-flow')!, 'Delete')
+  const after = json(host)
+  expect(after.edges).toHaveLength(before.edges.length)
+  expect(after.nodes).toHaveLength(before.nodes.length)
+})
+
+it('a step added from quick-add ends the details that were showing', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  libraryItem(host, 'Delay').click()
+  expect(host.querySelector('[aria-label="Step details"]')).not.toBeNull()
+  button(host, 'Add step').click()
+  await vi.waitFor(() => expect(quickAddOf(host)).not.toBeNull())
+  button(host, 'Create Constant').click()
+  expect(json(host).nodes.at(-1).kind).toBe('constant')
+  expect(host.querySelector('[aria-label="Step details"]')).toBeNull()
+  expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
+})
+
 it('on a narrow screen a library click opens the sheet on the details, with a step selected before or not', async () => {
   viewportWidth(800)
   const { host } = mount()
@@ -450,7 +535,9 @@ it('on a narrow screen a library click opens the sheet on the details, with a st
   button(host, 'Close panel').click()
   expect(panel.dataset.open).toBe('false')
   expect(libraryItem(host, 'Delay').getAttribute('aria-pressed')).toBe('false')
-  await settle() // the sheet's close gives focus back to the canvas
+  // Closing the sheet on the details gives focus back to the library item, as "Close details" does.
+  await settle()
+  expect(document.activeElement).toBe(libraryItem(host, 'Delay'))
   focusNode(host, 'service-1')
   expect(panel.querySelector('.hs-insp-node')).not.toBeNull()
   libraryItem(host, 'Delay').focus()

@@ -4,7 +4,7 @@ import { Dialog } from './Dialog'
 export function HelpDialog(props: { open: boolean; onClose: () => void }){
  return <Dialog open={props.open} title="Visual automation help" width="large" onClose={props.onClose}>
  <h3>Build and connect steps</h3>
- <p>An automation starts with a trigger and runs its steps from left to right. Add a step from the step library on the left by dragging it onto the canvas; click it there to read what it does. On the canvas, double-click or right-click empty space, press A, or use Add step to search for a step.</p>
+ <p>An automation starts with a trigger and runs its steps from left to right. Add a step from the step library on the left by dragging it onto the canvas; click it in the library to read what it does. On the canvas, double-click or right-click empty space, press A, or use Add step to search for a step.</p>
  <p>Connect steps on the canvas only. Drag from a step's output to another step's input; drop on empty space to add a step that is connected right away. From the keyboard, press Enter on a pin, then on the pin to connect it to. To remove a connection, select it and press Delete.</p>
  <p>Conditions continue on If true or If false. On error is followed when a step fails. Triggers can share the steps after them.</p>
  <h3>Edit a step</h3>

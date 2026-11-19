@@ -75,6 +75,8 @@ export interface InspectorProps {
   preview?: string
   /** The description of `preview` was closed: the page drops it. */
   onPreviewClose?(): void
+  /** A pressed in the description of `preview`: the canvas's quick-add. */
+  onQuickAdd?(): void
 }
 
 /**
@@ -111,19 +113,25 @@ export function Inspector(props: InspectorProps) {
     if (id) focusSoon(title(id))
     else focusSoon(canvas)
   }
+  /** The step library's pressed item: the one whose kind is described. */
+  const pressedItem = () => workspace().querySelector<HTMLElement>('.hs-lib__item[aria-pressed="true"]')
+  /** Where focus goes when the description closes: the library item that showed it while it is on the page, else the canvas. */
+  const backFromPreview = (item: HTMLElement | null | undefined) => (item?.isConnected ? item : canvas())
   const close = () => {
     const id = props.selected?.id
+    // A description with nothing selected: its library item, looked up while still pressed.
+    const item = !many() && !id && !edge() && preview() ? pressedItem() : undefined
     setDismissed(true)
     props.onClose?.()
     props.onPreviewClose?.()
-    // Back to where the selection is: its card on the canvas, else the canvas.
-    focusSoon(() => card(id) ?? canvas())
+    // Back to where the selection is: its card on the canvas; for a description, its library item; else the canvas.
+    focusSoon(() => card(id) ?? backFromPreview(item))
   }
   /** Drops the described kind; focus goes back to the library item that showed it (looked up while still pressed), else the canvas. */
   const closePreview = () => {
-    const item = workspace().querySelector<HTMLElement>('.hs-lib__item[aria-pressed="true"]')
+    const item = pressedItem()
     props.onPreviewClose?.()
-    focusSoon(() => item ?? canvas())
+    focusSoon(() => backFromPreview(item))
   }
 
   const duplicate = (selection: string[]) => {
@@ -173,7 +181,7 @@ export function Inspector(props: InspectorProps) {
         <Show when={props.selected?.id} keyed fallback={
           <Show when={edge()} fallback={
             <Show when={preview()} keyed fallback={<Overview />}>
-              {kind => <KindPreview kind={kind} graph={props.graph} catalog={props.catalog} onClose={closePreview} />}
+              {kind => <KindPreview kind={kind} graph={props.graph} catalog={props.catalog} onClose={closePreview} onQuickAdd={props.onQuickAdd} />}
             </Show>
           }>{current => <WireView edge={current()} />}</Show>
         }>
