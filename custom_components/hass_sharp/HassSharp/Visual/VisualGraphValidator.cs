@@ -679,7 +679,9 @@ public static class VisualGraphValidator
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
                         errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
-            foreach (var entity in DefinitionItems(Root, "entities"))
+            // These two rules are the When commanded and Show frame steps' own: an entity an Entity node declares is left out.
+            var declared = nodes.Values.Where(n => Declares(Spec(n), "entity")).Select(n => Choice(n, "key")).ToHashSet(StringComparer.Ordinal);
+            foreach (var entity in DefinitionItems(Root, "entities").Where(e => !declared.Contains(Text(e, "key"))))
                 if (EntityDomain(Root, Text(entity, "key")) is { } domain)
                     foreach (var (command, _) in domain["commands"] as JsonObject ?? [])
                         if (!commands.Any(n => Choice(n, "entity") == Text(entity, "key") && Choice(n, "command") == command))
@@ -687,7 +689,7 @@ public static class VisualGraphValidator
             // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
             var frames = OfKind("camera_frame").Where(n => IsCamera(Choice(n, "entity"))).ToList();
             foreach (var node in Later(frames, n => Choice(n, "entity"))) Error(Id(node), Words.FrameDuplicate(EntityName(Choice(node, "entity")), KindLabel("camera_frame")), "entity", code: "camera.duplicate");
-            foreach (var camera in DefinitionItems(Root, "entities").Where(e => IsCamera(Text(e, "key"))))
+            foreach (var camera in DefinitionItems(Root, "entities").Where(e => IsCamera(Text(e, "key")) && !declared.Contains(Text(e, "key"))))
                 if (!OfKind("show_frame").Any(n => Choice(n, "entity") == Text(camera, "key")))
                     errors.Add(new(null, Words.NoFrame(EntityName(Text(camera, "key")), KindLabel("show_frame")), 2, Code: "camera.no_frame"));
         }

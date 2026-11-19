@@ -10235,6 +10235,9 @@
         ],
         "minGraphVersion": 5,
         "argumentStorage": "arguments",
+        "dynamicInputs": "declared",
+        "dynamicOutputs": "declared",
+        "dynamicExecution": "declared",
         "config": {
           "key": {
             "type": "string",
@@ -12086,6 +12089,9 @@
         "label": "Camera",
         "state": {},
         "commands": {},
+        "frame": {
+          "label": "When a frame is needed"
+        },
         "options": {
           "frame_interval": {
             "type": "number",

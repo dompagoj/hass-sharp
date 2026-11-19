@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, declaredEntities, definitionCatalog, nodeCatalog, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
-import { updateNode, type VisualGraph } from '../src/visual/graph'
+import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, executionLabel, executionPorts, nodeCatalog, setInput, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
+import { connectNodes, updateNode, type VisualGraph } from '../src/visual/graph'
+import { buildNodeView } from '../src/visual/flow/flowModel'
 import { editorGraph } from '../src/entities/model'
 
 const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
@@ -39,4 +40,50 @@ it('the editor does not list an entity that a node declares', () => {
   const node = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor' }).nodes[0]
   const body = { name: 'Nodes', device: null, settings: [], entities: [{ key: 'door', domain: 'binary_sensor' }, { key: 'old', domain: 'switch' }], logic: { kind: 'graph', graph: { version: 5, name: 'Nodes', nodes: [node], edges: [] } } }
   expect((editorGraph(body as never).definition as never as { entities: { key: string }[] }).entities.map(e => e.key)).toEqual(['old'])
+})
+
+it('a new Entity node does not take the key of the definition\'s one setting', () => {
+  const graph: VisualGraph = { version: 5, name: 'Nodes', nodes: [], edges: [], definition: { entities: [], settings: [{ key: 'delay', type: 'number' }] } as never }
+  const node = addGraphNode(graph, 'entity', 'a', nodeCatalog).nodes[0]
+  expect(node.config.key).toBeUndefined()
+  expect(Object.values(node.config)).not.toContain('delay')
+})
+
+/** The labels of a node's right column, top to bottom: each execution pin with the values under it. */
+const rightColumn = (graph: VisualGraph, id: string) =>
+  buildNodeView(graph.nodes.find(n => n.id === id)!, { graph, catalog: nodeCatalog, diagnostics: [] }).rows.flatMap(r => (r.output ? [r.output.label] : []))
+
+it('the node has the pins of its type', () => {
+  const light = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light' }).nodes[0]
+  expect(Object.keys(dataInputs(light))).toEqual(['is_on', 'brightness'])
+  expect(Object.values(dataInputs(light)).every(input => input.required === false)).toBe(true)
+  expect(executionPorts(light)).toEqual(['command:turn_on', 'command:turn_off'])
+  expect(executionLabel(light, 'command:turn_on')).toBe('Turn on')
+  expect(dataOutputs(light)['command:turn_on:brightness']).toMatchObject({ pointer: '/data/brightness', group: 'command:turn_on' })
+  const camera = add(empty(), 'entity', 'c', { key: 'cam', domain: 'camera' }).nodes[0]
+  expect(executionPorts(camera)).toEqual(['frame'])
+  expect(executionLabel(camera, 'frame')).toBe('When a frame is needed')
+  expect(Object.keys(dataInputs({ ...light, config: { ...light.config, key: '' } }))).toEqual(['is_on', 'brightness'])
+})
+
+it('a value set on the node is kept under arguments, and one can be connected', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light' })
+  graph = add(graph, 'entity_is', 'is', { entity: lit('entity_id', 'binary_sensor.motion') })
+  graph = connectData(graph, 'is', 'value', 'l', 'is_on')
+  expect(graph.edges.some(e => e.kind === 'data' && e.target === 'l' && e.targetPort === 'is_on')).toBe(true)
+  // setInput changes the node it is given, as InputRow does on a copy.
+  const set = structuredClone(graph.nodes[0])
+  setInput(set, 'brightness', lit('number', 128), nodeCatalog)
+  // The connected input is cleared under arguments too, as connectData clears any input it wires.
+  expect(set.config.arguments).toEqual({ is_on: { kind: 'unset' }, brightness: lit('number', 128) })
+  expect(set.config).not.toHaveProperty('brightness')
+})
+
+it('a step can be connected to a command, and the card lists each command with its values under it', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light' })
+  graph = add(graph, 'log', 'log')
+  graph = connectNodes(graph, 'l', 'log', 'command:turn_on')
+  // A step order wire names its execution pin as port (sourcePort is a value wire's).
+  expect(graph.edges.some(e => e.kind !== 'data' && e.source === 'l' && e.target === 'log' && e.port === 'command:turn_on')).toBe(true)
+  expect(rightColumn(graph, 'l')).toEqual(['Turn on', 'Brightness', 'Turn off'])
 })

@@ -17,7 +17,8 @@ static class EntityNodeTests
         foreach (var (name, test) in new (string, Action)[] {
             (nameof(NodesDeclareEntities), NodesDeclareEntities),
             (nameof(ANodeReplacesAListedEntityOfItsKey), ANodeReplacesAListedEntityOfItsKey),
-            (nameof(AGraphOfTheWrongShapeDeclaresNothing), AGraphOfTheWrongShapeDeclaresNothing) })
+            (nameof(AGraphOfTheWrongShapeDeclaresNothing), AGraphOfTheWrongShapeDeclaresNothing),
+            (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins) })
         {
             try
             {
@@ -67,5 +68,21 @@ static class EntityNodeTests
     {
         foreach (var graph in new JsonObject[] { new(), new() { ["nodes"] = 3, ["definition"] = new JsonObject() }, new() { ["nodes"] = new JsonArray(1, "x", new JsonObject { ["kind"] = "entity", ["config"] = 5 }), ["definition"] = new JsonObject() } })
             Check(VisualNodeCatalog.DeclaredEntities(graph, VisualNodeCatalog.Root).All(d => d.Entity.Count == 0), "no entity is read from a malformed graph");
+    }
+
+    static void TheNodeHasItsTypesPins()
+    {
+        var light = Hub("l", "lamp", "light");
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(light).Select(p => p.Key)) == "is_on,brightness", "a light's state values are its inputs");
+        Check(VisualNodeCatalog.DataInputs(light).All(p => p.Value?["required"]?.GetValue<bool>() == false), "every state input is optional as a pin");
+        Check(string.Join(",", VisualNodeCatalog.ExecutionPorts(light)) == "command:turn_on,command:turn_off", "one execution pin per command");
+        var outputs = VisualNodeCatalog.DataOutputs(light);
+        Check(string.Join(",", outputs.Select(p => p.Key)) == "command:turn_on:brightness", "a command's values are outputs");
+        Check(outputs["command:turn_on:brightness"]!["pointer"]!.GetValue<string>() == "/data/brightness" && outputs["command:turn_on:brightness"]!["group"]!.GetValue<string>() == "command:turn_on", "an output points into its command's data and is grouped under it");
+        Check(string.Join(",", VisualNodeCatalog.ExecutionPorts(Hub("c", "cam", "camera"))) == "frame", "a camera has the frame pin");
+        Check(VisualNodeCatalog.ExecutionPorts(Hub("s", "t", "sensor")).Length == 0 && VisualNodeCatalog.DataOutputs(Hub("s", "t", "sensor")).Count == 0, "a sensor has inputs only");
+        var unknown = Hub("u", "u", "nothing");
+        Check(VisualNodeCatalog.DataInputs(unknown).Count == 0 && VisualNodeCatalog.ExecutionPorts(unknown).Length == 0, "an unknown type has no pins");
+        Check(VisualNodeCatalog.DataInputs(Hub("d", "", "light")).Count == 2, "the pins do not wait for a key");
     }
 }

@@ -296,11 +296,13 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
       list: !untyped && typeIsList(output.type, catalog), connected, error: false, description: output.description,
     }
   })
-  // A value read in one of the step's scopes (a flow's value, For each's item) sits right under that scope's pin.
+  // A value read in one of the step's scopes (a flow's value, For each's item) sits right under that scope's pin, and so
+  // does one grouped under a pin (an Entity node's command value).
   const scopeOf = (i: number) => outputSpecs[i][1].scope
+  const under = (i: number, port: string) => scopeOf(i) === port || outputSpecs[i][1].group === port
   const right = [
-    ...namedExec.flatMap(port => [execPin(port), ...outputs.filter((_, i) => scopeOf(i) === port)]),
-    ...outputs.filter((_, i) => { const scope = scopeOf(i); return !scope || !namedExec.includes(scope) }),
+    ...namedExec.flatMap(port => [execPin(port), ...outputs.filter((_, i) => under(i, port))]),
+    ...outputs.filter((_, i) => !namedExec.some(port => under(i, port))),
   ]
   const rows: RowView[] = Array.from({ length: Math.max(inputs.length, right.length) }, (_, i) => ({
     id: `${inputs[i]?.port ?? ''}|${right[i]?.id ?? ''}`,

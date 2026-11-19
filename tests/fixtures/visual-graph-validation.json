@@ -37632,5 +37632,231 @@
       "node.document",
       "node.document"
     ]
+  },
+  {
+    "name": "an Entity node takes its state from a value step and runs a step on a command",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [
+        {
+          "id": "relay",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay"
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.motion"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "on_log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Turned on"
+            }
+          }
+        },
+        {
+          "id": "off_log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Turned off"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "is.value:relay.is_on",
+          "kind": "data",
+          "source": "is",
+          "target": "relay",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        },
+        {
+          "id": "relay:command:turn_on:on_log",
+          "source": "relay",
+          "target": "on_log",
+          "port": "command:turn_on"
+        },
+        {
+          "id": "relay:command:turn_off:off_log",
+          "source": "relay",
+          "target": "off_log",
+          "port": "command:turn_off"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a state input of an Entity node takes only its value's type",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "open"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "c.value:door.is_on",
+          "kind": "data",
+          "source": "c",
+          "target": "door",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "is_on",
+    "messages": [
+      "On accepts True/False, not Text"
+    ]
+  },
+  {
+    "name": "an Entity node refuses a value its type does not have",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "arguments": {
+              "brightness": {
+                "kind": "literal",
+                "type": "number",
+                "value": 5
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "contains": "Unknown input brightness",
+    "messages": [
+      "Unknown input brightness"
+    ]
+  },
+  {
+    "name": "an Entity node that runs nothing is not warned about by the rules of When commanded and Show frame steps",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [
+        {
+          "id": "relay",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay"
+          }
+        },
+        {
+          "id": "cam",
+          "kind": "entity",
+          "config": {
+            "key": "cam",
+            "domain": "camera",
+            "name": "Camera"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "code definition.invalid: entities that are not a list",
+    "graph": {
+      "version": 5,
+      "name": "Broken",
+      "nodes": [],
+      "edges": [],
+      "definition": {
+        "entities": {
+          "door": {
+            "domain": "binary_sensor"
+          }
+        },
+        "settings": []
+      }
+    },
+    "valid": false,
+    "messages": [
+      "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type"
+    ],
+    "codes": [
+      "definition.invalid"
+    ]
   }
 ]

@@ -95,7 +95,26 @@ public static class VisualNodeCatalog
     internal static JsonObject? DefinitionEntity(JsonObject catalog, string key) => DefinitionItems(catalog, "entities").Find(e => Text(e, "key") == key);
     /// <summary>The <c>entityDomains</c> entry of the definition's entity with this key; null for an unknown entity or domain.</summary>
     internal static JsonObject? EntityDomain(JsonObject catalog, string key) =>
-        DefinitionEntity(catalog, key) is { } entity && Text(entity, "domain") is { Length: > 0 } domain && catalog["entityDomains"] is JsonObject domains && domains.TryGetPropertyValue(domain, out var entry) ? entry as JsonObject : null;
+        DefinitionEntity(catalog, key) is { } entity && Text(entity, "domain") is { Length: > 0 } domain ? DomainRow(catalog, domain) : null;
+    /// <summary>The <c>entityDomains</c> row of a domain; null for one the catalog does not have.</summary>
+    static JsonObject? DomainRow(JsonObject catalog, string domain) =>
+        catalog["entityDomains"] is JsonObject domains && domains.TryGetPropertyValue(domain, out var entry) ? entry as JsonObject : null;
+    /// <summary>
+    /// The <c>entityDomains</c> row of the type an Entity node (<c>"dynamicInputs": "declared"</c>) declares, read from
+    /// its own <c>config.domain</c>, never by its key; null for an unknown type. Mirrored by <c>declaredDomain</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static JsonObject? DeclaredDomain(JsonObject node, JsonObject catalog) => DomainRow(catalog, Text(node["config"], "domain"));
+    /// <summary>
+    /// An Entity node's execution pins: <c>command:&lt;command&gt;</c> per command of its type, in the row's order, then
+    /// <c>frame</c> when the row has <c>frame</c> (a camera); none for an unknown type. Mirrored by <c>declaredExecution</c>
+    /// in <c>contract.ts</c>.
+    /// </summary>
+    static IEnumerable<string> DeclaredExecution(JsonObject node, JsonObject catalog)
+    {
+        if (DeclaredDomain(node, catalog) is not { } row) yield break;
+        foreach (var (command, _) in row["commands"] as JsonObject ?? []) yield return "command:" + command;
+        if (row["frame"] is JsonObject) yield return "frame";
+    }
     /// <summary>The type of the definition's setting with this key, when it is one a setting can have; null otherwise.</summary>
     internal static string? SettingType(JsonObject catalog, string key) =>
         DefinitionItems(catalog, "settings").Find(s => Text(s, "key") == key) is { } setting && Text(setting, "type") is var type && SettingTypes.Contains(type) ? type : null;
@@ -326,6 +345,7 @@ public static class VisualNodeCatalog
         if (Text(spec, "dynamicExecution") == "branches" && node["config"]?["branches"] is JsonArray branches)
             // Only a text id names a branch, as in TypeScript; another value is reported by the validators and has no port.
             ports.AddRange(branches.OfType<JsonValue>().Select(id => id.TryGetValue<string>(out var branch) ? branch : null).OfType<string>().Select(id => "branch:" + id));
+        if (Text(spec, "dynamicExecution") == "declared") ports.AddRange(DeclaredExecution(node, snapshot?.Root ?? Root));
         // A Custom C# node with flows has its ports in its signature, as its pins are.
         ports.AddRange(((CustomSignature(node, spec)?["execution"] ?? spec?["execution"]) as JsonArray ?? []).Select(p => p!.GetValue<string>()));
         return ports.ToArray();
@@ -350,6 +370,7 @@ public static class VisualNodeCatalog
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
         if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, catalog)) ports[key] = value?.DeepClone();
         if (Text(spec, "dynamicOutputs") == "command") foreach (var (key, value) in CommandOutputs(node, catalog)) ports[key] = value?.DeepClone();
+        if (Text(spec, "dynamicOutputs") == "declared") foreach (var (key, value) in DeclaredOutputs(node, catalog)) ports[key] = value?.DeepClone();
         // An output with "when" exists only while that boolean config is true (D3, D9).
         foreach (var key in ports.Where(p => Text(p.Value, "when") is { Length: > 0 } when && !((node["config"] as JsonObject)?[when] is JsonValue on && on.TryGetValue<bool>(out var enabled) && enabled)).Select(p => p.Key).ToArray())
             ports.Remove(key);
@@ -415,13 +436,32 @@ public static class VisualNodeCatalog
     {
         var ports = new JsonObject();
         if (EntityDomain(catalog, Text(node["config"], "entity"))?["commands"]?[Text(node["config"], "command")]?["data"] is not JsonObject data) return ports;
-        foreach (var (name, value) in data)
-        {
-            var port = new JsonObject { ["type"] = TypeIds(value?["types"]).FirstOrDefault() ?? "", ["pointer"] = "/data/" + name.Replace("~", "~0").Replace("/", "~1") };
-            if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
-            ports[name] = port;
-        }
+        foreach (var (name, value) in data) ports[name] = CommandValueOutput(name, value);
         return ports;
+    }
+    /// <summary>
+    /// An Entity node's value outputs: for each data value of each command of its type, <c>command:&lt;command&gt;:&lt;value&gt;</c>,
+    /// as a When commanded step gives it (<see cref="CommandValueOutput"/>), grouped under its command's execution pin
+    /// (<c>group</c>, layout only: it is not a scope). Mirrored by <c>declaredOutputs</c> in <c>contract.ts</c>.
+    /// </summary>
+    static JsonObject DeclaredOutputs(JsonObject node, JsonObject catalog)
+    {
+        var ports = new JsonObject();
+        foreach (var (command, entry) in DeclaredDomain(node, catalog)?["commands"] as JsonObject ?? [])
+            foreach (var (name, value) in entry?["data"] as JsonObject ?? [])
+            {
+                var port = CommandValueOutput(name, value);
+                port["group"] = "command:" + command;
+                ports[$"command:{command}:{name}"] = port;
+            }
+        return ports;
+    }
+    /// <summary>One data value of a command as an output: of its first type, with its label, read from the run's trigger at <c>/data/&lt;name&gt;</c>.</summary>
+    static JsonObject CommandValueOutput(string name, JsonNode? value)
+    {
+        var port = new JsonObject { ["type"] = TypeIds(value?["types"]).FirstOrDefault() ?? "", ["pointer"] = "/data/" + name.Replace("~", "~0").Replace("/", "~1") };
+        if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
+        return port;
     }
     /// <summary>The text items of a list of type ids, such as a state value's <c>types</c>; none for anything else.</summary>
     static IEnumerable<string> TypeIds(JsonNode? types) => (types as JsonArray ?? []).OfType<JsonValue>().Select(t => t.TryGetValue<string>(out var s) ? s : "").Where(s => s != "");
@@ -491,11 +531,13 @@ public static class VisualNodeCatalog
         }
         // The state values of the domain of the definition's entity config.entity names, each without a default: for a
         // State, each required unless the domain's row says "required": false; for a Set state, none required (what it is
-        // not given, the entity keeps). Mirrored by dataInputs in contract.ts.
-        if (dynamic == "entity" && EntityDomain(snapshot?.Root ?? Root, Text(node["config"], "entity"))?["state"] is JsonObject state)
+        // not given, the entity keeps). An Entity node has those of the type its own config.domain names, none required
+        // as a pin. Mirrored by dataInputs in contract.ts.
+        var stateRow = dynamic switch { "entity" => EntityDomain(snapshot?.Root ?? Root, Text(node["config"], "entity")), "declared" => DeclaredDomain(node, snapshot?.Root ?? Root), _ => null };
+        if (stateRow?["state"] is JsonObject state)
             foreach (var (key, value) in state)
             {
-                var required = Text(node, "kind") != "set_entity_state" && !(value?["required"] is JsonValue r && r.TryGetValue<bool>(out var flag) && !flag);
+                var required = dynamic == "entity" && Text(node, "kind") != "set_entity_state" && !(value?["required"] is JsonValue r && r.TryGetValue<bool>(out var flag) && !flag);
                 var port = Input(TypeIds(value?["types"]), required, null);
                 if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
                 ports[key] = port;

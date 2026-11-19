@@ -11,7 +11,6 @@ import type { OptionText } from './traceModel'
 const own = <T,>(record: Record<string, T> | undefined, key: string) => (record && Object.hasOwn(record, key) ? record[key] : undefined)
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 
-
 export function inputLabel(graph: Graph, node: GraphNode, port: string, catalog: VisualCatalogSnapshot): string {
   if (node.kind === 'service' && port.startsWith('field:')) return serviceFieldLabel(text(node.config.service), port.slice(6), catalog.services)
   return own(nodeInputs(graph, node, definitionCatalog(catalog, graph)), port)?.label ?? portLabel(port)

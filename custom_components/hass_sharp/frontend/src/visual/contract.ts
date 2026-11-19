@@ -39,12 +39,14 @@ export interface InputSpec {
  * value wired into that input (as `withGraphTypes` resolves it under `resolvedOutputs`), and `type` is empty.
  */
 /** `scope` names the owner's scope port the value is read in (For each's item in Body, a flow's value on that flow). */
-export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; scope?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
+/** `group` names the execution pin the output is drawn under (an Entity node's command): layout only, it is not a scope. */
+export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; scope?: string; group?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
 /**
  * `root`: the node starts a flow of its own (as a trigger does); `documents`: the kinds of graph it works in (any when
  * absent); `singleton`: a graph holds at most one. `dynamicInputs: 'entity'` gives the node the state values of the
  * domain of the definition's entity `config.entity` names (see `dataInputs`); `dynamicOutputs: 'command'` gives it the
- * data values of its entity's command `config.command` (see `commandOutputs`).
+ * data values of its entity's command `config.command` (see `commandOutputs`). `declared` (an Entity node's) gives it the
+ * pins of the type its own `config.domain` names (see `declaredDomain`).
  */
 export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities. */ declares?: 'entity'; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
@@ -74,7 +76,8 @@ export interface EntityValueSpec { types: string[]; label?: string; required?: b
  * One entity domain a definition's graph can define: its state values (inputs of State and Set state), its commands,
  * each with the values of its data (outputs of When commanded), and its options.
  */
-export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; options: Record<string, ConfigSpec> }
+/** `frame`: the type is asked for frames (a camera), and its Entity node has a `frame` execution pin with this label. */
+export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; frame?: { label: string }; options: Record<string, ConfigSpec> }
 /**
  * A data value of a command: `default` is what the host gives a flow when Home Assistant sends none and the entity has no
  * state value of the same name, if the entity takes it (a light turned on at full). No validator reads it.
@@ -171,7 +174,7 @@ const numeric = (id: string, catalog: VisualCatalogSnapshot) => { const kind = r
 export function executionPorts(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const spec = nodeSpec(node.kind, catalog)
   if (isPure(node, catalog)) return []
-  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(flowSource(node, catalog)?.execution ?? [])] : []
+  return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(spec.dynamicExecution === 'declared' ? declaredExecution(node, catalog) : []), ...(flowSource(node, catalog)?.execution ?? [])] : []
 }
 /** Where a node's execution ports, scopes and their labels are: a Custom C# node's signature when it has flows, else its kind's entry. */
 function flowSource(node: GraphNode, catalog: VisualCatalogSnapshot): Pick<NodeSpec, 'execution' | 'scopePorts' | 'executionLabels'> | undefined {
@@ -183,6 +186,9 @@ export const scopePorts = (node: GraphNode, catalog: VisualCatalogSnapshot = nod
   (flowSource(node, catalog)?.scopePorts ?? []).filter((port): port is string => typeof port === 'string')
 /** The label a node's own entry (or signature) gives an execution port, such as Done or a flow's label; undefined when it gives none. */
 export function executionLabel(node: GraphNode, port: string, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
+  // An Entity node's pin: its command's label, or the type's frame label.
+  if (nodeSpec(node.kind, catalog)?.dynamicExecution === 'declared' && declaredExecution(node, catalog).includes(port))
+    return port === 'frame' ? declaredDomain(node, catalog)?.frame?.label : entityCommandLabel(catalog, text(node.config.domain), port.slice('command:'.length))
   const labels = flowSource(node, catalog)?.executionLabels
   const label = labels && Object.hasOwn(labels, port) ? labels[port] : undefined
   return typeof label === 'string' && label.trim() ? label : undefined
@@ -249,11 +255,26 @@ export function definitionCatalog(catalog: VisualCatalogSnapshot, graph: unknown
   return { ...catalog, definition: { ...structuredClone(graph.definition), entities: derivedEntities(graph.definition, graph, catalog) } as unknown as GraphDefinition }
 }
 /** The definition's entity with this key. */
-export const definitionEntity =(catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
+export const definitionEntity = (catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
 /** The `entityDomains` entry of the definition's entity with this key; undefined for an unknown entity or domain. */
 export function entityDomain(catalog: VisualCatalogSnapshot, key: string): EntityDomainSpec | undefined {
   const domain = text(definitionEntity(catalog, key)?.domain)
   return domain ? domainRow(catalog, domain) : undefined
+}
+/**
+ * The `entityDomains` row of the type an Entity node (`dynamicInputs: 'declared'`) declares, read from its own
+ * `config.domain`, never by its key; undefined for an unknown type. Mirrors `VisualNodeCatalog.DeclaredDomain`.
+ */
+export const declaredDomain = (node: GraphNode, catalog: VisualCatalogSnapshot): EntityDomainSpec | undefined =>
+  domainRow(catalog, text(record(node.config) ? node.config.domain : undefined))
+/**
+ * An Entity node's execution pins: `command:<command>` per command of its type, in the row's order, then `frame` when the
+ * row has `frame` (a camera); none for an unknown type. Mirrors `VisualNodeCatalog.DeclaredExecution`.
+ */
+function declaredExecution(node: GraphNode, catalog: VisualCatalogSnapshot): string[] {
+  const row = declaredDomain(node, catalog)
+  if (!row) return []
+  return [...Object.keys(record(row.commands) ? row.commands : {}).map(command => `command:${command}`), ...(record(row.frame) ? ['frame'] : [])]
 }
 /** The `entityDomains` row of a domain; undefined for one the catalog does not have. */
 function domainRow(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string): EntityDomainSpec | undefined {
@@ -556,6 +577,7 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
   if (spec?.dynamicOutputs === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.outputs ?? {}))
   if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
   if (spec?.dynamicOutputs === 'command') Object.assign(ports, commandOutputs(node, catalog))
+  if (spec?.dynamicOutputs === 'declared') Object.assign(ports, declaredOutputs(node, catalog))
   // An output with `when` exists only while that boolean config is true (D3, D9).
   for (const [key, port] of Object.entries(ports)) if (port.when && node.config[port.when] !== true) delete ports[key]
   return ports
@@ -612,11 +634,26 @@ export function commandOutputs(node: GraphNode, catalog: VisualCatalogSnapshot =
   const commands = entityDomain(catalog, text(node.config.entity))?.commands, command = text(node.config.command)
   const entry: unknown = record(commands) && Object.hasOwn(commands, command) ? commands[command] : undefined
   const data = record(entry) && record(entry.data) ? entry.data : {}
-  for (const [name, value] of Object.entries(data)) {
-    const type = typeIds(record(value) ? value.types : undefined)[0] ?? ''
-    ports[name] = { type, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}), pointer: '/data/' + name.replaceAll('~', '~0').replaceAll('/', '~1') }
-  }
+  for (const [name, value] of Object.entries(data)) ports[name] = commandValueOutput(name, value)
   return ports
+}
+/**
+ * An Entity node's value outputs: for each data value of each command of its type, `command:<command>:<value>`, as a When
+ * commanded step gives it (`commandValueOutput`), grouped under its command's execution pin (`group`, layout only: it is
+ * not a scope). Mirrors `VisualNodeCatalog.DeclaredOutputs`.
+ */
+function declaredOutputs(node: GraphNode, catalog: VisualCatalogSnapshot): Record<string, OutputSpec> {
+  const ports = Object.create(null) as Record<string, OutputSpec>
+  const commands = declaredDomain(node, catalog)?.commands
+  for (const [command, entry] of Object.entries(record(commands) ? commands : {}))
+    for (const [name, value] of Object.entries(record(entry) && record(entry.data) ? entry.data : {}))
+      ports[`command:${command}:${name}`] = { ...commandValueOutput(name, value), group: `command:${command}` }
+  return ports
+}
+/** One data value of a command as an output: of its first type, with its label, read from the run's trigger at `/data/<name>`. */
+function commandValueOutput(name: string, value: unknown): OutputSpec {
+  const type = typeIds(record(value) ? value.types : undefined)[0] ?? ''
+  return { type, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}), pointer: '/data/' + name.replaceAll('~', '~0').replaceAll('/', '~1') }
 }
 /** The text items of a list of type ids, such as a state value's `types`; none for anything else. */
 const typeIds = (types: unknown) => Array.isArray(types) ? types.filter((t): t is string => typeof t === 'string' && t !== '') : []
@@ -661,10 +698,11 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   }
   // The state values of the domain of the definition's entity config.entity names, each without a default: for a State,
   // each required unless the domain's row says `required: false`; for a Set state, none required (what it is not given,
-  // the entity keeps). Mirrors `VisualNodeCatalog.DataInputs`.
-  const state = dynamic === 'entity' ? entityDomain(catalog, text(node.config.entity))?.state : undefined
+  // the entity keeps). An Entity node has those of the type its own config.domain names, none required as a pin. Mirrors
+  // `VisualNodeCatalog.DataInputs`.
+  const state = dynamic === 'entity' ? entityDomain(catalog, text(node.config.entity))?.state : dynamic === 'declared' ? declaredDomain(node, catalog)?.state : undefined
   if (record(state)) for (const [key, value] of Object.entries(state)) {
-    const required = node.kind !== 'set_entity_state' && !(record(value) && value.required === false)
+    const required = dynamic === 'entity' && node.kind !== 'set_entity_state' && !(record(value) && value.required === false)
     ports[key] = { types: typeIds(record(value) ? value.types : undefined), required, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}) }
   }
   return ports
@@ -1597,7 +1635,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         readers.add(reader.id)
         errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(wired[1], wired[0])), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
       }
-    for (const entity of definitionItems(catalog, 'entities')) {
+    // These two rules are the When commanded and Show frame steps' own: an entity an Entity node declares is left out.
+    const declared = new Set([...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity').map(n => choice(n, 'key')))
+    for (const entity of definitionItems(catalog, 'entities').filter(e => !declared.has(text(e.key)))) {
       const domain = entityDomain(catalog, text(entity.key))
       if (domain) for (const command of Object.keys(record(domain.commands) ? domain.commands : {}))
         if (!commands.some(n => choice(n, 'entity') === entity.key && choice(n, 'command') === command)) {
@@ -1607,7 +1647,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
     const frames = ofKind('camera_frame').filter(n => isCamera(catalog, choice(n, 'entity')))
     for (const node of later(frames, n => choice(n, 'entity'))) error(node.id, words.frameDuplicate(cameraName(catalog, choice(node, 'entity')), kindLabel('camera_frame')), 'entity', undefined, 'camera.duplicate')
-    for (const camera of definitionItems(catalog, 'entities').filter(e => isCamera(catalog, text(e.key))))
+    for (const camera of definitionItems(catalog, 'entities').filter(e => isCamera(catalog, text(e.key)) && !declared.has(text(e.key))))
       if (!ofKind('show_frame').some(n => choice(n, 'entity') === camera.key)) {
         errors.push({ nodeId: null, message: words.noFrame(cameraName(catalog, text(camera.key)), kindLabel('show_frame')), severity: 2, code: 'camera.no_frame' }); origins.push(origin)
       }

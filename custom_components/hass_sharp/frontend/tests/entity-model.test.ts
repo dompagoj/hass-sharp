@@ -115,7 +115,9 @@ describe('editor graph', () => {
       merge(catalog as unknown as Record<string, unknown>, patch)
       return catalog
     }
-    const entityCases = cases.filter(c => c.graph && typeof c.graph === 'object' && c.graph.definition && typeof c.graph.definition === 'object' && !Array.isArray(c.graph.definition))
+    // A definition whose entities are not a list cannot be sent as a body; one without a list (its Entity nodes declare them) is sent with none.
+    const entityCases = cases.filter(c => c.graph && typeof c.graph === 'object' && c.graph.definition && typeof c.graph.definition === 'object' && !Array.isArray(c.graph.definition) &&
+      (!Object.hasOwn(c.graph.definition, 'entities') || Array.isArray(c.graph.definition.entities)))
     it('has the fixture entity cases', () => expect(entityCases.length).toBeGreaterThan(30))
     for (const fixture of entityCases) it(fixture.name, () => {
       const graph = structuredClone(fixture.graph)
@@ -126,7 +128,7 @@ describe('editor graph', () => {
           ? { ...s, value: null, label: `Setting ${s.key}`, secret: true, hasValue: true }
           : { ...s, value: s.type === 'number' ? 4 : s.type === 'boolean' ? true : 'text', label: `Setting ${s.key}` }),
         // A name the fixture gives (null for none) stays, as a sentence that names an entity by its name says it.
-        entities: graph.definition.entities.map((e: any) => ({ ...e, name: Object.hasOwn(e, 'name') ? e.name : `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
+        entities: (graph.definition.entities ?? []).map((e: any) => ({ ...e, name: Object.hasOwn(e, 'name') ? e.name : `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
         logic: { kind: 'graph', graph: withoutDefinition(graph) },
       }
       const diagnostics = contract.validateGraph(editorGraph(body), fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog)
