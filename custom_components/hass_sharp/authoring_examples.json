@@ -924,7 +924,7 @@
     },
     {
       "title": "Plug over HTTP",
-      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status and sets the relay switch and the power sensor from it with Get field and Set state. Each When commanded step turns the plug on or off with an HTTP request, then sets the switch.",
+      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged). Each When commanded step turns the plug on or off with an HTTP request, then sets the switch.",
       "definition": {
         "name": "Plug over HTTP",
         "device": {
@@ -1077,6 +1077,70 @@
                 }
               },
               {
+                "id": "relay_online",
+                "kind": "set_entity_available",
+                "config": {
+                  "entity": "relay",
+                  "available": {
+                    "kind": "literal",
+                    "type": "boolean",
+                    "value": true
+                  }
+                },
+                "position": {
+                  "x": 1260,
+                  "y": 100
+                }
+              },
+              {
+                "id": "power_online",
+                "kind": "set_entity_available",
+                "config": {
+                  "entity": "power",
+                  "available": {
+                    "kind": "literal",
+                    "type": "boolean",
+                    "value": true
+                  }
+                },
+                "position": {
+                  "x": 1560,
+                  "y": 100
+                }
+              },
+              {
+                "id": "relay_offline",
+                "kind": "set_entity_available",
+                "config": {
+                  "entity": "relay",
+                  "available": {
+                    "kind": "literal",
+                    "type": "boolean",
+                    "value": false
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 460
+                }
+              },
+              {
+                "id": "power_offline",
+                "kind": "set_entity_available",
+                "config": {
+                  "entity": "power",
+                  "available": {
+                    "kind": "literal",
+                    "type": "boolean",
+                    "value": false
+                  }
+                },
+                "position": {
+                  "x": 960,
+                  "y": 460
+                }
+              },
+              {
                 "id": "turn_on",
                 "kind": "entity_command",
                 "config": {
@@ -1085,7 +1149,7 @@
                 },
                 "position": {
                   "x": 60,
-                  "y": 460
+                  "y": 640
                 }
               },
               {
@@ -1113,7 +1177,7 @@
                 },
                 "position": {
                   "x": 360,
-                  "y": 460
+                  "y": 640
                 }
               },
               {
@@ -1129,7 +1193,7 @@
                 },
                 "position": {
                   "x": 660,
-                  "y": 460
+                  "y": 640
                 }
               },
               {
@@ -1141,7 +1205,7 @@
                 },
                 "position": {
                   "x": 60,
-                  "y": 640
+                  "y": 820
                 }
               },
               {
@@ -1169,7 +1233,7 @@
                 },
                 "position": {
                   "x": 360,
-                  "y": 640
+                  "y": 820
                 }
               },
               {
@@ -1185,7 +1249,7 @@
                 },
                 "position": {
                   "x": 660,
-                  "y": 640
+                  "y": 820
                 }
               }
             ],
@@ -1206,6 +1270,30 @@
                 "id": "set_relay:next:set_power",
                 "source": "set_relay",
                 "target": "set_power",
+                "port": "next"
+              },
+              {
+                "id": "set_power:next:relay_online",
+                "source": "set_power",
+                "target": "relay_online",
+                "port": "next"
+              },
+              {
+                "id": "relay_online:next:power_online",
+                "source": "relay_online",
+                "target": "power_online",
+                "port": "next"
+              },
+              {
+                "id": "status:error:relay_offline",
+                "source": "status",
+                "target": "relay_offline",
+                "port": "error"
+              },
+              {
+                "id": "relay_offline:next:power_offline",
+                "source": "relay_offline",
+                "target": "power_offline",
                 "port": "next"
               },
               {
@@ -1467,7 +1555,7 @@
     },
     {
       "title": "File at setup",
-      "description": "Downloads a file once when the definition starts, keeps it by its checksum, logs where it is and shows that path as a sensor's state. The address and the checksum are placeholders: replace both with your file's own before you save it, or its When started step fails.",
+      "description": "Downloads a file once when the definition starts, keeps it by its checksum, logs where it is and shows that path as a sensor's state. The address and the checksum are placeholders: replace both with your file's own before you save it, or the definition will not start.",
       "definition": {
         "name": "File at setup",
         "device": null,
@@ -1602,7 +1690,7 @@
       "library": {
         "id": "example_plug",
         "name": "SmartPlug.cs",
-        "source": "using System.Net.Http;\nusing System.Text;\nusing System.Text.Json.Nodes;\n\n/// <summary>A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.</summary>\npublic class SmartPlug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50/rpc.</summary>\n    [Setting(\"Address\")] public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n    readonly SharpSensor power;\n\n    /// <summary>Adds the plug's two entities, the switch turning the plug on and off.</summary>\n    public SmartPlug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n        power = Add(new SharpSensor(\"power\", \"Power\") { DeviceClass = \"power\", Unit = \"W\", StateClass = \"measurement\" });\n    }\n\n    /// <summary>Reads the plug's status every 10 seconds while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromSeconds(10), Poll);\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Sets the switch and the sensor from the plug's status.</summary>\n    async Task Poll()\n    {\n        var status = await Call(\"Switch.GetStatus\", new JsonObject { [\"id\"] = 0 });\n        relay.IsOn = status?[\"output\"]?.GetValue<bool>();\n        power.Value = status?[\"apower\"]?.GetValue<double>();\n    }\n\n    /// <summary>Turns the plug on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        await Call(\"Switch.Set\", new JsonObject { [\"id\"] = 0, [\"on\"] = on });\n        relay.IsOn = on;\n    }\n\n    /// <summary>Sends one request to the plug and returns its result.</summary>\n    async Task<JsonNode?> Call(string method, JsonObject parameters)\n    {\n        var request = new JsonObject { [\"id\"] = 1, [\"method\"] = method, [\"params\"] = parameters };\n        using var content = new StringContent(request.ToJsonString(), Encoding.UTF8, \"application/json\");\n        using var response = await Http.PostAsync(Address, content, Stopping);\n        response.EnsureSuccessStatusCode();\n        return JsonNode.Parse(await response.Content.ReadAsStringAsync(Stopping))?[\"result\"];\n    }\n}"
+        "source": "using System.Net.Http;\nusing System.Text;\nusing System.Text.Json.Nodes;\n\n/// <summary>A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.</summary>\npublic class SmartPlug : SharpDevice\n{\n    /// <summary>The plug's JSON-RPC address.</summary>\n    [Setting(\"Address\", Description = \"Where the plug answers, such as http://192.168.1.50/rpc.\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n    readonly SharpSensor power;\n\n    /// <summary>Adds the plug's two entities, the switch turning the plug on and off.</summary>\n    public SmartPlug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n        power = Add(new SharpSensor(\"power\", \"Power\") { DeviceClass = \"power\", Unit = \"W\", StateClass = \"measurement\" });\n    }\n\n    /// <summary>Refuses to start without an address the plug can be reached at.</summary>\n    protected override Task Setup()\n    {\n        if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not (\"http\" or \"https\"))\n            throw new InvalidOperationException(\"Set the plug's address, such as http://192.168.1.50/rpc.\");\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Reads the plug's status every 10 seconds while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromSeconds(10), Poll);\n        return Task.CompletedTask;\n    }\n\n    /// <summary>\n    /// Sets the switch and the sensor from the plug's status. While the plug does not answer, both are unavailable, and\n    /// Every logs why once.\n    /// </summary>\n    async Task Poll()\n    {\n        try\n        {\n            var status = await Call(\"Switch.GetStatus\", new JsonObject { [\"id\"] = 0 });\n            relay.IsOn = status?[\"output\"]?.GetValue<bool>();\n            power.Value = status?[\"apower\"]?.GetValue<double>();\n            relay.Available = true;\n            power.Available = true;\n        }\n        catch\n        {\n            relay.Available = false;\n            power.Available = false;\n            throw;\n        }\n    }\n\n    /// <summary>Turns the plug on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        await Call(\"Switch.Set\", new JsonObject { [\"id\"] = 0, [\"on\"] = on });\n        relay.IsOn = on;\n    }\n\n    /// <summary>Sends one request to the plug and returns its result.</summary>\n    async Task<JsonNode?> Call(string method, JsonObject parameters)\n    {\n        var request = new JsonObject { [\"id\"] = 1, [\"method\"] = method, [\"params\"] = parameters };\n        using var content = new StringContent(request.ToJsonString(), Encoding.UTF8, \"application/json\");\n        using var response = await Http.PostAsync(Address, content, Stopping);\n        response.EnsureSuccessStatusCode();\n        return JsonNode.Parse(await response.Content.ReadAsStringAsync(Stopping))?[\"result\"];\n    }\n}"
       }
     }
   ]

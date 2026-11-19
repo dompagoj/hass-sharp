@@ -177,7 +177,7 @@ static class AuthoringAdapterTests
                 kinds.Add(node["kind"]!.GetValue<string>());
             }
         }
-        string[] shown=["camera_snapshot","image_draw_rect","image_draw_text","camera_frame","show_frame","http_request","download_file","entity_setup","entity_command","set_entity_state","entity_state","entity_is","setting"];
+        string[] shown=["camera_snapshot","image_draw_rect","image_draw_text","camera_frame","show_frame","http_request","download_file","entity_setup","entity_command","set_entity_state","entity_state","entity_is","setting","set_entity_available"];
         VisualExecutionTests.Check(shown.All(kinds.Contains),"the example definitions use every kind they show: missing "+string.Join(", ",shown.Where(k=>!kinds.Contains(k))));
         Console.WriteLine("PASS the example definitions preview with no diagnostics, lay out their steps, carry no secret and use every kind they show");
     }
