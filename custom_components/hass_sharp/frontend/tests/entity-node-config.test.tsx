@@ -201,13 +201,17 @@ describe('retyping an Entity node to or from Camera', () => {
     expect(configOf(relay.graph, 'set')).toEqual({ entity: 'relay' })
     expect(refitNotice(relay.removed)).toBe('Cleared a value that no longer fits: On.')
     const level = retypeNode(graph, 'level', 'camera', nodeCatalog)
-    expect(configOf(level.graph, 'level')).toMatchObject({ key: 'level', domain: 'camera', name: 'Level', options: {} })
+    expect(configOf(level.graph, 'level')).toMatchObject({ key: 'level', domain: 'camera', name: 'Level' })
+    // A number's minimum and maximum go: a camera takes neither.
+    expect(configOf(level.graph, 'level').options).toEqual({})
     // Its Set value command and that command's value go, with the wires from them.
     expect(level.graph.edges.filter(e => e.source === 'level')).toEqual([])
     expect(refitNotice(level.removed)).toContain('Value')
     // Back from Camera: its seconds between frames go, as a number has none.
     const camera = entityGraph({ nodes: [{ key: 'front', domain: 'camera', name: 'Front', options: { frame_interval: 2 } }] })
-    expect(configOf(retypeNode(camera, 'front', 'number', nodeCatalog).graph, 'front')).toMatchObject({ key: 'front', domain: 'number', name: 'Front', options: {} })
+    const front = configOf(retypeNode(camera, 'front', 'number', nodeCatalog).graph, 'front')
+    expect(front).toMatchObject({ key: 'front', domain: 'number', name: 'Front' })
+    expect(front.options).toEqual({})
   })
 })
 

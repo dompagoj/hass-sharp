@@ -252,7 +252,8 @@ describe('the image type', () => {
   it('is shown as a camera\'s frame by Show frame, in the flow a camera\'s Entity node starts when a frame is needed, only in an entity definition', () => {
     const { show_frame: show } = contract.nodeCatalog.nodes
     expect(show).toMatchObject({ category: 'Entity', documents: ['entity'], config: { entity: { type: 'string', required: true } } })
-    expect(show).toMatchObject({ label: 'Show frame', execution: ['next'], inputs: { image: { types: ['image'], required: true } }, outputs: {} })
+    expect(show).toMatchObject({ label: 'Show frame', execution: ['next'], inputs: { image: { types: ['image'], required: true } } })
+    expect(show.outputs).toEqual({})
     expect(show.root).toBeUndefined()
     expect(show.pure).toBeUndefined()
     expect(show.description).toBe('Make this picture the camera\'s current picture.')
@@ -271,7 +272,9 @@ describe('the image type', () => {
   it('starts a flow with When a frame is needed, a root that records no run by default (the old step, until Task 12)', () => {
     const { camera_frame: frame } = contract.nodeCatalog.nodes
     expect(frame).toMatchObject({ category: 'Entity', documents: ['entity'], config: { entity: { type: 'string', required: true } } })
-    expect(frame).toMatchObject({ label: 'When a frame is needed', root: true, execution: ['next'], inputs: {}, outputs: {}, config: { trackHistory: { default: false } } })
+    expect(frame).toMatchObject({ label: 'When a frame is needed', root: true, execution: ['next'], config: { trackHistory: { default: false } } })
+    expect(frame.inputs).toEqual({})
+    expect(frame.outputs).toEqual({})
     expect(frame.description).toBe('Run the steps after it when Home Assistant needs a new picture from one of this definition\'s cameras. Nothing runs while nobody is watching.')
     expect(frame.singleton).toBeUndefined()
     const camera = add(empty([], 'Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })

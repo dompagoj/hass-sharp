@@ -158,7 +158,8 @@ it('choosing a type in the section shows the notice, and one undo brings everyth
   const domain = control<HTMLSelectElement>(root, 'Type')
   domain.value = 'binary_sensor'
   domain.dispatchEvent(new Event('change', { bubbles: true }))
-  expect(changed().config).toMatchObject({ domain: 'binary_sensor', options: {} })
+  expect(changed().config).toMatchObject({ domain: 'binary_sensor' })
+  expect(changed().config.options).toEqual({})
   expect(changed().config.arguments).toEqual({ is_on: lit('boolean', true) })
   expect(history.graph().edges.some(e => e.source === 'l')).toBe(false)
   expect(history.graph().nodes.find(n => n.id === 'set')!.config).not.toHaveProperty('brightness')

@@ -68,7 +68,9 @@ it('a type change drops what the new type does not have and says so', () => {
   graph = connectNodes(graph, 'l', 'set', 'command:turn_on')
   const { graph: retyped, removed } = retypeNode(graph, 'l', 'binary_sensor', nodeCatalog)
   const node = retyped.nodes.find(n => n.id === 'l')!
-  expect(node.config).toMatchObject({ domain: 'binary_sensor', options: {}, arguments: { is_on: lit('boolean', true) } })
+  expect(node.config).toMatchObject({ domain: 'binary_sensor' })
+  // A light's Can be dimmed goes: a binary sensor has no options.
+  expect(node.config.options).toEqual({})
   expect(node.config.arguments).toEqual({ is_on: lit('boolean', true) })
   expect(retyped.edges.some(e => e.source === 'l')).toBe(false)
   expect(retyped.nodes.find(n => n.id === 'set')!.config).not.toHaveProperty('brightness')

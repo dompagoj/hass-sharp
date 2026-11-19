@@ -87,7 +87,8 @@ describe('entity API client', () => {
     expect(error).toBeInstanceOf(VisualApiError)
     expect(error).toBeInstanceOf(EntityApiError)
     expect(new VisualApiError('conflict', 'x')).not.toBeInstanceOf(EntityApiError)
-    expect(new EntityApiError('validation', {})).toMatchObject({ code: 'validation', detail: {}, message: 'Fix the problems before saving.' })
+    expect(new EntityApiError('validation', {})).toMatchObject({ code: 'validation', message: 'Fix the problems before saving.' })
+    expect(new EntityApiError('validation', {}).detail).toEqual({})
   })
   it('rethrows an Error as it is', async () => {
     const thrown = new Error('Socket closed')

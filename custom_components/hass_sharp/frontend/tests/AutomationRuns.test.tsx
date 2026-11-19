@@ -494,7 +494,8 @@ it('labels a frame run by its camera, named when the definition is known', async
 // A root step of an entity definition with no method of its own runs under the method name generated from its id; a
 // flow of an Entity node under the one generated from its id and pin.
 const lensGraph = hubsGraph('Lens', [['cam', 'front', 'camera', 'Front door'], ['plug', 'relay', 'switch', 'Relay']], [
-  { id: 'setup', kind: 'entity_setup', label: 'Warm up', config: {}, position: at },
+  { id: 'setup', kind: 'entity_setup', config: {}, position: at },
+  { id: 'tick', kind: 'trigger', label: 'Every minute', config: { type: 'ha', trigger: { trigger: 'time_pattern', minutes: '*' } }, position: at },
   { id: 'log', kind: 'log', config: { value: { kind: 'unset' } }, position: at },
 ])
 
@@ -504,14 +505,16 @@ it('titles an entity definition\'s run by its root step when it carries that ste
     record({ runId: 'run-5', automationId: 'entity:lens', visualId: 'lens', cause: 'Frame', trigger: { kind: 'frame', entity: 'front' }, actionLabel: flowMethod(cam, 'frame') }),
     record({ runId: 'run-4', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_7365747570' }),
     record({ runId: 'run-3', automationId: 'entity:lens', visualId: 'lens', cause: 'Command', trigger: commandTrigger, actionLabel: flowMethod(plug, 'command:turn_on') }),
+    record({ runId: 'run-6', automationId: 'entity:lens', visualId: 'lens', cause: 'Trigger', trigger: { kind: 'ha', platform: 'time_pattern' }, actionLabel: 'Run_7469636B' }),
     // A root no longer in the graph, and a step that is no root: as recorded.
     record({ runId: 'run-2', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_676F6E65' }),
     record({ runId: 'run-1', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_6C6F67' }),
   ]
   const { root } = setupDefinition(async () => page(runs), { triggerNames: definitionNames(lensGraph, nodeCatalog) })
-  await vi.waitFor(() => expect(rows(root)).toHaveLength(5))
-  // A step's own label names its runs; an Entity node is named by its entity, never a label of its own.
-  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['Front door: When a frame is needed', 'Warm up', 'Relay: Turn on', 'Run_676F6E65', 'Run_6C6F67'])
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(6))
+  // A root without a label is titled by its kind (When started); one with a label by its label (Every minute); an
+  // Entity node's flow by its entity and the flow.
+  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['Front door: When a frame is needed', 'When started', 'Relay: Turn on', 'Every minute', 'Run_676F6E65', 'Run_6C6F67'])
 })
 
 it('titles a run of an Entity node\'s flow by the entity and the flow when it carries the flow\'s method name', async () => {
