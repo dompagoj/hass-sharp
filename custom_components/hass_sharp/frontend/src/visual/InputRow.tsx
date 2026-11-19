@@ -13,6 +13,11 @@ export const closeIcon = ['M6 6l12 12', 'M18 6 6 18']
 
 /** Focuses the control of an inspector row: the one its label names, else its first field, else a button. */
 export function focusControl(row: HTMLElement) {
+  // A row that is itself the control (an Entity node's name in the inspector's header).
+  if (row.matches('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)')) {
+    row.focus()
+    return row.ownerDocument.activeElement === row
+  }
   const labelled = row.querySelector<HTMLLabelElement>('label[for]')
   const target = (labelled?.htmlFor ? row.querySelector<HTMLElement>(`[id="${labelled.htmlFor}"]`) : null)
     ?? row.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled),select:not(:disabled),textarea:not(:disabled)')

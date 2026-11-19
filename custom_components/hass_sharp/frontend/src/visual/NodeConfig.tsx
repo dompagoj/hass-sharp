@@ -22,6 +22,7 @@ import { DraftField } from './widgets/common'
 import { numberMessage, parseNumber, useDecimalSeparator } from './widgets/number'
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
+import type { SavedEntities } from './adapter'
 import { stateValueRow, stepInputRows, stepPickers, type StepPickerContext } from '../entities/NodePickers'
 
 type Options = { coalesce?: string }
@@ -52,6 +53,8 @@ export interface NodeConfigProps {
   onEditCode?(): void
   /** Says what a change also did (the wires a new trigger type removed), on the canvas. */
   onNotice?(text: string): void
+  /** The saved document's entities as Home Assistant has them (an Entity node's saved key and entity id). */
+  savedEntities?: SavedEntities
 }
 
 /**
@@ -76,6 +79,8 @@ export function NodeConfig(props: NodeConfigProps) {
   const problems = createMemo(() => (props.diagnostics ?? []).filter(d => d.nodeId === props.node.id && d.severity >= 2))
   const errorsFor = (key: string) => problems().filter(d => d.severity === 3 && (d.inputId === key || d.portId === key)).map(d => d.message)
   const kind = () => props.node.kind
+  /** A node that declares an entity is named by it: its header edits the entity's name, not a label of the node. */
+  const declares = () => spec()?.declares === 'entity'
   const kindLabel = () => spec()?.label ?? words.key(kind())
   /** A Custom C# node's pins, title and description, as its code gives them. */
   const signature = () => customSignature(props.node, props.catalog)
@@ -89,6 +94,16 @@ export function NodeConfig(props: NodeConfigProps) {
     if (value === undefined) delete next[key]
     else next[key] = value
     props.onChange(next, options)
+  }
+  /** The header's text: an entity's name (left out when cleared, never null), else the node's label. */
+  const retitle = (value: string) => {
+    if (!declares()) return props.onGraphChange(updateNode(props.graph, props.node.id, { label: value || undefined }), { coalesce: `label:${props.node.id}` })
+    // An Entity node's own label is never shown: the name replaces it.
+    const { label: _label, ...node } = props.node
+    const config = { ...node.config }
+    if (value) config.name = value
+    else delete config.name
+    props.onGraphChange({ ...props.graph, nodes: props.graph.nodes.map(n => (n.id === node.id ? { ...node, config } : n)) }, { coalesce: `name:${props.node.id}` })
   }
   const copy = (text: string, done: string) => {
     void Promise.resolve(navigator.clipboard?.writeText?.(text)).then(() => setStatus(done), () => setStatus('Copying is not allowed here'))
@@ -124,6 +139,7 @@ export function NodeConfig(props: NodeConfigProps) {
     onChange: config => props.onChange(config),
     onGraphChange: graph => props.onGraphChange(graph),
     onNotice: text => props.onNotice?.(text),
+    saved: () => props.savedEntities,
   }
   /** How the row of an input is edited when its kind says so (a Has state's state offers its entity's states). */
   const rowFor = (port: string) => {
@@ -230,8 +246,10 @@ export function NodeConfig(props: NodeConfigProps) {
       <header class="hs-insp-head" classList={{ 'hs-insp-head--trigger': kind() === 'trigger' }}>
         <span class="hs-insp-head__icon" title={view().identity.label}><Glyph paths={view().identity.icon} /></span>
         <div class="hs-insp-head__titles">
-          <input ref={title} class="hs-insp-title" aria-label="Node label" aria-describedby={descriptionId} value={props.node.label ?? ''} placeholder={unnamed()}
-            onInput={e => props.onGraphChange(updateNode(props.graph, props.node.id, { label: e.currentTarget.value || undefined }), { coalesce: `label:${props.node.id}` })} />
+          <input ref={title} class="hs-insp-title" aria-label={declares() ? 'Entity name' : 'Node label'} aria-describedby={descriptionId}
+            data-input-id={declares() ? 'name' : undefined} aria-invalid={(declares() && errorsFor('name').length > 0) || undefined}
+            value={declares() ? (typeof props.node.config.name === 'string' ? props.node.config.name : '') : props.node.label ?? ''}
+            placeholder={declares() ? 'Not set' : unnamed()} onInput={e => retitle(e.currentTarget.value)} />
           <small class="hs-insp-kind">{kindLabel() === view().identity.label ? kindLabel() : `${kindLabel()} · ${view().identity.label}`}</small>
         </div>
         <Menu label="Node actions" items={menu()} />

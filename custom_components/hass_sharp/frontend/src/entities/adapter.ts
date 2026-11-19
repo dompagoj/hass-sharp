@@ -3,7 +3,7 @@ import type { HomeAssistant } from '../types'
 import type { EditorAdapter, EditorTexts } from '../visual/adapter'
 import type { VisualGraph } from '../visual/graph'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
-import { DefinitionOverview } from './DefinitionPanel'
+import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
 import { icons } from '../visual/icons'
 import { copyNotice, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
@@ -111,6 +111,13 @@ export function entityAdapter(
     texts: entityTexts,
     runGroup: context => createComponent(DefinitionRunNow, { context }),
     overview: context => createComponent(DefinitionOverview, { context, memory }),
+    // An Entity node's key is fixed once saved; the line under it gives the entity id Home Assistant gave it.
+    savedEntities: context => {
+      const document = context.document
+      if (!document) return undefined
+      const entityIds = Object.fromEntries(liveEntitiesOf(document).flatMap(e => (e.entityId ? [[e.key, e.entityId] as const] : [])))
+      return { keys: (document.entities ?? []).map(e => e.key), entityIds }
+    },
     overviewIcon: icons.entity,
     // A problem about no step and no row of the form is listed at the form's top.
     overviewProblem: diagnostic => problemRow(diagnostic) ?? (diagnostic.nodeId || diagnostic.startLine != null ? undefined : 'problems'),

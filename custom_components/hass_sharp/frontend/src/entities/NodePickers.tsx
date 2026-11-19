@@ -7,7 +7,9 @@ import { Errors, type FieldRow } from '../visual/InputRow'
 import { typeLabel } from '../visual/typeLabels'
 import { stateField } from '../visual/widgets'
 import { SearchSelect, type SearchOption } from '../visual/widgets/SearchSelect'
+import type { SavedEntities } from '../visual/adapter'
 import { optionFits } from './definitionEdits'
+import { EntityNodeSection } from './EntityNodeSection'
 import { definitionEntityKinds } from './model'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -169,6 +171,8 @@ export interface StepPickerContext {
   onChange(config: GraphNode['config']): void
   onGraphChange(graph: VisualGraph): void
   onNotice?(text: string): void
+  /** The saved document's entities as Home Assistant has them; undefined before the first save. */
+  saved?: () => SavedEntities | undefined
 }
 
 /** One labelled picker of a step's config, with its hint and problems, as the inspector's other settings are laid out. */
@@ -299,6 +303,8 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   camera_frame: { keys: ['entity'], Section: EntitySection },
   show_frame: { keys: ['entity'], Section: EntitySection },
   setting: { keys: ['key'], Section: SettingSection },
+  // An Entity node: its whole entity but its name (the header's) and its state values (its inputs).
+  entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: EntityNodeSection },
 }
 
 /** Under a Set state's value, when its type has more than one: what leaving it empty does. */

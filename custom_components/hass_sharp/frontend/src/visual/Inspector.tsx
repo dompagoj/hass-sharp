@@ -5,6 +5,7 @@ import { AutomationOverview, automationTexts } from './automationAdapter'
 import { TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
 import type { VisualDiagnostic } from './api'
+import type { SavedEntities } from './adapter'
 import { copySteps, pasteSteps } from './clipboard'
 import { graphTypes } from './connectionIndex'
 import { dataOutputs, type GraphNode, type VisualCatalogSnapshot } from './contract'
@@ -77,6 +78,8 @@ export interface InspectorProps {
   onPreviewClose?(): void
   /** A pressed in the description of `preview`: the canvas's quick-add. */
   onQuickAdd?(): void
+  /** The saved document's entities as Home Assistant has them, for the panel of a step that declares one. */
+  savedEntities?: SavedEntities
 }
 
 /**
@@ -106,7 +109,7 @@ export function Inspector(props: InspectorProps) {
   /** Focuses what `find` returns once it has been rendered, unless the user has put focus somewhere else meanwhile. */
   const focusSoon = (find: () => HTMLElement | null | undefined) => focusWhenShown(find, aside)
   const title = (id: string) => () =>
-    [...aside.querySelectorAll<HTMLElement>('.hs-insp-node')].find(el => el.dataset.nodeId === id)?.querySelector<HTMLElement>('input[aria-label="Node label"]')
+    [...aside.querySelectorAll<HTMLElement>('.hs-insp-node')].find(el => el.dataset.nodeId === id)?.querySelector<HTMLElement>('input.hs-insp-title')
   /** Selects a step and moves focus to its title in the panel, so focus never falls to the page. */
   const selectAndFocus = (id?: string) => {
     props.onSelect?.(id)
@@ -115,8 +118,11 @@ export function Inspector(props: InspectorProps) {
   }
   /** The step library's pressed item: the one whose kind is described. */
   const pressedItem = () => workspace().querySelector<HTMLElement>('.hs-lib__item[aria-pressed="true"]')
-  /** Where focus goes when the description closes: the library item that showed it while it is on the page, else the canvas. */
-  const backFromPreview = (item: HTMLElement | null | undefined) => (item?.isConnected ? item : canvas())
+  /**
+   * Where focus goes when the description closes: the library item that showed it while it is on the page and drawn
+   * (below 700px the library is hidden, and a hidden item takes no focus), else the canvas.
+   */
+  const backFromPreview = (item: HTMLElement | null | undefined) => (item?.isConnected && item.getClientRects().length ? item : canvas())
   const close = () => {
     const id = props.selected?.id
     // A description with nothing selected: its library item, looked up while still pressed.
@@ -195,7 +201,7 @@ export function Inspector(props: InspectorProps) {
                 onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
                 onGraphChange={props.commit} onSelect={selectAndFocus}
                 onDuplicate={() => duplicate([id])} onDelete={() => remove([id])}
-                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} onNotice={props.onNotice} />
+                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} onNotice={props.onNotice} savedEntities={props.savedEntities} />
             )
           }}
         </Show>

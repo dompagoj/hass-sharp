@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityCommandLabel, entityDomain, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityCommandLabel, entityDomain, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -247,6 +247,11 @@ function kindText(ctx: Context): string | undefined {
     case 'entity_state': case 'set_entity_state': case 'set_entity_available': case 'camera_frame': case 'show_frame': {
       const entity = definitionEntityName(ctx)
       return entity ? `${entityStepWords[node.kind]} ▸ ${entity}` : undefined
+    }
+    // An Entity node: its type and key (its name is its title).
+    case 'entity': {
+      const type = entityTypeLabel(catalog, text(config.domain)), key = text(config.key)
+      return [type, key].filter(Boolean).join(' · ') || undefined
     }
     case 'entity_command': {
       const entity = definitionEntityName(ctx), command = text(config.command)

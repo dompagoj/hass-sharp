@@ -119,8 +119,8 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
                               // A double-click's second click (detail 2) keeps the details; Enter and Space give 0.
                               onClick={event => props.onPreview(props.previewed === item.kind && event.detail < 2 ? undefined : item.kind)}
                               onKeyDown={event => {
-                                // A opens quick-add, as on the canvas; Escape ends this item's details.
-                                const plain = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+                                // A (or Shift+A) opens quick-add, as on the canvas; Escape ends this item's details.
+                                const plain = !event.ctrlKey && !event.metaKey && !event.altKey
                                 if (plain && event.key.toLowerCase() === 'a') {
                                   event.preventDefault()
                                   props.onQuickAdd()

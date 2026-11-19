@@ -450,6 +450,23 @@ it('A on a focused library item opens quick-add, as A on the canvas does', async
   await vi.waitFor(() => expect(quickAddOf(host)).not.toBeNull())
 })
 
+it('Shift+A on a focused library item opens quick-add, as Shift+A on the canvas does', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  const item = libraryItem(host, 'Delay')
+  item.focus()
+  expect(key(item, 'A', { shiftKey: true }).defaultPrevented).toBe(true)
+  await vi.waitFor(() => expect(quickAddOf(host)).not.toBeNull())
+})
+
+it('Shift+A with focus in the details opens quick-add', async () => {
+  const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
+  libraryItem(host, 'Delay').click()
+  const close = button(host, 'Close details')
+  close.focus()
+  expect(key(close, 'A', { shiftKey: true }).defaultPrevented).toBe(true)
+  await vi.waitFor(() => expect(quickAddOf(host)).not.toBeNull())
+})
+
 it('A with focus on "Close details" opens quick-add', async () => {
   const host = root(); dispose = render(() => <VisualEditor name="Heating" />, host)
   libraryItem(host, 'Delay').click()
@@ -465,6 +482,8 @@ it('a typed in the library\'s search field, or A with a modifier key on an item,
   search.focus()
   expect(key(search, 'a').defaultPrevented).toBe(false)
   expect(key(libraryItem(host, 'Delay'), 'a', { ctrlKey: true }).defaultPrevented).toBe(false)
+  expect(key(libraryItem(host, 'Delay'), 'a', { metaKey: true }).defaultPrevented).toBe(false)
+  expect(key(libraryItem(host, 'Delay'), 'a', { altKey: true }).defaultPrevented).toBe(false)
   await settle()
   expect(quickAddOf(host)).toBeNull()
 })

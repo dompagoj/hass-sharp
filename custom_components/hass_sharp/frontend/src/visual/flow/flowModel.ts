@@ -2,6 +2,7 @@ import { createContext, useContext } from 'solid-js'
 import {
   customSignature,
   dataOutputs,
+  entityNodeName,
   executionLabel,
   executionPorts,
   inputValue,
@@ -170,9 +171,13 @@ export function literalTargetEntities(node: GraphNode): string[] {
   const target = node.config.target
   return record(target) && target.kind === 'literal' ? targetIds(target.value as never).entity_id : []
 }
-/** A node's name on its card: its own label, else (a Custom C# node) its method's title, else its kind's label. */
+/**
+ * A node's name on its card: the entity a node of a declaring kind declares (`entityNodeName`: its name, else its key,
+ * else the kind's label; never a label of the node's own), else its own label, else (a Custom C# node) its method's
+ * title, else its kind's label.
+ */
 export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '') =>
-  node ? (text(node.label) || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
+  node ? (entityNodeName(node, catalog) || text(node.label) || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
 
 /** Nodes whose `next` means "after the structure" are drawn with a named Done row instead of a header pin. */

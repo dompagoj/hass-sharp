@@ -1,19 +1,18 @@
-import { batch, createEffect, createSignal, createUniqueId, For, Index, Match, on, Show, Switch } from 'solid-js'
+import { batch, createEffect, createSignal, createUniqueId, For, Index, on, Show } from 'solid-js'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
-import { entityTypeLabel, words, type ConfigSpec, type VisualCatalogSnapshot } from '../visual/contract'
+import { entityTypeLabel, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import { Glyph } from '../visual/Glyph'
 import type { VisualGraph } from '../visual/graph'
 import { icons } from '../visual/icons'
-import { addEntity, definitionOf, keyProblem, keyRule, readNumber, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
-import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
+import { addEntity, definitionOf, keyProblem, keyRule, removeEntity, setEntityOption, stepsUsingEntity, updateEntity } from './definitionEdits'
+import { categories, OptionField, savedKeyHint } from './EntityNodeSection'
+import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField } from './formFields'
 import { renameEntityKey, type DefinitionEntity } from './model'
 import { retypeEntity } from './NodePickers'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
-const savedKeyHint = "The key is part of the entity's identity in Home Assistant and cannot change."
-const categories: Choice[] = [{ value: '', label: 'None' }, { value: 'config', label: 'Config' }, { value: 'diagnostic', label: 'Diagnostic' }]
 /** "N steps use this entity…": what removing a used entity or setting leaves. */
 export const usedBy = (count: number, noun: string) =>
   `${count} ${count === 1 ? 'step uses' : 'steps use'} this ${noun}. ${count === 1 ? 'It' : 'They'} will show a problem until you change or remove ${count === 1 ? 'it' : 'them'}.`
@@ -200,45 +199,5 @@ function EntityRow(props: {
         </div>
       </Show>
     </li>
-  )
-}
-
-/**
- * One option the entity's type takes (`entityDomains[…].options`), by its rule: a list of texts (one per line), a
- * choice of its values, a number, a switch, or a text; its hint is the catalog's, and one the type needs says so. A
- * number is read as the class page's number fields read theirs: a text that is not one is kept as typed (the form
- * then says so on the field, and Save waits). Empty, an option is left out (the type's default); so is a switch off.
- */
-function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; errors: string[]; onChange(value: unknown): void }) {
-  const name = () => `option:${props.option}`
-  const label = () => text(props.rule.label) || words.key(props.option)
-  const required = () => props.rule.required === true
-  const hint = () => [text(props.rule.description), required() ? 'Required.' : ''].filter(Boolean).join(' ') || undefined
-  const placeholder = () => (required() ? 'Required' : 'None')
-  const allowed = () => (Array.isArray(props.rule.enum) ? props.rule.enum.map(String) : undefined)
-  return (
-    <Switch fallback={
-      <Show when={allowed()} fallback={
-        <TextField name={name()} label={label()} hint={hint()} placeholder={placeholder()} required={required()} errors={props.errors} text={text(props.value)}
-          commit={value => props.onChange(value.trim() ? value.trim() : undefined)} />
-      }>
-        {values => <SelectField name={name()} label={label()} hint={hint()} value={text(props.value)} errors={props.errors}
-          choices={[{ value: '', label: required() ? 'Choose one' : 'None' }, ...values().map(value => ({ value, label: words.key(value) }))]} onChange={value => props.onChange(value || undefined)} />}
-      </Show>
-    }>
-      <Match when={props.rule.type === 'array'}>
-        <TextField name={name()} label={label()} hint={hint()} multiline placeholder={placeholder()} required={required()} errors={props.errors}
-          text={Array.isArray(props.value) ? props.value.map(String).join('\n') : ''}
-          commit={value => { const items = value.split('\n').map(item => item.trim()).filter(Boolean); props.onChange(items.length ? items : undefined) }} />
-      </Match>
-      <Match when={props.rule.type === 'number'}>
-        <TextField name={name()} label={label()} hint={hint()} placeholder={placeholder()} required={required()} errors={props.errors}
-          text={typeof props.value === 'number' ? String(props.value) : text(props.value)}
-          commit={value => { const read = readNumber(value); props.onChange(read === null ? undefined : read ?? value) }} />
-      </Match>
-      <Match when={props.rule.type === 'boolean'}>
-        <SwitchField name={name()} label={label()} hint={hint()} checked={props.value === true} errors={props.errors} onChange={on => props.onChange(on || undefined)} />
-      </Match>
-    </Switch>
   )
 }

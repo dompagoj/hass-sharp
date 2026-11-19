@@ -257,12 +257,25 @@ export function definitionId(name: string, taken: string[]): string {
 export const definitionEntityKinds: readonly string[] = ['entity_state', 'entity_command', 'set_entity_state', 'set_entity_available', 'camera_frame', 'show_frame']
 
 /**
- * Renames an entity of the editor graph and every step whose `entity` names it ({@link definitionEntityKinds}). The
- * same graph when no entity has `from`, `to` is not an entity key, or another entity already has it.
+ * Renames an entity of the editor graph and every step whose `entity` names it ({@link definitionEntityKinds}): a
+ * listed one, or with `nodeId` the one that Entity node declares. The same graph when no such entity has `from`, `to`
+ * is not an entity key, or another entity already has it. The steps stay with `from` while another entity keeps it
+ * (two nodes declared the same key).
  */
-export function renameEntityKey(graph: Graph, from: string, to: string): Graph {
+export function renameEntityKey(graph: Graph, from: string, to: string, nodeId?: string): Graph {
   if (!record(graph.definition) || from === to || !entityKeyPattern.test(to)) return graph
   const definition = editorDefinition(graph)
+  if (nodeId !== undefined) {
+    const declared = declaredEntities(graph)
+    const keys = [...definition.entities.map(e => e.key), ...declared.map(d => d.entity.key)]
+    if (!declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from) || keys.includes(to)) return graph
+    const follow = from !== '' && keys.filter(key => key === from).length === 1
+    return {
+      ...graph,
+      nodes: graph.nodes.map(node => node.id === nodeId ? { ...node, config: { ...node.config, key: to } }
+        : follow && definitionEntityKinds.includes(node.kind) && node.config?.entity === from ? { ...node, config: { ...node.config, entity: to } } : node),
+    }
+  }
   if (!definition.entities.some(e => e.key === from) || definition.entities.some(e => e.key === to)) return graph
   return {
     ...graph,

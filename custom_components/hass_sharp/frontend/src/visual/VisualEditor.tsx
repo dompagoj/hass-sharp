@@ -229,7 +229,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     if (focus)
       soon(() => {
         const panel = inspector()
-        const target = panel?.querySelector<HTMLElement>('.hs-insp-node input[aria-label="Node label"]') ?? panel?.querySelector<HTMLElement>('.hs-insp-sheet-bar ~ * button, .hs-insp-sheet-bar ~ * input')
+        const target = panel?.querySelector<HTMLElement>('.hs-insp-node input.hs-insp-title') ?? panel?.querySelector<HTMLElement>('.hs-insp-sheet-bar ~ * button, .hs-insp-sheet-bar ~ * input')
         target?.focus()
         return !!target && activeElement() === target
       }, editor)
@@ -395,6 +395,9 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
       if (doc && !session.unsaved() && !busy() && !switching()) void session.load(doc.id)
     },
   })
+
+  /** What Home Assistant has of the saved document's entities (an Entity node's saved key and entity id). */
+  const savedEntities = createMemo(() => adapter.savedEntities?.(context(id => inPanel(() => choose(id)))))
 
   // ---- Full screen: the library and the drawer fold away; the inspector floats; a compact bar stays.
   let libraryBefore = false
@@ -591,6 +594,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           onDuplicate={ids => inPanel(() => flow?.duplicate(ids) ?? [])}
           onEditCode={editCode}
           onNotice={text => flow?.notify(text, { keep: true })}
+          savedEntities={savedEntities()}
         />
       </div>
       <BottomDrawer

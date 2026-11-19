@@ -154,3 +154,5 @@
 @media (forced-colors: active) {
   .hs-app .hs-cdef__body > .hs-def-section, .hs-app .hs-cdef-missing { border-color: CanvasText; }
 }
+/* An Entity node's entity id, in the inspector's section rather than under a row of the list. */
+.hs-app .hs-entity-node__id { padding: 0; }

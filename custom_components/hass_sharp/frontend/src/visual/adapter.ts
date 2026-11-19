@@ -32,6 +32,12 @@ export interface EditorDocument {
   savedUtc?: string | null
 }
 
+/**
+ * What Home Assistant has of a saved document's entities: the keys of the saved entities (each part of its entity's
+ * identity there, so it no longer changes) and the entity id it gave each one, by key.
+ */
+export interface SavedEntities { keys: string[]; entityIds: Record<string, string> }
+
 /** What a save answers. */
 export interface EditorSaveResult<D extends EditorDocument = EditorDocument> {
   document: D
@@ -188,6 +194,11 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   runGroup?(context: EditorContext<D>): JSX.Element
   /** The top of the inspector's overview, when nothing is selected (the problem count and last run follow it). */
   overview?(context: EditorContext<D>): JSX.Element
+  /**
+   * The saved document's entities as Home Assistant has them, for the inspector of a step that declares one (an
+   * entity definition's Entity node): undefined before the first save, and for a document without entities.
+   */
+  savedEntities?(context: EditorContext<D>): SavedEntities | undefined
   /** The icon of the bar that opens the overview where the inspector is a sheet (with `texts.overviewPeek`). */
   overviewIcon?: readonly string[]
   /**

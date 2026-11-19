@@ -62,6 +62,17 @@ describe('the summaries of an entity definition\'s steps', () => {
   })
 })
 
+describe('an Entity node', () => {
+  it('says its type and its key', () => {
+    expect(both(node('entity', { key: 'lamp', domain: 'light', name: 'Lamp' }))).toBe('Light · lamp')
+    expect(both(node('entity', { key: '', domain: 'light', name: 'Lamp' }))).toBe('Light')
+    expect(both(node('entity', { key: '  ', domain: 'light' }))).toBe('Light')
+    expect(both(node('entity', { domain: 'binary_sensor' }))).toBe('Binary sensor')
+    // A type the catalog does not have, in words.
+    expect(both(node('entity', { key: 'fan', domain: 'fan_speed' }))).toBe('Fan speed · fan')
+  })
+})
+
 describe('Has state and Current state', () => {
   it('name the Home Assistant entity and the state', () => {
     expect(both(node('entity_is', { entity: lit('entity_id', 'binary_sensor.motion_a'), state: lit('string', 'on') }))).toBe('Has state ▸ binary_sensor.motion_a is on')

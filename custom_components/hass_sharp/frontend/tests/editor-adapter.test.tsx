@@ -400,3 +400,18 @@ it('encodes the id in the editor link of the automation and the entity definitio
   expect(entityAdapter(hass).editorHref('a b/c?d')).toBe('/entities/a%20b%2Fc%3Fd')
   expect(automationAdapter(hass).runHref('visual-a b', 'r/1')).toBe('/visual/visual-a%20b/runs/r%2F1')
 })
+
+it('the entity definition\'s adapter answers its saved entities\' keys and the entity ids Home Assistant gave them', () => {
+  const adapter = entityAdapter({ callWS: async () => ({}) })
+  const context = (document: unknown) => ({ document }) as unknown as Parameters<NonNullable<typeof adapter.savedEntities>>[0]
+  expect(adapter.savedEntities!(context(undefined))).toBeUndefined()
+  const saved = { id: 'desk', entities: [{ key: 'lamp', domain: 'light' }, { key: 'fan', domain: 'switch' }], registeredEntities: [] }
+  // Running: its live entities; one Home Assistant has no id for yet is left out.
+  expect(adapter.savedEntities!(context({ ...saved, liveEntities: [{ key: 'lamp', entityId: 'light.desk_lamp' }, { key: 'fan', entityId: null }] })))
+    .toEqual({ keys: ['lamp', 'fan'], entityIds: { lamp: 'light.desk_lamp' } })
+  // Off or failed: the entity registry's, by unique id.
+  expect(adapter.savedEntities!(context({ ...saved, liveEntities: [], registeredEntities: [{ uniqueId: 'desk:fan', entityId: 'switch.desk_fan' }, { uniqueId: 'other:lamp', entityId: 'light.other' }] })))
+    .toEqual({ keys: ['lamp', 'fan'], entityIds: { fan: 'switch.desk_fan' } })
+  // The automation editor has no entities.
+  expect(automationAdapter({ callWS: async () => ({}) }).savedEntities).toBeUndefined()
+})

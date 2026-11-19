@@ -55,7 +55,7 @@ export function KindPreview(props: KindPreviewProps) {
     if (event.key === 'Escape') {
       event.preventDefault()
       props.onClose()
-    } else if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'a' && props.onQuickAdd) {
+    } else if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'a' && props.onQuickAdd) {
       event.preventDefault()
       props.onQuickAdd()
     }

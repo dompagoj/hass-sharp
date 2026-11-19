@@ -20,7 +20,7 @@ afterEach(() => {
  * The docked Inspector of a fresh automation, with `props` over those defaults (a selected step's pickers ask Home
  * Assistant), in a workspace with a canvas stand-in and, with `pressed`, the step library's pressed item.
  */
-function mount(props: Partial<InspectorProps>, options: { pressed?: boolean } = {}) {
+function mount(props: Partial<InspectorProps>, options: { pressed?: boolean; hidden?: boolean } = {}) {
   const root = document.createElement('div')
   root.className = 'hs-app'
   document.body.append(root)
@@ -36,6 +36,9 @@ function mount(props: Partial<InspectorProps>, options: { pressed?: boolean } = 
       </HassCtx.Provider>
     </QueryClientProvider>
   ), root)
+  // A hidden library (below 700px it is display: none) draws its items nowhere.
+  const item = root.querySelector<HTMLElement>('.hs-lib__item')
+  if (item && options.hidden) item.getClientRects = () => [] as unknown as DOMRectList
   return root
 }
 
@@ -140,6 +143,16 @@ it('Close details puts focus on the canvas when the library item that showed the
   const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')!
   close.focus()
   close.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-flow')))
+})
+
+it('Close details puts focus on the canvas when the library that showed the kind is hidden', async () => {
+  const [kind, setKind] = createSignal<string | undefined>('delay')
+  const root = mount({ get preview() { return kind() }, onPreviewClose: () => { setKind(undefined); root.querySelector('.hs-lib__item')!.setAttribute('aria-pressed', 'false') } }, { pressed: true, hidden: true })
+  const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')!
+  close.focus()
+  close.click()
+  expect(root.querySelector('.hs-lib__item')!.isConnected).toBe(true)
   await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-flow')))
 })
 
