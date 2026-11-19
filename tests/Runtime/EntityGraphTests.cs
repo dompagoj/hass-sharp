@@ -164,17 +164,20 @@ static class EntityGraphTests
     /// </summary>
     static JsonObject Command(string id, string entity, string command) => N(id, "pin", new { entity, port = "command:" + command });
     /// <summary>
-    /// The definition as the editor sends it: each entity it lists is on an Entity node, and it lists none. The node is the
+    /// The definition as the editor sends it: each entity it lists is on an Entity node, and it has no <c>entities</c> key
+    /// (not even an empty list). The node is the
     /// <see cref="State"/> of its key, else a new one of the key's id, placed first in the listed order (the order the
     /// entities are registered in); it takes the listed entity's type, name and settings, named by its key when it has no
     /// name and the definition no device. Each <see cref="Command"/> or <see cref="FrameNeeded"/> stand-in of its key is
     /// that node's pin: the wires out of it start at the pin, a data wire at the pin's value. A stand-in's
-    /// <c>trackHistory</c>, and a State's, are the node's <c>history</c> switches. A definition already in that form, or of
-    /// no graph, is sent as it is.
+    /// <c>trackHistory</c>, and a State's, are the node's <c>history</c> switches. A listed entity whose Entity node is
+    /// already complete stays listed: only a test that saves a read answer back, with its derived entities, sends one. A
+    /// definition of no graph is sent as it is.
     /// </summary>
     static JsonObject Placed(JsonObject definition)
     {
-        if (definition["logic"]?["graph"] is not JsonObject graph || definition["entities"] is not JsonArray { Count: > 0 } listed) return definition;
+        if (definition["logic"]?["graph"] is not JsonObject graph || definition["entities"] is not JsonArray listed) return definition;
+        if (listed.Count == 0) { definition.Remove("entities"); return definition; }
         static string? Text(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
         var nodes = graph["nodes"] as JsonArray ?? [];
         var edges = (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
@@ -185,7 +188,7 @@ static class EntityGraphTests
             var key = Text(entity, "key")!;
             // An Entity node of the key already in that form declares it: the entity stays listed, as a read answer saved back lists it.
             if (nodes.OfType<JsonObject>().Any(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] != null)) { kept.Add(entity.DeepClone()); continue; }
-            var state =nodes.OfType<JsonObject>().FirstOrDefault(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] == null);
+            var state = nodes.OfType<JsonObject>().FirstOrDefault(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] == null);
             var id = Text(state, "id") ?? key;
             var config = new JsonObject();
             foreach (var (name, value) in entity) if (value != null) config[name] = value.DeepClone();
@@ -216,7 +219,8 @@ static class EntityGraphTests
             hubs.Add(new JsonObject { ["id"] = id, ["kind"] = "entity", ["label"] = "", ["config"] = config });
         }
         for (var i = 0; i < hubs.Count; i++) nodes.Insert(i, hubs[i]);
-        definition["entities"] = kept;
+        if (kept.Count > 0) definition["entities"] = kept;
+        else definition.Remove("entities");
         return definition;
     }
     static JsonObject Read(string id, string entity) => N(id, "read_entity", new JsonObject { ["entity"] = Lit("entity_id", entity) });
@@ -1107,6 +1111,7 @@ static class EntityGraphTests
         await rig.Change("sensor.button", "pressed");
         await rig.Flush();
         Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
+        // On purpose with the read answer's entities, derived from the node: the answer saved back as it is.
         var back = new JsonObject
         {
             ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
@@ -1384,7 +1389,7 @@ static class EntityGraphTests
         await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0,
             definition = SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" }) });
         await rig.Save("level", Level(Offset(4), Token("graph-hunter2")));
-        // The definition members of an answer, as the answer has them.
+        // The definition members of an answer, as the answer has them: a graph's on purpose with its derived entities.
         static JsonObject Back(JsonObject answer) => new()
         {
             ["name"] = answer["name"]!.DeepClone(), ["device"] = answer["device"]?.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(),

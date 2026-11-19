@@ -363,7 +363,7 @@ static class EntityStoreTests
             // A case marked node gives the entity as an Entity node, whose problems are on it, about option:<option>; the
             // graph's own problems (it has no step, and may have no name) are not the case's.
             var node = item["node"]?.GetValue<bool>() == true;
-            var preview = generator.Preview(node ? GraphBody(Graph("Options", [new JsonObject { ["id"] = "e", ["kind"] = "entity", ["config"] = entity }]), []) : GraphBody(Graph("Options", []), [entity]), snapshot);
+            var preview = generator.Preview(node ? GraphBody(Graph("Options", [new JsonObject { ["id"] = "e", ["kind"] = "entity", ["config"] = entity }]), null) : GraphBody(Graph("Options", []), [entity]), snapshot);
             var diagnostics = preview.Diagnostics.Where(d => !node || d.Code == "definition.entityOption").ToList();
             var got = diagnostics.Select(d => $"{d.Code} {d.InputId} {d.PortId ?? "null"} {d.NodeId ?? "null"} {d.Message}").ToArray();
             var wanted = item["problems"]!.AsArray().OfType<JsonObject>().Select(w => (Want: w, Input: node ? "option:" + w["portId"]!.GetValue<string>() : w["inputId"]?.GetValue<string>(),
@@ -393,7 +393,7 @@ static class EntityStoreTests
     {
         var generator = new DefinitionGenerator();
         var select = new JsonObject { ["id"] = "mode", ["kind"] = "entity", ["config"] = new JsonObject { ["key"] = "mode", ["domain"] = "select", ["name"] = "Mode" } };
-        var preview = generator.Preview(GraphBody(Graph("Mode", [select]), []), snapshot);
+        var preview = generator.Preview(GraphBody(Graph("Mode", [select]), null), snapshot);
         var errors = preview.Diagnostics.Where(d => d.Severity == 3).ToList();
         Check(errors.Count == 1, "a select without options has one problem: " + Codes(preview));
         Check(errors[0] is { NodeId: "mode", InputId: "option:options", PortId: null, Code: "definition.entityOption" } && errors[0].Message == "Mode needs options: a select cannot work without it",
@@ -401,12 +401,12 @@ static class EntityStoreTests
         Check(!preview.Valid && preview.Source == "" && preview.SourceMap.Count == 0 && preview.EmbeddedCatalog == null, "a problem on a node leaves the preview invalid, with no source");
         // The graph is checked with it: a problem elsewhere in it is reported too, not hidden behind the node's.
         var log = N("log", "log", new { value = Lit("string", "Ran") });
-        var both = generator.Preview(GraphBody(Graph("Mode", [(JsonObject)select.DeepClone(), (JsonObject)log.DeepClone()]), []), snapshot);
+        var both = generator.Preview(GraphBody(Graph("Mode", [(JsonObject)select.DeepClone(), (JsonObject)log.DeepClone()]), null), snapshot);
         var codes = both.Diagnostics.Where(d => d.Severity == 3).Select(d => $"{d.Code} {d.NodeId} {d.InputId}").ToList();
         Check(codes.Contains("definition.entityOption mode option:options") && codes.Contains("node.unreachable log ") && codes.Count == 2, "the node's problem and the graph's are both reported: " + Codes(both));
         Check(!both.Valid && both.Source == "", "with both, the preview is invalid, with no source");
         // A problem of the document on no node still comes alone, before the graph is looked at.
-        var named = generator.Preview(GraphBody(Graph("Mode", [(JsonObject)select.DeepClone(), (JsonObject)log.DeepClone()]), [], name: ""), snapshot);
+        var named = generator.Preview(GraphBody(Graph("Mode", [(JsonObject)select.DeepClone(), (JsonObject)log.DeepClone()]), null, name: ""), snapshot);
         Check(named.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entityOption"]), "a problem on no node answers the document's problems alone: " + Codes(named));
         Console.WriteLine("PASS entity store: a problem with an Entity node's option is on its node, reported with the graph's own");
     }
@@ -420,8 +420,8 @@ static class EntityStoreTests
         Check(DefinitionGraph.Compose(device)["definition"]?["device"] is JsonObject { Count: 0 }, "with one, its device is an empty object: " + DefinitionGraph.Compose(device)["definition"]?.ToJsonString());
         var nameless = new JsonObject { ["id"] = "door", ["kind"] = "entity", ["config"] = new JsonObject { ["key"] = "door", ["domain"] = "binary_sensor", ["name"] = "" } };
         var generator = new DefinitionGenerator();
-        Check(generator.Preview(GraphBody(Graph("Door", [nameless]), []), VisualCatalogSnapshot.BuiltIn).Diagnostics.Any(d => d is { Code: "entity.name", NodeId: "door", InputId: "name" }), "an entity of no device needs a name");
-        Check(generator.Preview(GraphBody(Graph("Door", [(JsonObject)nameless.DeepClone()]), []) with { Device = new DefinitionDevice(null, null, null, null, null, null, null) }, VisualCatalogSnapshot.BuiltIn)
+        Check(generator.Preview(GraphBody(Graph("Door", [nameless]), null), VisualCatalogSnapshot.BuiltIn).Diagnostics.Any(d => d is { Code: "entity.name", NodeId: "door", InputId: "name" }), "an entity of no device needs a name");
+        Check(generator.Preview(GraphBody(Graph("Door", [(JsonObject)nameless.DeepClone()]), null) with { Device = new DefinitionDevice(null, null, null, null, null, null, null) }, VisualCatalogSnapshot.BuiltIn)
             is { Valid: true } valid && !valid.Diagnostics.Any(d => d.Code == "entity.name"), "an entity of a device needs none");
         Console.WriteLine("PASS entity store: a definition's device is marked on its composed graph, and an entity of one needs no name");
     }
