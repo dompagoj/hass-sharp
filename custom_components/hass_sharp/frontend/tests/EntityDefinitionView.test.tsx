@@ -1664,3 +1664,49 @@ it('reads the definition again when it was switched elsewhere, so its switch say
   await vi.waitFor(() => expect(page.root.querySelector('.hs-save-chip')!.getAttribute('title')).toBe('Saved revision 2'))
   expect(page.root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.checked).toBe(true)
 })
+
+it("names a parent as it is called, until a device is picked, and a parent that is gone as such", async () => {
+  const pending = (root: Element) => root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')?.textContent
+  const body = plugBody()
+  body.device = { via: { definition: 'room' } }
+  const { root } = await openPlug(f => { f.entities.seed('room', { ...newGraphDefinition('A Room Hub'), device: {} }); f.entities.seed('plug', body) }, undefined, devicesRegistry())
+  await vi.waitFor(() => expect(partOf(root).selectedOptions[0]?.textContent).toBe('A Room Hub'))
+  choose(partOf(root), 'device')
+  await vi.waitFor(() => expect(pending(root)).toBe('Still part of A Room Hub until you pick a device.'))
+  dispose!(); document.body.innerHTML = ''
+  const gone = plugBody()
+  gone.device = { via: { definition: 'gone' } }
+  const again = await openPlug(f => f.entities.seed('plug', gone), undefined, devicesRegistry())
+  await vi.waitFor(() => expect(partOf(again.root).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
+  choose(partOf(again.root), 'device')
+  await vi.waitFor(() => expect(pending(again.root)).toBe('Still part of a definition that no longer exists until you pick a device.'))
+})
+
+it('reads a definition again each time it is switched on, after an earlier switch used up its reads', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = await openPlug(f => f.entities.seed('plug', pollingPlug()))
+  const toggle = () => root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!
+  const stored = () => fixture.entities.documents.get('plug')!
+  const reads = () => fixture.entities.requests.filter(r => r.operation === 'read').length
+  const cycle = async () => {
+    toggle().click()
+    await vi.waitFor(() => expect(stored().enabled).toBe(false))
+    await vi.advanceTimersByTimeAsync(0)
+    toggle().click()
+    await vi.waitFor(() => expect(stored().enabled).toBe(true))
+    await vi.advanceTimersByTimeAsync(0)
+  }
+  // Switched off and on, it does not start: its reads are used up, and it is not running.
+  fixture.entities.controls.activation = 'setup'
+  await cycle()
+  for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(runNow(root)!.title).toBe('The entity definition is not running'))
+  // Switched off and on again to retry: read again until it starts.
+  await cycle()
+  const before = reads()
+  await vi.advanceTimersByTimeAsync(2000)
+  fixture.entities.documents.set('plug', { ...stored(), status: 'running', active: true, currentRevisionActive: true, activationError: null })
+  for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(2000)
+  expect(reads() - before).toBeGreaterThan(1)
+  await vi.waitFor(() => expect(runNow(root)!.disabled).toBe(false))
+})

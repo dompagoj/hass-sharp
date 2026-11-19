@@ -33,13 +33,14 @@ function DefinitionRunControl(props: { context: EditorContext<EntityEditorDocume
   const queryClient = useQueryClient()
   const api = entityApi(hass)
   const context = props.context
-  // Switched here: the saved document's run state is older than the switch. A new document (a read, a save) is current.
-  const [switched, setSwitched] = createSignal(false)
-  createEffect(on(() => context.enabled, () => setSwitched(true), { defer: true }))
-  createEffect(on(() => context.document, () => setSwitched(false), { defer: true }))
+  // Switched here (how many times since the document): the saved document's run state is older than the switch. Each
+  // switch is a new query key, so its reads start again; a new document (a read, a save) is current, and starts at 0.
+  const [switched, setSwitched] = createSignal(0)
+  createEffect(on(() => context.enabled, () => setSwitched(count => count + 1), { defer: true }))
+  createEffect(on(() => context.document, () => setSwitched(0), { defer: true }))
   const reread = () => {
     const document = context.document
-    return !!document && context.enabled !== false && (switched() || document.status === 'setup' || document.enabled !== context.enabled)
+    return !!document && context.enabled !== false && (switched() > 0 || document.status === 'setup' || document.enabled !== context.enabled)
   }
   const queryKey = () => [...definitionsQueryKey, 'run-state', context.document?.id, context.document?.revision, context.enabled, switched()]
   // The reads answered (or failed) under each key: a new document or switch starts again.

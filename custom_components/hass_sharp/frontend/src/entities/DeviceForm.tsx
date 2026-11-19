@@ -100,12 +100,14 @@ function DeviceParent(props: { device: DefinitionDevice | null; onChange(device:
   const isDevice = (d: DefinitionSummary) =>
     d.device != null || (d.logic.kind === 'class' && sources.types()?.find(t => t.id === d.logic.type)?.kind === 'device')
   const parents = () => (sources.definitions() ?? []).filter(d => d.id !== props.ownId && isDevice(d)).sort(byName)
-  /** A named definition not offered: as the list says it, or its id before the list is read. */
-  const unlisted = (id: string) => {
+  /** A named definition not offered, as a choice's label or within a sentence: its id before the list is read. */
+  const unlisted = (id: string, inSentence = false) => {
     const all = sources.definitions()
     if (!all) return id
     const found = all.find(d => d.id === id)
-    return !found ? 'A definition that no longer exists' : id === props.ownId ? 'This entity definition' : `${found.name} (not a device)`
+    if (!found) return inSentence ? 'a definition that no longer exists' : 'A definition that no longer exists'
+    if (id === props.ownId) return inSentence ? 'this entity definition' : 'This entity definition'
+    return `${found.name} (not a device)`
   }
   const choices = () => {
     const id = named()
@@ -123,8 +125,9 @@ function DeviceParent(props: { device: DefinitionDevice | null; onChange(device:
     if (!picking() || deviceId() !== undefined) return
     const id = named()
     if (id === undefined) return 'Part of nothing until you pick a device.'
-    const label = choices().find(c => c.value === definitionChoice(id))?.label ?? id
-    return `Still part of ${label.startsWith('A ') ? `a ${label.slice(2)}` : label} until you pick a device.`
+    // A parent offered by its name, as it is called; one not offered as the sentence says it.
+    const parent = parents().find(d => d.id === id)
+    return `Still part of ${parent ? parent.name : unlisted(id, true)} until you pick a device.`
   }
   // The picker follows the choice in the tab order; the focus stays on Part of, which arrow keys move through.
   const choose = (choice: string) => {
