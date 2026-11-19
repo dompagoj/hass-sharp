@@ -59,7 +59,11 @@ const held = (document: EntityDocument): EntityEditorDocument => ({
   currentRevisionActive: document.enabled ? document.currentRevisionActive : true,
   graph: editorGraph(document),
 })
-const result = (saved: EntitySaveResult) => ({ ...saved, document: held(saved.document) })
+/**
+ * A save's answer as the editor takes it. A definition that is off is not started by a save (and a copy is saved off):
+ * its answer's `active: false` is no failed activation to report.
+ */
+const result = (saved: EntitySaveResult) => ({ ...saved, active: saved.document.enabled ? saved.active : true, document: held(saved.document) })
 
 /**
  * The editor of an entity definition built from steps: the `hass_sharp/entities` API, ids from the name (fixed at the

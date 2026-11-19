@@ -378,6 +378,45 @@ it('opens a definition that is off without an activation alert, saying it is off
   expect(entityRow(root, 'relay').querySelector('.hs-def-row__id code')!.textContent).toBe('switch.plug_relay')
 })
 
+it('saves a definition that is off without saying its activation failed: a save does not start it', async () => {
+  const { root, fixture } = await openPlug(fixture => fixture.entities.seed('plug', plugBody(), { enabled: false }))
+  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await vi.waitFor(() => expect(button(root, 'Save').getAttribute('aria-disabled')).toBeNull())
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  expect(root.textContent).not.toContain('Saved, but not activated')
+  expect(root.textContent).not.toContain('Runtime activation failed')
+  // Still shown as off.
+  expect(root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.checked).toBe(false)
+  expect(inspector(root).querySelector('.hs-insp-off')).not.toBeNull()
+  expect(fixture.entities.documents.get('plug')!.enabled).toBe(false)
+})
+
+it('says a save of a definition that is on did not activate it, with the reason or without one', async () => {
+  const { root, fixture } = await openPlug()
+  fixture.entities.controls.activation = 'notLoaded'
+  fixture.entities.controls.activationError = 'Downloading firmware.bin failed'
+  rename(root, 'Socket')
+  await vi.waitFor(() => expect(button(root, 'Save').getAttribute('aria-disabled')).toBeNull())
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(root.textContent).toContain('Saved, but not activated'))
+  expect(root.textContent).toContain('Downloading firmware.bin failed')
+  // An answer that says it is not active, and not why.
+  const inner = fixture.callWS
+  fixture.callWS = async (message: any) => {
+    const answer: any = await inner(message)
+    if (message.request?.operation === 'save' && answer?.ok) answer.result.activationError = null
+    return answer
+  }
+  rename(root, 'Plug')
+  await vi.waitFor(() => expect(button(root, 'Save').getAttribute('aria-disabled')).toBeNull())
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(2))
+  await vi.waitFor(() => expect(root.textContent).toContain('Runtime activation failed. Edit and save again, or reload the HassSharp integration.'))
+  expect(root.textContent).toContain('Saved, but not activated')
+})
+
 it('deletes a saved definition after a confirmation that says its entities leave Home Assistant, then shows the entities page', async () => {
   const { root, fixture, history } = await openPlug()
   const remove = button(inspector(root), 'Delete entity definition')
@@ -750,6 +789,9 @@ it('saves a copy turned off after a conflict, and names the secrets the copy has
   expect(copy.definition.name).toBe('Plug (copy)')
   expect(copy.definition.settings.find((s: any) => s.key === 'token').value).toBe('typed-token')
   await vi.waitFor(() => expect(root.textContent).toContain('The copy has no saved value for Password and API key. Type them again.'))
+  // The copy is off, as it was saved: not a failed activation.
+  expect(root.textContent).not.toContain('Saved, but not activated')
+  expect(fixture.entities.documents.get('plug_copy')!.enabled).toBe(false)
   expect(fixture.entities.documents.get('plug')!.name).toBe('Plug (elsewhere)')
   deselect(root)
   expect(control(expand(settingRow(root, 'password')), 'value').placeholder).toBe('No value')
