@@ -31,6 +31,9 @@ export const triggerChoices: Choice[] = [
   { id: 'manual', name: 'Only manually', explanation: 'Runs only when started with Run now or by another automation.', icon: ['M7 4.5v15l12-7.5z'] },
   { id: 'other', name: 'Other trigger', explanation: 'Any other trigger an integration in Home Assistant offers.', icon: ['M9 3v5', 'M15 3v5', 'M6 8h12v3a6 6 0 0 1-12 0z', 'M12 17v4'] },
 ]
+/** A choice's explanation in a graph of the document: a definition's Trigger is started by hand only with Run now or by an assistant. */
+const explained = (choice: Choice, document: GraphDocument | undefined) =>
+  document === 'entity' && choice.id === 'manual' ? 'Runs only when started with Run now or by an assistant.' : choice.explanation
 const native = ['entity', 'daily', 'once', 'manual', 'startup']
 const platforms = ['state', 'numeric_state', 'time', 'time_pattern', 'sun', 'zone', 'event']
 
@@ -361,7 +364,7 @@ export function TriggerConfig(props: {
         <span class="hs-insp-field__label" id={`${props.node.id}-when`}>When</span>
         <div class="hs-when__current">
           <span class="hs-when__icon"><Glyph paths={current().icon} /></span>
-          <span class="hs-when__text"><strong>{current().name}</strong><small>{current().explanation}</small></span>
+          <span class="hs-when__text"><strong>{current().name}</strong><small>{explained(current(), props.document)}</small></span>
           <button ref={changeButton} type="button" class="hs-button hs-button--ghost hs-when__change" aria-expanded={choosing()} aria-label="Change trigger type"
             onClick={() => (choosing() ? closeChoices() : openChoices())}>{choosing() ? 'Close' : 'Change'}</button>
         </div>
@@ -372,7 +375,7 @@ export function TriggerConfig(props: {
                 <label class="hs-when__choice" classList={{ 'hs-when__choice--current': item.id === choice() }} onClick={() => pick(item.id)}>
                   <input type="radio" name={`${props.node.id}-trigger-type`} value={item.id} checked={item.id === pending()} onChange={() => setPending(item.id)} />
                   <span class="hs-when__icon"><Glyph paths={item.icon} /></span>
-                  <span class="hs-when__text"><strong>{item.name}</strong><small>{item.explanation}</small></span>
+                  <span class="hs-when__text"><strong>{item.name}</strong><small>{explained(item, props.document)}</small></span>
                 </label>
               )}
             </For>
@@ -456,7 +459,9 @@ export function TriggerConfig(props: {
           </Show>
         </div>
       </Show>
-      <Show when={type() === 'manual'}><p class="hs-muted">Use Run now, or start it from another automation.</p></Show>
+      <Show when={type() === 'manual'}>
+        <p class="hs-muted">{props.document === 'entity' ? 'Use Run now, or ask an assistant to run it.' : 'Use Run now, or start it from another automation.'}</p>
+      </Show>
       <Show when={type() === 'startup'}><p class="hs-muted">Runs once each time Home Assistant starts.</p></Show>
 
       <fieldset class="hs-insp-modes">

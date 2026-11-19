@@ -132,6 +132,11 @@ export interface EditorContext<D extends EditorDocument = EditorDocument> {
   readonly catalogError: string | undefined
   /** Shows a notice under the top bar (an error stays until the next one). */
   notice(notice: RunNotice): void
+  /**
+   * Reads the saved document again, as a save that met a revision changed elsewhere does when nothing is unsaved: the
+   * page, and the on/off switch, then show it as it is. Nothing happens while there are unsaved changes or a request.
+   */
+  reload(): void
   /** Selects a step (the overview's: and moves focus to it in the panel), or nothing. */
   select(id?: string): void
   /**

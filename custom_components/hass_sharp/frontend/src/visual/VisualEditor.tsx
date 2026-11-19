@@ -385,6 +385,10 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     get enabled() { return enabled() }, get dirty() { return session.dirty() }, get busy() { return busy() },
     get conflict() { return session.conflict() }, get catalogError() { return session.catalogError() },
     get located() { return located() },
+    reload: () => {
+      const doc = session.document()
+      if (doc && !session.unsaved() && !busy() && !switching()) void session.load(doc.id)
+    },
   })
 
   // ---- Full screen: the library and the drawer fold away; the inspector floats; a compact bar stays.

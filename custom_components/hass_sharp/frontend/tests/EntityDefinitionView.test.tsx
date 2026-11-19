@@ -1551,17 +1551,24 @@ it('makes the device part of another definition that is a device, or of a Home A
   const again = await openPlug(undefined, fixture, devicesRegistry())
   await vi.waitFor(() => expect(partOf(again.root).value).toBe('definition:hub'))
   expect(partOf(again.root).selectedOptions[0].textContent).toBe('Hub')
-  // A Home Assistant device: the device picker, by name, without the plug's own device.
+  // A Home Assistant device: the device picker, by name, without the plug's own device. Until one is picked the
+  // device is still part of Hub, and the form says so; the focus stays on Part of, and Tab goes on to the picker.
+  partOf(again.root).focus()
   choose(partOf(again.root), 'device')
   const picker = () => again.root.querySelector<HTMLInputElement>('[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
-  await vi.waitFor(() => expect(document.activeElement).toBe(picker()))
+  await vi.waitFor(() => expect(picker()).not.toBeNull())
+  expect(document.activeElement).toBe(partOf(again.root))
+  const focusable = [...again.root.querySelectorAll<HTMLElement>('[aria-label="Device"] :is(input, select, textarea, button)')]
+  expect(focusable[focusable.indexOf(partOf(again.root)) + 1]).toBe(picker())
   expect(json(again.root).definition.device.via).toEqual({ definition: 'hub' })
+  expect(again.root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
   picker().click()
   const options = () => [...again.root.querySelectorAll<HTMLElement>('[aria-label="Device"] [role="option"]')]
   expect(options().map(o => o.textContent)).toEqual(['Attic router', 'Zigbee coordinator'])
   options()[1].click()
   expect(json(again.root).definition.device.via).toEqual({ deviceId: 'zigbee' })
   expect(partOf(again.root).value).toBe('device')
+  expect(again.root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')).toBeNull()
   button(again.root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device.via).toEqual({ deviceId: 'zigbee' }))
   await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
@@ -1589,4 +1596,71 @@ it('shows a parent definition that no longer exists as such, which can be cleare
   expect(shownChoices(partOf(root))).toEqual(['Nothing', 'A Home Assistant device…'])
   undo(root)
   expect(json(root).definition.device.via).toEqual({ definition: 'gone', deviceId: null })
+})
+
+it('stops reading a definition that does not start, then says it is not running, and a save reads it again', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = await openPlug(f => { f.entities.controls.activation = 'setup'; f.entities.seed('plug', pollingPlug()) })
+  const run = runNow(root)!
+  const reads = () => fixture.entities.requests.filter(r => r.operation === 'read').length
+  await vi.waitFor(() => expect(run.title).toBe('The entity definition is still starting'))
+  const first = reads()
+  for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(2000)
+  // At most 15 reads, about 30 s: then what the last read said, never "still starting".
+  expect(reads() - first).toBeLessThanOrEqual(15)
+  expect(reads() - first).toBeGreaterThanOrEqual(10)
+  await vi.waitFor(() => expect(run.title).toBe('The entity definition is not running'))
+  const after = reads()
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(reads()).toBe(after)
+  // A save is a new answer: it is read again until it runs.
+  fixture.entities.controls.activation = 'running'
+  rename(root, 'Socket')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(run.disabled).toBe(false))
+  expect(run.title).toBe('Run the saved entity definition’s Trigger step now')
+})
+
+it('stops waiting when every read fails, and says the definition is not running', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = await openPlug(f => { f.entities.controls.activation = 'setup'; f.entities.seed('plug', pollingPlug()) })
+  const inner = fixture.callWS
+  let failed = 0
+  fixture.callWS = async (message: any) => {
+    if (message.request?.operation === 'read') { failed++; throw new Error('offline') }
+    return inner(message)
+  }
+  const run = runNow(root)!
+  for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(2000)
+  expect(failed).toBeLessThanOrEqual(16)
+  await vi.waitFor(() => expect(run.title).toBe('The entity definition is not running'))
+})
+
+it('reads the definition again when it was switched elsewhere, so its switch says what the server says', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = await openPlug(f => f.entities.seed('plug', pollingPlug()))
+  const toggle = () => root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!
+  toggle().click()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.enabled).toBe(false))
+  await vi.advanceTimersByTimeAsync(0)
+  toggle().click()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.enabled).toBe(true))
+  // Turned off again elsewhere (by an assistant, say) before this page's read.
+  fixture.entities.documents.set('plug', { ...fixture.entities.documents.get('plug')!, enabled: false, status: 'off', active: false, currentRevisionActive: false, activationError: 'Not active', liveEntities: [] })
+  for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(toggle().checked).toBe(false))
+  await vi.waitFor(() => expect(runNow(root)!.title).toBe('Turn the entity definition on to run this step'))
+  // Saved again elsewhere: read again at once.
+  dispose!(); document.body.innerHTML = ''
+  const page = await openPlug(f => f.entities.seed('plug', pollingPlug()))
+  const plug = () => page.fixture.entities.documents.get('plug')!
+  page.root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.click()
+  await vi.waitFor(() => expect(plug().enabled).toBe(false))
+  await vi.advanceTimersByTimeAsync(0)
+  page.fixture.entities.documents.set('plug', { ...plug(), revision: 2 })
+  page.root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.click()
+  await vi.advanceTimersByTimeAsync(2000)
+  await vi.waitFor(() => expect(page.root.querySelector('.hs-save-chip')!.getAttribute('title')).toBe('Saved revision 2'))
+  expect(page.root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.checked).toBe(true)
 })

@@ -117,23 +117,30 @@ function DeviceParent(props: { device: DefinitionDevice | null; onChange(device:
   const ownDevices = () => new Set((registry()?.entities ?? []).filter(e => props.ownEntityIds.includes(e.entity_id) && e.device_id).map(e => e.device_id))
   const devices = () => (registry()?.devices ?? []).filter(d => !ownDevices().has(d.id)).map(d => ({ value: d.id, label: d.name ?? d.id }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.value.localeCompare(b.value))
-  const pickerId = createUniqueId()
-  let picker: HTMLDivElement | undefined
+  const pickerId = createUniqueId(), pendingId = `${pickerId}-pending`
+  /** While no device is picked yet, what the device is still part of (it is saved so until one is). */
+  const pending = () => {
+    if (!picking() || deviceId() !== undefined) return
+    const id = named()
+    if (id === undefined) return 'Part of nothing until you pick a device.'
+    const label = choices().find(c => c.value === definitionChoice(id))?.label ?? id
+    return `Still part of ${label.startsWith('A ') ? `a ${label.slice(2)}` : label} until you pick a device.`
+  }
+  // The picker follows the choice in the tab order; the focus stays on Part of, which arrow keys move through.
   const choose = (choice: string) => {
-    if (choice === deviceChoice) {
-      setPicking(true)
-      queueMicrotask(() => picker?.querySelector<HTMLInputElement>('input')?.focus())
-    } else props.onChange(withVia(props.device, choice ? { definition: choice.slice(definitionChoice('').length) } : null))
+    if (choice === deviceChoice) setPicking(true)
+    else props.onChange(withVia(props.device, choice ? { definition: choice.slice(definitionChoice('').length) } : null))
   }
   return (
     <>
       <SelectField name="via" label="Part of" value={value()} choices={choices()} onChange={choose}
         hint="The device it is connected through, such as a hub." />
       <Show when={value() === deviceChoice}>
-        <div ref={picker} class="hs-insp-field hs-def-field" data-field="viaDevice">
+        <div class="hs-insp-field hs-def-field" data-field="viaDevice">
           <label class="hs-insp-field__label" for={pickerId}>Home Assistant device</label>
           <SearchSelect id={pickerId} label="Home Assistant device" options={devices()} value={deviceId()} placeholder="Choose a device"
-            onSelect={id => props.onChange(withVia(props.device, { deviceId: id }))} />
+            describedBy={pending() ? pendingId : undefined} onSelect={id => props.onChange(withVia(props.device, { deviceId: id }))} />
+          <Show when={pending()}>{text => <small id={pendingId} class="hs-field-hint">{text()}</small>}</Show>
         </div>
       </Show>
     </>

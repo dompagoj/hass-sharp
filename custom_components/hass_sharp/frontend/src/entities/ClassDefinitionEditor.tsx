@@ -156,6 +156,8 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
 
   const status = createMemo(() => { const document = saved(); return document ? definitionStatus(document) : undefined })
   const entities = createMemo(() => { const document = saved(); return document ? cardEntities(document) : [] })
+  /** The entity ids Home Assistant gave its entities: their device is its own, never its parent. */
+  const ownEntityIds = () => entities().flatMap(e => (e.entityId ? [e.entityId] : []))
   // Each entity's state as Home Assistant has it, as the cards show it; the clock tells a button's last press from.
   const states = liveState(hass, () => entities().flatMap(e => (e.entityId && !e.disabled ? [e.entityId] : [])))
   const [now, setNow] = createSignal(Date.now())
@@ -268,9 +270,11 @@ export function ClassDefinitionEditor(props: { document?: EntityDocument; name?:
             <SettingsSection type={chosen()} session={session} problems={problems().fields} unused={unused()} reveal={reveal} />
             <Show when={chosen().kind === 'device'} fallback={
               <DeviceSection device={body().device} onChange={session.setDevice} memory={memory} savedId={saved()?.id} savedDevice={saved()?.device}
-                toggle={{ label: 'Group this entity as a device', hint: 'Home Assistant shows it on a device page of its own, named after this entity definition.' }} />
+                toggle={{ label: 'Group this entity as a device', hint: 'Home Assistant shows it on a device page of its own, named after this entity definition.' }}
+                parent={{ ownEntityIds: ownEntityIds() }} />
             }>
-              <DeviceSection device={body().device} onChange={session.setDevice} fixed={{ hint: 'Leave a field empty to use what the class sets.', placeholder: 'Set by the class' }} />
+              <DeviceSection device={body().device} onChange={session.setDevice} savedId={saved()?.id} parent={{ ownEntityIds: ownEntityIds() }}
+                fixed={{ hint: 'Leave a field empty to use what the class sets.', placeholder: 'Set by the class' }} />
             </Show>
           </>}
         </Show>

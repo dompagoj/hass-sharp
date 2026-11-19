@@ -1026,3 +1026,57 @@ it('shows a camera it made as Ready or Unavailable, never its access token, its 
   await vi.waitFor(() => expect(state()).toBe('Unavailable'))
   never()
 })
+
+it("makes a class definition's device part of another definition, saved with its other details, and shows one that is gone", async () => {
+  const { root, fixture } = setup('/entities/plug', f => {
+    f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { model: 'S2' } })
+    f.entities.seed('hub', { name: 'Hub', device: {}, settings: [], entities: [{ key: 'hub', domain: 'binary_sensor', name: 'Hub' }], logic: { kind: 'graph', graph: { version: 5, name: 'Hub', nodes: [], edges: [] } } })
+    f.entities.seed('thermo', thermometer(null))
+    // A device class with no details stored is a device all the same.
+    f.entities.seed('bridge', plug([], 'Bridge'))
+  })
+  const view = await ready(root)
+  const partOf = () => view.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  await vi.waitFor(() => expect([...partOf().options].map(o => o.textContent)).toEqual(['Nothing', 'Bridge', 'Hub', 'A Home Assistant device…']))
+  choose(partOf(), 'definition:hub')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  // Stored beside the details that override the class's.
+  expect(saves(fixture)[0].definition.device).toEqual({ model: 'S2', via: { definition: 'hub' } })
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  // Opened again, and the parent gone.
+  dispose!(); document.body.innerHTML = ''
+  fixture.entities.documents.delete('hub')
+  const again = setup('/entities/plug', undefined, fixture)
+  const page2 = await ready(again.root)
+  const partOf2 = () => page2.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  await vi.waitFor(() => expect(partOf2().selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
+  choose(partOf2(), '')
+  save(again.root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(2))
+  expect(saves(fixture)[1].definition.device).toEqual({ model: 'S2' })
+})
+
+it('offers Part of to a single entity grouped as a device, and drops a device class whose only detail was its parent', async () => {
+  const { root, fixture } = setup('/entities/thermo', f => {
+    f.entities.seed('thermo', thermometer({}))
+    f.entities.seed('bridge', { ...plug([], 'Bridge'), device: { via: { definition: 'thermo' } } })
+  })
+  const view = await ready(root)
+  const partOf = () => view.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  await vi.waitFor(() => expect([...partOf().options].map(o => o.textContent)).toEqual(['Nothing', 'Bridge', 'A Home Assistant device…']))
+  choose(partOf(), 'definition:bridge')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.device).toEqual({ via: { definition: 'bridge' } })
+  // A device class part of nothing, with no details: the class's own device, nothing sent.
+  dispose!(); document.body.innerHTML = ''
+  const bridge = setup('/entities/bridge', undefined, fixture)
+  const page = await ready(bridge.root)
+  const select = () => page.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  await vi.waitFor(() => expect(select().value).toBe('definition:thermo'))
+  choose(select(), '')
+  save(bridge.root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(2))
+  expect(saves(fixture)[1].definition.device).toBeNull()
+})

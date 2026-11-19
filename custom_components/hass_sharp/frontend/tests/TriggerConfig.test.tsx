@@ -15,7 +15,7 @@ afterEach(() => {
   client?.clear()
   document.body.innerHTML = ''
 })
-function mount(initial: Record<string, unknown>, hass: Record<string, unknown> = {}) {
+function mount(initial: Record<string, unknown>, hass: Record<string, unknown> = {}, kind?: 'automation' | 'entity') {
   const host = document.createElement('div')
   host.className = 'hs-app'
   document.body.append(host)
@@ -26,7 +26,7 @@ function mount(initial: Record<string, unknown>, hass: Record<string, unknown> =
     () => (
       <QueryClientProvider client={client!}>
         <HassCtx.Provider value={value as any}>
-          <TriggerConfig node={{ id: 'start', kind: 'trigger', config: config() }} onChange={next => setConfig(next)} />
+          <TriggerConfig document={kind} node={{ id: 'start', kind: 'trigger', config: config() }} onChange={next => setConfig(next)} />
           <TriggerAdvanced node={{ id: 'start', kind: 'trigger', config: config() }} onChange={next => setConfig(next)} />
         </HassCtx.Provider>
       </QueryClientProvider>
@@ -402,4 +402,16 @@ it.each([
   )
   const label = [...host.querySelectorAll<HTMLLabelElement>('.hs-insp-trigger label')].find(l => l.querySelector('strong')?.textContent === 'Track in run history')
   expect(label?.querySelector('.hs-field-hint')?.textContent).toBe(hint)
+})
+
+it.each([
+  [undefined, 'Runs only when started with Run now or by another automation.', 'Use Run now, or start it from another automation.'],
+  ['entity', 'Runs only when started with Run now or by an assistant.', 'Use Run now, or ask an assistant to run it.'],
+] as const)('says how a trigger that runs only manually is started, in a graph of %s', (document, explanation, note) => {
+  const { host } = mount({ type: 'manual' }, {}, document)
+  expect(host.querySelector('.hs-when__current small')!.textContent).toBe(explanation)
+  expect(host.querySelector('.hs-insp-trigger > p.hs-muted')!.textContent).toBe(note)
+  host.querySelector<HTMLButtonElement>('[aria-label="Change trigger type"]')!.click()
+  const manual = [...host.querySelectorAll('.hs-when__choice')].find(c => c.querySelector('strong')!.textContent === 'Only manually')!
+  expect(manual.querySelector('small')!.textContent).toBe(explanation)
 })
