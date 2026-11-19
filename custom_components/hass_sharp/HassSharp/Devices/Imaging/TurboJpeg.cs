@@ -7,8 +7,8 @@ namespace HassSharp;
 /// <c>/usr/lib/libturbojpeg.so.0</c> (3.1); Ubuntu has 2.1. Only functions present since 2.0 are called, through function
 /// pointers looked up once per process, so a missing library or function only makes <see cref="Available"/> false.
 /// A TurboJPEG handle is not thread-safe, and after a failed call it stays failed: each thread has one decompressor and
-/// one compressor, destroyed and made again after any failed call, and destroyed once the thread has ended. Pixels are
-/// RGB, three bytes each, rows packed.
+/// one compressor, destroyed and made again after any failed call (and the compressor after any call with flags), and
+/// destroyed once the thread has ended. Pixels are RGB, three bytes each, rows packed.
 /// </summary>
 internal static unsafe class TurboJpeg
 {
@@ -167,6 +167,13 @@ internal static unsafe class TurboJpeg
         finally
         {
             if (output != null) api.Free(output);
+            // libjpeg-turbo 2.1 keeps what a call with flags set in the compressor: after a progressive picture, every
+            // baseline picture it writes is grey. Such a compressor is not used again; the next call makes a new one.
+            if (flags != 0)
+            {
+                compressor?.Dispose();
+                compressor = null;
+            }
         }
     }
 }

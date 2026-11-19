@@ -40,6 +40,7 @@ static class SharpImageTests
         Corrupted();
         WarningThenFatal();
         ManyScans();
+        BaselineAfterProgressive();
         HugeHeader();
         NoSize();
         CutBeforeItsSize();
@@ -351,6 +352,22 @@ static class SharpImageTests
         }
         catch (InvalidDataException) { outcome = "is refused"; }
         Console.WriteLine($"PASS sharp image: a progressive picture of over 500 scans {outcome}, not decoded scan by scan");
+    }
+
+    // libjpeg-turbo 2.1 (Ubuntu's) writes every baseline picture grey with a compressor that wrote a progressive one; 3.x
+    // does not, so on 3.x only the check that the compressor was let go can fail.
+    static void BaselineAfterProgressive()
+    {
+        Progressive(64, 48, SharpColor.Green);
+        Check(TurboJpeg.ThreadHandles.Compressor == null, "the compressor that wrote a progressive picture is not kept");
+        var rgb = new byte[64 * 48 * 3];
+        ImagePainter.Fill(rgb, 64, 48, SharpColor.Green);
+        for (var i = 0; i < 2; i++)
+        {
+            var pixels = Decode(TurboJpeg.Encode(rgb, 64, 48, 80));
+            Check(pixels.Near(32, 24, SharpColor.Green), $"baseline picture {i + 1} written after a progressive one on the same thread is the picture, not {pixels.At(32, 24)}");
+        }
+        Console.WriteLine("PASS sharp image: baseline pictures written right after a progressive one on the same thread are the picture, with a new compressor");
     }
 
     // A JPEG whose start-of-frame says 9000 × 9000, with the data of a small picture.
