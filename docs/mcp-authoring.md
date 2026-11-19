@@ -73,9 +73,9 @@ tool invocation, including direct calls and cached tools.
   value of a secret setting, so it was not passed on…"). A secret typed into a
   conversation reaches the assistant's provider all the same: enter secrets in the
   HassSharp panel, and let the assistant send the setting back as it was answered.
-  No tool returns a camera's picture. A trace can still show a true or false worked out
-  from a secret, or what a step it was given returns; see
-  [custom entities](custom-entities.md#run-history-and-traces).
+  No tool returns a camera's picture. A trace can still show a true or false worked
+  out from a secret, or what a step it was given returns; see [custom
+  entities](custom-entities.md#run-history-and-traces).
 - **Injected text.** Entity names and attributes, service descriptions, errors and
   trace values come from devices and integrations. The prompt tells the model they
   are data and never instructions, but a model can still be misled by them.
@@ -247,8 +247,8 @@ envelope; validation, conflicts and revisions work as above.
 4. `entities_preview({definition})` validates and compiles a definition, `{name,
    device?, settings?, entities?, logic}` with `logic` `{kind:"graph", graph}` or
    `{kind:"class", type}`, without creating anything. It returns `valid`,
-   `diagnostics`, `source`, `sourceMap` and, for a graph, `graph` with each Custom C# step's pins
-   worked out (no settings come back).
+   `diagnostics`, `source`, `sourceMap` and, for a graph, `graph` with each Custom
+   C# step's pins worked out (no settings come back).
 5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
    creates or updates its entities, returning `saved`, `document`, `active` and
    `activationError`. `enabled` is only for a new definition; `new` is not an id. An
@@ -288,21 +288,21 @@ source wins. The optional generation guards the saved workspace. The response is
 Keep the echoed workspaceVersion and sourceGeneration separate from saved
 generation when handling delayed results. Preview never executes the methods.
 
-`library_save({id,name,source,expectedRevision})` creates, edits or renames a source;
-`library_delete({id,expectedRevision})` removes it. Both validate the remaining
-libraries, **all saved graphs** and every entity definition, including C#
-references, before committing.
-Every successful library mutation advances every graph revision because generated
-graphs embed the complete library snapshot. Refresh graph documents after changes.
-Results contain `saved`, `document`, `deleted`, `generation`, `catalog` and
+`library_save({id,name,source,expectedRevision})` creates, edits or renames a
+source; `library_delete({id,expectedRevision})` removes it. Both validate the
+remaining libraries, **all saved graphs** and every entity definition, including C#
+references, before committing. Every successful library mutation advances every
+graph revision because generated graphs embed the complete library snapshot. Refresh
+graph documents after changes. Results contain `saved`, `document`, `deleted`,
+`generation`, `catalog` and
 `automations:[{id,saved,document,active,activationError}]`, and for entity
 definitions `definitions:[{id,saved,document,active,activationError,enabled}]` and
 `invalidDefinitions:[{id,name,diagnostics,running,message}]` (those that already had
 errors and are left as they are). A save that would break a working definition is
 refused, with those definitions under `definitions` in its validation detail.
 Compilation/dependency errors and revision conflicts preserve their structured
-details. Persistence may
-succeed while activation fails for a graph; inspect each activation result.
+details. Persistence may succeed while activation fails for a graph; inspect each
+activation result.
 
 See [writing C# nodes](node-libraries.md) for Custom C# nodes, the complete library example and
 [visual authoring](writing-visual-automations.md) for graph execution rules.

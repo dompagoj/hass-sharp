@@ -64,10 +64,10 @@ definition envelope"), `storage` (the file could not be read or written) and
   sends `entities: []`; its entities come from its code.
 - `device`: null for none, or, for a class, null for the class's own (a
   `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
-  swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` or
-  `{deviceId:"<Home Assistant device id>"}`. `via` is not checked on save; when the
-  device is set up, a parent Home Assistant does not have is left out. For a class,
-  each field given overrides the class's own.
+  swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is
+  `{definition:"<id>"}` or `{deviceId:"<Home Assistant device id>"}`. `via` is not
+  checked on save; when the device is set up, a parent Home Assistant does not have
+  is left out. For a class, each field given overrides the class's own.
 - `settings`: for a graph `{key, label?, type, value, secret?}` with `type`
   `string`, `boolean` or `number`; for a class `{key, value}`, one per `[Setting]`
   property the class declares (a value null leaves the property's own).
@@ -143,9 +143,9 @@ on, it is rebuilt against the libraries as saved now; off, it is unloaded and it
 entities stay in Home Assistant as unavailable.
 
 **delete** removes the file, the run history's identity, the entities' stored
-states, and the entities and the device in Home Assistant. Removing the entities has 30 seconds; a
-failure is logged ("Cannot remove the entities of deleted entity definition …") and
-the delete still succeeds.
+states, and the entities and the device in Home Assistant. Removing the entities has
+30 seconds; a failure is logged ("Cannot remove the entities of deleted entity
+definition …") and the delete still succeeds.
 
 **run** starts one Trigger step of a graph definition by hand, as `run` does for an
 automation. An unknown definition is `not_found`; otherwise it is refused with

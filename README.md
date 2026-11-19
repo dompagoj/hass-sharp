@@ -83,11 +83,12 @@ revision-checked services as the panel. See [MCP authoring](docs/mcp-authoring.m
   runs it inside Home Assistant's process, with its privileges. Treat the tools
   that change things as code execution. For an agent that must not change
   anything, use an MCP Server entry with **Read only** enabled.
-- What the tools return goes to the model's provider: discovered entities
-  (whether or not they are exposed to assistants, with only a few attributes),
-  service descriptions, graphs and their C#, entity definitions, and run errors
-  and trace values. A secret setting's value is never returned, but a secret typed
-  into a conversation reaches the provider: enter secrets in the panel.
+- What the tools return goes to the model's provider: discovered entities (whether
+  or not they are exposed to assistants, with only a few attributes), service
+  descriptions, graphs and their C#, entity definitions, and run errors and trace
+  values. A secret setting's value is never returned as the setting's value (a trace
+  can still show what is worked out from it), but a secret typed into a conversation
+  reaches the provider: enter secrets in the panel.
 - Trace values under secret-looking names are redacted, by name only: this is a
   safeguard, not a security boundary.
 

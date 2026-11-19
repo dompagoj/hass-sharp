@@ -610,6 +610,16 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(listed['ok']); self.assertFalse(listed['result'][0]['device'])
         description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
         self.assertIn('SharpDevice',description)
+        # A types request that raises is a failed one too: the list is answered, and one warning says why, quoting no setting.
+        async def raising(request,is_admin):
+            if request['operation']=='types': raise RuntimeError('the managed side went away')
+            return {'version':1,'ok':True,'result':documents[:1]}
+        self.service.entities=AsyncMock(side_effect=raising)
+        with self.assertLogs('custom_components.HassSharp',level='WARNING') as logged:
+            listed=(await self.call('entities_list',{})).data
+        self.assertTrue(listed['ok'],listed); self.assertFalse(listed['result'][0]['device'])
+        self.assertEqual(len(logged.records),1)
+        self.assertIn('types',logged.output[0]); self.assertNotIn('http://plug',logged.output[0])
 
     async def test_entities_read_and_save_answer_documents_without_node_sizes_or_secret_values(self):
         document=self.entity_document()
@@ -971,6 +981,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('records it as Stopped',definitions)
         self.assertIn('the service call that sent the command succeeds',definitions)
         self.assertNotIn('as succeeded',definitions)
+        # What a State follows, as the code works it out (Visual/StateDependencies.cs): never an Entity field step.
+        self.assertIn('the entity of a Has state or a Current state step, or of a Constant of an entity id type',definitions)
+        self.assertNotIn('Entity field step',definitions)
+        self.assertIn('own camera (it is refused at once)',definitions)
         self.assertEqual(result['guidance'],self.adapter.PROMPT)
         whole=(await self.call('get_node_schema',{'document':'entity'})).data['result']['catalog']
         self.assertEqual(set(whole['nodes']),set(result['catalog']['nodes']))

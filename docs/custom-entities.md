@@ -400,11 +400,12 @@ public class SmartPlug : SharpDevice
 To use it, open **Node library**, select **Add file**, enter the **File name**
 `SmartPlug.cs` and choose **Create file**; replace what the file holds with the code
 and select **Save**. Then choose **Entities → New entity definition**, enter a name,
-choose **Use a class from the node library** and select **Continue**. Under **Class**, choose **Smart plug**;
-under **Settings**, enter the plug's address; select **Save**. The **Device** fields
-override what the class sets when you fill them in, and **Part of** is offered as for
-a graph. A class that is one entity has **Group this entity as a device** instead.
-Its **Entities** appear after it has started once.
+choose **Use a class from the node library** and select **Continue**. Under
+**Class**, choose **Smart plug**; under **Settings**, enter the plug's address;
+select **Save**. The **Device** fields override what the class sets when you fill
+them in, and **Part of** is offered as for a graph. A class that is one entity has
+**Group this entity as a device** instead. Its **Entities** appear after it has
+started once.
 
 ### SharpDevice and SharpEntity
 
@@ -541,9 +542,10 @@ steps to trace.
 
 - An entity's key is permanent once saved: with the definition's id it is the
   entity's identity in Home Assistant. The server does not refuse a changed key:
-  changing it (through an assistant, or in the stored document) makes a new entity, and Home Assistant may give the new one an id ending
-  in `_2` while the old registry entry still exists. Before the first save, changing
-  a key changes it in every step that uses the entity.
+  changing it (through an assistant, or in the stored document) makes a new entity,
+  and Home Assistant may give the new one an id ending in `_2` while the old
+  registry entry still exists. Before the first save, changing a key changes it in
+  every step that uses the entity.
 - A deleted entity whose unique id comes back, such as a definition deleted and made
   again with the same id and key, gets back the customisation Home Assistant kept for
   it in its registry.
