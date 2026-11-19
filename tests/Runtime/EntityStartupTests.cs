@@ -835,9 +835,13 @@ static class EntityStartupTests
             var failed = await Read(api, "lamp1");
             Check(Status(failed) == "failed" && failed["activationError"]?.GetValue<string>().Contains("The node libraries have errors") == true,
                 "lamp1 loaded without the entity classes: " + failed.ToJsonString());
+            var batches = home.Pushes().Length;
             api.SetEntityDescriptions(Fixture("ha-entity-components.json"), started: true);
             Check(api.RetriesQueued == 1, "the push did not retry: " + api.RetriesQueued);
             await api.RetriesDone();
+            // The retry loads the definition and starts it, as Init does, without waiting for the start, which runs on a
+            // thread of its own; the status is set before the entities are published.
+            await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>() == "lamp1:relay"), "lamp1 starts");
             var lamp1 = await Read(api, "lamp1");
             Check(Status(lamp1) == "running" && lamp1["activationError"] == null && home.Syncs("lamp1").Length == syncs + 1, "lamp1 after the retry: " + lamp1.ToJsonString());
             Console.WriteLine("PASS entity startup: a definition that failed to load for want of the entity classes loads when they are pushed");
