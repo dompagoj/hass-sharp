@@ -41,12 +41,23 @@ const documentDescriptions: Partial<Record<GraphDocument, Record<string, string>
 export const stepDescription = (kind: string, description: string, document: GraphDocument = 'automation') =>
   documentDescriptions[document]?.[kind] ?? description
 /**
- * The steps a graph of the document can take, for the step library and quick-add: every kind but those whose
- * `documents` leave that document out (an entity definition's own steps, in an automation), each described for it.
+ * The categories a graph of the document lists first, in this order: an entity definition leads with its own steps.
+ * Every other category keeps the catalog's order after them.
  */
-export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog, document: GraphDocument = 'automation') =>
-  Object.entries(catalog.nodes).filter(([, spec]) => !Array.isArray(spec.documents) || spec.documents.includes(document))
+export const paletteOrder: Partial<Record<GraphDocument, string[]>> = { entity: ['Entity'] }
+/**
+ * The steps a graph of the document can take, for the step library and quick-add: every kind but those whose
+ * `documents` leave that document out (an entity definition's own steps, in an automation), each described for it,
+ * the document's `paletteOrder` categories first.
+ */
+export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog, document: GraphDocument = 'automation') => {
+  const first = paletteOrder[document] ?? []
+  // A listed category's place in the list; every other category after them all (the sort is stable).
+  const rank = (category: string) => (first.includes(category) ? first.indexOf(category) : first.length)
+  return Object.entries(catalog.nodes).filter(([, spec]) => !Array.isArray(spec.documents) || spec.documents.includes(document))
     .map(([kind, spec]) => ({ kind, ...spec, description: stepDescription(kind, spec.description, document) }))
+    .sort((a, b) => rank(a.category) - rank(b.category))
+}
 /**
  * Whether a palette item matches a search: every word of it appears in the item's label, kind, description, its
  * catalog keywords (other names people search by, "set value" for Constant) or the extra texts.

@@ -101,3 +101,29 @@ it('the canvas quick-add offers the steps of the document its graph is', async (
   const entity = await offered({ version: 5, name: 'Relay', nodes: [], edges: [], definition: { entities: [{ key: 'relay', domain: 'switch' }], settings: [] } })
   for (const kind of entityKinds) expect(entity, kind).toContain(`Create ${label(kind)}`)
 })
+
+it('an entity definition lists the Entity group first, then the catalog\'s order with Trigger leading it', () => {
+  const categories = [...new Set(catalogPalette(nodeCatalog, 'entity').map(item => item.category))]
+  expect(categories[0]).toBe('Entity')
+  expect(categories.slice(1)).toEqual([...new Set(catalogPalette().map(item => item.category))])
+  const kinds = catalogPalette(nodeCatalog, 'entity').map(item => item.kind)
+  const firstOther = kinds.findIndex(kind => nodeCatalog.nodes[kind].category !== 'Entity')
+  expect(kinds[firstOther]).toBe('trigger')
+  // Within the group, the catalog's own order.
+  const entityKinds = Object.keys(nodeCatalog.nodes).filter(kind => nodeCatalog.nodes[kind].category === 'Entity')
+  expect(kinds.slice(0, firstOther)).toEqual(entityKinds)
+})
+
+it('an automation keeps the catalog\'s order', () => {
+  const expected = Object.keys(nodeCatalog.nodes).filter(kind => !nodeCatalog.nodes[kind].documents)
+  expect(catalogPalette().map(item => item.kind)).toEqual(expected)
+})
+
+it('the step library and quick-add of an entity definition both start with the Entity group', () => {
+  const root = host()
+  dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onAdd={() => {}} onQuickAdd={() => {}} />, root)
+  expect(root.querySelector('.hs-lib__category')!.textContent).toBe('Entity')
+  dispose()
+  dispose = render(() => <QuickAdd document="entity" x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)
+  expect(root.querySelector('[role="option"]')!.getAttribute('aria-label')).toBe(`Create ${label('entity_state')}`)
+})

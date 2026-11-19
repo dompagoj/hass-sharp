@@ -37,7 +37,7 @@ export function NodeLibraryPanel(props: NodeLibraryPanelProps) {
   const items = createMemo(() => {
     return catalogPalette(catalog(), props.document ?? 'automation').filter(item => paletteMatches(item, search(), nodeIdentity(item.kind, catalog()).label))
   })
-  // Categories in catalog order; the heading shows the category's look, not the trigger's own, when it has others.
+  // Categories in the palette's order; the heading shows the category's look, not the trigger's own, when it has others.
   const groups = createMemo(() => {
     const byCategory = new Map<string, ReturnType<typeof items>>()
     for (const item of items()) byCategory.set(item.category, [...(byCategory.get(item.category) ?? []), item])

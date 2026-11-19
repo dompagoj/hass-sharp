@@ -41,7 +41,7 @@ export function QuickAdd(props: {
   const items = createMemo(() => {
     return offered().filter(item => paletteMatches(item, search(), item.category))
   })
-  // Categories in catalog order, each with the steps that match; the flat order is what the arrow keys walk.
+  // Categories in the palette's order, each with the steps that match; the flat order is what the arrow keys walk.
   const groups = createMemo(() => {
     const byCategory = new Map<string, ReturnType<typeof items>>()
     for (const item of items()) byCategory.set(item.category, [...(byCategory.get(item.category) ?? []), item])
