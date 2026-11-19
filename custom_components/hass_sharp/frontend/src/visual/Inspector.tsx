@@ -119,6 +119,12 @@ export function Inspector(props: InspectorProps) {
     // Back to where the selection is: its card on the canvas, else the canvas.
     focusSoon(() => card(id) ?? canvas())
   }
+  /** Drops the described kind; focus goes back to the library item that showed it (looked up while still pressed), else the canvas. */
+  const closePreview = () => {
+    const item = workspace().querySelector<HTMLElement>('.hs-lib__item[aria-pressed="true"]')
+    props.onPreviewClose?.()
+    focusSoon(() => item ?? canvas())
+  }
 
   const duplicate = (selection: string[]) => {
     let ids: string[]
@@ -167,7 +173,7 @@ export function Inspector(props: InspectorProps) {
         <Show when={props.selected?.id} keyed fallback={
           <Show when={edge()} fallback={
             <Show when={preview()} keyed fallback={<Overview />}>
-              {kind => <KindPreview kind={kind} graph={props.graph} catalog={props.catalog} onClose={() => props.onPreviewClose?.()} />}
+              {kind => <KindPreview kind={kind} graph={props.graph} catalog={props.catalog} onClose={closePreview} />}
             </Show>
           }>{current => <WireView edge={current()} />}</Show>
         }>

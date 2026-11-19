@@ -16,8 +16,11 @@ afterEach(() => {
   client?.clear()
   document.body.innerHTML = ''
 })
-/** The docked Inspector of a fresh automation, with `props` over those defaults (a selected step's pickers ask Home Assistant). */
-function mount(props: Partial<InspectorProps>) {
+/**
+ * The docked Inspector of a fresh automation, with `props` over those defaults (a selected step's pickers ask Home
+ * Assistant), in a workspace with a canvas stand-in and, with `pressed`, the step library's pressed item.
+ */
+function mount(props: Partial<InspectorProps>, options: { pressed?: boolean } = {}) {
   const root = document.createElement('div')
   root.className = 'hs-app'
   document.body.append(root)
@@ -25,7 +28,11 @@ function mount(props: Partial<InspectorProps>) {
   dispose = render(() => (
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={{ callWS: async () => ({}) } as any}>
-        <Inspector graph={createGraph('Hall')} catalog={nodeCatalog} diagnostics={[]} commit={() => {}} docked {...props} />
+        <div class="hs-visual-workspace">
+          <div class="hs-flow" tabindex="-1" />
+          {options.pressed && <button type="button" class="hs-lib__item" aria-pressed="true">Delay</button>}
+          <Inspector graph={createGraph('Hall')} catalog={nodeCatalog} diagnostics={[]} commit={() => {}} docked {...props} />
+        </div>
       </HassCtx.Provider>
     </QueryClientProvider>
   ), root)
@@ -83,4 +90,23 @@ it('as a sheet, a peek bar shows the kind and closing the sheet drops the previe
   // The next kind described opens the sheet again.
   setKind('delay')
   expect(panel.getAttribute('data-open')).toBe('true')
+})
+
+it('Close details puts focus on the canvas once the preview is gone, so it never falls to the page', async () => {
+  const [kind, setKind] = createSignal<string | undefined>('delay')
+  const root = mount({ get preview() { return kind() }, onPreviewClose: () => setKind(undefined) })
+  const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')!
+  close.focus()
+  close.click()
+  expect(root.querySelector('[aria-label="Step details"]')).toBeNull()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-flow')))
+})
+
+it('Close details puts focus back on the library item that showed the kind', async () => {
+  const [kind, setKind] = createSignal<string | undefined>('delay')
+  const root = mount({ get preview() { return kind() }, onPreviewClose: () => { setKind(undefined); root.querySelector('.hs-lib__item')!.setAttribute('aria-pressed', 'false') } }, { pressed: true })
+  const close = root.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')!
+  close.focus()
+  close.click()
+  await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-lib__item')))
 })
