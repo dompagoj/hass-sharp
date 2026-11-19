@@ -369,8 +369,10 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   camera_frame: { keys: ['entity'], Section: EntitySection },
   show_frame: { keys: ['entity'], Section: EntitySection },
   setting: { keys: ['key'], Section: SettingSection },
-  // An Entity node: its whole entity but its name (the header's) and its state values (its inputs).
-  entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: EntityNodeSection },
+  // An Entity node: its whole entity but its name (the header's) and its state values (its inputs). Looked up when it
+  // is drawn: EntityNodeSection imports this module, so when it is loaded first (the Entities list does), it is not
+  // defined yet while this table is made.
+  entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: props => <EntityNodeSection {...props} /> },
 }
 
 /** Under a Set state's value, when its type has more than one: what leaving it empty does. */

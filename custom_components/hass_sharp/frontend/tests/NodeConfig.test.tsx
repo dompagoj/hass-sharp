@@ -1026,21 +1026,21 @@ it('refuses a setting\'s comma where the person\'s number format writes a point,
 it('shows run history tracking a step\'s config does not hold as the entity definition\'s default', async () => {
   const graph: VisualGraph = {
     version: 5, name: 'Relay', edges: [],
-    definition: { entities: [{ key: 'relay', domain: 'switch' }], settings: [] },
+    definition: { entities: [], settings: [] },
     nodes: [
-      { id: 'state', kind: 'entity_state', config: { entity: 'relay' }, position: { x: 0, y: 0 } },
-      { id: 'cmd', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 0, y: 200 } },
+      { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Relay', history: {} }, position: { x: 0, y: 0 } },
       { id: 'setup', kind: 'entity_setup', config: {}, position: { x: 0, y: 400 } },
       { id: 'poll', kind: 'trigger', config: { type: 'time_pattern', minutes: '/1' }, position: { x: 0, y: 600 } },
     ],
   }
-  const { el, setSelected } = mount(graph, 'state')
+  const { el, setSelected } = mount(graph, 'relay')
+  // An Entity node records by flow: its state updates are not recorded and its commands are, unless it says otherwise.
+  const recorded = () => [...el.querySelectorAll<HTMLLabelElement>('section[aria-label="Run history"] label')]
+    .map(label => [label.textContent, el.querySelector<HTMLInputElement>(`[id="${label.htmlFor}"]`)?.checked])
+  await vi.waitFor(() => expect(recorded()).toEqual([['Record state updates', false], ['Record commands', true]]))
+  expect(row(el, 'trackHistory')).toBeUndefined()
   const field = () => row(el, 'trackHistory')!
   const shown = () => ({ checked: field().querySelector<HTMLInputElement>('input[role="switch"]')!.checked, text: field().querySelector('.hs-muted')!.textContent })
-  await vi.waitFor(() => expect(field()).toBeDefined())
-  expect(shown()).toEqual({ checked: false, text: 'False' })
-  setSelected('cmd')
-  await vi.waitFor(() => expect(shown()).toEqual({ checked: true, text: 'True' }))
   setSelected('setup')
   await vi.waitFor(() => expect(shown()).toEqual({ checked: true, text: 'True' }))
   // A trigger of an entity definition is not recorded unless it says so.

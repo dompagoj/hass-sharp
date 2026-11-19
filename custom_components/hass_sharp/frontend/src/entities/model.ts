@@ -194,7 +194,11 @@ const settingToSend = (setting: DefinitionSetting): DefinitionSetting => {
   return sent
 }
 
-/** The body an editor graph stands for, for `preview` and `save`: the name from the graph, the logic graph without its definition. */
+/**
+ * The body an editor graph stands for, for `preview` and `save`: the name from the graph, the logic graph without its
+ * definition. It has `entities` only while the definition lists one: an Entity node's entity is in the graph, and the
+ * server reads no list as none.
+ */
 export function definitionBody(graph: Graph): DefinitionBody {
   if (!record(graph.definition)) throw new Error('This graph has no definition: it is not an entity definition’s')
   const { definition, ...logic } = graph
@@ -203,7 +207,7 @@ export function definitionBody(graph: Graph): DefinitionBody {
     name: graph.name,
     device: structuredClone(device ?? null),
     settings: (settings ?? []).map(setting => settingToSend(structuredClone(setting))),
-    entities: structuredClone(entities ?? []),
+    ...(entities?.length ? { entities: structuredClone(entities) } : {}),
     logic: { kind: 'graph', graph: structuredClone(logic) },
   }
 }

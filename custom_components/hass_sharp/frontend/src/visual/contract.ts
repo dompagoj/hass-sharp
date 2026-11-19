@@ -250,10 +250,16 @@ export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnaps
   const keys = [...listed.filter(record).map(e => e.key), ...declaredEntities(graph, catalog).map(d => d.entity.key)]
   return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
 }
-/** `base`, else `base_2`, `base_3`… past the keys `taken`. */
+/** `base`, else `base_2`, `base_3`… past the keys `taken`, each within the 40 characters of an entity key. */
 export function freeKey(base: string, taken: readonly string[]): string {
   if (!taken.includes(base)) return base
-  for (let n = 2; ; n++) if (!taken.includes(`${base}_${n}`)) return `${base}_${n}`
+  for (let n = 2; ; n++) {
+    // As `definitionId` keeps an id within 80 characters: a base too long for its number is shortened first, without
+    // the `_` that may then end it, so a key of 39 or 40 characters gives one of at most 40 (`entityKeyPattern`).
+    const suffix = `_${n}`
+    const key = (base.length + suffix.length > 40 ? trimSeparators(base.slice(0, 40 - suffix.length)) : base) + suffix
+    if (!taken.includes(key)) return key
+  }
 }
 /** Lower case without accents (`Café` → `cafe`), each run of other characters one `_`, no `_` at either end. */
 export const slug = (name: string) =>

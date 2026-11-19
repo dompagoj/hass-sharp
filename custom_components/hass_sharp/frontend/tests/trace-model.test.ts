@@ -316,11 +316,16 @@ it('answers values read downstream in a long run without scanning the whole run 
   expect(model.eventsOf('log')).toHaveLength(2000)
 })
 
-it('names an entity step\'s state values and command data in a run as the panel names them', () => {
+it('names an entity step\'s state values and an Entity node\'s state values and command data in a run as the panel names them', () => {
   const g = { version: 5, name: 'Things', edges: [], nodes: [
-    { id: 'set', kind: 'set_entity_state', config: { entity: 'lamp' } }, { id: 'say', kind: 'entity_command', config: { entity: 'label', command: 'set_value' } }],
-    definition: { entities: [{ key: 'lamp', domain: 'light' }, { key: 'label', domain: 'text' }], settings: [] } } as unknown as Graph
-  expect(inputLabel(g, g.nodes[0], 'is_on', nodeCatalog)).toBe('On')
-  expect(inputOrder(g, g.nodes[0], { brightness: 1, is_on: true }, nodeCatalog)).toEqual(['is_on', 'brightness'])
-  expect(outputLabel(g.nodes[1], 'value', nodeCatalog, g)).toBe('Text')
+    { id: 'lamp', kind: 'entity', config: { key: 'lamp', domain: 'light', name: 'Lamp' } }, { id: 'label', kind: 'entity', config: { key: 'label', domain: 'text', name: 'Label' } },
+    { id: 'set', kind: 'set_entity_state', config: { entity: 'lamp' } }],
+    definition: { entities: [], settings: [] } } as unknown as Graph
+  const [lamp, label, set] = g.nodes
+  expect(inputLabel(g, set, 'is_on', nodeCatalog)).toBe('On')
+  expect(inputOrder(g, set, { brightness: 1, is_on: true }, nodeCatalog)).toEqual(['is_on', 'brightness'])
+  // The node's own state values, in its type's order, and the value its Set value command carries.
+  expect(inputLabel(g, lamp, 'brightness', nodeCatalog)).toBe('Brightness')
+  expect(inputOrder(g, lamp, { brightness: 1, is_on: true }, nodeCatalog)).toEqual(['is_on', 'brightness'])
+  expect(outputLabel(label, 'command:set_value:value', nodeCatalog, g)).toBe('Text')
 })

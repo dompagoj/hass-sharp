@@ -24,20 +24,23 @@ class WidgetError extends Error {
 const forbidden = ['automation', 'Automation', '/visual/', '/automations']
 const clean = (text: string) => forbidden.filter(word => text.includes(word))
 
-/** A widget graph: an entity graph (it carries a definition) with gears as its entities and a secret setting. */
+/** The `n`th gear: an Entity node, a binary sensor. */
+const gear = (n: number) => ({ id: `gear_${n}`, kind: 'entity', config: { key: `gear_${n}`, domain: 'binary_sensor', name: `Gear ${n}` }, position: { x: 60, y: 200 * n } })
+/**
+ * A widget graph: an entity graph (it carries a definition) with gears as its Entity nodes, and a secret setting. Its
+ * definition lists no entity, as an editor graph's does while its entities are its Entity nodes'.
+ */
 function widgetGraph(name: string, gears = 1, token: string | null = 'hunter2'): VisualGraph {
   return {
-    version: 5, name, nodes: [], edges: [],
+    version: 5, name, nodes: Array.from({ length: gears }, (_, i) => gear(i + 1)), edges: [],
     definition: {
-      entities: Array.from({ length: gears }, (_, i) => ({ key: `gear_${i + 1}`, domain: 'binary_sensor', name: `Gear ${i + 1}` })),
+      entities: [],
       settings: [{ key: 'token', type: 'string', value: token, secret: true } as { key: string; type: string }],
     },
   }
 }
-const gears = (graph: VisualGraph) => graph.definition?.entities.length ?? 0
-const addGear = (graph: VisualGraph): VisualGraph => ({
-  ...graph, definition: { ...graph.definition!, entities: [...graph.definition!.entities, { key: `gear_${gears(graph) + 1}`, domain: 'binary_sensor' }] },
-})
+const gears = (graph: VisualGraph) => graph.nodes.filter(node => node.kind === 'entity').length
+const addGear = (graph: VisualGraph): VisualGraph => ({ ...graph, nodes: [...graph.nodes, gear(gears(graph) + 1)] })
 /** What the stub's drafts keep: the graph without its secret values. */
 const withoutSecrets = (graph: VisualGraph): VisualGraph => ({
   ...graph, definition: { ...graph.definition!, settings: graph.definition!.settings.map(setting => ({ ...setting, value: null })) },

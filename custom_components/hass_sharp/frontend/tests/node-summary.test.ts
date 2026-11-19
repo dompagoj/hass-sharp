@@ -3,13 +3,13 @@ import { nodeCatalog, withGraphTypes, type Graph, type GraphNode, type VisualCat
 import { nodeSummary, stepSummary } from '../src/visual/nodeSummary'
 
 const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
-const graph: Graph = {
-  version: 5, name: 'Plug', nodes: [], edges: [],
-  definition: {
-    entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'power', domain: 'sensor', name: 'Power' }, { key: 'online', domain: 'binary_sensor' }],
-    settings: [{ key: 'host', label: 'Address', type: 'string', value: '10.0.0.7' }, { key: 'port', type: 'number' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: null, hasValue: true }],
-  } as unknown as Graph['definition'],
-}
+/** An Entity node of the entity `key` (also its id), named only when `name` is given. */
+const hub = (key: string, domain: string, name?: string): GraphNode => ({ id: key, kind: 'entity', config: { key, domain, ...(name === undefined ? {} : { name }) } })
+/** An entity definition whose entities are the Entity nodes `hubs`, with no settings unless given. */
+const definitionOf = (hubs: GraphNode[], settings: unknown[] = []): Graph =>
+  ({ version: 5, name: 'Plug', nodes: hubs, edges: [], definition: { entities: [], settings } as unknown as Graph['definition'] })
+const graph = definitionOf([hub('relay', 'switch', 'Relay'), hub('power', 'sensor', 'Power'), hub('online', 'binary_sensor')],
+  [{ key: 'host', label: 'Address', type: 'string', value: '10.0.0.7' }, { key: 'port', type: 'number' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: null, hasValue: true }])
 const node = (kind: string, config: Record<string, unknown>): GraphNode => ({ id: 'n', kind, config })
 /** The summary with the definition lifted into the catalog (the canvas), and from the graph alone (the inspector). */
 const both = (n: GraphNode) => {
@@ -20,24 +20,35 @@ const both = (n: GraphNode) => {
 
 describe('the summaries of an entity definition\'s steps', () => {
   it('name the entity by its name, else its key', () => {
-    expect(both(node('entity_state', { entity: 'power' }))).toBe('State ▸ Power')
+    expect(both(node('set_entity_state', { entity: 'power', value: lit('number', 4) }))).toBe('Set state ▸ Power')
     expect(both(node('set_entity_state', { entity: 'online' }))).toBe('Set state ▸ online')
     expect(both(node('set_entity_available', { entity: 'relay', available: lit('boolean', true) }))).toBe('Set available ▸ Relay')
   })
-  it('name the command by its label', () => {
+  it('of State, When commanded and When a frame is needed name the entity by its name, else its key (the old steps, until Task 12)', () => {
+    expect(both(node('entity_state', { entity: 'power' }))).toBe('State ▸ Power')
+    expect(both(node('entity_state', { entity: 'heater' }))).toBe('State ▸ heater')
+    expect(both(node('entity_command', { entity: 'heater', command: 'turn_on' }))).toBe('When commanded ▸ heater: turn_on')
+    expect(stepSummary(node('entity_state', {}), nodeCatalog, undefined, graph)).toBeUndefined()
+    expect(nodeSummary(node('entity_state', {}), nodeCatalog, undefined, graph)).toBe(nodeCatalog.nodes.entity_state.description)
+    const cameras = definitionOf([hub('annotated', 'camera', 'Annotated'), hub('yard', 'camera')])
+    const summary = (n: GraphNode) => nodeSummary(n, withGraphTypes(nodeCatalog, cameras), undefined, cameras)
+    expect(summary(node('camera_frame', { entity: 'annotated' }))).toBe('When a frame is needed ▸ Annotated')
+    expect(summary(node('camera_frame', { entity: 'yard' }))).toBe('When a frame is needed ▸ yard')
+    expect(summary(node('camera_frame', {}))).toBe(nodeCatalog.nodes.camera_frame.description)
+  })
+  it('name the command by its label (When commanded, until Task 12)', () => {
     expect(both(node('entity_command', { entity: 'relay', command: 'turn_off' }))).toBe('When commanded ▸ Relay: Turn off')
     expect(both(node('entity_command', { entity: 'relay', command: 'toggle' }))).toBe('When commanded ▸ Relay: toggle')
   })
-  it('name the command by the catalog\'s label of its type, else in words', () => {
+  it('name the command by the catalog\'s label of its type, else in words (When commanded, until Task 12)', () => {
     const catalog = { ...nodeCatalog, entityDomains: { ...nodeCatalog.entityDomains, fan: { label: 'Fan', state: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} }, options: {} } } } as unknown as VisualCatalogSnapshot
-    const fanGraph: Graph = { ...graph, definition: { entities: [{ key: 'blades', domain: 'fan', name: 'Blades' }], settings: [] } as unknown as Graph['definition'] }
+    const fanGraph = definitionOf([hub('blades', 'fan', 'Blades')])
     const summary = (config: Record<string, unknown>) => nodeSummary(node('entity_command', config), withGraphTypes(catalog, fanGraph), undefined, fanGraph)
     expect(summary({ entity: 'blades', command: 'turn_on' })).toBe('When commanded ▸ Blades: Spin up')
     expect(summary({ entity: 'blades', command: 'set_speed' })).toBe('When commanded ▸ Blades: Set speed')
   })
-  it('name the new types\' commands by their labels', () => {
-    const things: Graph = { ...graph, definition: { entities: [{ key: 'level', domain: 'number', name: 'Level' }, { key: 'lamp', domain: 'light', name: 'Lamp' },
-      { key: 'blind', domain: 'cover', name: 'Blind' }, { key: 'mode', domain: 'select' }, { key: 'bell', domain: 'button', name: 'Bell' }], settings: [] } as unknown as Graph['definition'] }
+  it('name the new types\' commands by their labels (When commanded, until Task 12)', () => {
+    const things = definitionOf([hub('level', 'number', 'Level'), hub('lamp', 'light', 'Lamp'), hub('blind', 'cover', 'Blind'), hub('mode', 'select'), hub('bell', 'button', 'Bell')])
     const summary = (kind: string, config: Record<string, unknown>) => nodeSummary(node(kind, config), withGraphTypes(nodeCatalog, things), undefined, things)
     expect(summary('entity_command', { entity: 'level', command: 'set_value' })).toBe('When commanded ▸ Level: Set value')
     expect(summary('entity_command', { entity: 'blind', command: 'set_position' })).toBe('When commanded ▸ Blind: Set position')
@@ -51,14 +62,14 @@ describe('the summaries of an entity definition\'s steps', () => {
     expect(both(node('setting', { key: 'password' }))).toBe('Setting ▸ Password')
   })
   it('show a key the definition no longer has as it is', () => {
-    expect(both(node('entity_state', { entity: 'heater' }))).toBe('State ▸ heater')
-    expect(both(node('entity_command', { entity: 'heater', command: 'turn_on' }))).toBe('When commanded ▸ heater: turn_on')
+    expect(both(node('set_entity_state', { entity: 'heater' }))).toBe('Set state ▸ heater')
+    expect(both(node('set_entity_available', { entity: 'heater', available: lit('boolean', true) }))).toBe('Set available ▸ heater')
     expect(both(node('setting', { key: 'token' }))).toBe('Setting ▸ token')
   })
   it('fall back to the description while nothing is chosen', () => {
-    expect(stepSummary(node('entity_state', {}), nodeCatalog, undefined, graph)).toBeUndefined()
+    expect(stepSummary(node('set_entity_state', {}), nodeCatalog, undefined, graph)).toBeUndefined()
     expect(stepSummary(node('setting', { key: '' }), nodeCatalog, undefined, graph)).toBeUndefined()
-    expect(nodeSummary(node('entity_state', {}), nodeCatalog, undefined, graph)).toBe(nodeCatalog.nodes.entity_state.description)
+    expect(nodeSummary(node('set_entity_available', {}), nodeCatalog, undefined, graph)).toBe(nodeCatalog.nodes.set_entity_available.description)
   })
 })
 
@@ -139,21 +150,19 @@ describe('Take a picture, Draw rectangle and Draw text', () => {
   })
 })
 
-describe('When a frame is needed and Show frame', () => {
-  const cameras: Graph = { ...graph, definition: { entities: [{ key: 'annotated', domain: 'camera', name: 'Annotated' }, { key: 'yard', domain: 'camera' }], settings: [] } as unknown as Graph['definition'] }
+describe('Show frame', () => {
+  const cameras = definitionOf([hub('annotated', 'camera', 'Annotated'), hub('yard', 'camera')])
   const summary = (n: GraphNode) => {
     const lifted = nodeSummary(n, withGraphTypes(nodeCatalog, cameras), undefined, cameras)
     expect(nodeSummary(n, nodeCatalog, undefined, cameras)).toBe(lifted)
     return lifted
   }
   it('name the camera by its name, else its key', () => {
-    expect(summary(node('camera_frame', { entity: 'annotated' }))).toBe('When a frame is needed ▸ Annotated')
     expect(summary(node('show_frame', { entity: 'annotated', image: { kind: 'unset' } }))).toBe('Show frame ▸ Annotated')
-    expect(summary(node('camera_frame', { entity: 'yard' }))).toBe('When a frame is needed ▸ yard')
+    expect(summary(node('show_frame', { entity: 'yard', image: { kind: 'unset' } }))).toBe('Show frame ▸ yard')
     expect(summary(node('show_frame', { entity: 'gone' }))).toBe('Show frame ▸ gone')
   })
   it('fall back to the description for a camera not chosen', () => {
-    expect(summary(node('camera_frame', {}))).toBe(nodeCatalog.nodes.camera_frame.description)
     expect(summary(node('show_frame', {}))).toBe(nodeCatalog.nodes.show_frame.description)
   })
 })

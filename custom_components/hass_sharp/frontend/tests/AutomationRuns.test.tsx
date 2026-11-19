@@ -7,7 +7,7 @@ import { HassCtx } from '../src/context'
 import { AutomationRuns } from '../src/components/AutomationRuns'
 import { dispatchRun, forgetAcceptedRun, runHistoryInterval } from '../src/components/runDispatch'
 import { definitionNames, summarizeTrigger } from '../src/components/TriggerSummary'
-import { nodeCatalog, type Graph } from '../src/visual/contract'
+import { flowMethod, nodeCatalog, type Graph, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { page, run as record, triggers, v1Run } from './run-fixture'
 import { dateText, lastRunText, relativeTime } from '../src/automations/model'
 import type { HomeAutomation } from '../src/visual/api'
@@ -412,10 +412,15 @@ function setupDefinition(callWS: (message: any) => Promise<any>, props: Partial<
   </HassCtx.Provider></QueryClientProvider>, root)
   return { root }
 }
-const plugNames = {
-  entities: [{ key: 'relay', domain: 'switch', name: 'Main relay' }, { key: 'power', domain: 'sensor', name: null }],
-  domains: { switch: { label: 'Switch', state: {}, options: {}, commands: { turn_on: { label: 'Turn on' }, turn_off: { label: 'Turn off' } } } },
-}
+const at = { x: 0, y: 0 }
+/** An entity definition's graph of the Entity nodes `hubs`, each `[id, key, domain, name?]`, and the steps `more`. */
+const hubsGraph = (name: string, hubs: [string, string, string, string?][], more: Graph['nodes'] = [], edges: Graph['edges'] = []) => ({
+  version: 5, name, edges,
+  nodes: [...hubs.map(([id, key, domain, named]) => ({ id, kind: 'entity', config: { key, domain, ...(named === undefined ? {} : { name: named }) }, position: at })), ...more],
+  definition: { entities: [], settings: [] },
+}) as unknown as Graph
+/** The plug's names, from its Entity nodes: a relay named Main relay, and a power sensor with no name. */
+const plugNames = definitionNames(hubsGraph('Plug', [['relay', 'relay', 'switch', 'Main relay'], ['power', 'power', 'sensor']]), nodeCatalog)!
 
 it('summarises a command run by its entity and command, named when the definition is known, and a setup run', () => {
   // Without the definition: the key, and the command with its underscores as spaces.
@@ -429,7 +434,8 @@ it('summarises a command run by its entity and command, named when the definitio
 })
 
 it('names a command run\'s command by the catalog\'s label of its type, else in words', () => {
-  const fan = { entities: [{ key: 'blades', domain: 'fan', name: 'Blades' }], domains: { fan: { label: 'Fan', state: {}, options: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} } } } }
+  const catalog = { ...nodeCatalog, entityDomains: { ...nodeCatalog.entityDomains, fan: { label: 'Fan', state: {}, options: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} } } } } as unknown as VisualCatalogSnapshot
+  const fan = definitionNames(hubsGraph('Fan', [['blades', 'blades', 'fan', 'Blades']]), catalog)!
   expect(summarizeTrigger({ kind: 'command', entity: 'blades', command: 'turn_on' }, fan)).toBe('Blades: Spin up')
   expect(summarizeTrigger({ kind: 'command', entity: 'blades', command: 'set_speed' }, fan)).toBe('Blades: Set speed')
 })
@@ -446,7 +452,7 @@ it('labels a definition\'s Command and Setup causes, and words its empty state a
   expect(root.textContent).not.toContain('Run it now')
   dispose(); document.body.innerHTML = ''
   runs = [
-    record({ runId: 'run-2', automationId: 'entity:plug', visualId: 'plug', cause: 'Command', trigger: commandTrigger, actionLabel: 'When commanded ▸ Main relay: Turn on' }),
+    record({ runId: 'run-2', automationId: 'entity:plug', visualId: 'plug', cause: 'Command', trigger: commandTrigger, actionLabel: 'Main relay: Turn on' }),
     record({ runId: 'run-1', automationId: 'entity:plug', visualId: 'plug', cause: 'Setup', trigger: setupTrigger, actionLabel: 'When started' }),
   ]
   const again = setupDefinition(async () => page(runs), { revisionLabel: 'Revision', triggerNames: plugNames, runHref: run => `/entities/${run.visualId}/runs/${run.runId}` })
@@ -476,7 +482,7 @@ it('labels the two causes in an automation\'s list too, without the definition\'
 
 it('labels a frame run by its camera, named when the definition is known', async () => {
   const frameTrigger = { kind: 'frame', entity: 'front' } as const
-  const cameraNames = { entities: [{ key: 'front', domain: 'camera', name: 'Front door' }], domains: {} }
+  const cameraNames = definitionNames(hubsGraph('Doorbell', [['front', 'front', 'camera', 'Front door']]), nodeCatalog)!
   expect(summarizeTrigger(frameTrigger)).toBe('front')
   expect(summarizeTrigger(frameTrigger, cameraNames)).toBe('Front door')
   expect(summarizeTrigger({ kind: 'frame' })).toBe('Frame needed')
@@ -485,30 +491,27 @@ it('labels a frame run by its camera, named when the definition is known', async
   expect(rows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Frame needed · Front door')
 })
 
-// A root step of an entity definition with no method of its own runs under the method name generated from its id.
-const at = { x: 0, y: 0 }
-const lensGraph = { version: 5, name: 'Lens', edges: [],
-  nodes: [
-    { id: 'frame', kind: 'camera_frame', config: { entity: 'front' }, position: at },
-    { id: 'setup', kind: 'entity_setup', config: {}, position: at },
-    { id: 'on', kind: 'entity_command', label: 'On turn on', config: { entity: 'relay', command: 'turn_on' }, position: at },
-    { id: 'log', kind: 'log', config: { value: { kind: 'unset' } }, position: at },
-  ],
-  definition: { entities: [{ key: 'front', domain: 'camera', name: 'Front door' }, { key: 'relay', domain: 'switch', name: 'Relay' }], settings: [] },
-} as unknown as Graph
+// A root step of an entity definition with no method of its own runs under the method name generated from its id; a
+// flow of an Entity node under the one generated from its id and pin.
+const lensGraph = hubsGraph('Lens', [['cam', 'front', 'camera', 'Front door'], ['plug', 'relay', 'switch', 'Relay']], [
+  { id: 'setup', kind: 'entity_setup', label: 'Warm up', config: {}, position: at },
+  { id: 'log', kind: 'log', config: { value: { kind: 'unset' } }, position: at },
+])
 
 it('titles an entity definition\'s run by its root step when it carries that step\'s generated method name, and keeps any other name', async () => {
+  const [cam, plug] = lensGraph.nodes
   const runs = [
-    record({ runId: 'run-5', automationId: 'entity:lens', visualId: 'lens', cause: 'Frame', trigger: { kind: 'frame', entity: 'front' }, actionLabel: 'Run_6672616D65' }),
+    record({ runId: 'run-5', automationId: 'entity:lens', visualId: 'lens', cause: 'Frame', trigger: { kind: 'frame', entity: 'front' }, actionLabel: flowMethod(cam, 'frame') }),
     record({ runId: 'run-4', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_7365747570' }),
-    record({ runId: 'run-3', automationId: 'entity:lens', visualId: 'lens', cause: 'Command', trigger: commandTrigger, actionLabel: 'Run_6F6E' }),
+    record({ runId: 'run-3', automationId: 'entity:lens', visualId: 'lens', cause: 'Command', trigger: commandTrigger, actionLabel: flowMethod(plug, 'command:turn_on') }),
     // A root no longer in the graph, and a step that is no root: as recorded.
     record({ runId: 'run-2', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_676F6E65' }),
     record({ runId: 'run-1', automationId: 'entity:lens', visualId: 'lens', cause: 'Setup', trigger: setupTrigger, actionLabel: 'Run_6C6F67' }),
   ]
   const { root } = setupDefinition(async () => page(runs), { triggerNames: definitionNames(lensGraph, nodeCatalog) })
   await vi.waitFor(() => expect(rows(root)).toHaveLength(5))
-  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['When a frame is needed', 'When started', 'On turn on', 'Run_676F6E65', 'Run_6C6F67'])
+  // A step's own label names its runs; an Entity node is named by its entity, never a label of its own.
+  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['Front door: When a frame is needed', 'Warm up', 'Relay: Turn on', 'Run_676F6E65', 'Run_6C6F67'])
 })
 
 it('titles a run of an Entity node\'s flow by the entity and the flow when it carries the flow\'s method name', async () => {

@@ -11,10 +11,12 @@ function client(answer: (request: any) => unknown = () => ok({})) {
   const hass = { callWS: async (message: any) => { messages.push(structuredClone(message)); return answer(message.request) } }
   return { api: entityApi(hass as any), messages }
 }
+/** An Entity node of the motion definition. */
+const hub = (key: string, name: string) => ({ id: key, kind: 'entity', config: { key, domain: 'binary_sensor', name }, position: { x: 60, y: 100 } })
+/** The motion definition: its entity an Entity node, so it lists none. */
 const body = (): DefinitionBody => ({
   name: 'Any motion', device: null, settings: [{ key: 'offset', value: 4, label: 'Offset', type: 'number' }],
-  entities: [{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion' }],
-  logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } },
+  logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [hub('any_motion', 'Any motion')], edges: [] } },
 })
 
 describe('entity API client', () => {
@@ -219,7 +221,7 @@ describe('the in-memory entities backend', () => {
   it('refuses an id outside the definition id rule on every operation that takes one', async () => {
     const { fixture, api } = setup()
     for (const id of ['Any motion', '_motion', 'new:1', 'a'.repeat(81), '']) {
-      await expect(api.save(id, { ...body(), logic: { kind: 'class', type: tokenType.id }, entities: null }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
+      await expect(api.save(id, { ...body(), logic: { kind: 'class', type: tokenType.id } }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
       await expect(api.save(id, body(), 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
       await expect(api.read(id)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
       await expect(api.setEnabled(id, true)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
@@ -232,7 +234,7 @@ describe('the in-memory entities backend', () => {
   it('refuses to save the id new, which is the new-definition page, as the real save does', async () => {
     const { fixture, api } = setup()
     await expect(api.save('new', body(), 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
-    await expect(api.save('new', { ...body(), logic: { kind: 'class', type: tokenType.id }, entities: null }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
+    await expect(api.save('new', { ...body(), logic: { kind: 'class', type: tokenType.id } }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
     expect(fixture.entities.documents.has('new')).toBe(false)
     await expect(api.read('new')).rejects.toMatchObject({ code: 'not_found' })
   })
@@ -263,7 +265,9 @@ describe('the in-memory entities backend', () => {
     const codes = async (definition: DefinitionBody) => (await api.preview(definition)).diagnostics.map(d => d.code)
     expect(await codes({ ...body(), name: '' })).toEqual(['definition.name'])
     expect(await codes({ ...body(), name: 'x'.repeat(121) })).toEqual(['definition.name'])
-    expect(await codes({ ...body(), entities: [] })).toEqual(['definition.entitiesRequired'])
+    // Neither an Entity node nor an entity listed.
+    expect(await codes({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } } })).toEqual(['definition.entitiesRequired'])
+    // Listed entities (until Task 11 ends the list): each key checked, once.
     expect(await codes({ ...body(), entities: [{ key: 'Door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }] }))
       .toEqual(['definition.entityKey', 'definition.duplicateEntity'])
     const keyProblem = (await api.preview({ ...body(), entities: [{ key: 'Door', domain: 'binary_sensor' }] })).diagnostics[0]
@@ -331,7 +335,7 @@ describe('the in-memory entities backend', () => {
   })
   it("answers an entity's disabled flag from the registry entry a test seeded for it", async () => {
     const { fixture, api } = setup()
-    const two: DefinitionBody = { ...body(), entities: [...body().entities!, { key: 'tamper', domain: 'binary_sensor', name: 'Tamper' }] }
+    const two: DefinitionBody = { ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [hub('any_motion', 'Any motion'), hub('tamper', 'Tamper')], edges: [] } } }
     fixture.entities.registry.set('motion', [{ uniqueId: 'motion:tamper', entityId: 'binary_sensor.motion_tamper', domain: 'binary_sensor', name: 'Tamper', disabled: true }])
     // Seeded entries are its registry while seeded.
     expect((await api.save('motion', two, 0)).document.registeredEntities.map(e => [e.uniqueId, e.disabled])).toEqual([['motion:tamper', true]])
@@ -407,7 +411,7 @@ describe('the in-memory entities backend', () => {
     const { fixture, api } = setup()
     const trigger = (id: string, config: Record<string, unknown> = {}) => ({ id, kind: 'trigger', config: { type: 'time_pattern', ...config } })
     const steps = (): DefinitionBody => ({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [],
-      nodes: [trigger('poll'), trigger('quiet', { manual: false }), { id: 'log', kind: 'log', config: {} }] } } })
+      nodes: [hub('any_motion', 'Any motion'), trigger('poll'), trigger('quiet', { manual: false }), { id: 'log', kind: 'log', config: {} }] } } })
     const saved = await api.save('motion', steps(), 0)
     const answer = (runnable: boolean) => [
       { triggerId: 'poll', method: 'Run_706F6C6C', manual: true, runnable },
@@ -427,7 +431,7 @@ describe('the in-memory entities backend', () => {
   })
   it('runs a Trigger step of a running definition, and refuses the rest in the words EntityApi does', async () => {
     const { fixture, api } = setup()
-    const steps = (): DefinitionBody => ({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [], nodes: [
+    const steps = (): DefinitionBody => ({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [], nodes: [hub('any_motion', 'Any motion'),
       { id: 'poll', kind: 'trigger', config: { type: 'time_pattern' } }, { id: 'quiet', kind: 'trigger', config: { manual: false } }, { id: 'log', kind: 'log', label: 'Write it down', config: {} }] } } })
     await api.save('motion', steps(), 0)
     await expect(api.run('motion', 'poll')).resolves.toEqual({ version: 1, runId: 'manual-entity-run' })

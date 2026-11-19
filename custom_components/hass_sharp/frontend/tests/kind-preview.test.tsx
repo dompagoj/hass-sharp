@@ -68,7 +68,10 @@ it('describes a kind: label, category, the whole description, how to add it and 
 })
 
 it('says an entity definition\'s Trigger in its own words', () => {
-  const root = mount({ preview: 'trigger', graph: { ...createGraph('Relay'), definition: { entities: [{ key: 'relay', domain: 'switch' }], settings: [] } } })
+  // An entity definition's graph: its definition (no entity listed) and its relay an Entity node.
+  const graph = createGraph('Relay')
+  const relay = { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Relay' }, position: { x: 60, y: 300 } }
+  const root = mount({ preview: 'trigger', graph: { ...graph, nodes: [...graph.nodes, relay], definition: { entities: [], settings: [] } } })
   expect(root.querySelector('[aria-label="Step details"]')!.textContent).toContain('Run the steps after it when something happens, at a set time or on an interval.')
 })
 

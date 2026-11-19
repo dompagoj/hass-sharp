@@ -15,7 +15,8 @@ const cases = shared.cases as Case[]
 
 const entityOf = (c: Case) => ({ key: c.key, domain: c.domain, ...(c.name ? { name: c.name } : {}), ...(c.options !== undefined ? { options: c.options } : {}) }) as DefinitionEntity
 const body = (c: Case): DefinitionBody => ({
-  name: 'Options', device: null, settings: [], entities: c.node ? [] : [entityOf(c)],
+  // A node case sends no entities list; a listed case lists its entity (until Task 11 ends the list).
+  name: 'Options', device: null, settings: [], ...(c.node ? {} : { entities: [entityOf(c)] }),
   logic: { kind: 'graph', graph: { version: 5, name: 'Options', nodes: c.node ? [{ id: 'e', kind: 'entity', config: entityOf(c) as unknown as Record<string, unknown> }] : [], edges: [] } },
 })
 function same(got: VisualDiagnostic[], want: Expected[], node = false) {

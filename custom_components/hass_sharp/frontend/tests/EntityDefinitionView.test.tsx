@@ -14,28 +14,9 @@ import { dropStep, libraryItem } from './library'
 // The entity definition editor in the panel, against the in-memory entity API: a definition is built, saved, read
 // back, switched, deleted and recovered entirely through the page.
 
-/**
- * A new definition starts with an Entity node. Most tests here build through the right panel's Entities list, so for
- * them a new definition starts as one did before Entity nodes: its one binary sensor listed, named after it. A test
- * of the starter itself sets `starter.listed` to false.
- */
-const starter = vi.hoisted(() => ({ listed: true }))
-vi.mock('../src/entities/model', async importOriginal => {
-  const model = await importOriginal<typeof import('../src/entities/model')>()
-  return {
-    ...model,
-    newGraphDefinition: (name: string): DefinitionBody => {
-      const body = model.newGraphDefinition(name)
-      if (!starter.listed || body.logic.kind !== 'graph') return body
-      return { ...body, entities: [{ key: model.entityKey(name), domain: 'binary_sensor', name }], logic: { ...body.logic, graph: { ...body.logic.graph, nodes: [] } } }
-    },
-  }
-})
-
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
 afterEach(async () => {
-  starter.listed = true
   dispose?.(); dispose = undefined
   client?.clear()
   document.body.innerHTML = ''
@@ -126,16 +107,15 @@ const expectClean = (root: Element) => {
   expect(['automation', 'Automation', '/visual/', '/automations'].filter(word => copy.innerHTML.includes(word))).toEqual([])
 }
 
-/** The phase 2 example of the derived motion sensor (code map, section 3). */
+/** The phase 2 example of the derived motion sensor (code map, section 3), its entity the starter's Entity node. */
 const motionExample: DefinitionBody = {
   name: 'Any motion', device: null, settings: [],
-  entities: [{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion' }],
   logic: { kind: 'graph', graph: { version: 5, name: 'Any motion',
     nodes: [
+      { id: 's', kind: 'entity', config: { key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {}, history: {}, arguments: { is_on: { kind: 'unset' } } } },
       { id: 'a', kind: 'entity_is', config: { entity: { kind: 'literal', type: 'entity_id', value: 'binary_sensor.motion_a' }, state: { kind: 'literal', type: 'string', value: 'on' } }, label: 'Has state ▸ motion A' },
       { id: 'b', kind: 'entity_is', config: { entity: { kind: 'literal', type: 'entity_id', value: 'binary_sensor.motion_b' }, state: { kind: 'literal', type: 'string', value: 'on' } }, label: 'Has state ▸ motion B' },
-      { id: 'or', kind: 'or', config: { left: { kind: 'unset' }, right: { kind: 'unset' } } },
-      { id: 's', kind: 'entity_state', config: { entity: 'any_motion' }, label: 'State ▸ any motion' }],
+      { id: 'or', kind: 'or', config: { left: { kind: 'unset' }, right: { kind: 'unset' } } }],
     edges: [
       { id: 'a.value:or.left', kind: 'data', source: 'a', target: 'or', sourcePort: 'value', targetPort: 'left' },
       { id: 'b.value:or.right', kind: 'data', source: 'b', target: 'or', sourcePort: 'value', targetPort: 'right' },
@@ -157,9 +137,9 @@ function normalised(definition: any, ids: string[]) {
 it('builds the derived motion sensor from a new definition through the page, and saves the phase 2 example', async () => {
   const { root, fixture, history } = setup('/entities/new')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  // The definition's name names its first entity until that entity is edited.
+  // The definition's name names its starter Entity node's entity until that entity is edited.
   rename(root, 'Any motion')
-  const ids: string[] = []
+  const ids: string[] = [json(root).nodes[0].id]
   for (const [entity, text] of [['binary_sensor.motion_a', 'Has state ▸ motion A'], ['binary_sensor.motion_b', 'Has state ▸ motion B']]) {
     dropStep(root, 'Has state')
     ids.push(lastStep(root))
@@ -169,30 +149,24 @@ it('builds the derived motion sensor from a new definition through the page, and
   dropStep(root, 'Or')
   ids.push(lastStep(root))
   label(root, '')
-  // The definition's only entity is chosen for a new State (ruling R12).
-  dropStep(root, 'State')
-  ids.push(lastStep(root))
-  label(root, 'State ▸ any motion')
-  wire(root, ids[0], 'value', ids[2], 'left')
-  wire(root, ids[1], 'value', ids[2], 'right')
-  wire(root, ids[2], 'value', ids[3], 'is_on')
+  // The Or gives the Entity node its state.
+  wire(root, ids[1], 'value', ids[3], 'left')
+  wire(root, ids[2], 'value', ids[3], 'right')
+  wire(root, ids[3], 'value', ids[0], 'is_on')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   button(root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
   const sent = saves(fixture)[0]
   // The id comes from the name (ruling R4); a new definition replaces revision 0.
   expect(sent).toMatchObject({ id: 'any_motion', expectedRevision: 0 })
-  // As it goes over the websocket (JSON: a cleared label is no member), with the page's ids and positions.
-  const body = normalised(JSON.parse(JSON.stringify(sent.definition)), ['a', 'b', 'or', 's'])
-  // The page writes two things the hand-written example leaves out, each meaning what leaving it out means: the
-  // State's run history at its default (off, as the server takes it), and the wired input as `unset` (as the example's
-  // Or has its two).
-  const state = body.logic.graph.nodes[3]
-  expect(state.config).toEqual({ entity: 'any_motion', trackHistory: false, is_on: { kind: 'unset' } })
-  state.config = { entity: 'any_motion' }
+  // As it goes over the websocket (JSON: a cleared label is no member), with the page's ids and positions, and no
+  // entities list: the entity is the Entity node's.
+  const body = normalised(JSON.parse(JSON.stringify(sent.definition)), ['s', 'a', 'b', 'or'])
+  expect(body).not.toHaveProperty('entities')
   expect(body).toEqual(motionExample)
   await vi.waitFor(() => expect(history.get()).toBe('/entities/any_motion'))
-  expect(fixture.entities.documents.get('any_motion')!.entities).toEqual(motionExample.entities)
+  // The store derives the entity from the node.
+  expect(fixture.entities.documents.get('any_motion')!.entities).toEqual([{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {} }])
   expectClean(root)
 
   // Opened again, it shows what was saved, with its entity's id in Home Assistant and its key fixed.
@@ -202,12 +176,16 @@ it('builds the derived motion sensor from a new definition through the page, and
   await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   expect(nameInput(again.root).value).toBe('Any motion')
   const { definition, ...logic } = json(again.root)
-  expect(definition).toEqual({ entities: motionExample.entities, settings: [], device: null })
+  // The editor lists no entity: the node declares it.
+  expect(definition).toEqual({ entities: [], settings: [], device: null })
   expect(logic.nodes.map((n: any) => n.id)).toEqual(sentGraph.nodes.map((n: any) => n.id))
   expect(logic.edges).toEqual(sentGraph.edges)
-  const row = expand(entityRow(again.root, 'any_motion'))
-  expect(row.querySelector('.hs-def-row__id code')!.textContent).toBe('binary_sensor.any_motion_any_motion')
-  expect(control(row, 'key').readOnly).toBe(true)
+  expect(again.root.querySelector('[aria-label="Entities"] [data-entity-key]')).toBeNull()
+  // Saved, the node's key is read-only in its section, and the section shows its entity's id in Home Assistant.
+  again.root.querySelector<HTMLElement>(`.solid-flow__node[data-id="${ids[0]}"]`)!.click()
+  await vi.waitFor(() => expect(inspector(again.root).querySelector('.hs-entity-node__id code')?.textContent).toBe('binary_sensor.any_motion_any_motion'))
+  expect(control(inspector(again.root), 'key').readOnly).toBe(true)
+  expect(control(inspector(again.root), 'key').value).toBe('any_motion')
   expect(again.root.querySelectorAll('.solid-flow__node')).toHaveLength(4)
   expectClean(again.root)
 })
@@ -226,6 +204,15 @@ const type = (input: HTMLInputElement | HTMLTextAreaElement, text: string) => {
   input.dispatchEvent(new FocusEvent('blur'))
 }
 const choose = (select: HTMLSelectElement, value: string) => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) }
+/** Selects the step `id` on the canvas, so the inspector shows it. */
+const selectNode = async (root: Element, id: string) => {
+  root.querySelector<HTMLElement>(`.solid-flow__node[data-id="${id}"]`)!.click()
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')?.getAttribute('data-node-id')).toBe(id))
+}
+/** Names the selected Entity node's entity, in the inspector's header. */
+const entityName = (root: Element, name: string) => type(inspector(root).querySelector<HTMLInputElement>('input[aria-label="Entity name"]')!, name)
+/** Adds an Entity node from the step library; it is selected. Its id. */
+const addEntityNode = (root: Element) => { dropStep(root, 'Entity'); return lastStep(root) }
 /** Picks one of the definition's entities (or a command) in the selected step's picker, by its label. */
 const pickOption = async (root: Element, field: string, text: string) => {
   const box = inspector(root).querySelector<HTMLInputElement>(`[data-input-id="${field}"] input[role="combobox"]`)!
@@ -234,38 +221,35 @@ const pickOption = async (root: Element, field: string, text: string) => {
   ;[...inspector(root).querySelectorAll<HTMLElement>(`[data-input-id="${field}"] [role="option"]`)].find(o => o.firstElementChild?.textContent === text)!.click()
 }
 
-it('builds a polled plug: a time-pattern trigger sets its power, two When commanded flows answer its relay, with a host and a secret password', async () => {
+it('builds a polled plug: a time-pattern trigger sets its power, its relay\'s two commands answer it, with a host and a secret password', async () => {
   const { root, fixture } = setup('/entities/new?name=Plug')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  // The starter's entity, named after the definition, becomes the relay.
-  const first = expand(entityRow(root, 'plug'))
-  type(control(first, 'name'), 'Relay')
-  type(control(first, 'key'), 'relay')
-  const relay = entityRow(root, 'relay')
-  choose(control(relay, 'domain'), 'switch')
-  type(control(relay, 'icon'), 'mdi:power-socket')
-  button(root, 'Add entity').click()
-  let row = entityRow(root, 'entity')
-  type(control(row, 'key'), 'power')
-  row = entityRow(root, 'power')
-  choose(control(row, 'domain'), 'sensor')
-  type(control(row, 'name'), 'Power')
-  type(control(row, 'deviceClass'), 'power')
-  type(control(row, 'option:unit'), 'W')
-  choose(control(row, 'option:stateClass'), 'measurement')
-  button(root, 'Add entity').click()
-  row = entityRow(root, 'entity')
-  type(control(row, 'key'), 'online')
-  row = entityRow(root, 'online')
-  type(control(row, 'name'), 'Online')
-  type(control(row, 'deviceClass'), 'connectivity')
-  choose(control(row, 'entityCategory'), 'diagnostic')
+  // The starter's Entity node, named after the definition, becomes the relay.
+  const relay = json(root).nodes[0].id as string
+  await selectNode(root, relay)
+  entityName(root, 'Relay')
+  type(control(inspector(root), 'key'), 'relay')
+  choose(control(inspector(root), 'domain'), 'switch')
+  type(control(inspector(root), 'icon'), 'mdi:power-socket')
+  const power = addEntityNode(root)
+  entityName(root, 'Power')
+  type(control(inspector(root), 'key'), 'power')
+  choose(control(inspector(root), 'domain'), 'sensor')
+  type(control(inspector(root), 'deviceClass'), 'power')
+  type(control(inspector(root), 'option:unit'), 'W')
+  choose(control(inspector(root), 'option:stateClass'), 'measurement')
+  addEntityNode(root)
+  entityName(root, 'Online')
+  type(control(inspector(root), 'key'), 'online')
+  type(control(inspector(root), 'deviceClass'), 'connectivity')
+  choose(control(inspector(root), 'entityCategory'), 'diagnostic')
+  deselect(root)
   const device = root.querySelector<HTMLElement>('[aria-label="Device"]')!
   control(device, 'device').click()
   type(control(device, 'manufacturer'), 'Acme')
   type(control(device, 'model'), 'P1')
   button(root, 'Add setting').click()
-  row = settingRow(root, 'setting')
+  let row = settingRow(root, 'setting')
   type(control(row, 'key'), 'host')
   row = settingRow(root, 'host')
   type(control(row, 'label'), 'Host')
@@ -291,20 +275,15 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   choose(inspector(root).querySelector<HTMLSelectElement>('[data-input-id="value"] select[aria-label="Value kind"]')!, 'number')
   type(inspector(root).querySelector<HTMLInputElement>('[data-input-id="value"] input[aria-label="Value"]')!, '42')
   flow(root, poll, setPower)
-  // Turning the relay on and off: a When commanded each, the relay pre-chosen (the only entity that takes commands).
-  const commands: string[] = []
-  for (const command of ['Turn on', 'Turn off']) {
-    dropStep(root, 'When commanded')
-    const when = lastStep(root)
-    commands.push(when)
-    if (command === 'Turn off') await pickOption(root, 'command', 'Turn off')
+  // Turning the relay on and off: a Set state on each of its two commands.
+  for (const command of ['turn_on', 'turn_off']) {
     dropStep(root, 'Set state')
     const set = lastStep(root)
     await pickOption(root, 'entity', 'Relay')
     // A new Set state of a switch opens On, as it is saved; Off is one click.
     expect(inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.checked).toBe(true)
-    if (command === 'Turn off') inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
-    flow(root, when, set)
+    if (command === 'turn_off') inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
+    flow(root, relay, set, `command:${command}`)
   }
   // The new definition's draft is kept as it is edited, with the device and without the typed secret.
   await vi.waitFor(() => expect(Object.values(localStorage).find(draft => draft.includes('"Acme"'))).toBeDefined(), { timeout: 3000 })
@@ -316,11 +295,8 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   const sent = JSON.parse(JSON.stringify(saves(fixture)[0]))
   expect(sent).toMatchObject({ id: 'plug', expectedRevision: 0 })
   expect(sent.definition.name).toBe('Plug')
-  expect(sent.definition.entities).toEqual([
-    { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket' },
-    { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' } },
-    { key: 'online', domain: 'binary_sensor', name: 'Online', deviceClass: 'connectivity', entityCategory: 'diagnostic' },
-  ])
+  // The entities are the Entity nodes': the definition lists none.
+  expect(sent.definition).not.toHaveProperty('entities')
   expect(sent.definition.device).toEqual({ manufacturer: 'Acme', model: 'P1' })
   // The typed secret goes to Home Assistant in the save, and nowhere else.
   expect(sent.definition.settings).toEqual([
@@ -330,15 +306,17 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   const graph = sent.definition.logic.graph
   expect(graph.definition).toBeUndefined()
   expect(graph.nodes.map((n: any) => [n.kind, n.config])).toEqual([
+    ['entity', { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket', enabledByDefault: true, options: {}, history: {}, arguments: {} }],
+    ['entity', { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', enabledByDefault: true, options: { unit: 'W', stateClass: 'measurement' }, history: {}, arguments: {} }],
+    ['entity', { key: 'online', domain: 'binary_sensor', name: 'Online', deviceClass: 'connectivity', entityCategory: 'diagnostic', enabledByDefault: true, options: {}, history: {}, arguments: {} }],
     ['trigger', { mode: 'Single', manual: true, trackHistory: false, type: 'ha', trigger: { trigger: 'time_pattern', minutes: '/10' } }],
     ['set_entity_state', { entity: 'power', value: { kind: 'literal', type: 'number', value: 42 } }],
-    ['entity_command', { trackHistory: true, entity: 'relay', command: 'turn_on' }],
     ['set_entity_state', { entity: 'relay', is_on: { kind: 'literal', type: 'boolean', value: true } }],
-    ['entity_command', { trackHistory: true, entity: 'relay', command: 'turn_off' }],
     ['set_entity_state', { entity: 'relay', is_on: { kind: 'literal', type: 'boolean', value: false } }],
   ])
   const ids = graph.nodes.map((n: any) => n.id)
-  expect(graph.edges.map((e: any) => [e.kind ?? 'execution', ids.indexOf(e.source), ids.indexOf(e.target)])).toEqual([['execution', 0, 1], ['execution', 2, 3], ['execution', 4, 5]])
+  expect(graph.edges.map((e: any) => [e.kind ?? 'execution', ids.indexOf(e.source), e.port ?? 'next', ids.indexOf(e.target)]))
+    .toEqual([['execution', 3, 'next', 4], ['execution', 0, 'command:turn_on', 5], ['execution', 0, 'command:turn_off', 6]])
   await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')!.textContent).toBe('Saved'))
   // Saved: the store has the secret; the page holds it no longer, and says it is saved.
   expect(fixture.entities.documents.get('plug')!.settings[1].value).toBe('hunter2')
@@ -346,17 +324,20 @@ it('builds a polled plug: a time-pattern trigger sets its power, two When comman
   expect(control(expand(settingRow(root, 'password')), 'value').placeholder).toBe('Saved; type to replace')
   expect(root.innerHTML).not.toContain('hunter2')
   expect(JSON.stringify(json(root))).not.toContain('hunter2')
-  // Each entity now shows the entity id Home Assistant gave it.
-  await vi.waitFor(() => expect(entityRow(root, 'power').querySelector('.hs-def-row__id code')?.textContent).toBe('sensor.plug_power'))
+  // Each Entity node now shows the entity id Home Assistant gave it, and its key no longer changes.
+  await selectNode(root, power)
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-entity-node__id code')?.textContent).toBe('sensor.plug_power'))
+  expect(control(inspector(root), 'key').readOnly).toBe(true)
 })
 
-/** The plug as phase 2 stores it, with a secret password, saved at revision 1 and running. */
+/** The plug, saved at revision 1 and running: a secret password, and a relay and a power sensor, each an Entity node. */
 const plugBody = (): DefinitionBody => ({
   name: 'Plug',
   device: { manufacturer: 'Acme', model: 'P1' },
   settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: 'stored-secret' }],
-  entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'power', domain: 'sensor', name: 'Power', options: { unit: 'W' } }],
-  logic: { kind: 'graph', graph: { version: 5, name: 'Plug', nodes: [{ id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 60, y: 100 } }], edges: [] } },
+  logic: { kind: 'graph', graph: { version: 5, name: 'Plug', edges: [], nodes: [
+    { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Relay' }, position: { x: 60, y: 100 } },
+    { id: 'power', kind: 'entity', config: { key: 'power', domain: 'sensor', name: 'Power', options: { unit: 'W' } }, position: { x: 60, y: 500 } }] } },
 })
 const openPlug = async (prepare?: (fixture: Fixture) => void, fixture?: Fixture, entities?: unknown) => {
   const page = setup('/entities/plug', f => { if (!f.entities.documents.has('plug')) f.entities.seed('plug', plugBody()); prepare?.(f) }, fixture, entities)
@@ -364,6 +345,14 @@ const openPlug = async (prepare?: (fixture: Fixture) => void, fixture?: Fixture,
   return page
 }
 const chipTip = (root: Element) => root.querySelector('.hs-save-chip')!.getAttribute('title')
+/** Renames the plug's relay on its Entity node, then shows the definition's form again: an unsaved change. */
+const renameRelay = async (root: Element, name: string) => {
+  await selectNode(root, 'relay')
+  entityName(root, name)
+  deselect(root)
+}
+/** The name the relay's Entity node gives it, in the graph the page holds. */
+const relayName = (root: Element) => json(root).nodes.find((n: any) => n.id === 'relay').config.name
 
 it('turns a saved definition off and on with its switch, which says what that does, and makes the lists stale', async () => {
   const { root, fixture } = await openPlug()
@@ -396,12 +385,13 @@ it('opens a definition that is off without an activation alert, saying it is off
   expect(button(root, 'Save').getAttribute('aria-disabled')).toBe('true')
   expect(button(root, 'Save').title).toBe('Nothing to save: every change is saved')
   // Its entities are still known from Home Assistant's registry.
-  expect(entityRow(root, 'relay').querySelector('.hs-def-row__id code')!.textContent).toBe('switch.plug_relay')
+  await selectNode(root, 'relay')
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-entity-node__id code')?.textContent).toBe('switch.plug_relay'))
 })
 
 it('saves a definition that is off without saying its activation failed: a save does not start it', async () => {
   const { root, fixture } = await openPlug(fixture => fixture.entities.seed('plug', plugBody(), { enabled: false }))
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   await vi.waitFor(() => expect(button(root, 'Save').getAttribute('aria-disabled')).toBeNull())
   button(root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
@@ -454,7 +444,7 @@ it('deletes a saved definition after a confirmation that says its entities leave
 
 it('offers no delete while there are unsaved changes, and none for a definition never saved', async () => {
   const { root } = await openPlug()
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   expect(button(inspector(root), 'Delete entity definition').disabled).toBe(true)
   expect(inspector(root).textContent).toContain('Save or undo your changes before deleting it.')
   dispose!(); document.body.innerHTML = ''
@@ -465,7 +455,7 @@ it('offers no delete while there are unsaved changes, and none for a definition 
 
 it('meets a revision saved elsewhere with the conflict choices, in the entity definition\'s words, and keeps the person\'s version', async () => {
   const { root, fixture } = await openPlug()
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   // Saved again elsewhere meanwhile.
   const stored = fixture.entities.documents.get('plug')!
   fixture.entities.documents.set('plug', { ...stored, revision: 2, name: 'Plug (elsewhere)' })
@@ -480,7 +470,8 @@ it('meets a revision saved elsewhere with the conflict choices, in the entity de
   await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 3'))
   const last = saves(fixture).at(-1)
   expect(last).toMatchObject({ id: 'plug', expectedRevision: 2 })
-  expect(last.definition.entities[0].name).toBe('Main relay')
+  expect(last.definition).not.toHaveProperty('entities')
+  expect(last.definition.logic.graph.nodes.find((n: any) => n.id === 'relay').config.name).toBe('Main relay')
   // The secret no one typed is kept.
   expect(last.definition.settings[1]).toEqual({ key: 'password', label: 'Password', type: 'string', secret: true, keep: true })
   expect(fixture.entities.documents.get('plug')!.settings[1].value).toBe('stored-secret')
@@ -491,7 +482,7 @@ it('restores a draft without a typed secret, keeping the saved one, and never wr
   const first = await openPlug()
   const fixture = first.fixture
   expect(first.root.innerHTML).not.toContain('stored-secret')
-  type(control(expand(entityRow(first.root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(first.root, 'Main relay')
   type(control(expand(settingRow(first.root, 'password')), 'value'), 'typed-secret')
   await vi.advanceTimersByTimeAsync(600)
   const key = 'hass-sharp:draft:u1/entity:plug'
@@ -517,7 +508,7 @@ it('restores a draft without a typed secret, keeping the saved one, and never wr
   const again = await openPlug(undefined, fixture)
   await vi.waitFor(() => expect(document.querySelector('dialog[open]')?.textContent).toContain('Restore unsaved changes'))
   button(document.querySelector('dialog[open]')!, 'Restore').click()
-  expect(control(expand(entityRow(again.root, 'relay')), 'name').value).toBe('Main relay')
+  expect(relayName(again.root)).toBe('Main relay')
   expect(control(expand(settingRow(again.root, 'password')), 'value').placeholder).toBe('Saved; type to replace')
   await vi.waitFor(() => expect(button(again.root, 'Save').disabled).toBe(false))
   button(again.root, 'Save').click()
@@ -544,8 +535,10 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
   expect(sheet.querySelector('[aria-label="Entities"]')).not.toBeNull()
   // Focus moves into the sheet; Close puts it back as its bar.
   await vi.waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true))
-  type(control(expand(entityRow(root, 'any_motion')), 'name'), 'Motion anywhere')
-  expect(json(root).definition.entities[0].name).toBe('Motion anywhere')
+  // The definition's form is in it, a setting's row among it.
+  button(sheet, 'Add setting').click()
+  type(control(settingRow(root, 'setting'), 'key'), 'host')
+  expect(json(root).definition.settings.map((s: any) => s.key)).toEqual(['host'])
   button(sheet, 'Close panel').click()
   expect(sheet.dataset.open).toBe('false')
   expect(sheet.dataset.peek).toBe('true')
@@ -567,7 +560,6 @@ it('hands a definition built from a class, saved or new, to its own page', async
 })
 
 it('starts a new definition named from the address, with an Entity node, a binary sensor named after it, and the editor in its words', async () => {
-  starter.listed = false
   const { root, fixture } = setup('/entities/new?logic=graph&name=Hall motion')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   expect(nameInput(root).value).toBe('Hall motion')
@@ -629,52 +621,65 @@ const more = (root: Element, item: string) => {
   ;[...root.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].find(b => b.textContent === item)!.click()
 }
 
-/** The phase 2 example of the device definition (code map, section 3; `tests/Runtime/EntityGraphTests.cs:511-535`). */
+/** An Entity node of the example: its entity and state values, the rest at what a new node has. */
+const exampleNode = (id: string, config: Record<string, unknown>) =>
+  ({ id, kind: 'entity', config: { enabledByDefault: true, options: {}, history: {}, arguments: {}, ...config } })
+/**
+ * The phase 2 example of the device definition (code map, section 3; `tests/Runtime/EntityGraphTests.cs`, A device
+ * definition groups its entities), its three entities Entity nodes: the power's and the online's state given on the
+ * node, the relay's two commands each setting it.
+ */
 const plugExample: DefinitionBody = {
   name: 'Plug', device: { manufacturer: 'Acme', model: 'P1', suggestedArea: 'Kitchen' }, settings: [],
-  entities: [
-    { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' } },
-    { key: 'online', domain: 'binary_sensor', deviceClass: 'connectivity', entityCategory: 'diagnostic' },
-    { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket', enabledByDefault: false }],
   logic: { kind: 'graph', graph: { version: 5, name: 'Plug',
     nodes: [
-      { id: 'p', kind: 'entity_state', config: { value: { kind: 'literal', type: 'number', value: 42 }, entity: 'power' } },
-      { id: 'o', kind: 'entity_state', config: { is_on: { kind: 'literal', type: 'boolean', value: true }, entity: 'online' } },
-      { id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' } },
+      exampleNode('p', { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' }, arguments: { value: { kind: 'literal', type: 'number', value: 42 } } }),
+      exampleNode('o', { key: 'online', domain: 'binary_sensor', deviceClass: 'connectivity', entityCategory: 'diagnostic', arguments: { is_on: { kind: 'literal', type: 'boolean', value: true } } }),
+      exampleNode('r', { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket', enabledByDefault: false }),
       { id: 'set_on', kind: 'set_entity_state', config: { is_on: { kind: 'literal', type: 'boolean', value: true }, entity: 'relay' } },
-      { id: 'off', kind: 'entity_command', config: { entity: 'relay', command: 'turn_off' } },
       { id: 'set_off', kind: 'set_entity_state', config: { is_on: { kind: 'literal', type: 'boolean', value: false }, entity: 'relay' } }],
     edges: [
-      { id: 'on:next:set_on', source: 'on', target: 'set_on', port: 'next' },
-      { id: 'off:next:set_off', source: 'off', target: 'set_off', port: 'next' }] } },
+      { id: 'r:command:turn_on:set_on', source: 'r', target: 'set_on', port: 'command:turn_on' },
+      { id: 'r:command:turn_off:set_off', source: 'r', target: 'set_off', port: 'command:turn_off' }] } },
+}
+/** Gives the selected step's state value `id` a value: Set value, then its kind and, for a number, the number. */
+const setValue = (root: Element, id: string, kind?: string, value?: string) => {
+  inspector(root).querySelector<HTMLButtonElement>(`[data-input-id="${id}"] .hs-insp-unset button`)!.click()
+  if (kind) choose(inspector(root).querySelector<HTMLSelectElement>(`[data-input-id="${id}"] select[aria-label="Value kind"]`)!, kind)
+  if (value !== undefined) type(inspector(root).querySelector<HTMLInputElement>(`[data-input-id="${id}"] input[aria-label="Value"]`)!, value)
 }
 
 it('builds the phase 2 plug through the page, every member of it, and saves that example', async () => {
   const { root, fixture } = setup('/entities/new?name=Plug')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  // The starter's entity, named after the definition, becomes the power sensor.
-  let row = expand(entityRow(root, 'plug'))
-  type(control(row, 'key'), 'power')
-  row = entityRow(root, 'power')
-  type(control(row, 'name'), 'Power')
-  choose(control(row, 'domain'), 'sensor')
-  type(control(row, 'deviceClass'), 'power')
-  type(control(row, 'option:unit'), 'W')
-  choose(control(row, 'option:stateClass'), 'measurement')
-  // A binary sensor without a name of its own.
-  button(root, 'Add entity').click()
-  type(control(entityRow(root, 'entity'), 'key'), 'online')
-  row = entityRow(root, 'online')
-  type(control(row, 'deviceClass'), 'connectivity')
-  choose(control(row, 'entityCategory'), 'diagnostic')
+  // The starter's Entity node, named after the definition, becomes the power sensor: 42 W.
+  const ids: string[] = [json(root).nodes[0].id]
+  await selectNode(root, ids[0])
+  type(control(inspector(root), 'key'), 'power')
+  entityName(root, 'Power')
+  choose(control(inspector(root), 'domain'), 'sensor')
+  type(control(inspector(root), 'deviceClass'), 'power')
+  type(control(inspector(root), 'option:unit'), 'W')
+  choose(control(inspector(root), 'option:stateClass'), 'measurement')
+  setValue(root, 'value', 'number', '42')
+  // A binary sensor without a name of its own, on.
+  ids.push(addEntityNode(root))
+  entityName(root, '')
+  type(control(inspector(root), 'key'), 'online')
+  type(control(inspector(root), 'deviceClass'), 'connectivity')
+  choose(control(inspector(root), 'entityCategory'), 'diagnostic')
+  setValue(root, 'is_on')
+  const on = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
+  if (!on().checked) on().click()
   // The relay, which Home Assistant adds turned off.
-  button(root, 'Add entity').click()
-  type(control(entityRow(root, 'entity'), 'key'), 'relay')
-  row = entityRow(root, 'relay')
-  choose(control(row, 'domain'), 'switch')
-  type(control(row, 'name'), 'Relay')
-  type(control(row, 'icon'), 'mdi:power-socket')
-  control(row, 'enabledByDefault').click()
+  const relay = addEntityNode(root)
+  ids.push(relay)
+  type(control(inspector(root), 'key'), 'relay')
+  choose(control(inspector(root), 'domain'), 'switch')
+  entityName(root, 'Relay')
+  type(control(inspector(root), 'icon'), 'mdi:power-socket')
+  control(inspector(root), 'enabledByDefault').click()
+  deselect(root)
   const device = root.querySelector<HTMLElement>('[aria-label="Device"]')!
   control(device, 'device').click()
   type(control(device, 'manufacturer'), 'Acme')
@@ -682,28 +687,9 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
   type(control(device, 'suggestedArea'), 'Kitchen')
 
   // Each step is added with its title as its label; the example's steps have none, so the label is cleared.
-  const ids: string[] = []
-  // The power's State: 42 W.
-  dropStep(root, 'State')
-  ids.push(lastStep(root))
-  label(root, '')
-  await pickOption(root, 'entity', 'Power')
-  choose(inspector(root).querySelector<HTMLSelectElement>('[data-input-id="value"] select[aria-label="Value kind"]')!, 'number')
-  type(inspector(root).querySelector<HTMLInputElement>('[data-input-id="value"] input[aria-label="Value"]')!, '42')
-  // The online State: on.
-  dropStep(root, 'State')
-  ids.push(lastStep(root))
-  label(root, '')
-  await pickOption(root, 'entity', 'online')
-  inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.click()
-  // Turn on and Turn off, each setting the relay (the only entity that takes commands, so chosen for them).
-  for (const [command, on] of [['Turn on', true], ['Turn off', false]] as const) {
+  // Turn on and Turn off, each setting the relay.
+  for (const [command, on] of [['turn_on', true], ['turn_off', false]] as const) {
     deselect(root)
-    dropStep(root, 'When commanded')
-    const when = lastStep(root)
-    ids.push(when)
-    label(root, '')
-    if (command === 'Turn off') await pickOption(root, 'command', 'Turn off')
     dropStep(root, 'Set state')
     const set = lastStep(root)
     ids.push(set)
@@ -712,42 +698,41 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
     const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
     expect(toggle().checked).toBe(true)
     if (!on) toggle().click()
-    flow(root, when, set)
+    flow(root, relay, set, `command:${command}`)
   }
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   button(root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
   const sent = JSON.parse(JSON.stringify(saves(fixture)[0]))
   expect(sent).toMatchObject({ id: 'plug', expectedRevision: 0 })
-  const body = normalised(sent.definition, ['p', 'o', 'on', 'set_on', 'off', 'set_off'])
-  // Normalised as the motion example's: the page's step ids, positions and wire ids replaced by the example's. Beyond
-  // that the page writes each step's run history at its catalog default (a State off, When commanded on), which the
-  // hand-written example leaves to that default; and a flow wire from Next leaves its port out, which the graph format
-  // reads as `next`, where the example names it.
-  const nodes = body.logic.graph.nodes
-  expect(nodes.map((n: any) => n.config.trackHistory)).toEqual([false, false, true, undefined, true, undefined])
-  for (const node of nodes) delete node.config.trackHistory
-  body.logic.graph.edges = body.logic.graph.edges.map(({ id: _id, ...edge }: any) => {
-    expect(Object.keys(edge)).toEqual(['source', 'target'])
-    return { id: `${edge.source}:next:${edge.target}`, ...edge, port: 'next' }
-  })
+  // No entities list: every entity is an Entity node's.
+  expect(sent.definition).not.toHaveProperty('entities')
+  const body = normalised(sent.definition, ['p', 'o', 'r', 'set_on', 'set_off'])
+  // Normalised as the motion example's: the page's step ids, positions and wire ids replaced by the example's.
+  body.logic.graph.edges = body.logic.graph.edges.map(({ id: _id, ...edge }: any) => ({ id: `${edge.source}:${edge.port}:${edge.target}`, ...edge }))
   expect(body).toEqual(plugExample)
 })
 
-it('keeps the key of an entity added to a saved definition open until the save that stores it', async () => {
+it('keeps the key of an Entity node added to a saved definition open until the save that stores it', async () => {
   const { root, fixture } = await openPlug()
-  button(inspector(root), 'Add entity').click()
-  const added = entityRow(root, 'entity')
-  expect(control(added, 'key').readOnly).toBe(false)
-  type(control(added, 'key'), 'meter')
-  expect(control(entityRow(root, 'meter'), 'key').readOnly).toBe(false)
+  const added = addEntityNode(root)
+  entityName(root, 'Meter')
+  expect(control(inspector(root), 'key').readOnly).toBe(false)
+  type(control(inspector(root), 'key'), 'meter')
+  expect(control(inspector(root), 'key').readOnly).toBe(false)
   // The saved ones stay fixed meanwhile.
-  expect(control(expand(entityRow(root, 'relay')), 'key').readOnly).toBe(true)
+  await selectNode(root, 'relay')
+  expect(control(inspector(root), 'key').readOnly).toBe(true)
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   button(root, 'Save').click()
   await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 2'))
-  expect(saves(fixture).at(-1).definition.entities.map((e: any) => e.key)).toEqual(['relay', 'power', 'meter'])
-  expect(control(entityRow(root, 'meter'), 'key').readOnly).toBe(true)
+  const sent = saves(fixture).at(-1).definition
+  expect(sent).not.toHaveProperty('entities')
+  expect(sent.logic.graph.nodes.filter((n: any) => n.kind === 'entity').map((n: any) => n.config.key)).toEqual(['relay', 'power', 'meter'])
+  // The store's entities are the nodes'; the new one's key is fixed now.
+  expect(fixture.entities.documents.get('plug')!.entities!.map(e => e.key)).toEqual(['relay', 'power', 'meter'])
+  await selectNode(root, added)
+  await vi.waitFor(() => expect(control(inspector(root), 'key').readOnly).toBe(true))
 })
 
 it('saves a definition named New under another id than the new one\'s address (ruling R17)', async () => {
@@ -788,7 +773,7 @@ it('turns the device back on as it was, its parent too, after a step was selecte
   control(inspector(root).querySelector('[aria-label="Device"]')!, 'device').click()
   expect(json(root).definition.device).toBeNull()
   // A step selected (the form goes), then nothing (it is back).
-  press(root.querySelector('.solid-flow__node[data-id="on"]')!)
+  press(root.querySelector('.solid-flow__node[data-id="relay"]')!)
   await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
   deselect(root)
   control(inspector(root).querySelector('[aria-label="Device"]')!, 'device').click()
@@ -812,7 +797,7 @@ const conflictWith = async (root: Element, fixture: Fixture) => {
 
 it('saves a copy turned off after a conflict, and names the secrets the copy has no value for', async () => {
   const { root, fixture, history } = await openPlug(fixture => fixture.entities.seed('plug', securePlug()))
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   type(control(expand(settingRow(root, 'token')), 'value'), 'typed-token')
   button(await conflictWith(root, fixture), 'Save as a copy').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities/plug_copy'))
@@ -832,18 +817,18 @@ it('saves a copy turned off after a conflict, and names the secrets the copy has
 
 it('says so when the copy lacks a single secret', async () => {
   const { root, fixture } = await openPlug()
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   button(await conflictWith(root, fixture), 'Save as a copy').click()
   await vi.waitFor(() => expect(root.textContent).toContain('The copy has no saved value for Password. Type it again.'))
 })
 
 it('discards the changes after a conflict, opening the definition as saved elsewhere', async () => {
   const { root, fixture } = await openPlug()
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   button(await conflictWith(root, fixture), 'Discard my changes').click()
   await vi.waitFor(() => expect(nameInput(root).value).toBe('Plug (elsewhere)'))
   expect(chipTip(root)).toBe('Saved revision 2')
-  expect(json(root).definition.entities[0].name).toBe('Relay')
+  expect(relayName(root)).toBe('Relay')
   expect(saves(fixture)).toHaveLength(1)
 })
 
@@ -855,12 +840,12 @@ it('reads the definition again when node libraries change: the newer revision wh
   window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
   await vi.waitFor(() => expect(nameInput(root).value).toBe('Plug renamed'))
   expect(chipTip(root)).toBe('Saved revision 2')
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   fixture.entities.documents.set('plug', { ...fixture.entities.documents.get('plug')!, revision: 3 })
   fixture.controls.generation = 'g3'
   window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
   await vi.waitFor(() => expect(root.textContent).toContain('This entity definition changed elsewhere while you had unsaved changes here.'))
-  expect(json(root).definition.entities[0].name).toBe('Main relay')
+  expect(relayName(root)).toBe('Main relay')
 })
 
 it('keeps the definition when its delete is refused because it changed elsewhere, and says why', async () => {
@@ -878,7 +863,7 @@ it('keeps the definition when its delete is refused because it changed elsewhere
 
 it('shows a save refused with a setting\'s problem on its row, and the Problems tab finds that row', async () => {
   const { root, fixture } = await openPlug()
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   fixture.entities.controls.diagnostics = [{ nodeId: null, inputId: 'host', portId: null, code: 'definition.settingType', severity: 3, message: 'Setting host is not a text', startLine: null, startColumn: null } as any]
   button(root, 'Save').click()
@@ -887,7 +872,7 @@ it('shows a save refused with a setting\'s problem on its row, and the Problems 
   expect(chipTip(root)).not.toBe('Saved revision 2')
   // Closed by the person, then found from the Problems tab: the form shows, the row opens, focus is in it.
   settingRow(root, 'host').querySelector<HTMLButtonElement>('.hs-def-row__head')!.click()
-  press(root.querySelector('.solid-flow__node[data-id="on"]')!)
+  press(root.querySelector('.solid-flow__node[data-id="relay"]')!)
   await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'Setting host is not a text')!.click()
@@ -897,7 +882,7 @@ it('shows a save refused with a setting\'s problem on its row, and the Problems 
 
 it('a Problems-tab choice about the definition ends a step\'s description and shows its row', async () => {
   const { root, fixture } = await openPlug()
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   fixture.entities.controls.diagnostics = [{ nodeId: null, inputId: 'host', portId: null, code: 'definition.settingType', severity: 3, message: 'Setting host is not a text', startLine: null, startColumn: null } as any]
   button(root, 'Save').click()
@@ -915,7 +900,7 @@ it('a Problems-tab choice about the definition ends a step\'s description and sh
 
 // ---- The Runs tab: the definition's runs, in its words, each linked to its run's page under /entities.
 const runRecord = (overrides: Record<string, unknown>) => ({
-  runId: 'run-1', automationId: 'entity:plug', revision: 'rev-1', action: 'VisualAutomation::On', actionLabel: 'When commanded ▸ Relay: Turn on', triggerNodeId: 'on',
+  runId: 'run-1', automationId: 'entity:plug', revision: 'rev-1', action: 'VisualAutomation::On', actionLabel: 'Relay: Turn on', triggerNodeId: 'relay',
   visualId: 'plug', visualRevision: 1, cause: 'Command', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' }, plannedUtc: null,
   receivedUtc: '2026-11-12T01:00:00Z', startUtc: '2026-11-12T01:00:01Z', endUtc: '2026-11-12T01:00:02Z', durationMs: 1000, status: 'Succeeded', error: null, hasTrace: true, ...overrides,
 })
@@ -938,7 +923,8 @@ async function openPlugRuns(runs: () => unknown[], path = '/entities/plug?drawer
       const stored = fixture.entities.documents.get('plug')!
       return { version: 1, live: false, run: found, trace: null,
         snapshot: { revision: 'rev-1', visualId: 'plug', visualRevision: 1, catalog: nodeCatalog,
-          graph: { ...structuredClone(stored.logic.graph), definition: { entities: structuredClone(stored.entities), settings: stored.settings.map(s => ({ key: s.key, type: s.type })) } } } }
+          // Its entities are its Entity nodes': the definition composed in has its settings by key and type only.
+          graph: { ...structuredClone(stored.logic.graph), definition: { settings: stored.settings.map(s => ({ key: s.key, type: s.type })) } } } }
     }
     return inner(message)
   }
@@ -1001,7 +987,7 @@ it('opens a run of the definition on its run page and comes back to its Runs tab
   await vi.waitFor(() => expect(history.get()).toBe('/entities/plug/runs/run-2'))
   await vi.waitFor(() => expect(root.querySelector('a.hs-trace-open')).not.toBeNull())
   expect(root.querySelector('a.hs-trace-open')!.getAttribute('href')).toBe('/entities/plug')
-  expect(card(root, 'on').textContent).toContain('Relay')
+  expect(card(root, 'relay').textContent).toContain('Relay')
   for (const secret of ['typed-secret', 'stored-secret']) expect(document.body.innerHTML).not.toContain(secret)
   root.querySelector<HTMLButtonElement>('[aria-label="Back to the entity definition’s runs"]')!.click()
   await vi.waitFor(() => expect(runRows(root)).toHaveLength(2))
@@ -1119,11 +1105,27 @@ const addTyped = (root: Element, key: string, domain: string) => {
   return entityRow(root, key)
 }
 const fieldOf = (row: Element, name: string) => row.querySelector<HTMLElement>(`[data-field="${name}"]`)!
+/**
+ * For the tests of the Entities list's rows, which Task 11 moves to the Entity node's section with the list's end: the
+ * new definition's starter Entity node deleted, and its entity listed instead (a binary sensor keyed and named as
+ * the starter was), its row open.
+ */
+const listStarter = async (root: Element, key: string, name: string) => {
+  await selectNode(root, json(root).nodes[0].id)
+  button(inspector(root), 'Node actions').click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Delete')!.click()
+  await vi.waitFor(() => expect(json(root).nodes).toEqual([]))
+  deselect(root)
+  button(root, 'Add entity').click()
+  type(control(entityRow(root, 'entity'), 'key'), key)
+  type(control(entityRow(root, key), 'name'), name)
+  return expand(entityRow(root, key))
+}
 
 it('offers all ten types, and saves a button, number, select, text, light and cover with their options typed', async () => {
   const { root, fixture } = setup('/entities/new?name=Things')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  const first = expand(entityRow(root, 'things'))
+  const first = await listStarter(root, 'things', 'Things')
   expect([...control(first, 'domain').options].map(o => o.textContent)).toEqual(['Binary sensor', 'Sensor', 'Switch', 'Button', 'Number', 'Select', 'Text', 'Light', 'Cover', 'Camera'])
   type(control(first, 'key'), 'bell')
   choose(control(entityRow(root, 'bell'), 'domain'), 'button')
@@ -1178,7 +1180,7 @@ it('offers all ten types, and saves a button, number, select, text, light and co
 it('blocks Save while a required option is empty or a number option is not a number, and says so on the field', async () => {
   const { root, fixture } = setup('/entities/new?name=Mode')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  const row = expand(entityRow(root, 'mode'))
+  const row = await listStarter(root, 'mode', 'Mode')
   choose(control(row, 'domain'), 'select')
   // Required: said by the field, and Save waits for it.
   const options = () => fieldOf(entityRow(root, 'mode'), 'option:options')
@@ -1228,7 +1230,7 @@ it('blocks Save while a required option is empty or a number option is not a num
 it('says a required option is missing on its field once the field is left without one', async () => {
   const { root } = setup('/entities/new?name=Mode')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  choose(control(expand(entityRow(root, 'mode')), 'domain'), 'select')
+  choose(control(await listStarter(root, 'mode', 'Mode'), 'domain'), 'select')
   const options = () => fieldOf(entityRow(root, 'mode'), 'option:options')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(true))
   await new Promise(resolve => setTimeout(resolve, 20))
@@ -1244,7 +1246,7 @@ const focused = (element: Element) => (element.getRootNode() as Document | Shado
 it('keeps focus in an option field while another option changes, a switch is turned, or a choice is made', async () => {
   const { root } = setup('/entities/new?name=Level')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  choose(control(expand(entityRow(root, 'level')), 'domain'), 'number')
+  choose(control(await listStarter(root, 'level', 'Level'), 'domain'), 'number')
   const max = control(entityRow(root, 'level'), 'option:max')
   max.focus()
   // Minimum commits (its blur comes as focus has moved on to Maximum).
@@ -1277,7 +1279,7 @@ it('keeps focus in an option field while another option changes, a switch is tur
 it('drops the options a new type does not have, or whose value it does not take, in one undo step', async () => {
   const { root } = setup('/entities/new?name=Level')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  const row = expand(entityRow(root, 'level'))
+  const row = await listStarter(root, 'level', 'Level')
   choose(control(row, 'domain'), 'number')
   type(control(row, 'option:min'), '2')
   type(control(row, 'option:unit'), '%')
@@ -1299,7 +1301,7 @@ it('drops the options a new type does not have, or whose value it does not take,
 it('shows what the server refuses of an option under that option, and keeps Save waiting for it', async () => {
   const { root } = setup('/entities/new?name=Things')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  const row = expand(entityRow(root, 'things'))
+  const row = await listStarter(root, 'things', 'Things')
   choose(control(row, 'domain'), 'text')
   type(control(row, 'option:min'), '30')
   type(control(row, 'option:max'), '300')
@@ -1336,7 +1338,7 @@ it('gives a camera its seconds between frames, with its hint, says on the field 
     }
   })
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  choose(control(expand(entityRow(root, 'front_door')), 'domain'), 'camera')
+  choose(control(await listStarter(root, 'front_door', 'Front door'), 'domain'), 'camera')
   const row = () => entityRow(root, 'front_door')
   expect([...row().querySelectorAll('[data-field^="option:"]')].map(f => [f.querySelector('label')!.textContent, f.querySelector('.hs-field-hint')?.textContent])).toEqual([
     ['Seconds between frames', 'How often Home Assistant asks for a new picture while someone is watching; 1 when left empty.']])
@@ -1370,7 +1372,7 @@ it('gives a camera its seconds between frames, with its hint, says on the field 
 it('retypes an entity to and from Camera in one undo step, removing what no longer fits', async () => {
   const { root } = setup('/entities/new?name=Front')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  choose(control(expand(entityRow(root, 'front')), 'domain'), 'number')
+  choose(control(await listStarter(root, 'front', 'Front'), 'domain'), 'number')
   type(control(entityRow(root, 'front'), 'option:min'), '2')
   // A number's options go: a camera has none of them.
   choose(control(entityRow(root, 'front'), 'domain'), 'camera')
@@ -1389,28 +1391,30 @@ it('retypes an entity to and from Camera in one undo step, removing what no long
 it('wires a light\'s Turn on into its Set state, brightness and all, and a number\'s Set value into its own', async () => {
   const { root, fixture } = setup('/entities/new?name=Lamp')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  const row = expand(entityRow(root, 'lamp'))
-  choose(control(row, 'domain'), 'light')
-  control(entityRow(root, 'lamp'), 'option:dimmable').click()
-  addTyped(root, 'level', 'number')
-  // A number's Set value: its value an output of When commanded, into Set state's Value.
-  dropStep(root, 'When commanded')
-  const set = lastStep(root)
-  await pickOption(root, 'entity', 'level')
+  // The starter's Entity node becomes a light that can dim; a second one is a number.
+  const lamp = json(root).nodes[0].id as string
+  await selectNode(root, lamp)
+  choose(control(inspector(root), 'domain'), 'light')
+  control(inspector(root), 'option:dimmable').click()
+  const set = addEntityNode(root)
+  entityName(root, 'Level')
+  type(control(inspector(root), 'key'), 'level')
+  choose(control(inspector(root), 'domain'), 'number')
+  // A number's Set value: its value an output of the node, into Set state's Value.
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Value'])
+  deselect(root)
   dropStep(root, 'Set state')
   const setLevel = lastStep(root)
-  await pickOption(root, 'entity', 'level')
+  await pickOption(root, 'entity', 'Level')
   // One state value: ready to fill, as it is all the step sets.
   expect(inspector(root).querySelector('[data-input-id="value"] .hs-insp-unset')).toBeNull()
-  wire(root, set, 'value', setLevel, 'value')
-  flow(root, set, setLevel)
+  wire(root, set, 'command:set_value:value', setLevel, 'value')
+  flow(root, set, setLevel, 'command:set_value')
   // The light's Turn on: its brightness an output, into Set state's optional Brightness; On set when the light was chosen.
-  deselect(root)
-  dropStep(root, 'When commanded')
-  const on = lastStep(root)
-  await pickOption(root, 'entity', 'Lamp')
+  await selectNode(root, lamp)
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Brightness'])
+  const on = lamp
+  deselect(root)
   dropStep(root, 'Set state')
   const setOn = lastStep(root)
   await pickOption(root, 'entity', 'Lamp')
@@ -1419,24 +1423,22 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   expect(brightness.querySelector('.hs-insp-unset')!.textContent).toContain('Not set')
   expect(brightness.textContent).toContain('Leave empty to keep it as it is.')
   expect(inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!.checked).toBe(true)
-  wire(root, on, 'brightness', setOn, 'brightness')
-  flow(root, on, setOn)
+  wire(root, on, 'command:turn_on:brightness', setOn, 'brightness')
+  flow(root, on, setOn, 'command:turn_on')
   // Turn off sets On alone.
   deselect(root)
-  dropStep(root, 'When commanded')
-  const off = lastStep(root)
-  await pickOption(root, 'entity', 'Lamp')
-  await pickOption(root, 'command', 'Turn off')
   dropStep(root, 'Set state')
   const setOff = lastStep(root)
   await pickOption(root, 'entity', 'Lamp')
   const toggle = () => inspector(root).querySelector<HTMLInputElement>('[data-input-id="is_on"] input[role="switch"]')!
   toggle().click()
   expect(toggle().checked).toBe(false)
-  flow(root, off, setOff)
+  flow(root, lamp, setOff, 'command:turn_off')
   const graph = json(root)
   expect(graph.edges.filter((e: any) => e.kind === 'data').map((e: any) => [e.source, e.sourcePort, e.target, e.targetPort])).toEqual([
-    [set, 'value', setLevel, 'value'], [on, 'brightness', setOn, 'brightness']])
+    [set, 'command:set_value:value', setLevel, 'value'], [on, 'command:turn_on:brightness', setOn, 'brightness']])
+  expect(graph.edges.filter((e: any) => e.kind !== 'data').map((e: any) => [e.source, e.port, e.target])).toEqual([
+    [set, 'command:set_value', setLevel], [lamp, 'command:turn_on', setOn], [lamp, 'command:turn_off', setOff]])
   expect(graph.nodes.find((n: any) => n.id === setOn).config).toMatchObject({ entity: 'lamp', is_on: { kind: 'literal', type: 'boolean', value: true } })
   expect(graph.nodes.find((n: any) => n.id === setOff).config).toMatchObject({ entity: 'lamp', is_on: { kind: 'literal', type: 'boolean', value: false } })
   expect(graph.nodes.find((n: any) => n.id === setOff).config).not.toHaveProperty('brightness')
@@ -1444,14 +1446,15 @@ it('wires a light\'s Turn on into its Set state, brightness and all, and a numbe
   button(root, 'Save').click()
   await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 1'))
   expect(saves(fixture)).toHaveLength(1)
+  expect(saves(fixture)[0].definition).not.toHaveProperty('entities')
 })
 
 it('shows a problem that has no row of the form at the top of the form, from a step selected', async () => {
   const { root, fixture } = await openPlug()
   fixture.entities.controls.diagnostics = [{ nodeId: null, inputId: null, portId: null, code: 'definition.other', severity: 3, message: 'The definition cannot be made', startLine: null, startColumn: null } as any]
-  type(control(expand(entityRow(root, 'relay')), 'name'), 'Main relay')
+  await renameRelay(root, 'Main relay')
   await vi.waitFor(() => expect(inspector(root).querySelector('[aria-label="Problems of this entity definition"]')?.textContent).toContain('The definition cannot be made'))
-  press(root.querySelector('.solid-flow__node[data-id="on"]')!)
+  press(root.querySelector('.solid-flow__node[data-id="relay"]')!)
   await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-problem__message')].find(b => b.textContent === 'The definition cannot be made')!.click()

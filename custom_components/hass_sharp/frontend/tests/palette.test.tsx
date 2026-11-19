@@ -5,9 +5,12 @@ import { QuickAdd } from '../src/visual/QuickAdd'
 import { catalogPalette, createGraph, type VisualGraph } from '../src/visual/graph'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { nodeCatalog } from '../src/visual/contract'
+import { add, empty } from './visual-fixture'
 
+// State, When commanded and When a frame is needed: entity-only too until Task 12 removes them.
+const oldSteps = ['entity_state', 'entity_command', 'camera_frame']
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
-const entityOnly = ['entity_state', 'entity_command', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'camera_frame', 'show_frame']
+const entityOnly = ['entity', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'show_frame', ...oldSteps]
 
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -98,7 +101,7 @@ it('the canvas quick-add offers the steps of the document its graph is', async (
   const automation = await offered(createGraph('Hall'))
   for (const kind of entityOnly) expect(automation, kind).not.toContain(`Create ${label(kind)}`)
   expect(automation).toContain(`Create ${label('trigger')}`)
-  const entity = await offered({ version: 5, name: 'Relay', nodes: [], edges: [], definition: { entities: [{ key: 'relay', domain: 'switch' }], settings: [] } })
+  const entity = await offered(add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }))
   for (const kind of entityKinds) expect(entity, kind).toContain(`Create ${label(kind)}`)
 })
 

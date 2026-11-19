@@ -31,8 +31,12 @@ const defaultExec = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
   const ports = executionPorts(node, catalog)
   return ports.includes('next') ? 'next' : ports.find(port => port !== 'error')
 }
-/** A value read in one scope of the step (a flow's value, For each's item) is used there; a loop's kept value in its body; anything else after the step. */
-const runPortFor = (output: OutputSpec | undefined) => output?.scope || (output?.visibility === 'loop' ? 'body' : 'next')
+/**
+ * A value read in one scope of the step (a flow's value, For each's item) is used there; a command's value of an Entity
+ * node on that command's flow (the execution pin it is drawn under); a loop's kept value in its body; anything else
+ * after the step.
+ */
+const runPortFor = (output: OutputSpec | undefined) => output?.scope || output?.group || (output?.visibility === 'loop' ? 'body' : 'next')
 const bestMatch = <T>(entries: [string, T][], exact: (value: T) => boolean, assignable: (value: T) => boolean) =>
   (entries.find(([, value]) => exact(value)) ?? entries.find(([, value]) => assignable(value)))?.[0]
 const kindLabel = (kind: string, catalog: VisualCatalogSnapshot) => (Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind].label : kind)

@@ -68,19 +68,20 @@ function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void;
   return { root, fixture, history, release, subscriptions, subscribeMessage, control }
 }
 
-const graph = (name: string) => ({ kind: 'graph' as const, graph: { version: 5, name, nodes: [], edges: [] } })
-/** The plug: a device of three entities built with nodes, with a secret and a plain setting. */
+/** A graph definition's logic: an Entity node for each of `entities` (its config the entity), and no other step. */
+const graph = (name: string, entities: Record<string, unknown>[] = []) => ({ kind: 'graph' as const, graph: { version: 5, name, edges: [],
+  nodes: entities.map((entity, i) => ({ id: `entity-${i + 1}`, kind: 'entity', config: entity, position: { x: 60, y: 200 * i } })) } })
+/** The plug: a device of four entities, each an Entity node, with a secret and a plain setting. */
 const plug: DefinitionBody = {
   name: 'Plug', device: { manufacturer: 'Acme', model: 'P1' },
   settings: [{ key: 'token', type: 'string', label: 'Token', secret: true, value: 'hunter2' }, { key: 'room', type: 'string', label: 'Room', value: 'plainly-visible-value' }],
-  entities: [{ key: 'power', domain: 'sensor', name: 'Power' }, { key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'online', domain: 'binary_sensor' },
-    { key: 'boost', domain: 'switch', name: 'Boost', enabledByDefault: false }],
-  logic: graph('Plug'),
+  logic: graph('Plug', [{ key: 'power', domain: 'sensor', name: 'Power' }, { key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'online', domain: 'binary_sensor' },
+    { key: 'boost', domain: 'switch', name: 'Boost', enabledByDefault: false }]),
 }
 const camera: DefinitionBody = {
   name: 'Driveway', settings: [{ key: 'Host', value: '10.0.0.9' }, { key: 'Password', value: 'camera-secret' }], logic: { kind: 'class', type: cameraType.id },
 }
-const porch: DefinitionBody = { name: 'Porch light', settings: [], entities: [{ key: 'light', domain: 'switch', name: 'Porch' }], logic: graph('Porch light') }
+const porch: DefinitionBody = { name: 'Porch light', settings: [], logic: graph('Porch light', [{ key: 'light', domain: 'switch', name: 'Porch' }]) }
 const registered = (uniqueId: string, entityId: string, name: string | null, disabled = false): RegisteredEntity =>
   ({ uniqueId, entityId, domain: entityId.split('.')[0], name, disabled })
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
@@ -189,8 +190,8 @@ it('shows each definition: its name, how it works, its device, its status, its e
 })
 
 it('says why a definition is not running, starting, or running an older revision, and caps a long list of entities', async () => {
-  const many: DefinitionBody = { name: 'Weather station', settings: [], logic: graph('Weather station'),
-    entities: Array.from({ length: 9 }, (_, i) => ({ key: `reading_${i + 1}`, domain: 'sensor', name: `Reading ${i + 1}` })) }
+  const many: DefinitionBody = { name: 'Weather station', settings: [],
+    logic: graph('Weather station', Array.from({ length: 9 }, (_, i) => ({ key: `reading_${i + 1}`, domain: 'sensor', name: `Reading ${i + 1}` }))) }
   const { root } = setup({ prepare: f => {
     f.entities.controls.activation = 'notLoaded'
     f.entities.controls.activationError = 'The library cams does not compile'
@@ -287,10 +288,10 @@ it('shows live states through one subscription, resubscribes only when the entit
 })
 
 it('shows each type\'s state in words: a light\'s brightness, a cover\'s position, a number\'s unit, a password as dots, a button\'s last press', async () => {
-  const things: DefinitionBody = { name: 'Things', settings: [], logic: graph('Things'), entities: [
+  const things: DefinitionBody = { name: 'Things', settings: [], logic: graph('Things', [
     { key: 'lamp', domain: 'light', name: 'A lamp', options: { dimmable: true } }, { key: 'blind', domain: 'cover', name: 'B blind', options: { positionable: true } },
     { key: 'level', domain: 'number', name: 'C level' }, { key: 'mode', domain: 'select', name: 'D mode', options: { options: ['Eco', 'Comfort'] } },
-    { key: 'code', domain: 'text', name: 'E code' }, { key: 'bell', domain: 'button', name: 'F bell' }] }
+    { key: 'code', domain: 'text', name: 'E code' }, { key: 'bell', domain: 'button', name: 'F bell' }]) }
   const { root, subscriptions } = setup({ prepare: f => f.entities.seed('things', things) })
   await loaded(root)
   await vi.waitFor(() => expect(subscriptions).toHaveLength(1))
@@ -333,7 +334,7 @@ it('shows each type\'s state in words: a light\'s brightness, a cover\'s positio
 })
 
 it('shows a camera as Ready or Unavailable, never its access token, its picture\'s address or any other attribute', async () => {
-  const doorbell: DefinitionBody = { name: 'Doorbell', settings: [], logic: graph('Doorbell'), entities: [{ key: 'front', domain: 'camera', name: 'Front door' }] }
+  const doorbell: DefinitionBody = { name: 'Doorbell', settings: [], logic: graph('Doorbell', [{ key: 'front', domain: 'camera', name: 'Front door' }]) }
   const logged = (['log', 'info', 'warn', 'error', 'debug'] as const).map(method => vi.spyOn(console, method))
   const { root, subscriptions } = setup({ prepare: f => f.entities.seed('doorbell', doorbell) })
   await loaded(root)

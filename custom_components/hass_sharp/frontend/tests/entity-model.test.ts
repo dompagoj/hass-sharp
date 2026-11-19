@@ -16,17 +16,20 @@ const withoutDefinition = ({ definition: _definition, ...graph }: any) => graph 
 /** The derived motion sensor: the shared fixture's graph, whose Entity node `s` declares it, so the body lists no entity. */
 const motion = (): DefinitionBody => {
   const graph = fixtureGraph('entity graph: derived binary sensor')
-  return { name: graph.name, device: null, settings: [], entities: [], logic: { kind: 'graph', graph: withoutDefinition(graph) } }
+  return { name: graph.name, device: null, settings: [], logic: { kind: 'graph', graph: withoutDefinition(graph) } }
 }
+/** The plug's three Entity nodes (its power reading set by a typed value) and Turn on of the relay → Set state. */
 const plugGraph = (): Graph => ({
   version: 5, name: 'Plug', nodes: [
-    { id: 'p', kind: 'entity_state', config: { entity: 'power' }, position: { x: 60, y: 100 } },
-    { id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 60, y: 300 } },
+    { id: 'p', kind: 'entity', position: { x: 60, y: 100 },
+      config: { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' }, arguments: { value: { kind: 'literal', type: 'number', value: 12 } } } },
+    { id: 'online', kind: 'entity', position: { x: 60, y: 200 }, config: { key: 'online', domain: 'binary_sensor', deviceClass: 'connectivity', entityCategory: 'diagnostic' } },
+    { id: 'relay', kind: 'entity', position: { x: 60, y: 300 }, config: { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket', enabledByDefault: false } },
     { id: 'set_on', kind: 'set_entity_state', config: { entity: 'relay', is_on: { kind: 'literal', type: 'boolean', value: true } }, position: { x: 360, y: 300 } },
   ],
-  edges: [{ id: 'on:next:set_on', source: 'on', target: 'set_on', port: 'next' }],
+  edges: [{ id: 'relay:command:turn_on->set_on', source: 'relay', target: 'set_on', port: 'command:turn_on' }],
 })
-/** The plug device, as the panel sends it: a device, settings of every kind (a secret typed in), three entities. */
+/** The plug device, as the panel sends it: a device, settings of every kind (a secret typed in), three Entity nodes. */
 const plug = (): DefinitionBody => ({
   name: 'Plug',
   device: { manufacturer: 'Acme', model: 'P1', swVersion: null, hwVersion: null, configurationUrl: null, suggestedArea: 'Kitchen', via: null },
@@ -34,11 +37,6 @@ const plug = (): DefinitionBody => ({
     { key: 'offset', value: 4, label: 'Offset', type: 'number' },
     { key: 'name', value: '', type: 'string' },
     { key: 'token', value: 'hunter2', label: 'Token', type: 'string', secret: true },
-  ],
-  entities: [
-    { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' } },
-    { key: 'online', domain: 'binary_sensor', deviceClass: 'connectivity', entityCategory: 'diagnostic' },
-    { key: 'relay', domain: 'switch', name: 'Relay', icon: 'mdi:power-socket', enabledByDefault: false },
   ],
   logic: { kind: 'graph', graph: plugGraph() },
 })
@@ -55,9 +53,17 @@ describe('editor graph', () => {
     for (const body of [motion(), plug()]) {
       const graph = editorGraph(body)
       expect(graph.name).toBe(body.name)
-      expect(graph.definition).toEqual({ entities: body.entities, settings: body.settings, device: body.device })
+      // Its entities are its Entity nodes: the editor lists none (Task 11 drops the empty list).
+      expect(graph.definition).toEqual({ entities: [], settings: body.settings, device: body.device })
       expect(definitionBody(graph)).toEqual(body)
     }
+  })
+  it('sends no entities list for a definition whose entities are Entity nodes', () => {
+    // Gap found converting these tests: the body always carried `entities: []`, which Task 11 refuses. The server
+    // reads no list as none, so only a definition that still lists an entity sends one.
+    for (const body of [motion(), plug()]) expect(definitionBody(editorGraph(body))).not.toHaveProperty('entities')
+    const listed: DefinitionBody = { ...motion(), entities: [{ key: 'door', domain: 'binary_sensor', name: 'Door' }] }
+    expect(definitionBody(editorGraph(listed)).entities).toEqual([{ key: 'door', domain: 'binary_sensor', name: 'Door' }])
   })
   it('keeps a stored via untouched', () => {
     const body = plug()
@@ -101,8 +107,9 @@ describe('editor graph', () => {
   })
 
   // Decision 1: the device sits in graph.definition.device; the validator reads entities and settings, and of the device
-  // only whether there is one (its entities then need no names), so a fixture's device is given with every member.
-  describe('validates as the shared fixture expects, with the device and every member of the definition in it', () => {
+  // only whether there is one (its entities then need no names), so a fixture's device is given with every member, and
+  // none is given for a fixture without one (whose entities then need names: the `entity.name` cases).
+  describe('validates as the shared fixture expects, with every member of the definition in it and the device when the fixture has one', () => {
     function patched(patch: Record<string, unknown>): contract.VisualCatalogSnapshot {
       const merge = (target: Record<string, unknown>, source: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(source)) {
@@ -128,8 +135,11 @@ describe('editor graph', () => {
         settings: graph.definition.settings.map((s: any, i: number) => i % 2
           ? { ...s, value: null, label: `Setting ${s.key}`, secret: true, hasValue: true }
           : { ...s, value: s.type === 'number' ? 4 : s.type === 'boolean' ? true : 'text', label: `Setting ${s.key}` }),
-        // A name the fixture gives (null for none) stays, as a sentence that names an entity by its name says it.
-        entities: (graph.definition.entities ?? []).map((e: any) => ({ ...e, name: Object.hasOwn(e, 'name') ? e.name : `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
+        // Only a fixture of the listed form lists entities (a name it gives, null for none, stays, as a sentence that
+        // names an entity by its name says it); every other declares them by its Entity nodes and sends no list.
+        ...(Array.isArray(graph.definition.entities) ? {
+          entities: graph.definition.entities.map((e: any) => ({ ...e, name: Object.hasOwn(e, 'name') ? e.name : `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
+        } : {}),
         logic: { kind: 'graph', graph: withoutDefinition(graph) },
       }
       const diagnostics = contract.validateGraph(editorGraph(body), fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog)
@@ -258,15 +268,19 @@ describe('definition ids', () => {
 })
 
 describe('renaming an entity key', () => {
-  it('renames the entity and every step that names it', () => {
+  const keys = (graph: Graph) => contract.declaredEntities(graph).map(d => d.entity.key)
+  const named = (graph: Graph) => Object.fromEntries(graph.nodes.filter(n => n.kind !== 'entity').map(n => [n.id, n.config.entity]))
+  it('renames the Entity node\'s entity and every step that names it', () => {
     const graph = editorGraph(plug())
-    const renamed = renameEntityKey(graph, 'relay', 'outlet')
+    const renamed = renameEntityKey(graph, 'relay', 'outlet', 'relay')
     expect(renamed).not.toBe(graph)
-    expect(renamed.definition!.entities.map(e => e.key)).toEqual(['power', 'online', 'outlet'])
-    expect(renamed.definition!.entities[2]).toEqual({ ...plug().entities![2], key: 'outlet' })
-    expect(renamed.nodes.map(n => n.config.entity)).toEqual(['power', 'outlet', 'outlet'])
-    expect(graph.nodes.map(n => n.config.entity)).toEqual(['power', 'relay', 'relay'])
-    expect(graph.definition!.entities[2].key).toBe('relay')
+    expect(keys(renamed)).toEqual(['power', 'online', 'outlet'])
+    expect(renamed.nodes.find(n => n.id === 'relay')!.config).toEqual({ ...plugGraph().nodes[2].config, key: 'outlet' })
+    expect(named(renamed)).toEqual({ set_on: 'outlet' })
+    expect(named(graph)).toEqual({ set_on: 'relay' })
+    expect(keys(graph)).toEqual(['power', 'online', 'relay'])
+    // A node is renamed by its own id: another node's id renames nothing.
+    expect(renameEntityKey(graph, 'relay', 'outlet', 'p')).toBe(graph)
   })
   it('leaves an entity operand alone', () => {
     const graph = editorGraph(motion())
@@ -276,12 +290,12 @@ describe('renaming an entity key', () => {
   })
   it('refuses a key another entity has', () => {
     const graph = editorGraph(plug())
-    expect(renameEntityKey(graph, 'relay', 'power')).toBe(graph)
+    expect(renameEntityKey(graph, 'relay', 'power', 'relay')).toBe(graph)
   })
   it('refuses a key outside the entity key rule', () => {
     const graph = editorGraph(plug())
-    for (const to of ['', 'Relay', '1relay', 'relay-2', 'r'.repeat(41)]) expect(renameEntityKey(graph, 'relay', to)).toBe(graph)
-    expect(renameEntityKey(graph, 'relay', 'r'.repeat(40))).not.toBe(graph)
+    for (const to of ['', 'Relay', '1relay', 'relay-2', 'r'.repeat(41)]) expect(renameEntityKey(graph, 'relay', to, 'relay')).toBe(graph)
+    expect(renameEntityKey(graph, 'relay', 'r'.repeat(40), 'relay')).not.toBe(graph)
   })
   it('renames only the steps whose entity is a definition entity', () => {
     const graph = editorGraph(plug())
@@ -289,8 +303,8 @@ describe('renaming an entity key', () => {
       { id: 't', kind: 'trigger', config: { type: 'entity', entity: 'relay' } },
       { id: 'avail', kind: 'set_entity_available', config: { entity: 'relay', available: { kind: 'literal', type: 'boolean', value: true } } },
     )
-    const renamed = renameEntityKey(graph, 'relay', 'outlet')
-    expect(Object.fromEntries(renamed.nodes.map(n => [n.id, n.config.entity]))).toEqual({ p: 'power', on: 'outlet', set_on: 'outlet', t: 'relay', avail: 'outlet' })
+    const renamed = renameEntityKey(graph, 'relay', 'outlet', 'relay')
+    expect(named(renamed)).toEqual({ set_on: 'outlet', t: 'relay', avail: 'outlet' })
   })
   it('knows the catalog steps that name a definition entity by its key', () => {
     const kinds = Object.entries(contract.nodeCatalog.nodes)

@@ -1,7 +1,25 @@
-import { declaredEntities, nodeCatalog, words, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addGraphNode, declaredEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
-import type { DefinitionBody, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
-import type { VisualGraph } from '../src/visual/graph'
+import type { DefinitionBody, DefinitionEntity, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
+import { updateNode, type VisualGraph } from '../src/visual/graph'
+
+/** A value typed in on a step's input. */
+export const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
+/**
+ * An entity definition's editor graph with no steps, as `editorGraph` gives one: its entities are the Entity nodes added
+ * to it; `listed` only for a test of the listed form, which Task 11 removes.
+ */
+export const empty = (listed: Record<string, unknown>[] = [], name = 'Nodes'): VisualGraph =>
+  ({ version: 5, name, nodes: [], edges: [], definition: { entities: listed, settings: [] } as never })
+/**
+ * The graph with a `kind` step `id` added as the editor adds one (an Entity node named by its type with a free key, a
+ * step prefilled with the definition's only entity), then `config` merged over its config and, when given, placed at
+ * `position`. An Entity node is `add(graph, 'entity', id, { key, domain, name })`, its state values under `arguments`.
+ */
+export const add = (graph: Graph, kind: string, id: string, config: Record<string, unknown> = {}, position?: { x: number; y: number }) => {
+  const added = addGraphNode(graph, kind, id, nodeCatalog)
+  return updateNode(added, id, { config: { ...added.nodes.at(-1)!.config, ...config }, ...(position ? { position } : {}) })
+}
 
 /** The server's outline of a graph (VisualApi.Outline): node kinds, positions and labels, trigger ids and configs, execution edges. */
 export function outlineOf(graph: VisualGraph): GraphOutline {
@@ -118,7 +136,9 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  * `EntityApi.EntityRequest` and the Python route do, in the `{version, ok, result | error}` envelope.
  *
  * - `documents`: the stored definitions by id, as the store keeps them: secrets in clear, `logic` as `{kind, type, graph}`,
- *   the graph without `definition`, with the run fields an answer has (`automationId` `entity:<id>`, `status`, …). Every
+ *   the graph without `definition`, a graph's `entities` derived as `EntityDefinitionStore.Save` stores them (the
+ *   listed ones whose key no Entity node declares, then those its Entity nodes declare), with the run fields an
+ *   answer has (`automationId` `entity:<id>`, `status`, …). Every
  *   answer masks secrets from it: a graph's `secret` settings, and every setting of a class except those its type in
  *   `types` declares and does not mark secret (all of them when the type is not in `types`, as for a library that does
  *   not compile).
@@ -201,6 +221,16 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const empty = (value: unknown) => value === undefined || value === null
   const problem = (code: string, message: string, inputId: string | null = null, portId: string | null = null): VisualDiagnostic =>
     ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId, code })
+  /**
+   * A graph definition's entities as the store keeps and answers them, derived by the editor's own `withGraphTypes`
+   * (which mirrors `VisualNodeCatalog.WithGraphTypes`): those it lists whose key no Entity node declares, then those its
+   * Entity nodes declare; a class's as given (none).
+   */
+  const derivedEntities = (body: DefinitionBody): DefinitionEntity[] | null => {
+    if (body.logic.kind !== 'graph') return structuredClone(body.entities ?? null)
+    const graph = { ...body.logic.graph, definition: { entities: body.entities ?? [], settings: [] } }
+    return structuredClone(withGraphTypes(nodeCatalog, graph).definition?.entities ?? []) as DefinitionEntity[]
+  }
   /**
    * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a listed entity
    * whose key an Entity node declares is checked on its node, whose options' problems are on it, about `option:<option>`.
@@ -341,8 +371,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     // Its script loaded; its host, unless it has none or the one it has is stopping (`EntityApi.RunningHost`).
     const loaded = activation !== 'off' && activation !== 'notLoaded'
     const host = activation === 'running' || activation === 'setup' || activation === 'failed' ? activation : undefined
-    // A graph's entities, or those its class's instance reports (`FixtureEntityType.entities`).
-    const made = body.logic.kind === 'graph' ? body.entities ?? [] : types.find(t => t.id === body.logic.type)?.entities ?? []
+    // A graph's entities (listed and declared by its Entity nodes), or those its class's instance reports (`FixtureEntityType.entities`).
+    const made = body.logic.kind === 'graph' ? derivedEntities(body) ?? [] : types.find(t => t.id === body.logic.type)?.entities ?? []
     return {
       automationId: `entity:${id}`, active: loaded, currentRevisionActive: loaded,
       activationError: activation === 'off' ? 'Not active' : activation === 'notLoaded' || host === 'failed' ? controls.activationError : null,
@@ -382,7 +412,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     return {
       version: 1, id, revision, name: body.name,
       device: d ? { manufacturer: d.manufacturer ?? null, model: d.model ?? null, swVersion: d.swVersion ?? null, hwVersion: d.hwVersion ?? null, configurationUrl: d.configurationUrl ?? null, suggestedArea: d.suggestedArea ?? null, via: d.via ?? null } : null,
-      settings, entities: structuredClone(body.entities ?? null),
+      settings, entities: derivedEntities(body),
       logic: body.logic.kind === 'graph' ? { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph } : { kind: 'class', type: body.logic.type, graph: null },
       source: '// HassSharp entity definition (fixture)', sourceMap: [], enabled, savedUtc: new Date().toISOString(), catalogGeneration: generation(),
       ...running(id, body, enabled), registeredEntities: [],

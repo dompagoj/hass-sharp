@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName } from '../src/components/TriggerSummary'
 import { connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
@@ -7,13 +7,7 @@ import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition } from '../src/entities/model'
 import { renameDefinition } from '../src/entities/definitionEdits'
 import { refitNotice, retypeNode } from '../src/entities/NodePickers'
-
-const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
-const empty = (entities: Record<string, unknown>[] = []): VisualGraph => ({ version: 5, name: 'Nodes', nodes: [], edges: [], definition: { entities, settings: [] } as never })
-const add = (graph: Graph, kind: string, id: string, config: Record<string, unknown> = {}) => {
-  const added = addGraphNode(graph, kind, id, nodeCatalog)
-  return updateNode(added, id, { config: { ...added.nodes.at(-1)!.config, ...config } })
-}
+import { add, empty, lit } from './visual-fixture'
 
 it('an Entity node declares an entity', () => {
   let graph = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor', name: 'Door' })
@@ -120,6 +114,38 @@ it('a pasted Entity node gets a key of its own and its pasted steps follow it', 
   expect(paste(graph, ['set']).nodes.at(-1)!.config.entity).toBe('lamp')
   // Pasted again, the next copy takes the next free key.
   expect(paste(pasted, ['l']).nodes.at(-1)!.config.key).toBe('lamp_3')
+})
+
+it('a pasted copy of an Entity node whose key is 40 characters long gets a valid key of its own, its key shortened for the number', () => {
+  // Gap found converting these tests: the copy's key was the original's with `_2` added, 42 characters, which is no key.
+  const long = 'a_very_long_entity_key_for_the_hall_lamp'
+  expect(long).toHaveLength(40)
+  const graph = add(empty(), 'entity', 'l', { key: long, domain: 'light', name: 'Lamp' })
+  const pattern = new RegExp(words.entityKeyPattern)
+  const first = paste(graph, ['l']).nodes.at(-1)!.config.key as string
+  expect(first).toBe('a_very_long_entity_key_for_the_hall_la_2')
+  expect(first.length).toBeLessThanOrEqual(40)
+  expect(pattern.test(first)).toBe(true)
+  // Each copy's key is still unused, however many there are.
+  const keys = [long]
+  let next = graph
+  for (let i = 0; i < 10; i++) {
+    next = paste(next, ['l'])
+    keys.push(next.nodes.at(-1)!.config.key as string)
+  }
+  expect(new Set(keys).size).toBe(keys.length)
+  for (const key of keys) {
+    expect(key.length, key).toBeLessThanOrEqual(40)
+    expect(pattern.test(key), key).toBe(true)
+  }
+  expect(keys.at(-1)).toBe('a_very_long_entity_key_for_the_hall_l_11')
+  expect(validateGraph(next).filter(d => d.severity === 3 && d.code !== 'entity.name').map(d => d.code)).toEqual([])
+  // A 39-character key, too.
+  const shorter = paste(add(empty(), 'entity', 'l', { key: long.slice(0, 39), domain: 'light', name: 'Lamp' }), ['l']).nodes.at(-1)!.config.key as string
+  expect(shorter).toBe('a_very_long_entity_key_for_the_hall_la_2')
+  // A shortened base that ends in `_` loses it before the number.
+  const underscored = `${'x'.repeat(37)}_ab`
+  expect(paste(add(empty(), 'entity', 'l', { key: underscored, domain: 'light', name: 'Lamp' }), ['l']).nodes.at(-1)!.config.key).toBe(`${'x'.repeat(37)}_2`)
 })
 
 it('a new definition starts with one Entity node that follows its name until it is saved', () => {

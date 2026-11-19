@@ -7,7 +7,7 @@ import { EntityRunTraceView, RunTraceView } from '../src/views/RunTraceView'
 import { AppRoutes } from '../src/App'
 import type { DefinitionBody } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
-import { nodeCatalog, type Graph } from '../src/visual/contract'
+import { flowMethod, nodeCatalog, type Graph } from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
 import type { RunTrace, RunTraceResponse, TraceEvent } from '../src/types'
 import { run } from './run-fixture'
@@ -627,32 +627,35 @@ const button = (root: Element, name: string) => {
 
 // ---- An entity definition's run, at /entities/:id/runs/:runId: the definition is read through the entity API.
 
-/** The plug as stored: a secret password, a relay and a power sensor; When commanded turn_on logs the password's step. */
+/** The plug as stored: a secret password, a relay and a power sensor (Entity nodes); the relay's Turn on logs the password's step. */
 const plugBody = (): DefinitionBody => ({
   name: 'Plug', device: null,
   settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: 'stored-secret' }],
-  entities: [{ key: 'relay', domain: 'switch', name: 'Main relay' }, { key: 'power', domain: 'sensor', name: 'Power' }],
   logic: { kind: 'graph', graph: plugGraph() },
 })
 function plugGraph(): Graph {
   return { version: 5, name: 'Plug',
     nodes: [
-      { id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 60, y: 100 } },
+      { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Main relay' }, position: { x: 60, y: 100 } },
+      { id: 'power', kind: 'entity', config: { key: 'power', domain: 'sensor', name: 'Power' }, position: { x: 60, y: 400 } },
       { id: 'set', kind: 'set_entity_state', config: { entity: 'relay', is_on: lit('boolean', true) }, position: { x: 400, y: 100 } },
       { id: 'pw', kind: 'setting', config: { key: 'password' }, position: { x: 400, y: 300 } },
       { id: 'say', kind: 'log', config: { value: { kind: 'unset' } }, position: { x: 700, y: 100 } },
     ],
     edges: [
-      { id: 'on->set', kind: 'execution', source: 'on', sourcePort: 'next', target: 'set', targetPort: 'in' },
+      { id: 'relay:command:turn_on->set', source: 'relay', target: 'set', port: 'command:turn_on' },
       { id: 'set->say', kind: 'execution', source: 'set', sourcePort: 'next', target: 'say', targetPort: 'in' },
       { id: 'pw.value:say.value', kind: 'data', source: 'pw', sourcePort: 'value', target: 'say', targetPort: 'value' },
     ] } as unknown as Graph
 }
+/** The method the relay's Turn on runs as, which a run records when it has no other name. */
+const turnOn = () => flowMethod(plugGraph().nodes[0], 'command:turn_on')
 /** The graph a definition's run stores: its logic graph with the definition composed in (settings by key and type only). */
-const storedGraph = (entities = plugBody().entities!) => ({ ...plugGraph(), definition: { entities, settings: [{ key: 'host', type: 'string' }, { key: 'password', type: 'string' }] } }) as unknown as Graph
+const storedGraph = () => ({ ...plugGraph(), definition: { settings: [{ key: 'host', type: 'string' }, { key: 'password', type: 'string' }] } }) as unknown as Graph
 function definitionResponse(overrides: Partial<RunTraceResponse> = {}): RunTraceResponse {
   const list: TraceEvent[] = [
-    { seq: 1, node: 'on', frame: '', t: 0, ms: 1, status: 'ok', port: 'next' },
+    // The Entity node's flow ends with the pin it started at as the port it took.
+    { seq: 1, node: 'relay', frame: '', t: 0, ms: 1, status: 'ok', port: 'command:turn_on' },
     { seq: 2, node: 'set', frame: '', t: 1, ms: 1, status: 'ok', port: 'next', inputs: { is_on: { type: 'boolean', v: true } } },
     // The recorder hides a setting step's value (it may be secret).
     { seq: 3, node: 'say', frame: '', t: 2, ms: 1, status: 'ok', port: 'next', inputs: { value: { type: 'string', v: '***', redacted: true, src: { node: 'pw', port: 'value' } } } },
@@ -661,9 +664,9 @@ function definitionResponse(overrides: Partial<RunTraceResponse> = {}): RunTrace
   for (const event of list) { const row = (summary[event.node] ??= { count: 0, failed: 0, last: 'ok' }); row.count++; row.last = event.status }
   return {
     version: 1, live: false,
-    run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'on', cause: 'Command', actionLabel: 'When commanded ▸ Main relay: Turn on', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }),
+    run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'relay', cause: 'Command', actionLabel: 'Main relay: Turn on', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }),
     snapshot: { revision: 'rev', visualId: 'plug', visualRevision: 1, graph: storedGraph(), catalog: nodeCatalog },
-    trace: { format: 1, runId: 'run-7', rootNodeId: 'on', startedUtc: '2026-11-12T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'command', entity: 'relay', command: 'turn_on' }, events: list, summary },
+    trace: { format: 1, runId: 'run-7', rootNodeId: 'relay', rootPort: 'command:turn_on', startedUtc: '2026-11-12T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'command', entity: 'relay', command: 'turn_on' }, events: list, summary },
     ...overrides,
   }
 }
@@ -702,10 +705,14 @@ it('shows a definition\'s run on its own graph, its entity steps by name, and go
   const { root, callWS, history, fixture } = mountDefinition(async () => definitionResponse())
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
   expect(root.querySelector('h1')!.textContent).toBe('Plug')
-  // The entity steps name the definition's entities, as the editor does.
-  expect(card(root, 'on').textContent).toContain('Main relay')
+  // The Entity node and the steps that name its entity show its name, as the editor does.
+  expect(card(root, 'relay').textContent).toContain('Main relay')
   expect(card(root, 'set').textContent).toContain('Main relay')
-  expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('When commanded ▸ Main relay: Turn on · Main relay: Turn on')
+  // The run started at the node's Turn on: the node ran, and its wire to Set state was travelled.
+  expect(card(root, 'relay').querySelector('.hs-card__trace-word')!.textContent).not.toBe('Not reached')
+  expect(card(root, 'power').querySelector('.hs-card__trace-word')!.textContent).toBe('Not reached')
+  expect(root.querySelector('.solid-flow__edge[data-id="relay:command:turn_on->set"]')!.outerHTML).toContain('hs-wire--travelled')
+  expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('Main relay: Turn on · Main relay: Turn on')
   expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/entities/plug')
   await vi.waitFor(() => expect(fixture.entities.requests.some(r => r.operation === 'read' && r.id === 'plug')).toBe(true))
   expect(callWS.mock.calls.some(([message]) => message.type === 'hass_sharp/visual')).toBe(false)
@@ -720,9 +727,10 @@ it('shows a definition\'s run on its own graph, its entity steps by name, and go
 })
 
 it('titles a definition\'s run by its root step when it carries that step\'s generated method name', async () => {
-  const { root } = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'on', cause: 'Command', actionLabel: 'Run_6F6E', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
+  const { root } = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'relay', cause: 'Command', actionLabel: turnOn(), trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
-  expect(root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('When commanded · Main relay: Turn on')
+  // An Entity node's flow is named by the entity and the flow.
+  expect(root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('Main relay: Turn on · Main relay: Turn on')
   dispose?.(); document.body.innerHTML = ''
   // A root that is not in the run's graph keeps the name recorded.
   const second = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'gone', cause: 'Command', actionLabel: 'Run_676F6E65', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
@@ -738,13 +746,17 @@ it('routes a definition\'s run address to its trace page in the panel', async ()
 
 it('says a definition\'s run used an earlier version once the definition changed, in the definition\'s words', async () => {
   const { root } = mountDefinition(async () => definitionResponse(), { prepare: fixture => {
+    // The relay's Entity node renamed since, and the entities the store derives from it with it.
     const stored = fixture.entities.documents.get('plug')!
-    fixture.entities.documents.set('plug', { ...stored, revision: 3, entities: [{ key: 'relay', domain: 'switch', name: 'Renamed relay' }, stored.entities![1]] })
+    const graph = structuredClone(stored.logic.graph!)
+    graph.nodes.find(n => n.id === 'relay')!.config.name = 'Renamed relay'
+    const entities = stored.entities!.map(e => (e.key === 'relay' ? { ...e, name: 'Renamed relay' } : e))
+    fixture.entities.documents.set('plug', { ...stored, revision: 3, logic: { ...stored.logic, graph }, entities } as typeof stored)
   } })
   await vi.waitFor(() => expect(root.textContent).toContain('This run used an earlier version.'))
   expect(root.querySelector('.hs-trace-strip__note[title]')!.getAttribute('title')).toBe('The canvas shows the entity definition as it was for this run, not as it is now.')
   // The canvas is the run's own: the entity as it was named then.
-  expect(card(root, 'on').textContent).toContain('Main relay')
+  expect(card(root, 'relay').textContent).toContain('Main relay')
   expect(root.textContent).not.toContain('Renamed relay')
 })
 
@@ -805,21 +817,20 @@ it('never shows a definition\'s secret setting value on its run\'s page', async 
 it('shows a picture as the recorder\'s short text, as plain words on its card and in the panel', async () => {
   const doorbell = (): Graph => ({ version: 5, name: 'Doorbell',
     nodes: [
-      { id: 'frame', kind: 'camera_frame', config: { entity: 'front', trackHistory: true }, position: { x: 60, y: 100 } },
+      { id: 'front', kind: 'entity', config: { key: 'front', domain: 'camera', name: 'Front door', history: { frame: true } }, position: { x: 60, y: 100 } },
       { id: 'snap', kind: 'camera_snapshot', config: { entity: { kind: 'literal', type: 'entity_id:camera', value: 'camera.porch' } }, position: { x: 360, y: 100 } },
       { id: 'text', kind: 'image_draw_text', config: { color: 'White', size: 16, background: true, text: { kind: 'literal', type: 'string', value: 'Porch' }, x: { kind: 'literal', type: 'number', value: 8 }, y: { kind: 'literal', type: 'number', value: 8 } }, position: { x: 660, y: 300 } },
       { id: 'show', kind: 'show_frame', config: { entity: 'front' }, position: { x: 960, y: 100 } },
     ],
     edges: [
-      { id: 'frame->snap', kind: 'execution', source: 'frame', sourcePort: 'next', target: 'snap', targetPort: 'in' },
+      { id: 'front:frame->snap', source: 'front', target: 'snap', port: 'frame' },
       { id: 'snap->show', kind: 'execution', source: 'snap', sourcePort: 'next', target: 'show', targetPort: 'in' },
       { id: 'snap.image:text.image', kind: 'data', source: 'snap', sourcePort: 'image', target: 'text', targetPort: 'image' },
       { id: 'text.image:show.image', kind: 'data', source: 'text', sourcePort: 'image', target: 'show', targetPort: 'image' },
     ] } as unknown as Graph)
-  const entities = [{ key: 'front', domain: 'camera', name: 'Front door' }]
   const taken = 'Image · 48 KB · 0 drawings', drawn = 'Image · 48 KB · 1 drawing'
   const list: TraceEvent[] = [
-    { seq: 1, node: 'frame', frame: '', t: 0, ms: 1, status: 'ok', port: 'next' },
+    { seq: 1, node: 'front', frame: '', t: 0, ms: 1, status: 'ok', port: 'frame' },
     { seq: 2, node: 'snap', frame: '', t: 1, ms: 120, status: 'ok', port: 'next', inputs: { entity: { type: 'entity_id:camera', v: 'camera.porch' } }, outputs: { image: { type: 'image', v: taken } } },
     { seq: 3, node: 'text', frame: '', t: 121, ms: 1, status: 'ok', port: 'next', inputs: { image: { type: 'image', v: taken, src: { node: 'snap', port: 'image' } } }, outputs: { image: { type: 'image', v: drawn } } },
     { seq: 4, node: 'show', frame: '', t: 122, ms: 1, status: 'ok', port: 'next', inputs: { image: { type: 'image', v: drawn, src: { node: 'text', port: 'image' } } } },
@@ -828,12 +839,12 @@ it('shows a picture as the recorder\'s short text, as plain words on its card an
   for (const event of list) { const row = (summary[event.node] ??= { count: 0, failed: 0, last: 'ok' }); row.count++; row.last = event.status }
   const answer: RunTraceResponse = {
     version: 1, live: false,
-    run: run({ runId: 'run-8', automationId: 'entity:doorbell', visualId: 'doorbell', visualRevision: 1, triggerNodeId: 'frame', cause: 'Frame', actionLabel: 'When a frame is needed ▸ Front door', trigger: { kind: 'frame', entity: 'front' } }),
-    snapshot: { revision: 'rev', visualId: 'doorbell', visualRevision: 1, graph: { ...doorbell(), definition: { entities, settings: [] } } as unknown as Graph, catalog: nodeCatalog },
-    trace: { format: 1, runId: 'run-8', rootNodeId: 'frame', startedUtc: '2026-11-18T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'frame', entity: 'front' }, events: list, summary },
+    run: run({ runId: 'run-8', automationId: 'entity:doorbell', visualId: 'doorbell', visualRevision: 1, triggerNodeId: 'front', cause: 'Frame', actionLabel: 'Front door: When a frame is needed', trigger: { kind: 'frame', entity: 'front' } }),
+    snapshot: { revision: 'rev', visualId: 'doorbell', visualRevision: 1, graph: { ...doorbell(), definition: { settings: [] } } as unknown as Graph, catalog: nodeCatalog },
+    trace: { format: 1, runId: 'run-8', rootNodeId: 'front', rootPort: 'frame', startedUtc: '2026-11-18T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'frame', entity: 'front' }, events: list, summary },
   }
   const { root } = mountDefinition(async () => answer, { path: '/entities/doorbell/runs/run-8', prepare: fixture => fixture.entities.seed('doorbell', {
-    name: 'Doorbell', device: null, settings: [], entities, logic: { kind: 'graph', graph: doorbell() } }) })
+    name: 'Doorbell', device: null, settings: [], logic: { kind: 'graph', graph: doorbell() } }) })
   await vi.waitFor(() => expect(steps(root)).toHaveLength(4))
   // On the cards: the words alone, never in quotes.
   const chips = (id: string) => [...card(root, id).querySelectorAll('.hs-value-chip')].map(chip => chip.textContent)
@@ -925,7 +936,7 @@ it('shows the not-found state for a run of another definition, a definition that
   await vi.waitFor(() => expect(gone.history.get()).toBe('/entities'))
   dispose?.(); document.body.innerHTML = ''
   // A class's definition records no runs.
-  const lamp = mountDefinition(async () => { throw { code: 'not_found', message: 'Run run-7 was not found.' } }, { path: '/entities/lamp/runs/run-7', prepare: fixture => fixture.entities.seed('lamp', { name: 'Lamp', device: null, settings: [], entities: null, logic: { kind: 'class', type: 'library:lib:Lamp' } }) })
+  const lamp = mountDefinition(async () => { throw { code: 'not_found', message: 'Run run-7 was not found.' } }, { path: '/entities/lamp/runs/run-7', prepare: fixture => fixture.entities.seed('lamp', { name: 'Lamp', device: null, settings: [], logic: { kind: 'class', type: 'library:lib:Lamp' } }) })
   await vi.waitFor(() => expect(lamp.root.textContent).toContain('This entity definition is built from a class in a node library, not from steps.'))
   button(lamp.root, 'Open in editor').click()
   await vi.waitFor(() => expect(lamp.history.get()).toBe('/entities/lamp'))

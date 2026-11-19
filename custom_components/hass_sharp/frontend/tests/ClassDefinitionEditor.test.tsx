@@ -1030,7 +1030,8 @@ it('shows a camera it made as Ready or Unavailable, never its access token, its 
 it("makes a class definition's device part of another definition, saved with its other details, and shows one that is gone", async () => {
   const { root, fixture } = setup('/entities/plug', f => {
     f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { model: 'S2' } })
-    f.entities.seed('hub', { name: 'Hub', device: {}, settings: [], entities: [{ key: 'hub', domain: 'binary_sensor', name: 'Hub' }], logic: { kind: 'graph', graph: { version: 5, name: 'Hub', nodes: [], edges: [] } } })
+    f.entities.seed('hub', { name: 'Hub', device: {}, settings: [], logic: { kind: 'graph', graph: { version: 5, name: 'Hub', edges: [],
+      nodes: [{ id: 'hub', kind: 'entity', config: { key: 'hub', domain: 'binary_sensor', name: 'Hub' }, position: { x: 60, y: 100 } }] } } })
     f.entities.seed('thermo', thermometer(null))
     // A device class with no details stored is a device all the same.
     f.entities.seed('bridge', plug([], 'Bridge'))

@@ -4,13 +4,14 @@ import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { NodeConfig } from '../src/visual/NodeConfig'
 import { Inspector } from '../src/visual/Inspector'
-import { addGraphNode, nodeCatalog, validateGraph, type Graph } from '../src/visual/contract'
+import { nodeCatalog, validateGraph } from '../src/visual/contract'
 import { connectNodes, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { nodeTitle } from '../src/visual/flow/flowModel'
 import type { VisualDiagnostic } from '../src/visual/api'
 import type { SavedEntities } from '../src/visual/adapter'
 import { keyProblem } from '../src/entities/definitionEdits'
 import { HassCtx } from '../src/context'
+import { add, empty, lit } from './visual-fixture'
 
 // An Entity node's right panel: its name in the header, then its key, type, settings, options, run history and entity
 // id in its own section; its state values are the generic Inputs.
@@ -25,12 +26,6 @@ afterEach(async () => {
   await new Promise(resolve => setTimeout(resolve, 0))
 })
 
-const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
-const empty = (entities: Record<string, unknown>[] = []): VisualGraph => ({ version: 5, name: 'Nodes', nodes: [], edges: [], definition: { entities, settings: [] } as never })
-const add = (graph: Graph, kind: string, id: string, config: Record<string, unknown> = {}) => {
-  const added = addGraphNode(graph, kind, id, nodeCatalog)
-  return updateNode(added, id, { config: { ...added.nodes.at(-1)!.config, ...config } })
-}
 const lamp = (config: Record<string, unknown> = {}) => add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp', ...config })
 
 /** Types into a field as a person does: the text, then leaving the field (a draft field commits on blur). */
