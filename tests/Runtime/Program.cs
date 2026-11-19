@@ -93,7 +93,9 @@ static class RuntimeCoreTests
         await Probe.Starts.Reader.ReadAsync();
         var pending = Enumerable.Range(0, 100).Select(i => queueManager.RunEntries("sensor.test", new(new() { EntityId = "sensor.test", State = i.ToString() }))).ToArray();
         Probe.Release.SetResult();
-        await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(10));
+        // One after the other, each with a 10 ms delay: about 1.1 s here, and 9 to 10 s with every core busy. The bound is
+        // only for a queue that stalls.
+        await Task.WhenAll(pending).WaitAsync(TimeSpan.FromSeconds(60));
         Check(Probe.Order.SequenceEqual(Enumerable.Range(0, 100)), "Queued must execute in trigger arrival order");
         queueManager.UnloadUserScripts();
         Console.WriteLine("PASS queue arrival order (100 triggers)");
