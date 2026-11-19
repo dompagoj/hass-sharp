@@ -314,12 +314,15 @@ def wrong_document(operation, args):
         definition = args.get("definition")
         takes = f'{operation} takes a definition: {{name, entities, logic: {{kind: "graph", graph}}}}'
         # Only what really is an automation's graph (or save's argument) goes to the automation tool.
-        if "graph" in args or not isinstance(definition, dict) or "logic" not in definition and ("nodes" in definition or "edges" in definition):
+        # An automation's read document has its graph at the top and no name.
+        automation = isinstance(definition, dict) and "logic" not in definition and (
+            "nodes" in definition or "edges" in definition or "graph" in definition and "name" not in definition)
+        if "graph" in args or not isinstance(definition, dict) or automation:
             return (f'{takes}; for an automation use {operation.removeprefix("entities_")}. '
                     'A definition from a C# class has logic: {kind: "class", type} instead')
-        if "logic" not in definition and "graph" in definition:
-            return f"{takes}: the graph goes inside logic, and entities and settings beside name"
         sentences = []
+        if "logic" not in definition and "graph" in definition:
+            sentences.append(f"{takes}: the graph goes inside logic, and entities and settings beside name")
         # A whole entities_read answer sent back: its revision would hide a stale copy, so it is refused, not trimmed.
         if stored := [key for key in STORED_DOCUMENT_KEYS if key in definition]:
             sentences.append("Send as definition only name, device, settings, entities and logic: remove " + ", ".join(sorted(stored))
@@ -328,8 +331,10 @@ def wrong_document(operation, args):
         graph = logic.get("graph") if isinstance(logic, dict) else None
         # A definition run's trace graph (trace with graph: true) is composed with a definition {entities, settings}.
         if isinstance(graph, dict) and (misplaced := [key for key in ("definition", "entities", "settings", "device", "logic") if key in graph]):
+            # Its settings are {key, type} only (DefinitionGraph.Compose): saved, they would clear every value and secret flag.
             sentences.append("The graph inside logic holds only version, name, nodes and edges: remove its " + " and ".join(misplaced)
-                             + " (a run's trace graph carries a definition). The entities and settings go at the top of the definition, beside name and logic")
+                             + ". Take the definition's entities and settings from entities_read, not from a trace: a trace graph's settings carry no values,"
+                             " labels or secret flags, so saving them would clear every setting's value")
         if isinstance(logic, dict) and logic.get("kind") not in ("graph", "class"):
             sentences.append('logic.kind is "graph" (with graph, a graph of the steps get_capabilities lists for document "entity") '
                              'or "class" (with type, a type id from entities_types)')

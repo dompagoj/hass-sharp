@@ -684,12 +684,22 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(sentence,refused['detail'],(name,args))
         # Only a graph that really is an automation's (nodes and edges at the top, no logic) is sent to save.
         self.assertNotIn('for an automation',(await self.call('entities_save',{'id':'x','expectedRevision':0,'definition':{'name':'Porch','graph':automation}})).data['error']['detail'])
+        # An automation's read document (graph at the top, no name, no logic) is an automation's: use save.
+        read={'version':5,'id':'porch','revision':3,'graph':automation,'automationId':'auto','enabled':True}
+        self.assertIn(entity_sentence,(await self.call('entities_save',{'id':'porch','expectedRevision':3,'definition':read})).data['error']['detail'])
+        # A definition with its graph at the top and stored keys beside it hears of both at once.
+        detail=(await self.call('entities_save',{'id':'porch','expectedRevision':3,'definition':{'name':'Porch','graph':automation,'id':'porch','revision':3}})).data['error']['detail']
+        self.assertIn('the graph goes inside logic',detail); self.assertIn('remove id, revision',detail)
         # A definition run's trace graph (trace with graph: true) is the graph composed with a definition {entities, settings};
         # copied into logic, it is refused with what to remove.
         composed={**self.GRAPH,'definition':{'entities':self.DEFINITION['entities'],'settings':[{'key':'address','type':'string'}]}}
         detail=(await self.call('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph','graph':composed}}})).data['error']['detail']
         self.assertIn('The graph inside logic holds only version, name, nodes and edges: remove its definition',detail)
-        self.assertIn('entities and settings go at the top of the definition',detail)
+        # A trace graph's settings are {key, type} only: the sentence sends the assistant to entities_read for them, never
+        # to move the trace's up (saving those would clear every setting's value).
+        self.assertIn('entities_read',detail)
+        self.assertIn("a trace graph's settings carry no values",detail)
+        self.assertNotIn('go at the top',detail)
         self.assertNotIn('for an automation',detail)
         detail=(await self.call('entities_preview',{'definition':{**self.DEFINITION,'logic':{'kind':'graph','graph':{**self.GRAPH,'entities':[],'settings':[]}}}})).data['error']['detail']
         self.assertIn('remove its entities and settings',detail)
