@@ -307,63 +307,146 @@ async def run_history(service_api, automation_id, args):
 
 def wrong_document(operation, args):
     """For arguments refused by the schema: the sentences that say what to send instead when they are the other kind of
-    document (an automation graph for a definition's tool, a definition for an automation's) or a definition put
-    together wrongly, else None. Each case and its sentence is a row of test_the_wrong_kind_of_document_is_refused_in_words."""
+    document (an automation graph for a definition's tool, a definition for an automation's), a run trace's graph, a
+    document under the wrong argument's name, or a definition put together wrongly, else None. The rules these sentences
+    keep (one tool never names the other for the same document; a trace graph always gets the one explanation and never
+    "use save"; ...) are checked over every combination in test_refusal_hints_keep_their_rules_for_every_way_a_document_is_missent,
+    and the cases are examples in test_the_wrong_kind_of_document_is_refused_in_words."""
     if not isinstance(args, dict):
         return None
     if operation in ("entities_preview", "entities_save"):
-        definition = args.get("definition")
-        twin = operation.removeprefix("entities_")
-        takes = f'{operation} takes a definition: {{name, entities, logic: {{kind: "graph", graph}}}}'
-        use_automation_tool = (f'{takes}; for an automation use {twin}. '
-                               'A definition from a C# class has logic: {kind: "class", type} instead')
-        if "graph" in args:
-            # Save's argument: an automation's graph, or a definition sent under the wrong name.
-            graph = args["graph"]
-            definition_like = isinstance(graph, dict) and any(key in graph for key in ("entities", "settings", "device", "logic"))
-            return f"{takes}: send it as definition, not graph" if definition_like else use_automation_tool
-        if not isinstance(definition, dict):
-            return f'{takes}, or logic: {{kind: "class", type}} for a C# class'
-        # Only what has none of a definition's own parts is an automation's: its graph (which has a name and a
-        # version of its own), or its read document (its graph at the top, and no name).
-        parts = [key for key in ("entities", "settings", "device", "logic") if key in definition]
-        flat = "nodes" in definition or "edges" in definition
-        if not parts and (flat or "graph" in definition and "name" not in definition):
-            return use_automation_tool
-        sentences = []
-        if "logic" not in definition and "graph" in definition:
-            sentences.append(f"{takes}: the graph goes inside logic, and entities and settings beside name")
-        elif "logic" not in definition and flat:
-            sentences.append(f"{takes}: the nodes and edges go inside logic.graph, as {{version, name, nodes, edges}}, and entities and settings beside name")
-        # A whole entities_read answer sent back: its revision would hide a stale copy, so it is refused, not trimmed. A
-        # version beside nodes and edges is the graph's own.
-        if stored := [key for key in STORED_DOCUMENT_KEYS if key in definition and not (key == "version" and flat)]:
-            sentences.append("Send as definition only name, device, settings, entities and logic: remove " + ", ".join(sorted(stored))
-                             + ", which an entities_read answer adds; id and expectedRevision (the revision read) are arguments of their own")
-        logic = definition.get("logic")
-        graph = logic.get("graph") if isinstance(logic, dict) else None
-        if isinstance(graph, dict) and (misplaced := [key for key in ("definition", "entities", "settings", "device", "logic") if key in graph]):
-            removal = "The graph inside logic holds only version, name, nodes and edges: remove its " + " and ".join(misplaced)
-            if "definition" in misplaced:
-                # Copied from a definition run's trace graph (trace with graph: true), which DefinitionGraph.Compose makes:
-                # its settings are {key, type} only, so saving them would clear every value and secret flag.
-                sentences.append(removal + ". Take the definition's entities and settings from entities_read, not from a trace: a trace graph's"
-                                 " settings carry no values, labels or secret flags, so saving them would clear every setting's value")
-            elif own := [key for key in ("entities", "settings", "device") if key in misplaced]:
-                # Written into the graph by hand: they keep their values, and their place is the definition's top.
-                sentences.append(removal + ". Put its " + " and ".join(own) + " at the top of the definition, beside name and logic")
-            else:
-                sentences.append(removal)
-        if isinstance(logic, dict) and logic.get("kind") not in ("graph", "class"):
-            sentences.append('logic.kind is "graph" (with graph, a graph of the steps get_capabilities lists for document "entity") '
-                             'or "class" (with type, a type id from entities_types)')
-        return ". ".join(sentences) or None
-    if operation in ("preview", "save"):
-        graph = args.get("graph")
-        if "definition" in args or isinstance(graph, dict) and any(key in graph for key in ("logic", "entities", "settings", "device", "definition")):
-            return (f"{operation} takes an automation graph: {{version, name, nodes, edges}}; for an entity definition use "
-                    f"entities_{operation}, which takes {{name, entities, logic}}")
-    return None
+        sentences = entity_tool_hints(operation, args)
+    elif operation in ("preview", "save"):
+        sentences = automation_tool_hints(operation, args)
+    else:
+        return None
+    return ". ".join(sentences) or None
+
+
+# A definition's own parts, which no automation has, and with the key a run's trace graph adds, what no graph holds.
+DEFINITION_PARTS = ("entities", "settings", "device", "logic")
+GRAPH_MISPLACED = ("definition", *DEFINITION_PARTS)
+
+
+def inner_graphs(document):
+    """The graphs inside a document, each with the words that name it: its logic's graph and a graph at its top."""
+    logic = document.get("logic")
+    found = []
+    if isinstance(logic, dict) and isinstance(logic.get("graph"), dict):
+        found.append(("The graph inside logic", logic["graph"]))
+    if isinstance(document.get("graph"), dict):
+        found.append(("The graph, which goes inside logic,", document["graph"]))
+    return found
+
+
+def document_kind(document):
+    """What a document sent to a tool is: "trace" (a definition run's trace graph, which carries definition), "definition"
+    (it has a definition's own parts), "automation" (an automation graph, or its read document, with nothing of a
+    definition in it or in its graph), "other" (not an object), or "loose" (anything else, such as {name, graph})."""
+    if not isinstance(document, dict):
+        return "other"
+    if "definition" in document:
+        return "trace"
+    if any(key in document for key in DEFINITION_PARTS):
+        return "definition"
+    if any(key in graph for _, graph in inner_graphs(document) for key in GRAPH_MISPLACED):
+        return "loose"
+    # An automation graph has a name and a version of its own; its read document holds it under graph, and has no name.
+    flat = "nodes" in document or "edges" in document
+    return "automation" if flat or isinstance(document.get("graph"), dict) and "name" not in document else "loose"
+
+
+def entity_tool_hints(operation, args):
+    """An entities tool's sentences, about the document in its definition argument (or, without one, in a graph argument)."""
+    twin = operation.removeprefix("entities_")
+    takes = f'{operation} takes a definition: {{name, entities, logic: {{kind: "graph", graph}}}}'
+    if "graph" in args and "definition" in args:
+        lead, document = f"{takes}: the graph goes inside the definition's logic, not in an argument of its own", args["definition"]
+    elif "graph" in args or isinstance(args.get("definition"), dict):
+        document = args["graph"] if "graph" in args else args["definition"]
+        kind = document_kind(document)
+        if kind == "automation":
+            return [f'{takes}; for an automation use {twin}. A definition from a C# class has logic: {{kind: "class", type}} instead']
+        # Save's argument holding a definition (or what is not an automation): the argument's name. A trace graph is neither.
+        lead = None if "graph" not in args else takes if kind == "trace" else f"{takes}: send it as definition, not graph"
+    else:
+        return [f'{takes}, or logic: {{kind: "class", type}} for a C# class']
+    return [*([lead] if lead else []), *(definition_hints(document) if isinstance(document, dict) else [])]
+
+
+def automation_tool_hints(operation, args):
+    """An automation tool's sentences, about the document in its graph argument (or in a definition argument)."""
+    document = args["definition"] if "definition" in args else args.get("graph")
+    kind = document_kind(document)
+    takes = f"{operation} takes an automation graph: {{version, name, nodes, edges}}"
+    if kind == "definition":
+        return [f"{takes}; for an entity definition use entities_{operation}, which takes it as definition: {{name, entities, logic}}",
+                *definition_hints(document)]
+    if kind == "automation" and "definition" in args:
+        return [f"{takes}: send {'it' if 'nodes' in document or 'edges' in document else 'its graph'} as graph, not definition"]
+    # A trace graph (or a document holding one) is a definition's, never an automation, but it is no definition either.
+    traced = kind == "trace" or kind == "loose" and any("definition" in graph for _, graph in inner_graphs(document))
+    return graph_hints(document) if traced else []
+
+
+def definition_hints(definition):
+    """The sentences for a definition put together wrongly, in this order: where its graph goes, the keys a read
+    answer adds, what its graphs hold, and its logic's kind."""
+    sentences = []
+    logic = definition.get("logic")
+    top_graph, flat = "graph" in definition, "nodes" in definition or "edges" in definition
+    if top_graph or flat:
+        if isinstance(logic, dict) and logic.get("graph") is not None:
+            beside = " and the ".join([*(["graph"] if top_graph else []), *(["nodes and edges"] if flat else [])])
+            sentences.append(f"In a definition, the graph goes only inside logic: remove the {beside} beside logic")
+        else:
+            place = ('the graph goes inside logic, as logic: {kind: "graph", graph}' + (", with the nodes and edges inside that graph" if flat else "")
+                     if top_graph else 'the nodes and edges go inside logic.graph, as logic: {kind: "graph", graph: {version, name, nodes, edges}}')
+            if isinstance(logic, dict) and logic.get("kind") == "class":
+                place += '; a definition from a C# class has logic: {kind: "class", type} and no graph'
+            elif "logic" not in definition:
+                place += ", and entities and settings beside name"
+            sentences.append("In a definition, " + place)
+    # A whole entities_read answer sent back: its revision would hide a stale copy, so it is refused, not trimmed. A
+    # version beside nodes and edges is the graph's own.
+    if stored := [key for key in STORED_DOCUMENT_KEYS if key in definition and not (key == "version" and flat)]:
+        sentences.append("Send as definition only name, device, settings, entities and logic: remove " + ", ".join(sorted(stored))
+                         + ", which an entities_read answer adds; id and expectedRevision (the revision read) are arguments of their own"
+                         + (", and so is enabled: false saves a new definition off, and entities_set_enabled turns a saved one on or off"
+                            if "enabled" in stored else ""))
+    sentences += graph_hints(definition)
+    if isinstance(logic, dict) and logic.get("kind") not in ("graph", "class"):
+        sentences.append('logic.kind is "graph" (with graph, a graph of the steps get_capabilities lists for document "entity") '
+                         'or "class" (with type, a type id from entities_types)')
+    return sentences
+
+
+def graph_hints(document):
+    """What the graphs in a document must not hold, and, for a run trace's graph, where a definition's entities and
+    settings come from instead."""
+    sentences, moved = [], []
+    misplaced = [(where, [key for key in GRAPH_MISPLACED if key in graph]) for where, graph in inner_graphs(document)]
+    if "definition" in document:
+        misplaced.append(("This graph, as a definition's logic.graph,", ["definition"]))
+    traced = any("definition" in keys for _, keys in misplaced)
+    for where, keys in misplaced:
+        if not keys:
+            continue
+        sentence = f"{where} holds only version, name, nodes and edges: remove its " + " and ".join(keys)
+        # Written into a graph by hand, they go to the definition's top, unless it already has its own (null and an
+        # empty list hold nothing): moved there, the graph's would replace them. A trace's never move: they have no values.
+        if not traced and (own := [key for key in ("entities", "settings", "device")
+                                   if key in keys and key not in moved and document.get(key) in (None, [])]):
+            sentence += ". Put its " + " and ".join(own) + " at the top of the definition, beside name and logic"
+            moved += own
+        sentences.append(sentence)
+    if traced:
+        # Copied from a definition run's trace graph (trace with graph: true), which DefinitionGraph.Compose makes: its
+        # settings are {key, type} only, so saving them would clear every value and secret flag.
+        sentences.append("A graph that carries a definition was copied from a definition's run trace, so it is not an automation. Take the "
+                         "definition's entities and settings from entities_read, not from a trace: a trace graph's settings carry no values, "
+                         "labels or secret flags, so saving them would clear every setting's value")
+    return sentences
 
 
 def secret_values(value):

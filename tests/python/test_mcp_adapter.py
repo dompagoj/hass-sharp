@@ -679,8 +679,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         def in_logic(graph): return {**self.DEFINITION,'logic':{'kind':'graph','graph':graph}}
         use_save='entities_save takes a definition: {name, entities, logic: {kind: "graph", graph}}; for an automation use save'
         to_entities='save takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_save'
-        hints=('takes a definition','takes an automation graph','inside logic','Send as definition only','entities_read','at the top','logic.kind is')
+        hints=('takes a definition','takes an automation graph','inside logic','Send as definition only','entities_read','at the top','logic.kind is','run trace')
         broken_node={**self.GRAPH,'nodes':[{**self.GRAPH['nodes'][0],'id':5}]}
+        # What every refusal of a trace graph says, wherever it was sent.
+        trace_says=["copied from a definition's run trace, so it is not an automation","Take the definition's entities and settings from entities_read, not from a trace",
+                    "a trace graph's settings carry no values"]
+        address=[{'key':'address','label':'Address','type':'string','value':'http://plug'}]
         rows=(
             # 1. An automation graph as the definition (nodes and edges at the top, beside its own name and version).
             ('entities_save',save(automation),[use_save],['entities_read','inside logic']),
@@ -695,28 +699,64 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_save',save({'name':'Porch','entities':entities,'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation']),
             ('entities_save',save({'version':5,'name':'Porch','entities':entities,'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation','remove version']),
             ('entities_save',{'id':'x','expectedRevision':0,'graph':self.DEFINITION},['send it as definition, not graph'],['for an automation']),
-            # 4. A stored definition document sent back whole.
+            # A definition and a separate graph argument: the graph goes inside the definition's logic.
+            ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph'}},'graph':self.GRAPH},
+             ["entities_save takes a definition: {name, entities, logic: {kind: \"graph\", graph}}: the graph goes inside the definition's logic"],['for an automation','send it as definition']),
+            # A graph, or its nodes and edges, beside a logic that has none.
+            ('entities_save',save({**self.DEFINITION,'logic':{'kind':'graph'},'graph':self.GRAPH}),['the graph goes inside logic'],['for an automation']),
+            ('entities_save',save({**self.DEFINITION,'logic':{'kind':'class','type':'library:p:NodeLib.P'},'nodes':[],'edges':[]}),
+             ['the nodes and edges go inside logic.graph','a definition from a C# class has logic: {kind: "class", type} and no graph'],['for an automation']),
+            # 4. A stored definition document sent back whole; enabled, like id and expectedRevision, is an argument of its own.
             ('entities_save',{'id':'porch','expectedRevision':4,'definition':stored},
-             ['Send as definition only name, device, settings, entities and logic: remove activationError, active, automationId,','id and expectedRevision'],['for an automation']),
+             ['Send as definition only name, device, settings, entities and logic: remove activationError, active, automationId,','id and expectedRevision',
+              'and so is enabled'],['for an automation']),
+            ('entities_save',save({**self.DEFINITION,'enabled':False}),['remove enabled, which an entities_read answer adds',
+             'id and expectedRevision (the revision read) are arguments of their own, and so is enabled: false saves a new definition off'],['for an automation']),
             # 5. A trace graph copied into logic: its settings have no values, so they come from entities_read.
-            ('entities_save',save(in_logic(composed)),['The graph inside logic holds only version, name, nodes and edges: remove its definition',
-             "Take the definition's entities and settings from entities_read, not from a trace","a trace graph's settings carry no values"],['at the top','for an automation']),
-            # 6. Entities, settings or a device written into the graph itself: they go at the top of the definition.
-            ('entities_preview',{'definition':in_logic({**self.GRAPH,'entities':[],'settings':[]})},
+            ('entities_save',save(in_logic(composed)),['The graph inside logic holds only version, name, nodes and edges: remove its definition',*trace_says],
+             ['at the top','for an automation']),
+            ('entities_save',save({'name':'Motion','logic':{'kind':'graph','graph':{**composed,'entities':entities}}}),
+             ['remove its definition and entities',*trace_says],['Put its','at the top']),
+            # A trace graph sent whole, as the definition, as save's graph argument, to save or to preview: never to the other family.
+            ('entities_save',save(composed),['the nodes and edges go inside logic.graph',"This graph, as a definition's logic.graph, holds only version, name, nodes and edges: remove its definition",
+             *trace_says],['for an automation use','for an entity definition use']),
+            ('entities_save',{'id':'x','expectedRevision':0,'graph':composed},['entities_save takes a definition',*trace_says],['for an automation use','send it as definition']),
+            ('save',{'id':'x','expectedRevision':0,'graph':composed},["This graph, as a definition's logic.graph, holds only version, name, nodes and edges: remove its definition",*trace_says],
+             ['for an entity definition use','takes an automation graph']),
+            # Was "use entities_preview" (fix round 3): a trace graph is neither a definition nor an automation.
+            ('preview',{'graph':{**automation,'definition':{'settings':[]}}},['remove its definition',*trace_says],['for an entity definition use']),
+            # A graph at the top beside a logic that holds a trace graph.
+            ('entities_save',save({'name':'Porch','graph':automation,'logic':{'kind':'graph','graph':composed}}),
+             ['the graph goes only inside logic','The graph inside logic holds only version, name, nodes and edges: remove its definition',*trace_says],['for an automation']),
+            # 6. Entities, settings or a device written into the graph itself: those the top does not have go there, and
+            # those it has are only removed from the graph. (Fix round 3 pinned "Put its entities and settings at the top"
+            # for a top that already has both: saved, that replaces them.)
+            ('entities_preview',{'definition':{**in_logic({**self.GRAPH,'entities':[],'settings':[]}),'settings':address}},
+             ['remove its entities and settings'],['Put its','at the top','entities_read','for an automation']),
+            ('entities_preview',{'definition':{'name':'Motion','logic':{'kind':'graph','graph':{**self.GRAPH,'entities':entities,'settings':[]}}}},
              ['remove its entities and settings','Put its entities and settings at the top of the definition, beside name and logic'],['entities_read','for an automation']),
+            ('entities_preview',{'definition':{'name':'Motion','entities':entities,'logic':{'kind':'graph','graph':{**self.GRAPH,'entities':entities,'settings':address}}}},
+             ['remove its entities and settings','Put its settings at the top of the definition'],['Put its entities','entities_read','http://plug']),
+            # The top's device is null (none), so the graph's goes there.
             ('entities_save',save(in_logic({**self.GRAPH,'device':{}})),['remove its device','Put its device at the top of the definition'],['entities_read']),
             ('entities_save',save(in_logic({**self.GRAPH,'logic':{}})),['remove its logic'],['entities_read','at the top']),
             # 7. Rows 3 and 4 together: both sentences, in that order.
             ('entities_save',save({'name':'Porch','graph':automation,'id':'porch','revision':3}),['the graph goes inside logic','remove id, revision'],['for an automation']),
-            # An unknown logic kind, and no definition at all.
+            # An unknown logic kind, a graph sent as logic itself, and no definition at all.
             ('entities_save',save({**self.DEFINITION,'logic':{'kind':'script','graph':automation}}),['logic.kind is "graph"'],['for an automation']),
+            ('entities_save',save({**self.DEFINITION,'logic':self.GRAPH}),['logic.kind is "graph"'],['for an automation']),
             ('entities_save',{'id':'x','expectedRevision':0},['entities_save takes a definition'],['for an automation']),
             # 8. The mirror: a definition, or a graph carrying a definition's parts, sent to an automation's tool.
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'logic':{'kind':'graph'}}},[to_entities],[]),
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'entities':[]}},[to_entities],[]),
             ('save',{'id':'x','expectedRevision':0,'definition':self.DEFINITION},[to_entities],[]),
             ('preview',{'graph':self.DEFINITION},['preview takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_preview'],[]),
-            ('preview',{'graph':{**automation,'definition':{'settings':[]}}},['preview takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_preview'],[]),
+            ('save',{'id':'x','expectedRevision':0,'graph':{'name':'Porch','entities':entities,'graph':composed}},
+             [to_entities,'the graph goes inside logic','remove its definition',*trace_says],['for an automation use']),
+            # An automation sent to its own tool under the definition's name: the argument's name, not the other family.
+            ('save',{'id':'x','expectedRevision':0,'definition':automation},['save takes an automation graph: {version, name, nodes, edges}: send it as graph, not definition'],
+             ['for an entity definition use']),
+            ('preview',{'definition':read},['send its graph as graph, not definition'],['for an entity definition use']),
             # 9. The right kind of document, refused for something else: only the schema's words.
             ('entities_save',save(in_logic(broken_node)),['Arguments do not match the tool parameter schema'],hints),
             ('entities_save',save({**self.DEFINITION,'name':5}),['Arguments do not match the tool parameter schema'],hints),
@@ -742,6 +782,131 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.service.entities.assert_not_called()
         open_below={**self.DEFINITION,'device':{'model':'Plug','via':{'definition':'hub'}},'settings':[{'key':'k','anything':1}],'entities':[{'key':'a','domain':'nope','what':2}]}
         self.assertFalse((await self.call('entities_preview',{'definition':open_below})).error)
+
+    def test_refusal_hints_keep_their_rules_for_every_way_a_document_is_missent(self):
+        # Every combination of what a document can carry, sent as each argument to each of the four tools; the schema's
+        # refusals are checked against the rules the hints keep, each a predicate on the request and the words.
+        import itertools,re
+        p=self.adapter.p
+        marks=('definition','entities','settings','device','logic')
+        secret='plug-address-value'
+        automation={'version':5,'name':'Porch','nodes':[{'id':'t','kind':'trigger','config':{'type':'manual'}}],'edges':[]}
+        copied={'entities':self.DEFINITION['entities'],'settings':[{'key':'address','type':'string'}]}
+        trace={**self.GRAPH,'definition':copied}
+        inner={'definition':copied,'entities':[{'key':'inner','domain':'switch'}],'settings':[{'key':'inner','type':'string','value':secret}],'device':{},'logic':{'kind':'graph'}}
+        # Each top key (entities, settings, device) is present or not on its own, so one set holds all three of the graph's own.
+        inner_sets=((),('definition',),('entities',),('logic',),('definition','entities'),('entities','settings','device'),marks)
+        logics=(None,{'kind':'graph'},{'kind':'class','type':'library:p:NodeLib.P'},
+                *({'kind':'graph','graph':{**self.GRAPH,**{key:inner[key] for key in keys}}} for keys in inner_sets))
+        tops={'name':'Porch','entities':self.DEFINITION['entities'],'settings':[{'key':'address','label':'Address','type':'string','value':secret}],'device':{'model':'Plug'}}
+        storeds=({},{'id':'porch','revision':4,'status':'running'},{'version':1,'id':'porch','revision':4,'enabled':False})
+        def documents():
+            for present in itertools.product((False,True),repeat=len(tops)):
+                base={key:value for (key,value),on in zip(tops.items(),present) if on}
+                for logic,graph,flat,stored,definition in itertools.product(logics,(None,automation,trace),(False,True),storeds,(False,True)):
+                    document={**stored,**base,**({'logic':logic} if logic else {}),**({'graph':graph} if graph else {})}
+                    if flat: document.update(version=5,nodes=self.GRAPH['nodes'],edges=[])
+                    if definition: document['definition']=copied
+                    yield document
+            yield 'Porch'
+        def requests(document):
+            for name in ('entities_save','entities_preview','save','preview'):
+                ids={'id':'x','expectedRevision':0} if name.endswith('save') else {}
+                for sent in ('definition','graph','both') if name.startswith('entities_') else ('graph','definition'):
+                    yield name,sent,{**ids,**({'graph':automation,'definition':document} if sent=='both' else {sent:document})}
+        schemas={name:p.Schema(self.adapter.TOOLS[name][0]) for name in ('entities_save','entities_preview','save','preview')}
+        def refusal(name,args):
+            """The detail of the refusal an assistant gets, as HassSharpTool.async_call words it; None when accepted."""
+            try:
+                schemas[name](args)
+            except p.Invalid as invalid:
+                hint=self.adapter.wrong_document(name,args)
+                return (f'{hint}. ' if hint else '')+f'Arguments do not match the tool parameter schema: {invalid}'
+            return None
+        def facts(d):
+            """What a generated document carries, worked out once for all the tools it is sent to."""
+            if not isinstance(d,dict):
+                return None
+            logic=d.get('logic')
+            graphs=[g for g in (logic.get('graph') if isinstance(logic,dict) else None,d.get('graph')) if isinstance(g,dict)]
+            inner=any(k in g for g in graphs for k in marks)
+            flat='nodes' in d or 'edges' in d
+            marked=inner or any(k in d for k in marks)
+            return types.SimpleNamespace(
+                marked=marked, flat=flat, trace_top='definition' in d, traced='definition' in d or any('definition' in g for g in graphs),
+                automation_like=not marked and (flat or isinstance(d.get('graph'),dict) and 'name' not in d),
+                definition_like='definition' not in d and any(k in d for k in ('entities','settings','device','logic')),
+                stored=[k for k in self.adapter.STORED_DOCUMENT_KEYS if k in d and not (k=='version' and flat)],
+                movable=[k for k in ('entities','settings','device') if any(k in g for g in graphs) and d.get(k) in (None,[])],
+                loose_graph=('graph' in d or flat) and not (isinstance(logic,dict) and logic.get('graph') is not None),
+                clean_entity=not inner and 'definition' not in d and 'graph' not in d and not flat and not (isinstance(logic,dict) and logic.get('kind') not in ('graph','class')))
+        order=('takes a','In a definition,','Send as definition only','holds only version, name, nodes and edges','Put its','copied from','logic.kind is')
+        others=('In a definition,','Send as definition only','holds only','Put its','copied from','logic.kind is','send it as','send its graph')
+        moves=re.compile(r'Put its (.+?) at the top of the definition')
+        def broken(name,sent,f,text,texts):
+            """The numbers of the rules the words break; f is the document's facts (None for one that is not an object)."""
+            entity=name.startswith('entities_')
+            twin=name.removeprefix('entities_') if entity else 'entities_'+name
+            hint=text.split('Arguments do not match the tool parameter schema')[0]
+            use_automation='for an automation use ' in hint
+            use_entities='for an entity definition use ' in hint
+            as_graph='as graph, not definition' in hint
+            as_definition='send it as definition, not graph' in hint
+            from_read='from entities_read' in hint
+            moved=[key for group in moves.findall(hint) for key in group.split(' and ')]
+            traced=f is not None and f.traced
+            # Whether the words speak about the document as a definition (an entities tool's own, or after "use entities_").
+            analysed=f is not None and (entity and (sent=='both' or not f.automation_like) or use_entities)
+            rules=[
+                # 1. "use save" only for a pure automation, sent alone to an entities tool, naming the twin.
+                not use_automation or entity and sent!='both' and f is not None and not f.marked and f'for an automation use {twin}.' in hint,
+                # 2. "use entities_save" only for what has logic, entities, settings or a device at its top, never a trace graph.
+                not use_entities or not entity and f is not None and f.definition_like and f'for an entity definition use {twin},' in hint,
+                # 3. The tool named does not name this one back for the same document (sent as that tool's argument).
+                (not use_automation or 'for an entity definition use' not in (texts[twin,'graph'] or ''))
+                and (not use_entities or 'for an automation use' not in (texts[twin,'definition'] or '')),
+                # 4. A trace graph, wherever it is, gets the one explanation, and never "use save".
+                not traced or hint.count('copied from')==1 and from_read and 'carry no values' in hint and not use_automation
+                and 'holds only version, name, nodes and edges' in hint and 'remove its definition' in hint,
+                # 5. entities_read as where entities and settings come from: only for a trace graph.
+                not from_read or traced,
+                # 6. "at the top of the definition": every key the graphs have that the top has not (null and [] hold nothing), and only those.
+                sorted(moved)==sorted(f.movable if analysed and not traced else []) and len(moved)==len(set(moved)),
+                # 7. A stored document: the keys to remove, and that id, expectedRevision and enabled are arguments of their own.
+                ('Send as definition only' in hint)==bool(analysed and f.stored) and not (analysed and f.stored and not (
+                    'remove '+', '.join(sorted(f.stored))+', which an entities_read answer adds' in hint
+                    and 'id and expectedRevision (the revision read) are arguments of their own' in hint and ('so is enabled' in hint)==('enabled' in f.stored))),
+                # 8. The right tool under the wrong argument's name is told the argument's name, not sent to the other family.
+                as_graph==(not entity and sent=='definition' and f is not None and f.automation_like) and not (as_graph and use_entities)
+                and (not as_definition or entity and sent=='graph' and not (f is not None and (f.automation_like or f.trace_top)))
+                and (not (entity and sent=='graph' and f is not None and f.definition_like) or as_definition and not use_automation),
+                # 9. A definition and a graph argument: about the definition, with the graph inside its logic.
+                sent!='both' or not entity or "the graph goes inside the definition's logic" in hint and not use_automation and not as_definition,
+                # 10. A graph, or nodes and edges, at the top of a definition whose logic has no graph: it goes inside logic.
+                not (analysed and f.loose_graph) or 'the graph goes inside logic' in hint or 'the nodes and edges go inside logic.graph' in hint,
+                # 11. Right in every respect these words speak about: none of them.
+                not (f is not None and (f.clean_entity and not f.stored and sent=='definition' if entity else not f.marked and sent=='graph')) or hint=='',
+                # 12. Each said once, in a fixed order, nothing against another, and never a setting's value.
+                len(sentences:=[s for s in hint.split('. ') if s.strip()])==len(set(sentences)) and (at:=[hint.find(m) for m in order if m in hint])==sorted(at)
+                and not (moved and from_read) and not (as_definition and use_automation) and not (use_entities and as_graph)
+                and not (use_automation and any(o in hint for o in others)) and secret not in text]
+            return [number for number,kept in enumerate(rules,1) if not kept]
+        failures,per_rule,checked=[],{},0
+        for document in documents():
+            f=facts(document)
+            texts={(name,sent):refusal(name,args) for name,sent,args in requests(document)}
+            for (name,sent),text in texts.items():
+                if text is None:
+                    continue
+                checked+=1
+                if numbers:=broken(name,sent,f,text,texts):
+                    args=next(args for n,s,args in requests(document) if (n,s)==(name,sent))
+                    failures.append(f'rules {numbers}: {name} {json.dumps(args)}\n  -> {text}')
+                    for number in numbers:
+                        per_rule[number]=per_rule.get(number,0)+1
+        self.assertGreater(checked,50000)
+        if failures:
+            self.fail(f'{len(failures)} of {checked} refusals break a rule (refusals per rule: {dict(sorted(per_rule.items()))}); the first:\n'+'\n'.join(failures[:8]))
 
     async def test_catalog_tools_for_entity_definitions(self):
         self.service.node_library.side_effect=self.library
