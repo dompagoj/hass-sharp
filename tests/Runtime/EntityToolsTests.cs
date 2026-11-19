@@ -527,11 +527,14 @@ static class EntityToolsTests
             await EntityTestHome.Until(() => Refused() >= 5, "five refused polls");
             var failed = home.Logs(PyLogLevel.Error).Skip(errors).ToArray();
             server.Up();
-            Check(failed.Length == 1 && failed[0].StartsWith("Meter: the timer callback every 20 ms failed: ", StringComparison.Ordinal) && !failed[0].Contains(server.Url("")),
-                "a server that is down is logged once: " + string.Join(" | ", failed));
+            // A poll in flight as the server goes down is answered by HttpListener as it stops (empty, or with a 404, as
+            // seen), and fails for a reason of its own, logged once too; on a slow machine one often is. The refused polls
+            // after it are logged once.
+            Check(failed.Length is 1 or 2 && failed.All(line => line.StartsWith("Meter: the timer callback every 20 ms failed: ", StringComparison.Ordinal) && !line.Contains(server.Url("")))
+                && failed.Distinct().Count() == failed.Length, "a server that is down is logged once: " + string.Join(" | ", failed));
             server.Respond("/power", LoopbackServer.Reply.Text("13"));
             await EntityTestHome.Until(() => Last("power") == "13", "the poll works again");
-            Check(home.Logs(PyLogLevel.Info).Count(line => line == "Meter: the timer callback every 20 ms works again") == 1 && home.Logs(PyLogLevel.Error).Length == errors + 1,
+            Check(home.Logs(PyLogLevel.Info).Count(line => line == "Meter: the timer callback every 20 ms works again") == 1 && home.Logs(PyLogLevel.Error).Length == errors + failed.Length,
                 "the recovery is logged once: " + string.Join(" | ", home.Logs()));
             Console.WriteLine("PASS entity tools: a poll of a server that is down logs one error, not one per tick, and one line when it works again");
 
