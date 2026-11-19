@@ -713,6 +713,8 @@ static class EntityGraphTests
         var batches = rig.Batches;
         await rig.Restart();
         Check(rig.Home.Syncs("motion").Length == 2 && rig.Home.Syncs("relay").Length == 2, "the restart registers the entities again");
+        // Init does not wait for a start, which runs on a thread of its own.
+        await rig.Started("motion");
         var motion = await rig.Read("motion");
         Check(Status(motion) == "running" && motion["revision"]!.GetValue<long>() == 1 && motion["currentRevisionActive"]!.GetValue<bool>(), "it runs after the restart: " + motion.ToJsonString());
         await rig.Until("motion:any_motion", s => Available(s) && Is(s, "is_on", true), "the State worked out after the restart", batches);

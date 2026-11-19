@@ -43,6 +43,10 @@ static class EntityStartupTests
     }
     static Task<JsonObject> Read(HassSharpManager api, string id) => Ok(api.EntityRequest, new { operation = "read", id });
     static string Status(JsonObject document) => document["status"]!.GetValue<string>();
+    // Init and a retry start a definition without waiting for the start, which runs on a thread of its own (a save waits
+    // for it, briefly, to answer how it went); the status is set before the entities are published.
+    static Task Published(EntityTestHome home, int batches, string uniqueId) =>
+        EntityTestHome.Until(() => home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>() == uniqueId), uniqueId + " is published");
     static long Revision(JsonObject document) => document["revision"]!.GetValue<long>();
     static string[] Ids(JsonNode? list) => list!.AsArray().Select(item => item!["id"]!.GetValue<string>()).ToArray();
     static string Storage(EntityTestHome home, params string[] parts) => Path.Combine([home.Root, ".storage", "hass_sharp", .. parts]);
@@ -359,7 +363,9 @@ static class EntityStartupTests
                     await api.RetryFailedLoads();
                     Check(CannotStart(mark).Length == 0, "a retry for the same reason warned: " + string.Join(" | ", CannotStart(mark)));
                     File.WriteAllText(marker, "");
+                    var batches = home.Pushes().Length;
                     await api.RetryFailedLoads();
+                    await Published(home, batches, "flaky:relay");
                     Check(Status(await Read(api, "flaky")) == "running", "the flaky plug does not run after the retry");
                     File.Delete(marker);
                     await Ok(api.EntityRequest, new { operation = "save", id = "flaky", expectedRevision = 1, definition = EntityApiTests.Definition("Flaky plug", marker, "library:plugs:NodeLib.FlakyPlug") });
@@ -434,11 +440,12 @@ static class EntityStartupTests
         finally { await first.UnloadAsync(); }
 
         File.WriteAllText(Storage(home, "entities", "plug2.json"), "{");
-        var (syncs, broken) = (home.Syncs("plug1").Length, home.Syncs("plug2").Length);
+        var (syncs, broken, batches) = (home.Syncs("plug1").Length, home.Syncs("plug2").Length, home.Pushes().Length);
         var api = new HassSharpManager(home.Root);
         try
         {
             await api.Init();
+            await Published(home, batches, "plug1:relay");
             var plug1 = await Read(api, "plug1");
             Check(Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && plug1["activationError"] == null && Revision(plug1) == 1,
                 "plug1 runs after the restart: " + plug1.ToJsonString());
@@ -518,6 +525,7 @@ static class EntityStartupTests
         }
         finally { await first.UnloadAsync(); }
 
+        var batches = home.Pushes().Length;
         var api = new HassSharpManager(home.Root);
         try
         {
@@ -526,6 +534,7 @@ static class EntityStartupTests
             Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that never ends held startup {clock.Elapsed.TotalSeconds:F1} s");
             var hang = await Read(api, "hang");
             Check(Status(hang) == "failed" && hang["activationError"]?.GetValue<string>() == message, "the hanging definition after the restart: " + hang.ToJsonString());
+            await Published(home, batches, "plug1:relay");
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the hanging one does not run");
             Console.WriteLine("PASS entity startup: a definition whose Setup() never ends fails within the setup bound and the definitions after it load at Init");
         }
@@ -580,6 +589,7 @@ static class EntityStartupTests
         }
         finally { await Wake(1); await first.UnloadAsync(); }
 
+        var batches = home.Pushes().Length;
         var api = new HassSharpManager(home.Root);
         try
         {
@@ -588,6 +598,7 @@ static class EntityStartupTests
             Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that blocks its thread held startup {clock.Elapsed.TotalSeconds:F1} s");
             var block = await Read(api, "block");
             Check(Status(block) == "failed" && block["activationError"]?.GetValue<string>() == message, "the blocking definition after the restart: " + block.ToJsonString());
+            await Published(home, batches, "plug1:relay");
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the blocking one does not run");
             Check(await Wake(2) == 2, "the Setup() at Init never blocked its thread");
             Console.WriteLine("PASS entity startup: a definition whose Setup() blocks its thread fails within the setup bound when saved and at Init, and the definitions after it load");
@@ -609,22 +620,26 @@ static class EntityStartupTests
         finally { await first.UnloadAsync(); }
 
         home.FailPrune = true;
+        var batches = home.Pushes().Length;
         var failing = new HassSharpManager(home.Root);
         try
         {
             await failing.Init().WaitAsync(TimeSpan.FromSeconds(30));
             Check(home.Logs().Any(line => line.Contains("Cannot prune") && line.Contains("the registry is locked")), "the failing prune is not logged: " + string.Join(" | ", home.Logs()));
+            await Published(home, batches, "plug1:relay");
             Check(Status(await Read(failing, "plug1")) == "running", "plug1 does not run after a failing prune");
         }
         finally { await failing.UnloadAsync(); }
 
         home.FailPrune = false; home.IgnorePrune = true;
         HassSharpManager.RemovalTimeout = TimeSpan.FromMilliseconds(200);
+        batches = home.Pushes().Length;
         var quiet = new HassSharpManager(home.Root);
         try
         {
             await quiet.Init().WaitAsync(TimeSpan.FromSeconds(5));
             Check(home.Logs().Any(line => line.Contains("Cannot prune") && line.Contains("did not answer")), "the unanswered prune is not logged: " + string.Join(" | ", home.Logs()));
+            await Published(home, batches, "plug1:relay");
             Check(Status(await Read(quiet, "plug1").WaitAsync(TimeSpan.FromSeconds(5))) == "running", "plug1 does not run after an unanswered prune");
         }
         finally { await quiet.UnloadAsync(); }
@@ -658,6 +673,7 @@ static class EntityStartupTests
         }
         finally { await first.UnloadAsync(); }
 
+        var batches = home.Pushes().Length;
         var api = new HassSharpManager(home.Root);
         try
         {
@@ -674,6 +690,7 @@ static class EntityStartupTests
             await api.RetryFailedLoads();
             Check(home.Logs(PyLogLevel.Warn).Length == before && !home.Logs(PyLogLevel.Error).Any(l => l.Contains("entity definition", StringComparison.OrdinalIgnoreCase)),
                 "a retry for the same reason logged: " + string.Join(" | ", home.Logs().TakeLast(4)));
+            await Published(home, batches, "spare:relay");
             Check(Status(await Read(api, "spare")) == "running" && VisualTests.Loaded(api, "auto") != null, "the other definition or the automation does not run");
             Check(home.Prunes()[^1] == """["plug1","spare"]""", "the prune: " + home.Prunes()[^1]);
             Console.WriteLine("PASS entity startup: a definition whose class is gone records why and the other definitions and automations load");
@@ -774,10 +791,12 @@ static class EntityStartupTests
         }
         int Ran(string command) => EntityTestHome.Commands().Count(c => c == command);
         Edit("disk");
+        var batches = home.Pushes().Length;
         var api = new HassSharpManager(home.Root);
         try
         {
             await api.Init();
+            await Published(home, batches, "plug1:relay");
             var plug1 = await Read(api, "plug1");
             Check(Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && Revision(plug1) == 1 && plug1["source"]!.GetValue<string>().Contains("disk turn_on"),
                 "plug1 after the restart: " + plug1.ToJsonString());
@@ -839,9 +858,7 @@ static class EntityStartupTests
             api.SetEntityDescriptions(Fixture("ha-entity-components.json"), started: true);
             Check(api.RetriesQueued == 1, "the push did not retry: " + api.RetriesQueued);
             await api.RetriesDone();
-            // The retry loads the definition and starts it, as Init does, without waiting for the start, which runs on a
-            // thread of its own; the status is set before the entities are published.
-            await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>() == "lamp1:relay"), "lamp1 starts");
+            await Published(home, batches, "lamp1:relay");
             var lamp1 = await Read(api, "lamp1");
             Check(Status(lamp1) == "running" && lamp1["activationError"] == null && home.Syncs("lamp1").Length == syncs + 1, "lamp1 after the retry: " + lamp1.ToJsonString());
             Console.WriteLine("PASS entity startup: a definition that failed to load for want of the entity classes loads when they are pushed");
