@@ -20,7 +20,7 @@ dotnet test custom_components/hass_sharp/HassSharp.Editor.Tests
 (cd custom_components/hass_sharp/frontend && bun run test)
 ```
 
-The runtime suite's image tests need libjpeg-turbo: `brew install jpeg-turbo` on macOS, the distribution's `libturbojpeg` package on Linux.
+The runtime suite's image tests need libjpeg-turbo: `brew install jpeg-turbo` on macOS, `libturbojpeg0` on Debian and current Ubuntu, and `libturbojpeg` on Ubuntu 24.04 and earlier.
 
 After publishing, `python tests/packaging/entity_bridge_smoke.py custom_components/hass_sharp [DOTNET_ROOT]`
 (needs Python.NET, not Home Assistant; CI runs it) drives a custom entity definition
