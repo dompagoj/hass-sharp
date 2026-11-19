@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, For, on, Show, untrack, type JSX } from 'solid-js'
 import { NodeConfig } from './NodeConfig'
+import { KindPreview } from './KindPreview'
 import { AutomationOverview, automationTexts } from './automationAdapter'
 import { TypeChip } from './InputRow'
 import { Glyph } from './Glyph'
@@ -70,22 +71,29 @@ export interface InspectorProps {
   onEditCode?(id: string): void
   /** Says on the canvas what a change made here also did (the wires a new trigger type removed). */
   onNotice?(text: string): void
+  /** A kind of step to describe (the step library's choice), shown when nothing is selected and the catalog has it. */
+  preview?: string
+  /** The description of `preview` was closed: the page drops it. */
+  onPreviewClose?(): void
 }
 
 /**
- * The right-hand panel. In order of precedence: several selected nodes, the selected node ({@link NodeConfig}), a selected wire (read only) or, with nothing selected, an overview of the
- * document (the page's `overview`, else an automation's triggers; then the problem count and last run).
+ * The right-hand panel. In order of precedence: several selected nodes, the selected node ({@link NodeConfig}), a selected wire (read only),
+ * the description of a kind of step ({@link KindPreview}) or, with nothing selected, an overview of the document (the page's `overview`, else
+ * an automation's triggers; then the problem count and last run).
  */
 export function Inspector(props: InspectorProps) {
   let aside!: HTMLElement
   const ids = () => (props.selectedIds ?? []).filter(id => props.graph.nodes.some(n => n.id === id))
   const many = () => ids().length > 1
   const edge = createMemo(() => (props.selectedEdgeId ? props.graph.edges.find(e => e.id === props.selectedEdgeId) : undefined))
+  /** The kind to describe, when the catalog has it. */
+  const preview = () => (props.preview && Object.hasOwn(props.catalog.nodes, props.preview) ? props.preview : undefined)
   const [status, setStatus] = createSignal('')
   const [dismissed, setDismissed] = createSignal(false)
-  // A new selection brings the sheet back.
-  createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' ')], () => setDismissed(false), { defer: true }))
-  const hasContent = () => !!(props.selected || many() || edge() || props.overviewPeek)
+  // A new selection (or a kind to describe) brings the sheet back.
+  createEffect(on(() => [props.selected?.id, props.selectedEdgeId, ids().join(' '), props.preview], () => setDismissed(false), { defer: true }))
+  const hasContent = () => !!(props.selected || many() || edge() || preview() || props.overviewPeek)
   // Docked, the panel is always there (the overview when nothing is selected).
   const open = () => !!props.docked || (props.open === undefined ? hasContent() && !dismissed() : props.open && hasContent())
   const peek = () => !props.docked && hasContent() && !open()
@@ -107,6 +115,7 @@ export function Inspector(props: InspectorProps) {
     const id = props.selected?.id
     setDismissed(true)
     props.onClose?.()
+    props.onPreviewClose?.()
     // Back to where the selection is: its card on the canvas, else the canvas.
     focusSoon(() => card(id) ?? canvas())
   }
@@ -156,7 +165,11 @@ export function Inspector(props: InspectorProps) {
       <p class="hs-visually-hidden" role="status">{status()}</p>
       <Show when={many()} fallback={
         <Show when={props.selected?.id} keyed fallback={
-          <Show when={edge()} fallback={<Overview />}>{current => <WireView edge={current()} />}</Show>
+          <Show when={edge()} fallback={
+            <Show when={preview()} keyed fallback={<Overview />}>
+              {kind => <KindPreview kind={kind} graph={props.graph} catalog={props.catalog} onClose={() => props.onPreviewClose?.()} />}
+            </Show>
+          }>{current => <WireView edge={current()} />}</Show>
         }>
           {id => {
             // Keyed on the id, not the node: an edit of the step gives a new node object, and the panel (its
@@ -203,11 +216,15 @@ export function Inspector(props: InspectorProps) {
    */
   function PeekBar() {
     const node = () => (many() ? undefined : props.selected)
-    const identity = () => { const current = node(); return current ? nodeIdentity(current.kind, props.catalog) : undefined }
+    /** The described kind, when nothing is selected. */
+    const kind = () => (many() || props.selected || edge() ? undefined : preview())
+    const identity = () => { const current = node()?.kind ?? kind(); return current ? nodeIdentity(current, props.catalog) : undefined }
     const title = () => {
       if (many()) return `${ids().length} steps selected`
       const current = node()
       if (current) return nodeTitle(current, props.catalog)
+      const described = kind()
+      if (described) return props.catalog.nodes[described].label
       const wire = edge()
       if (!wire && props.overviewPeek) return props.overviewPeek
       return wire?.kind === 'data' ? 'Value wire' : 'Flow wire'
@@ -226,7 +243,7 @@ export function Inspector(props: InspectorProps) {
       setDismissed(false)
     }
     return (
-      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : !edge() && props.overviewPeek ? props.overviewIcon ?? icons.data : icons.data)} color={identity()?.color} verb="Edit" onOpen={expand} />
+      <SheetPeek title={title()} line={line()} icon={identity()?.icon ?? (many() ? icons.flow : !edge() && props.overviewPeek ? props.overviewIcon ?? icons.data : icons.data)} color={identity()?.color} verb={kind() ? 'Show' : 'Edit'} onOpen={expand} />
     )
   }
 

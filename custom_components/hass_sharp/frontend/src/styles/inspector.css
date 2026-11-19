@@ -24,6 +24,10 @@
 .hs-app .hs-insp-desc-row { display: flex; align-items: flex-end; gap: 4px; margin-top: -8px; }
 .hs-app .hs-insp-desc { margin: 0; color: var(--hs-muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .hs-app .hs-insp-desc--open { display: block; }
+/* A kind of step described (the step library's choice): the header with a heading for its title, the pins listed read only. */
+.hs-app .hs-insp-preview { display: grid; gap: 16px; min-width: 0; }
+.hs-app .hs-insp-preview .hs-insp-title { display: flex; align-items: center; margin: 0; padding: 0; border: 0; }
+.hs-app .hs-insp-preview .hs-insp-output { grid-template-columns: minmax(0, 1fr) auto; }
 .hs-app .hs-insp-more, .hs-app .hs-insp-link { flex: none; padding: 0; border: 0; background: none; color: var(--hs-accent); font: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 
 /* Problems: one callout each; one with a field focuses it. */
