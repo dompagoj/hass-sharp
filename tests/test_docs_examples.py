@@ -58,6 +58,20 @@ class DocsExamplesTests(unittest.TestCase):
         canonical = lambda value: json.dumps(value, sort_keys=True)
         self.assertEqual(canonical(json.loads(block)), canonical(example_definition("Motion in either room")["definition"]))
 
+    def test_the_entity_node_shown_for_authors_is_the_examples(self):
+        # Each node and edge a guide shows of "Plug over HTTP" is the example's of the same id, word for word.
+        graph = example_definition("Plug over HTTP")["definition"]["logic"]["graph"]
+        canonical = lambda value: json.dumps(value, sort_keys=True)
+        for doc in (GUIDE, MCP):
+            shown = json.loads(fenced_block_after(doc.read_text(encoding="utf-8"), "<!-- example: Plug over HTTP -->", "json"))
+            with self.subTest(doc.name):
+                self.assertTrue(shown["nodes"] and shown["edges"])
+                for part in ("nodes", "edges"):
+                    own = {item["id"]: item for item in graph[part]}
+                    for item in shown[part]:
+                        self.assertEqual(canonical(item), canonical(own.get(item["id"])), item["id"])
+                self.assertIn("entity", [node["kind"] for node in shown["nodes"]])
+
     def test_the_mcp_doc_names_only_real_tools_and_every_tool(self):
         known = tool_names()
         self.assertIn("entities_save", known)

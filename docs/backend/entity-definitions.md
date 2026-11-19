@@ -48,20 +48,24 @@ definition envelope"), `storage` (the file could not be read or written) and
 `definition` is the body a client sends:
 
 ```text
-{name, device?, settings?, entities?, logic}
+{name, device?, settings?, logic}
 ```
 
-- `name`: 1 to 120 characters. It names the device, and an entity without a name
-  of its own on a standalone definition.
+- `name`: 1 to 120 characters. It names the device, and a class's entity without a
+  name of its own on a standalone definition.
 - `logic`: `{kind:"graph", graph}` with a version 5 graph, or
   `{kind:"class", type}` with a type id from `types`, such as
-  `library:example_plug:NodeLib.SmartPlug`.
-- `entities` (graph only, at least one): `{key, domain, name?, icon?, deviceClass?,
-  entityCategory?, enabledByDefault?, options?}`. `key` matches
+  `library:example_plug:NodeLib.SmartPlug`. A class's entities come from its code.
+- A graph's entities are its Entity nodes (kind `entity`, at least one), each with
+  `config` `{key, domain, name?, icon?, deviceClass?, entityCategory?,
+  enabledByDefault?, options?, history?, arguments?}`. `key` matches
   `^[a-z][a-z0-9_]{0,39}$` and is unique; `domain` is one of the ten in the node
-  catalog's `entityDomains`, which also gives each domain's state values, commands
-  and `options`; `entityCategory` is `config` or `diagnostic`. A class definition
-  sends `entities: []`; its entities come from its code.
+  catalog's `entityDomains`, which also gives each domain's state values (the
+  node's inputs), commands (its execution outputs `command:<command>`, with their
+  values as data outputs `command:<command>:<value>`; a camera has `frame`) and
+  `options`; `entityCategory` is `config` or `diagnostic`. An entity of a
+  definition without a device needs a `name`. The answered document lists them
+  under `entities`, for reading only.
 - `device`: null for none, or, for a class, null for the class's own (a
   `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
   swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is
@@ -164,11 +168,13 @@ A graph definition's runs are read with the run history commands of
 [run history](run-history.md), by the document's `automationId`:
 `{type:"hass_sharp/run_history",automationId,offset?,limit?,status?}`, then
 `{type:"hass_sharp/run_trace",runId}`. Besides an automation's causes, a run's
-`cause` can be `Command` (When commanded), `Setup` (When started) or `Frame` (When a
-frame is needed); a State's run is `Entity`. Whether a step's runs are recorded is
-its `trackHistory`; when it is not set: on for When commanded and When started, off
-for State, When a frame is needed and Trigger. A run started with `run` is always
-recorded. A class definition records no runs.
+`cause` can be `Command` (an Entity node's command), `Setup` (When started) or
+`Frame` (When a frame is needed); an Entity node's state run is `Entity`. An Entity
+node's `config.history` (`{state, commands, frame}`) says whether its runs are
+recorded: its commands' unless `commands` is false, its state's and its frame's only
+when `state` or `frame` is true. Another step's runs are recorded by its
+`trackHistory`; when it is not set: on for When started, off for a Trigger. A run
+started with `run` is always recorded. A class definition records no runs.
 
 A trace's graph is the composed graph: it carries the definition under
 `definition`, with no setting values. It is not a body to save; `read` gives that.

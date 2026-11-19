@@ -6,10 +6,11 @@ number, a select, a text, a light, a cover or a camera. A definition can group i
 entities as one device, with a device page of its own. What the entities do comes
 from one of two places:
 
-- **Steps.** A graph of the same kind as an automation's (graph version 5), with a
-  few steps only a definition has: State, When commanded, Set state and the rest
-  below. Everything in [Writing visual automations](writing-visual-automations.md)
-  about wires, types, value steps and Custom C# steps holds here too.
+- **Steps.** A graph of the same kind as an automation's (graph version 5), with
+  one **Entity** node for each entity and a few steps only a definition has: Set
+  state, When started and the rest below. Everything in
+  [Writing visual automations](writing-visual-automations.md) about wires, types,
+  value steps and Custom C# steps holds here too.
 - **A C# class** in a [node library](node-libraries.md), deriving from `SharpDevice`
   or from one typed entity such as `SharpSwitch`. The definition picks the class and
   fills in its settings; one class can back several definitions. See
@@ -22,39 +23,42 @@ programming interface is in [the entity definitions API](backend/entity-definiti
 
 ## Build a derived sensor in the panel
 
+Each entity is an **Entity** node on the canvas. Its state values are inputs on its
+left: connect a value to each, and Home Assistant shows the state they work out. Its
+commands are pins on its right, such as **Turn on** and **Turn off** for a switch:
+the steps you connect to one run when Home Assistant sends that command.
+
 This definition makes one binary sensor, **Any motion**, that is on while either of
-two motion sensors is on. It needs no trigger: its State is worked out again whenever
+two motion sensors is on. It needs no trigger: its state is worked out again whenever
 either sensor changes. Use two binary sensors of your own where these steps name
 `binary_sensor.hallway_motion` and `binary_sensor.kitchen_motion`.
 
 1. Open **HassSharp** in the sidebar, choose **Entities**, then **New entity
    definition**.
 2. Enter the **Entity definition name** `Motion in either room`, choose **Build with
-   nodes** under **How it works**, and select **Continue**. The editor opens with an
-   empty canvas. With no step selected, the panel on the right shows the
-   definition's **Entities**, **Device** and **Settings**; on a phone, tap "Entities,
-   device and settings" at the bottom.
-3. Under **Entities** there is already one binary sensor, named after the
-   definition. Open its row and set **Name** to `Any motion`, **Key** to
-   `any_motion` and **Device class** to `motion`. Leave **Type** as Binary sensor.
-   A text field takes its change when you leave it or press Enter.
+   nodes** under **How it works**, and select **Continue**. The editor opens with one
+   Entity node on the canvas: a binary sensor named after the definition.
+3. Select the Entity node. The panel on the right shows its name at the top and its
+   settings below it. Change the name to `Any motion`, set **Key** to `any_motion`
+   and **Device class** to `motion`, and leave **Type** as Binary sensor. A text
+   field takes its change when you leave it or press Enter.
 4. In the **Steps** library on the left, search for `Has state` and drag it onto the
    canvas. In its **Entity** field, pick
    `binary_sensor.hallway_motion`. Its **State** is already `on`.
 5. Add a second **Has state** step and pick `binary_sensor.kitchen_motion`.
-6. Add an **Or** step (under **Logic**) and a **State** step (under **Entity**). The
-   State's **Entity** is already Any motion, the definition's only entity.
+6. Add an **Or** step (under **Logic**).
 7. Wire the values: drag from the first Has state's **Result** to Or's **First
    value**, from the second Has state's **Result** to Or's **Second value**, and from
-   Or's **Result** to State's **On**.
-8. Select **Save**. Once it is saved, the entity's row shows the id Home Assistant
-   gave it, `binary_sensor.any_motion`, with a **Show** button that opens it in Home
-   Assistant. Its key can no longer change.
+   Or's **Result** to **On** on the left of the Any motion node.
+8. Select **Save**. Once it is saved, the Entity node's panel shows the id Home
+   Assistant gave the entity, `binary_sensor.any_motion`, with a **Show** button that
+   opens it in Home Assistant. Its key can no longer change.
 
-As a document, the definition you built is this one, apart from the ids, labels and
-positions the panel chooses, the State's **Track in run history**, which the panel
-writes out as off, and its **On**, which the panel writes as `{"kind": "unset"}`
-beside the wire into it. It is the example "Motion in either room" in
+As a document, the definition you built is this one, apart from the ids and
+positions the panel chooses and the settings the panel writes out on the Entity node
+as they are by default (`"enabledByDefault": true`, and empty `options` and
+`history`). The **On** that the wire fills is `{"kind": "unset"}` under the node's
+`arguments`. It is the example "Motion in either room" in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json):
 
 <!-- example: Motion in either room -->
@@ -63,9 +67,6 @@ beside the wire into it. It is the example "Motion in either room" in
   "name": "Motion in either room",
   "device": null,
   "settings": [],
-  "entities": [
-    {"key": "any_motion", "domain": "binary_sensor", "name": "Any motion", "deviceClass": "motion"}
-  ],
   "logic": {
     "kind": "graph",
     "graph": {
@@ -79,12 +80,14 @@ beside the wire into it. It is the example "Motion in either room" in
           "entity": {"kind": "literal", "type": "entity_id", "value": "binary_sensor.kitchen_motion"},
           "state": {"kind": "literal", "type": "string", "value": "on"}}, "position": {"x": 60, "y": 280}},
         {"id": "either", "kind": "or", "config": {"left": {"kind": "unset"}, "right": {"kind": "unset"}}, "position": {"x": 360, "y": 100}},
-        {"id": "state", "kind": "entity_state", "config": {"entity": "any_motion"}, "position": {"x": 660, "y": 100}}
+        {"id": "any_motion", "kind": "entity", "config": {
+          "key": "any_motion", "domain": "binary_sensor", "name": "Any motion", "deviceClass": "motion",
+          "arguments": {"is_on": {"kind": "unset"}}}, "position": {"x": 660, "y": 100}}
       ],
       "edges": [
         {"id": "hallway.value:either.left", "kind": "data", "source": "hallway", "target": "either", "sourcePort": "value", "targetPort": "left"},
         {"id": "kitchen.value:either.right", "kind": "data", "source": "kitchen", "target": "either", "sourcePort": "value", "targetPort": "right"},
-        {"id": "either.value:state.is_on", "kind": "data", "source": "either", "target": "state", "sourcePort": "value", "targetPort": "is_on"}
+        {"id": "either.value:any_motion.is_on", "kind": "data", "source": "either", "target": "any_motion", "sourcePort": "value", "targetPort": "is_on"}
       ]
     }
   }
@@ -92,19 +95,20 @@ beside the wire into it. It is the example "Motion in either room" in
 ```
 
 The other example definitions in that file are *Plug over HTTP* (a setting, a
-Trigger that polls a plug every 10 seconds, and When commanded steps that switch it),
-*Camera with a box* (the camera steps), *File at setup* (a download when the
-definition starts; its address and checksum are placeholders) and *Plug from a class*
-(below).
+Trigger that polls a plug every 10 seconds, and steps on the relay's **Turn on** and
+**Turn off** that switch it), *Camera with a box* (the camera steps), *File at setup*
+(a download when the definition starts; its address and checksum are placeholders)
+and *Plug from a class* (below).
 
 ## Entity types
 
-Each type's row says what its State or Set state takes (one input per value), the
-commands Home Assistant sends it with the values a When commanded step gives for
-each, its options in the entity's row (each left empty takes the default shown), and
-its class for [classes](#classes).
+Each type's row says what its state takes (one input on the left of its Entity node
+per value; Set state takes the same), the commands Home Assistant sends it (one pin
+each on the right of its Entity node, with the values each gives under it), the
+options its Entity node shows (each left empty takes the default shown), and its
+class for [classes](#classes).
 
-| Type | State and Set state take | Commands (When commanded gives) | Options | Class |
+| Type | State inputs | Commands (and their values) | Options | Class |
 |---|---|---|---|---|
 | Binary sensor | **On**: true or false | none | none | `SharpBinarySensor` |
 | Sensor | **Value**: a number or a text | none | **Unit**; **State class**: measurement, total or total increasing; **Options**, one per line, for a sensor of the `enum` device class | `SharpSensor` |
@@ -115,41 +119,64 @@ its class for [classes](#classes).
 | Text | **Text** | Set text (**Text**) | **Shortest length** (0), **Longest length** (100, at most 255), **Pattern**: a regular expression matched from the start of the text (end it with `$` to match the whole text); **Shown as**: text or password | `SharpText` |
 | Light | **On**; **Brightness**, a whole number from 0 to 255, optional, only with **Can be dimmed** | Turn on (**Brightness**, optional), Turn off | **Can be dimmed** | `SharpLight` |
 | Cover | **Closed**, optional; **Position**, a whole number from 0 (closed) to 100 (open), optional, only with **Has a position** | Open, Close, Stop, Set position (**Position**) | **Has a position** | `SharpCover` |
-| Camera | nothing: its picture comes from Show frame | none | **Seconds between frames**: 0.5 to 60 (1) | `SharpCamera` |
+| Camera | nothing: its picture comes from Show frame | none; **When a frame is needed** instead (see [Cameras](#cameras)) | **Seconds between frames**: 0.5 to 60 (1) | `SharpCamera` |
 
-Every entity also has a **Name** (what Home Assistant shows), a **Key**, a **Device
-class** (a Home Assistant device class, such as `motion` or `power`), an **Icon**
-(such as `mdi:motion-sensor`), a **Category** (None, Config or Diagnostic) and
-**Enabled by default**.
+Select an Entity node to edit it in the panel on the right: its name at the top
+(what Home Assistant shows), then its **Key**, its **Type**, a **Device class** (a
+Home Assistant device class, such as `motion` or `power`), an **Icon** (such as
+`mdi:motion-sensor`), a **Category** (None, Config or Diagnostic), **Enabled by
+default**, the options of its type and its **Run history** (see
+[Run history](#run-history)).
 
 A sensor with options takes only one of them. With a unit, a state class or a device
 class other than date, timestamp and enum, it takes a number or a text that reads as
 one. Otherwise it takes any number or text. A value an entity does not take fails
-the step that gives it (see [State](#state-when-commanded-trigger-and-when-started)).
+the step that gives it (see [The Entity node](#the-entity-node)).
 
-## State, When commanded, Trigger and When started
+## The Entity node
 
-These are the steps that start something in a definition, and the steps that act on
-its entities. A step names one of the definition's entities by choosing it in its
-**Entity** field.
+Add an **Entity** node from the **Entity** category of the step library for each
+entity the definition creates, and choose its **Type** in the panel on the right. A
+new definition starts with one, a binary sensor named after the definition.
 
-- **State** gives an entity its state: wire values into it, one input per value of
-  its type. It is worked out again whenever an entity chosen on an entity input of
-  the value steps it reads changes: the entity of a Has state or a Current state
-  step, or a Constant of an entity id type. An entity read by another step, such as
-  Read entity, is not followed. A State that fails, or gives a value its entity does
-  not take, makes the entity unavailable and logs one warning per reason, naming the
-  entity; the entity is available again once the State works.
-- **When commanded** runs the steps after it when Home Assistant gives the entity a
-  command, such as turning a switch on: choose the entity and the **Command**. Its
-  outputs are the command's values, such as a light's brightness. Its steps must
-  finish within 30 seconds; a failure, or the 30 seconds passing, fails the service
-  call that sent the command (a flow past its 30 seconds goes on in the background).
-  A command that no step handles is a warning when you save.
+- **Its state** comes from its inputs on the left, one per value of its type: connect
+  a value to an input, or type one in. Once one has a value, every value the type
+  needs must have one; a light's **Brightness** is optional, its **On** is not. The
+  state is worked out again whenever an entity chosen on an entity input of the
+  value steps it reads changes: the entity of a Has state or a Current state step,
+  or a Constant of an entity id type. An entity read by another step, such as Read
+  entity, is not followed. An input cannot read a step that runs in a flow, such as
+  an HTTP request after a Trigger: set the state with a **Set state** step after
+  that step instead. A state that fails, or gives a value its entity does not take,
+  makes the entity unavailable and logs one warning per reason, naming the entity;
+  the entity is available again once its state works out.
+- **Its commands** are pins on its right, such as **Turn on** and **Turn off** for a
+  switch. The steps connected to a command run when Home Assistant gives the entity
+  that command. A command's values, such as a light's **Brightness**, are pins under
+  it, and only the steps that run from that command can read them. Two commands can
+  lead to the same step. The steps must finish within 30 seconds; a failure, or the
+  30 seconds passing, fails the service call that sent the command (a flow past its
+  30 seconds goes on in the background). A command with no step connected to it is a
+  warning: "Relay does nothing on Turn on: connect a step to Turn on".
+- **A camera** has **When a frame is needed** on its right instead; see
+  [Cameras](#cameras).
+- **Its name.** An entity of a definition that is not a device needs a name: "Name
+  this entity: it has no device, so Home Assistant shows it by its own name".
+
+The runs of an Entity node are named after its entity and the pin they start at:
+"Any motion: State", "Relay: Turn on", "Front door with a box: When a frame is
+needed". A node without a name is named by its key.
+
+## Trigger, When started and the other steps
+
+These are the other steps that start something in a definition, and the steps that
+act on its entities. A step names one of the definition's entities by choosing it in
+its **Entity** field.
+
 - **Set state** sets an entity's state inside a flow (after a Trigger, When started
-  or When commanded). It sets the values you give it and keeps the others as they
-  are, such as a light's brightness when only On is given. **Set available** marks
-  an entity unavailable, or available again.
+  or a command). It sets the values you give it and keeps the others as they are,
+  such as a light's brightness when only On is given. **Set available** marks an
+  entity unavailable, or available again.
 - **Trigger** runs the steps after it when something happens, at a set time or on an
   interval, as in an automation: to poll a device, for example. Its types are those
   of [an automation's triggers](writing-visual-automations.md#triggers-and-their-outputs);
@@ -161,9 +188,9 @@ its entities. A step names one of the definition's entities by choosing it in it
 - **Setting** gives the value of one of the definition's settings (see below).
 
 A **Stop** step ends a run there, and the run is recorded as Stopped, which is not a
-failure: a When commanded run that stops makes its service call succeed, a When
-started run that stops lets the definition start, and a Trigger's or a frame's run
-that stops is not an error. A State's run that stops does not make its entity
+failure: a command's run that stops makes its service call succeed, a When started
+run that stops lets the definition start, and a Trigger's or a frame's run that
+stops is not an error. A state's run that stops does not make its entity
 unavailable, and does not clear an earlier failure either.
 
 **Run now**, in the editor's top bar, lists the Trigger steps and starts one by hand;
@@ -173,8 +200,8 @@ while there are unsaved changes ("Save the entity definition to run this step"),
 while the definition is off, starting or not running. Unlike an automation, a
 definition that is off cannot be run. Nothing else is run by hand: a command runs
 when the entity's service is called in Home Assistant (try it on the entity's page),
-a State follows its sources, When started runs when the definition starts, and a
-frame is made when a camera is watched.
+an Entity node's state follows its sources, When started runs when the definition
+starts, and a frame is made when a camera is watched.
 
 ## Settings and secrets
 
@@ -214,8 +241,9 @@ clears an earlier link.
 Home Assistant makes the entity ids. On a device, an entity's id comes from the
 device's name (the definition's) and the entity's name; an entity without a name
 takes the device's name alone. Without a device, the id comes from the entity's name
-alone, or from the definition's name for an entity without a name, so name such
-entities with clashes in mind: the derived sensor above is `binary_sensor.any_motion`.
+alone, which is why such an Entity node needs one (a class's entity without one
+takes the definition's name); name it with clashes in mind: the derived sensor above
+is `binary_sensor.any_motion`.
 
 ## HTTP, downloads and restored state
 
@@ -256,8 +284,8 @@ one that does not match its checksum, or a server that sends nothing for 60 seco
 fails the step, and nothing is kept. Download in When started, so the file is there
 before the entities run.
 
-Entities that no State works out come back, after Home Assistant restarts or the
-definition is saved, with the state they last had: switches, numbers, selects, texts,
+Entities whose Entity node works out no state from its inputs come back, after Home
+Assistant restarts or the definition is saved, with the state they last had: switches, numbers, selects, texts,
 lights and covers set by commands, for example. A value the entity no longer takes,
 such as an option removed from a select, is left out. In a graph, a light turned on
 without a brightness keeps its last one, or comes on at full brightness the first
@@ -265,12 +293,13 @@ time. A class chooses this per entity with `RestoreState`.
 
 ## Cameras
 
-A camera shows the picture its last **Show frame** step gave it. Five steps work with
-pictures, in definitions only:
+A camera shows the picture its last **Show frame** step gave it. A camera's Entity
+node and four steps work with pictures, in definitions only:
 
-- **When a frame is needed** runs the steps after it when Home
-  Assistant needs a new picture from the camera, which it does only while someone
-  watches it or asks for its picture: nothing runs otherwise.
+- **When a frame is needed**, the pin on the right of a camera's Entity node, runs
+  the steps connected to it when Home Assistant needs a new picture from the camera,
+  which it does only while someone watches it or asks for its picture: nothing runs
+  otherwise.
 - **Take a picture** takes the current picture of another Home
   Assistant camera.
 - **Draw rectangle** and **Draw text** are value steps that draw on a picture: a
@@ -280,10 +309,12 @@ pictures, in definitions only:
 - **Show frame** makes a picture the camera's current one, in a frame
   flow or in any other flow, such as a Trigger's.
 
-So a camera either makes its frames when they are needed (a When a frame is needed
-flow that ends in Show frame), or is given them by other flows. A frame flow that
-ends without Show frame keeps the current picture. The example "Camera with a box"
-takes a picture of `camera.front_door`, draws a box and a caption on it and shows it.
+So a camera either makes its frames when they are needed (steps on When a frame is
+needed that end in Show frame), or is given them by other flows. A frame flow that
+ends without Show frame keeps the current picture, and a camera that no Show frame
+step names is a warning: "Front door with a box never shows a frame: add a Show
+frame step for it". The example "Camera with a box" takes a picture of
+`camera.front_door`, draws a box and a caption on it and shows it.
 A class does the same with `Frame()` or `OnFrame`, and `Show`; see
 [Classes](#classes).
 
@@ -530,13 +561,14 @@ public class BoxedDoor : SharpCamera
 
 Each definition lists its runs under **Runs** in the editor's bottom drawer, and
 each run opens its trace, as an automation's does; see
-[run history and traces](writing-visual-automations.md#run-history-and-traces). A
-step's **Track in run history** decides whether its runs are recorded. It is on
-unless turned off for When commanded and When started, and off unless turned on for
-a State, for When a frame is needed and for a Trigger (unlike in an automation, where
-a Trigger is recorded unless turned off). A run started with Run now, or by an
-assistant, is always recorded. The runs of a class are not recorded: a class has no
-steps to trace.
+[run history and traces](writing-visual-automations.md#run-history-and-traces). An
+Entity node's **Run history** has a switch for each kind of run it starts: **Record
+commands** is on unless turned off, and **Record state updates** and **Record
+frames** are off unless turned on. Each other step's **Track in run history**
+decides for its runs: on unless turned off for When started, off unless turned on
+for a Trigger (unlike in an automation, where a Trigger is recorded unless turned
+off). A run started with Run now, or by an assistant, is always recorded. The runs
+of a class are not recorded: a class has no steps to trace.
 
 ## Worth knowing
 
@@ -548,6 +580,10 @@ steps to trace.
   and Home Assistant may give the new one an id ending in `_2` while the old
   registry entry still exists. Before the first save, changing a key changes it in
   every step that uses the entity.
+- A copied or duplicated Entity node gets a key of its own, and the steps copied
+  with it follow that key.
+- Deleting an Entity node that steps use asks first: those steps show a problem
+  until you change or remove them.
 - A deleted entity whose unique id comes back, such as a definition deleted and made
   again with the same id and key, gets back the customisation Home Assistant kept for
   it in its registry.
@@ -574,9 +610,11 @@ steps to trace.
   Home Assistant when the saved definition next starts.
 - A node library save rebuilds every definition, as it rebuilds every automation,
   and is refused when it would break one that works.
-- A State updates only for entities chosen on its steps' pins. An entity that a
-  library or Custom C# step reads in its code (`NodeContext.State`) does not make the
-  State follow it.
+- An Entity node's state updates only for entities chosen on its steps' pins. An
+  entity that a library or Custom C# step reads in its code (`NodeContext.State`)
+  does not make the state follow it.
+- Changing an Entity node's **Type** removes the values and wires of the pins the new
+  type does not have, and says what it removed.
 - When the stored states cannot be read, the log says "… the entities start with no
   value until they are set again".
 
@@ -585,9 +623,9 @@ steps to trace.
 - Home Assistant checks number, select and text values and cover positions itself,
   and clamps a brightness or drops it for a light that cannot be dimmed, before
   HassSharp sees the command.
-- A value the command did not send but its step gives, such as a brightness of 255
-  the first time a dimmable light is turned on, appears in the trace as if it was
-  sent.
+- A value the command did not send but its Entity node gives, such as a brightness
+  of 255 the first time a dimmable light is turned on, appears in the trace as if it
+  was sent.
 - A class's light turned on without a brightness gets null, every time: keep its
   `Brightness` yourself.
 - A class's number or text whose `Min` is above its `Max` refuses every value.
@@ -647,6 +685,26 @@ steps to trace.
 An assistant connected through Home Assistant's MCP Server builds definitions with
 the `entities_*` tools: it reads the rules and the example definitions with
 `get_capabilities` and `document: "entity"`, then previews, saves, turns on and off,
-runs and reads the runs of a definition as the panel does. A secret typed into a
+runs and reads the runs of a definition as the panel does. It writes each entity as
+an Entity node of the graph, as the panel stores it: the relay of *Plug over HTTP*
+is this node, and its two commands start the steps on these execution edges, which
+name the command pin under `port`:
+
+<!-- example: Plug over HTTP -->
+```json
+{
+  "nodes": [
+    {"id": "relay", "kind": "entity", "config": {"key": "relay", "domain": "switch", "name": "Relay", "deviceClass": "outlet"}, "position": {"x": 60, "y": 640}}
+  ],
+  "edges": [
+    {"id": "relay:command:turn_on:switch_on", "source": "relay", "target": "switch_on", "port": "command:turn_on"},
+    {"id": "relay:command:turn_off:switch_off", "source": "relay", "target": "switch_off", "port": "command:turn_off"}
+  ]
+}
+```
+
+A command's values are the node's data outputs `command:<command>:<value>`, such as
+`command:turn_on:brightness` for a light, and a camera's frame flow starts at its
+`frame` output. A secret typed into a
 conversation reaches the assistant's provider: enter secrets in the panel instead.
 See [MCP authoring](mcp-authoring.md).

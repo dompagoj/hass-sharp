@@ -805,19 +805,11 @@
   "definitions": [
     {
       "title": "Motion in either room",
-      "description": "A binary sensor that is on while there is motion in the hallway or in the kitchen. Two Has state steps feed an Or step, whose result is the State of the any_motion entity, worked out again whenever either motion sensor changes.",
+      "description": "A binary sensor that is on while there is motion in the hallway or in the kitchen. Two Has state steps feed an Or step, whose result is connected to On of the Any motion Entity node; its state is worked out again whenever either motion sensor changes.",
       "definition": {
         "name": "Motion in either room",
         "device": null,
         "settings": [],
-        "entities": [
-          {
-            "key": "any_motion",
-            "domain": "binary_sensor",
-            "name": "Any motion",
-            "deviceClass": "motion"
-          }
-        ],
         "logic": {
           "kind": "graph",
           "graph": {
@@ -881,10 +873,18 @@
                 }
               },
               {
-                "id": "state",
-                "kind": "entity_state",
+                "id": "any_motion",
+                "kind": "entity",
                 "config": {
-                  "entity": "any_motion"
+                  "key": "any_motion",
+                  "domain": "binary_sensor",
+                  "name": "Any motion",
+                  "deviceClass": "motion",
+                  "arguments": {
+                    "is_on": {
+                      "kind": "unset"
+                    }
+                  }
                 },
                 "position": {
                   "x": 660,
@@ -910,10 +910,10 @@
                 "targetPort": "right"
               },
               {
-                "id": "either.value:state.is_on",
+                "id": "either.value:any_motion.is_on",
                 "kind": "data",
                 "source": "either",
-                "target": "state",
+                "target": "any_motion",
                 "sourcePort": "value",
                 "targetPort": "is_on"
               }
@@ -924,7 +924,7 @@
     },
     {
       "title": "Plug over HTTP",
-      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged; to see why in the run's trace, turn on the Trigger step's run history, which is off here, or run the Trigger with Run now). Each When commanded step turns the plug on or off with an HTTP request, then sets the switch.",
+      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged; to see why in the run's trace, turn on the Trigger step's run history, which is off here, or run the Trigger with Run now). Turn on and Turn off of the Relay Entity node each turn the plug on or off with an HTTP request, then set the switch.",
       "definition": {
         "name": "Plug over HTTP",
         "device": {
@@ -942,24 +942,6 @@
             "label": "Address",
             "type": "string",
             "value": "http://192.168.1.50/rpc"
-          }
-        ],
-        "entities": [
-          {
-            "key": "relay",
-            "domain": "switch",
-            "name": "Relay",
-            "deviceClass": "outlet"
-          },
-          {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power",
-            "deviceClass": "power",
-            "options": {
-              "unit": "W",
-              "stateClass": "measurement"
-            }
           }
         ],
         "logic": {
@@ -1141,15 +1123,35 @@
                 }
               },
               {
-                "id": "turn_on",
-                "kind": "entity_command",
+                "id": "relay",
+                "kind": "entity",
                 "config": {
-                  "entity": "relay",
-                  "command": "turn_on"
+                  "key": "relay",
+                  "domain": "switch",
+                  "name": "Relay",
+                  "deviceClass": "outlet"
                 },
                 "position": {
                   "x": 60,
                   "y": 640
+                }
+              },
+              {
+                "id": "power",
+                "kind": "entity",
+                "config": {
+                  "key": "power",
+                  "domain": "sensor",
+                  "name": "Power",
+                  "deviceClass": "power",
+                  "options": {
+                    "unit": "W",
+                    "stateClass": "measurement"
+                  }
+                },
+                "position": {
+                  "x": 60,
+                  "y": 460
                 }
               },
               {
@@ -1194,18 +1196,6 @@
                 "position": {
                   "x": 660,
                   "y": 640
-                }
-              },
-              {
-                "id": "turn_off",
-                "kind": "entity_command",
-                "config": {
-                  "entity": "relay",
-                  "command": "turn_off"
-                },
-                "position": {
-                  "x": 60,
-                  "y": 820
                 }
               },
               {
@@ -1337,10 +1327,10 @@
                 "targetPort": "value"
               },
               {
-                "id": "turn_on:next:switch_on",
-                "source": "turn_on",
+                "id": "relay:command:turn_on:switch_on",
+                "source": "relay",
                 "target": "switch_on",
-                "port": "next"
+                "port": "command:turn_on"
               },
               {
                 "id": "switch_on:next:set_on",
@@ -1357,10 +1347,10 @@
                 "targetPort": "url"
               },
               {
-                "id": "turn_off:next:switch_off",
-                "source": "turn_off",
+                "id": "relay:command:turn_off:switch_off",
+                "source": "relay",
                 "target": "switch_off",
-                "port": "next"
+                "port": "command:turn_off"
               },
               {
                 "id": "switch_off:next:set_off",
@@ -1383,21 +1373,11 @@
     },
     {
       "title": "Camera with a box",
-      "description": "A camera that shows the front door's picture with a box and a caption drawn on it. When a frame is needed runs Take a picture, and Show frame shows that picture after Draw rectangle and Draw text; nothing runs while nobody is watching.",
+      "description": "A camera that shows the front door's picture with a box and a caption drawn on it. When a frame is needed, on the camera's Entity node, runs Take a picture, and Show frame shows that picture after Draw rectangle and Draw text; nothing runs while nobody is watching.",
       "definition": {
         "name": "Camera with a box",
         "device": null,
         "settings": [],
-        "entities": [
-          {
-            "key": "boxed",
-            "domain": "camera",
-            "name": "Front door with a box",
-            "options": {
-              "frame_interval": 2
-            }
-          }
-        ],
         "logic": {
           "kind": "graph",
           "graph": {
@@ -1405,10 +1385,15 @@
             "name": "Camera with a box",
             "nodes": [
               {
-                "id": "frame",
-                "kind": "camera_frame",
+                "id": "boxed",
+                "kind": "entity",
                 "config": {
-                  "entity": "boxed"
+                  "key": "boxed",
+                  "domain": "camera",
+                  "name": "Front door with a box",
+                  "options": {
+                    "frame_interval": 2
+                  }
                 },
                 "position": {
                   "x": 60,
@@ -1513,10 +1498,10 @@
             ],
             "edges": [
               {
-                "id": "frame:next:picture",
-                "source": "frame",
+                "id": "boxed:frame:picture",
+                "source": "boxed",
                 "target": "picture",
-                "port": "next"
+                "port": "frame"
               },
               {
                 "id": "picture:next:show",
@@ -1560,14 +1545,6 @@
         "name": "File at setup",
         "device": null,
         "settings": [],
-        "entities": [
-          {
-            "key": "model",
-            "domain": "sensor",
-            "name": "Model file",
-            "entityCategory": "diagnostic"
-          }
-        ],
         "logic": {
           "kind": "graph",
           "graph": {
@@ -1626,6 +1603,20 @@
                 "position": {
                   "x": 960,
                   "y": 100
+                }
+              },
+              {
+                "id": "model",
+                "kind": "entity",
+                "config": {
+                  "key": "model",
+                  "domain": "sensor",
+                  "name": "Model file",
+                  "entityCategory": "diagnostic"
+                },
+                "position": {
+                  "x": 960,
+                  "y": 280
                 }
               }
             ],

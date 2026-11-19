@@ -95,9 +95,9 @@ public class SmokeLens : SharpCamera
 EXPECTED = [('relay', 'switch'), ('power', 'sensor'), ('problem', 'binary_sensor'), ('guard', 'switch'), ('target', 'number')]
 BEYOND = 'Target (target) takes a number from 5 to 30, not 45'
 
-# The graph definition: a binary sensor on while SOURCE is, a switch whose turn on and turn off flows set its state, a
-# switch with only a turn off flow, so that turning it on has no flow, and a dimmable light turned on at the brightness its
-# command gives.
+# The graph definition, each entity an Entity node: a binary sensor on while SOURCE is, a switch whose turn on and turn
+# off pins start flows that set its state, a switch with only a turn off flow, so that turning it on has no flow, and a
+# dimmable light turned on at the brightness its turn on pin gives.
 GRAPH_DEFINITION = 'smoke_graph'
 SOURCE = 'binary_sensor.smoke_source'
 NO_FLOW = 'Bare has no flow for Turn on'
@@ -115,28 +115,33 @@ def data(source, target, target_port, source_port='value'):
     return {'id': f'{source}.{source_port}:{target}.{target_port}', 'kind': 'data', 'source': source, 'target': target, 'sourcePort': source_port, 'targetPort': target_port}
 
 
-def next_(source, target):
-    return {'id': f'{source}:next:{target}', 'source': source, 'target': target, 'port': 'next'}
+def step(source, target, port):
+    """An execution edge from `port` of `source`: next, or an Entity node's command:<command>."""
+    return {'id': f'{source}:{port}:{target}', 'source': source, 'target': target, 'port': port}
+
+
+# Each: key, domain, name, commands, options; each is an Entity node of that id, in this order.
+GRAPH_ENTITIES = [('motion', 'binary_sensor', 'Motion', [], {}), ('relay', 'switch', 'Relay', ['turn_on', 'turn_off'], {}),
+                  ('bare', 'switch', 'Bare', ['turn_on', 'turn_off'], {}), ('lamp', 'light', 'Lamp', ['turn_on', 'turn_off'], {'dimmable': True})]
+
+
+def entity_node(key, domain, name, options):
+    # The motion sensor's On is wired, which leaves it unset under arguments, as the panel writes it.
+    arguments = {'arguments': {'is_on': {'kind': 'unset'}}} if key == 'motion' else {}
+    return node(key, 'entity', {'key': key, 'domain': domain, 'name': name, **({'options': options} if options else {}), **arguments})
 
 
 GRAPH = {'version': 5, 'name': 'Smoke graph', 'nodes': [
+    *(entity_node(key, domain, name, options) for key, domain, name, _, options in GRAPH_ENTITIES),
     node('source', 'entity_is', {'entity': literal('entity_id', SOURCE), 'state': literal('string', 'on')}),
-    node('motion', 'entity_state', {'entity': 'motion'}),
-    node('on', 'entity_command', {'entity': 'relay', 'command': 'turn_on'}),
     node('set_on', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', True)}),
-    node('off', 'entity_command', {'entity': 'relay', 'command': 'turn_off'}),
     node('set_off', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', False)}),
-    node('bare_off', 'entity_command', {'entity': 'bare', 'command': 'turn_off'}),
     node('bare_set_off', 'set_entity_state', {'entity': 'bare', 'is_on': literal('boolean', False)}),
-    node('lamp_on', 'entity_command', {'entity': 'lamp', 'command': 'turn_on'}),
     node('lamp_bright', 'set_entity_state', {'entity': 'lamp', 'is_on': literal('boolean', True)}),
-    node('lamp_off', 'entity_command', {'entity': 'lamp', 'command': 'turn_off'}),
     node('lamp_dark', 'set_entity_state', {'entity': 'lamp', 'is_on': literal('boolean', False)}),
-], 'edges': [data('source', 'motion', 'is_on'), next_('on', 'set_on'), next_('off', 'set_off'), next_('bare_off', 'bare_set_off'),
-             next_('lamp_on', 'lamp_bright'), next_('lamp_off', 'lamp_dark'), data('lamp_on', 'lamp_bright', 'brightness', 'brightness')]}
-# Each: key, domain, name, commands, options.
-GRAPH_ENTITIES = [('motion', 'binary_sensor', 'Motion', [], {}), ('relay', 'switch', 'Relay', ['turn_on', 'turn_off'], {}),
-                  ('bare', 'switch', 'Bare', ['turn_on', 'turn_off'], {}), ('lamp', 'light', 'Lamp', ['turn_on', 'turn_off'], {'dimmable': True})]
+], 'edges': [data('source', 'motion', 'is_on'), step('relay', 'set_on', 'command:turn_on'), step('relay', 'set_off', 'command:turn_off'),
+             step('bare', 'bare_set_off', 'command:turn_off'), step('lamp', 'lamp_bright', 'command:turn_on'), step('lamp', 'lamp_dark', 'command:turn_off'),
+             data('lamp', 'lamp_bright', 'brightness', 'command:turn_on:brightness')]}
 
 lock = threading.Lock()
 # Every thread Python started: a delegate called on one of these is a mismatch. Kept as thread objects, not idents: a
@@ -228,7 +233,7 @@ PyInterop.BeginPruneEntities = Action[String, Action, Action[String]](prune)
 PyInterop.PushEntityStates = Action[String](push)
 PyInterop.Log = Action[Int32, String](log)
 PyInterop.LogLevel = 20
-sources = {SOURCE: 'off'}  # Home Assistant's states, as the graph's State reads them; under the lock
+sources = {SOURCE: 'off'}  # Home Assistant's states, as the motion sensor's state reads them; under the lock
 
 
 def entity_state(entity_id, state):
@@ -437,15 +442,13 @@ try:
 
         # ---- A definition whose logic is a graph of nodes ----
         saved = request(manager.EntityRequest, {'operation': 'save', 'id': GRAPH_DEFINITION, 'expectedRevision': 0, 'definition': {
-            'name': 'Smoke graph', 'device': None, 'settings': [],
-            'entities': [{'key': key, 'domain': domain, 'name': name, **({'options': options} if options else {})}
-                         for key, domain, name, _, options in GRAPH_ENTITIES],
-            'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
+            'name': 'Smoke graph', 'device': None, 'settings': [], 'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
         # The saved libraries' compiler warnings come along (the class above has some); of the graph, only the one command.
         own = [d for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
         check([d.get('code') for d in own] == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
-        check('bare' in own[0].get('message', '') and 'Turn on' in own[0]['message'], f"the warning names the bare switch and its command: {own[0]}")
+        check(own[0].get('nodeId') == 'bare' and own[0].get('portId') == 'command:turn_on' and 'Bare' in own[0].get('message', '') and 'Turn on' in own[0]['message'],
+              f"the warning is on the bare switch's Turn on and names both: {own[0]}")
         live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
         check(live == {f'{GRAPH_DEFINITION}:{key}': f'{domain}.{GRAPH_DEFINITION}_{key}' for key, domain, _, _, _ in GRAPH_ENTITIES},
               f"the graph's live entities are not the entity ids Python answered: {saved['document']['liveEntities']}")
@@ -460,11 +463,11 @@ try:
               f'the graph sync describes {described}')
         check(definition['entities'][3]['options'] == {'dimmable': True}, f"the graph's light is described as {definition['entities'][3]}")
 
-        # The State's first run reads the source through PyInterop.Entity; each change of it runs the State again.
+        # The motion sensor's first state run reads the source through PyInterop.Entity; each change of it runs it again.
         motion = f'{GRAPH_DEFINITION}:motion'
         until(lasts(motion, 'is_on', False), 'the motion sensor pushed off from the source as it starts')
         check(SOURCE in arguments('subscribe'), f"the graph does not follow its source: subscribed to {arguments('subscribe')}")
-        check(SOURCE in arguments('entity'), f"the State did not read its source through PyInterop.Entity: asked for {arguments('entity')}")
+        check(SOURCE in arguments('entity'), f"the motion sensor's state did not read its source through PyInterop.Entity: asked for {arguments('entity')}")
         change(SOURCE, 'on')
         until(lasts(motion, 'is_on', True), 'the motion sensor pushed on after the source turned on')
         change(SOURCE, 'off')

@@ -230,8 +230,8 @@ envelope; validation, conflicts and revisions work as above.
    is `{definitions:[…]}`: complete definitions that validate, the five in
    [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json),
    the class one with its library source. `get_node_schema({kind})` adds
-   `entityDomains` for `entity_state`, `set_entity_state` and `entity_command`,
-   whose ports come from the domain of the entity they name.
+   `entityDomains` for `entity` (the Entity node) and `set_entity_state`, whose
+   ports come from the entity's type.
 2. `entities_types({})` lists the classes the node libraries offer:
    `{types:[…], generation}`, each type `{id, sourceId, typeExpression, title,
    description, kind, domain, settings:[{key, label, description, type, secret,
@@ -245,10 +245,11 @@ envelope; validation, conflicts and revisions work as above.
    it gives device details, or its class derives from `SharpDevice` (for a class no
    node library offers any more, whether it gives device details).
    `entities_read({id})` returns one complete document, with its `revision`,
-   `source`, `automationId` and `registeredEntities`. Read before every edit, and
-   send back only `name`, `device`, `settings`, `entities` and `logic`.
+   `source`, `automationId` and `registeredEntities`, and `entities`, the entities
+   its Entity nodes declare, for reading only. Read before every edit, and send
+   back only `name`, `device`, `settings` and `logic`.
 4. `entities_preview({definition})` validates and compiles a definition, `{name,
-   device?, settings?, entities?, logic}` with `logic` `{kind:"graph", graph}` or
+   device?, settings?, logic}` with `logic` `{kind:"graph", graph}` or
    `{kind:"class", type}`, without creating anything. It returns `valid`,
    `diagnostics` and, for a graph, `graph` with each Custom C# step's pins worked
    out (no settings come back). Unlike the panel's API, it leaves out the generated
@@ -271,20 +272,70 @@ envelope; validation, conflicts and revisions work as above.
    removes its entities and device.
 7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
    one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
-   command runs when the entity's service is called, a State follows the entities
-   it reads, and When started runs when the definition starts.
+   command runs when the entity's service is called, an Entity node's state follows
+   the entities it reads, and When started runs when the definition starts.
 8. `entities_history({id, status?, offset?, limit?})` returns the definition's runs
-   as `history` does an automation's; `trace` reads any run of either. When
-   commanded and When started record their runs unless their `trackHistory` is
-   false; a Trigger, a State and When a frame is needed only when it is true (a
-   Trigger's default is the opposite of an automation's); a run started with
-   `entities_run` is always recorded. A graph that `trace` returns with
-   `graph: true` carries the definition without its settings' values: it is not a
-   definition to save.
+   as `history` does an automation's; `trace` reads any run of either. An Entity
+   node's `config.history` (`{state, commands, frame}`) says which of its runs are
+   recorded: its commands' unless `commands` is false, its state's and its frame's
+   only when `state` or `frame` is true. When started records its runs unless its
+   `trackHistory` is false, a Trigger only when it is true (the opposite of an
+   automation's default); a run started with `entities_run` is always recorded. An
+   Entity node's runs are named `Relay: State`, `Relay: Turn on` or `Relay: When a
+   frame is needed` (its entity's name, else its key, and the pin), and their trace
+   has the node as `rootNodeId` and the pin as `rootPort` (`state` for its state).
+   A graph that `trace` returns with `graph: true` carries the definition without
+   its settings' values: it is not a definition to save.
 
-When commanded steps must finish within 30 seconds, or the service call that sent
-the command fails. A run that reaches a Stop step is Stopped, not failed: a command
-it handled succeeds and a When started flow that stops lets the definition start.
+### The Entity node
+
+Each entity of a graph definition is a node of kind `entity`. Its `config` is
+`{key, domain, name, icon?, deviceClass?, entityCategory?, enabledByDefault?,
+options?, history?, arguments?}`: `key` matches `^[a-z][a-z0-9_]{0,39}$` and is
+unique, `domain` is one of the ten in the catalog's `entityDomains` and `options`
+are that domain's. Leave out a field the entity does not need: `name`, `icon`,
+`deviceClass` and `entityCategory` take no `null`. An entity of a definition
+without a device needs a `name` (`entity.name`). Other steps, such as Set state,
+Set available and Show frame, name it by its key in `config.entity`.
+
+- **State.** The node has one input per value of `entityDomains[domain].state`,
+  by that value's name (`is_on`, `value`, `brightness`). Give a value under
+  `config.arguments.<name>`, as an operand such as
+  `{"kind":"literal","type":"boolean","value":true}`, or connect a data edge with
+  `targetPort` set to the name, which leaves `{"kind":"unset"}` under `arguments`.
+  Once one value is given, every value the type requires is needed too
+  (`entity.partialState`). An input cannot read, even through value steps, an
+  output of a step that runs in a flow (`scope.stateSource`): set the state with a
+  Set state step after that step instead.
+- **Commands.** The node has one execution output `command:<command>` per key of
+  `entityDomains[domain].commands`, so an execution edge from it with
+  `port: "command:turn_on"` starts the steps that run when Home Assistant sends
+  that command. The command's values are the data outputs
+  `command:<command>:<value>` (`command:turn_on:brightness`), readable only by
+  steps that run from that command alone (`scope.flow`). A command with no edge is
+  a warning (`command.unhandled`). The steps must finish within 30 seconds, or the
+  service call that sent the command fails.
+- **Frames.** A camera's node has the execution output `frame` instead (When a
+  frame is needed); a camera that no Show frame step names is a warning
+  (`camera.no_frame`).
+
+The relay of the example *Plug over HTTP* and the edges of its two commands:
+
+<!-- example: Plug over HTTP -->
+```json
+{
+  "nodes": [
+    {"id": "relay", "kind": "entity", "config": {"key": "relay", "domain": "switch", "name": "Relay", "deviceClass": "outlet"}, "position": {"x": 60, "y": 640}}
+  ],
+  "edges": [
+    {"id": "relay:command:turn_on:switch_on", "source": "relay", "target": "switch_on", "port": "command:turn_on"},
+    {"id": "relay:command:turn_off:switch_off", "source": "relay", "target": "switch_off", "port": "command:turn_off"}
+  ]
+}
+```
+
+A run that reaches a Stop step is Stopped, not failed: a command it handled
+succeeds and a When started flow that stops lets the definition start.
 
 ## Libraries
 

@@ -9,13 +9,16 @@ import ast
 import asyncio
 import copy
 import json
+import os
 import pathlib
+import re
 import threading
 import unittest
 from types import SimpleNamespace as NS
 
 from test_visual import EntryState, load_routes
 
+ROOT = pathlib.Path(os.environ.get('HASS_SHARP_TEST_ROOT', pathlib.Path(__file__).resolve().parents[2]))
 DOMAIN = 'hass_sharp'
 ENTRY = 'entry1'
 STATE_TRIGGER_ERROR = "required key not provided @ data['entity_id']"
@@ -55,9 +58,11 @@ class Registry:
 
 
 def definition(kind='graph', nodes=()):
-    logic = {'kind': 'graph', 'graph': {'version': 5, 'nodes': list(nodes), 'edges': []}} if kind == 'graph' \
+    """A definition as a request sends it: a graph's entity is an Entity node, before the given nodes."""
+    relay = {'id': 'relay', 'kind': 'entity', 'config': {'key': 'relay', 'domain': 'switch', 'name': 'Relay'}}
+    logic = {'kind': 'graph', 'graph': {'version': 5, 'nodes': [relay, *nodes], 'edges': []}} if kind == 'graph' \
         else {'kind': 'class', 'className': 'Porch'}
-    return {'name': 'Plug', 'entities': [{'key': 'relay', 'domain': 'switch'}], 'settings': [], 'logic': logic}
+    return {'name': 'Plug', 'settings': [], 'logic': logic}
 
 
 def trigger(node_id, configuration):
@@ -290,6 +295,29 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await self.send(request), expected)
         self.assertEqual(self.registry.reads, [])
         self.assertEqual(self.validated, [])
+
+
+class GuidanceTests(unittest.TestCase):
+    """What an author learns from, the shipped example definitions and the MCP guidance and guides, builds every entity
+    of a graph as an Entity node, with its state and commands on it."""
+
+    def test_every_graph_example_declares_its_entities_as_nodes(self):
+        examples = json.loads((ROOT / 'custom_components/hass_sharp/authoring_examples.json').read_text())
+        graphs = [example['definition'] for example in examples['definitions'] if example['definition']['logic']['kind'] == 'graph']
+        self.assertEqual(len(graphs), 4)
+        for definition in graphs:
+            kinds = [node['kind'] for node in definition['logic']['graph']['nodes']]
+            with self.subTest(definition['name']):
+                self.assertNotIn('entities', definition)
+                self.assertIn('entity', kinds)
+                self.assertFalse({'entity_state', 'entity_command', 'camera_frame'} & set(kinds))
+
+    def test_the_guidance_does_not_name_the_removed_steps(self):
+        text = ''.join((ROOT / path).read_text() for path in ('custom_components/hass_sharp/llm.py', 'docs/custom-entities.md', 'docs/mcp-authoring.md'))
+        # A whole name: Set state's kind, set_entity_state, stays.
+        for gone in ('entity_state', 'entity_command', 'camera_frame', 'When commanded'):
+            self.assertIsNone(re.search(rf'(?<![A-Za-z0-9_]){gone}(?![A-Za-z0-9_])', text), gone)
+        self.assertIn('set_entity_state', text)
 
 
 if __name__ == '__main__':
