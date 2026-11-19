@@ -27,6 +27,9 @@ static class EntityGraphTests
             (nameof(ASwitchRunsItsCommandFlows), ASwitchRunsItsCommandFlows),
             (nameof(AFailingCommandFlowFailsTheCommand), AFailingCommandFlowFailsTheCommand),
             (nameof(ACommandWithoutAFlowFails), ACommandWithoutAFlowFails),
+            (nameof(ASwitchNodeRunsItsCommandFlows), ASwitchNodeRunsItsCommandFlows),
+            (nameof(ACommandPinWithoutStepsFails), ACommandPinWithoutStepsFails),
+            (nameof(ALightNodeTurnedOnWithoutABrightnessIsAtFull), ALightNodeTurnedOnWithoutABrightnessIsAtFull),
             (nameof(ACommandThatDoesNotFinishTimesOut), ACommandThatDoesNotFinishTimesOut),
             (nameof(ACommandWhoseFlowIsCancelledSaysWhy), ACommandWhoseFlowIsCancelledSaysWhy),
             (nameof(SetupRunsBeforeTheSyncAndItsFailureFailsTheSave), SetupRunsBeforeTheSyncAndItsFailureFailsTheSave),
@@ -443,6 +446,70 @@ static class EntityGraphTests
         var failed = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a command without a flow");
         Check(failed.Message == "Relay has no flow for Turn on", "the message names the entity and the command: " + failed.Message);
         await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+    }
+
+    /// <summary>A switch an Entity node declares, with Set state steps on its Turn on pin and, unless left out, its Turn off pin.</summary>
+    static JsonObject RelayNode(bool turnOn = true)
+    {
+        var nodes = new List<JsonObject> { EntityNodeTests.Hub("relay", "relay", "switch", new JsonObject { ["name"] = "Relay" }), SetState("set_off", "relay", On(false)) };
+        var edges = new List<JsonObject> { Pin("relay", "command:turn_off", "set_off") };
+        if (turnOn) { nodes.Add(SetState("set_on", "relay", On(true))); edges.Add(Pin("relay", "command:turn_on", "set_on")); }
+        return Definition("Relay", Graph("Relay", [.. nodes], [.. edges]), []);
+    }
+    /// <summary>A step order wire from an Entity node's execution pin, with an id of its own words.</summary>
+    static JsonObject Pin(string hub, string port, string target) { var wire = E(hub, target, port); wire["id"] = $"{hub}:{port}:{target}"; return wire; }
+
+    /// <summary>
+    /// The hub form of <see cref="ASwitchRunsItsCommandFlows"/>: the steps on a switch node's command pins run on its
+    /// commands, the state they set is pushed, and each run is recorded under the entity's name and the command's.
+    /// </summary>
+    static async Task ASwitchNodeRunsItsCommandFlows()
+    {
+        await using var rig = await Rig.Start("switch-node");
+        var automationId = AutomationId(await rig.Save("relay", RelayNode()));
+        var sync = JsonNode.Parse(rig.Home.Syncs("relay").Single())!;
+        Check(sync["entities"]![0]!["commands"]!.ToJsonString() == """["turn_on","turn_off"]""", "the switch takes its commands: " + sync.ToJsonString());
+        await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", null), "a switch whose state is not worked out is pushed unknown as it starts");
+        var batches = rig.Batches;
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Flush();
+        Check(rig.Pushed("relay:relay", batches).LastOrDefault() is { } on && Is(on, "is_on", true), "turn on pushes on: " + Lines(rig.Home.Pushes().Skip(batches)));
+        batches = rig.Batches;
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Flush();
+        Check(rig.Pushed("relay:relay", batches).LastOrDefault() is { } off && Is(off, "is_on", false), "turn off pushes off: " + Lines(rig.Home.Pushes().Skip(batches)));
+        var runs = CommandRuns(rig, automationId);
+        Check(runs.Length == 2 && runs.All(r => r["status"]!.GetValue<string>() == "Succeeded" && r["triggerNodeId"]!.GetValue<string>() == "relay"), "both command runs are recorded, of the node: " + Lines(runs.Select(r => r.ToJsonString())));
+        Check(runs.Select(r => r["actionLabel"]!.GetValue<string>()).SequenceEqual(["Relay: Turn off", "Relay: Turn on"]), "each run is named by the entity and its command: " + Lines(runs.Select(r => r.ToJsonString())));
+    }
+
+    /// <summary>The hub form of <see cref="ACommandWithoutAFlowFails"/>: a command whose pin has no step fails, naming the entity and the command.</summary>
+    static async Task ACommandPinWithoutStepsFails()
+    {
+        await using var rig = await Rig.Start("no-pin-flow");
+        var saved = await rig.Save("relay", RelayNode(turnOn: false));
+        Check(saved["active"]!.GetValue<bool>(), "the definition runs: " + saved.ToJsonString());
+        await rig.Until("relay:relay", _ => true, "the switch starts");
+        var failed = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a command without a flow");
+        Check(failed.Message == "Relay has no flow for Turn on", "the message names the entity and the command: " + failed.Message);
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+    }
+
+    /// <summary>
+    /// A light node turned on without a brightness reads the one the host fills in on its command pin: having none yet,
+    /// the catalog's default, full.
+    /// </summary>
+    static async Task ALightNodeTurnedOnWithoutABrightnessIsAtFull()
+    {
+        await using var rig = await Rig.Start("light-node");
+        var graph = Graph("Lamp", [EntityNodeTests.Hub("lamp", "lamp", "light", new JsonObject { ["name"] = "Lamp", ["options"] = new JsonObject { ["dimmable"] = true } }), SetState("bright", "lamp", On(true))],
+            Pin("lamp", "command:turn_on", "bright"), Data("lamp", "bright", "brightness", "command:turn_on:brightness"));
+        await rig.Save("lamp", Definition("Lamp", graph, []));
+        await rig.Until("lamp:lamp", _ => true, "the light starts");
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", null);
+        await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 255), "turned on at full, having no brightness yet");
+        await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":80}""");
+        await rig.Until("lamp:lamp", s => Is(s, "brightness", 80), "turned on at the brightness asked for");
     }
 
     /// <summary>

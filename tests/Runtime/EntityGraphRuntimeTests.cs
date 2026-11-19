@@ -119,14 +119,22 @@ static class EntityGraphRuntimeTests
         /// Runs the root's method as the runner would: under a run of its own that reaches <paramref name="definition"/>
         /// (none when null), with the cancellation <paramref name="token"/>, traced into <paramref name="sink"/> when given.
         /// </summary>
-        public async Task Run(string root, IDefinitionRuntime? definition, CancellationToken token = default, IRunTraceSink? sink = null)
+        public Task Run(string root, IDefinitionRuntime? definition, CancellationToken token = default, IRunTraceSink? sink = null) =>
+            Invoke(VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = root }), definition, token, sink, TriggerPayload.Manual());
+        /// <summary>
+        /// Runs the flow of the Entity node <paramref name="root"/> on <paramref name="port"/> (its method,
+        /// <see cref="VisualNodeCatalog.FlowMethod"/>) as <see cref="Run(string, IDefinitionRuntime?, CancellationToken, IRunTraceSink?)"/>
+        /// runs a root, with <paramref name="payload"/> as its trigger (a command's, with its data), else a manual one.
+        /// </summary>
+        public Task Run(string root, string port, FakeDefinition definition, JsonElement? payload = null, IRunTraceSink? sink = null) =>
+            Invoke(VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = root }, port), definition, default, sink, payload ?? TriggerPayload.Manual());
+        async Task Invoke(string method, IDefinitionRuntime? definition, CancellationToken token, IRunTraceSink? sink, JsonElement payload)
         {
-            var method = VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = root });
             var prior = InvocationContext.Current;
             Task task;
             try
             {
-                InvocationContext.Current = new InvocationContext("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, TriggerPayload.Manual()) { Definition = definition, TraceSink = sink };
+                InvocationContext.Current = new InvocationContext("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, payload) { Definition = definition, TraceSink = sink };
                 instance._cancellationToken.Value = token;
                 task = (Task)instance.GetType().GetMethod(method)!.Invoke(instance, null)!;
             }
@@ -196,7 +204,16 @@ static class EntityGraphRuntimeTests
                 (nameof(ADrawingStepRoundsAPositionThatIsNotWhole), ADrawingStepRoundsAPositionThatIsNotWhole),
                 (nameof(APictureInAnObjectIsItsShortText), APictureInAnObjectIsItsShortText),
                 (nameof(APictureIsTracedAndLoggedAsAShortText), APictureIsTracedAndLoggedAsAShortText),
-                (nameof(ShowFrameHandsThePictureToTheDefinition), ShowFrameHandsThePictureToTheDefinition) })
+                (nameof(ShowFrameHandsThePictureToTheDefinition), ShowFrameHandsThePictureToTheDefinition),
+                (nameof(AnEntityNodeWorksOutItsState), AnEntityNodeWorksOutItsState),
+                (nameof(ASetValueOnTheNodeIsItsState), ASetValueOnTheNodeIsItsState),
+                (nameof(AFailingValueMakesTheEntityUnavailable), AFailingValueMakesTheEntityUnavailable),
+                (nameof(ACommandRunsTheStepsOnItsPin), ACommandRunsTheStepsOnItsPin),
+                (nameof(ACommandsValueIsReadOnItsFlow), ACommandsValueIsReadOnItsFlow),
+                (nameof(AFrameRunsTheStepsOnItsPin), AFrameRunsTheStepsOnItsPin),
+                (nameof(TheRootsOfANodeAreItsWiredFlows), () => { TheRootsOfANodeAreItsWiredFlows(); return Task.CompletedTask; }),
+                (nameof(AGraphOfANodeWithoutFlowsCompiles), AGraphOfANodeWithoutFlowsCompiles),
+                (nameof(HistoryFollowsTheNodesSwitches), () => { HistoryFollowsTheNodesSwitches(); return Task.CompletedTask; }) })
             {
                 States.Clear(); UserScriptManager.CurrentTrigger.Value = null;
                 try { await test(); }
@@ -208,6 +225,7 @@ static class EntityGraphRuntimeTests
         Console.WriteLine("PASS entity graph runtime: State sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
         Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy and round a position that is not whole, a picture is traced and logged as a short text, never its bytes, and goes into an object as that text; When a frame is needed runs the steps after it and Show frame hands its picture to the definition");
+        Console.WriteLine("PASS entity graph runtime: an Entity node works out its state from its wired and set values, or marks its entity unavailable, runs the steps on each wired command and its frame pin with the command's values, and its wired flows are its roots");
         Console.WriteLine("PASS entity graph runtime: HTTP request names a host it cannot connect to, gives no body for a HEAD, follows redirects itself without handing its headers to another host, refuses a header before sending, and reads an empty or compressed answer; Download file hides a secret's address and checksum");
     }
 
@@ -1410,5 +1428,180 @@ static class EntityGraphRuntimeTests
         definition = new FakeDefinition();
         await Fails(() => compiled.Run("frame", definition, cancel.Token), "a frame flow cancelled before it starts");
         Same(definition.Calls, [], "a cancelled run shows no frame");
+    }
+
+    // ---- Entity nodes ----
+
+    /// <summary>An Entity node (<see cref="EntityNodeTests.Hub"/>) with <paramref name="values"/> set on it as its state values, when given.</summary>
+    static JsonObject Hub(string id, string key, string domain, JsonObject? values = null, JsonObject? more = null)
+    {
+        var hub = EntityNodeTests.Hub(id, key, domain, more);
+        if (values != null) hub["config"]!["arguments"] = values;
+        return hub;
+    }
+    /// <summary>A step order wire from the Entity node's execution pin <paramref name="port"/> to <paramref name="target"/>.</summary>
+    static JsonObject Flow(string hub, string port, string target) => E(hub, target, port);
+    /// <summary>An entity definition's graph that lists no entities: its Entity nodes declare them.</summary>
+    static JsonObject Nodes(JsonObject[] nodes, params JsonObject[] edges) => new()
+    {
+        ["version"] = 5, ["name"] = "Entity", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges),
+        ["definition"] = new JsonObject { ["entities"] = new JsonArray(), ["settings"] = new JsonArray() },
+    };
+    static JsonObject Constant(string id, bool value) => N(id, "constant", new { type = "boolean", value = Lit("boolean", value) });
+    static JsonObject Said(string id) => N(id, "log", new { value = Lit("string", id) });
+
+    /// <summary>An Entity node's state flow hands the value wired to it to the definition, then marks the entity available.</summary>
+    static async Task AnEntityNodeWorksOutItsState()
+    {
+        using var compiled = await Compiled.Of(Nodes([Hub("door", "door", "binary_sensor"), Constant("c", true)], D("c", "door", "is_on")), "an Entity node with a wired value");
+        var definition = new FakeDefinition();
+        await compiled.Run("door", "state", definition);
+        Same(definition.Calls, ["state door is_on=bool:true", "available door yes"], "the node sets the state, then the availability");
+    }
+
+    /// <summary>A value set on the node is its state; a value it is not given, or one left unset, is not handed over.</summary>
+    static async Task ASetValueOnTheNodeIsItsState()
+    {
+        var values = new JsonObject { ["is_on"] = Lit("boolean", true), ["brightness"] = JsonSerializer.SerializeToNode(Unset) };
+        using var compiled = await Compiled.Of(Nodes([Hub("lamp", "lamp", "light", values)]), "an Entity node with a set value");
+        var definition = new FakeDefinition();
+        await compiled.Run("lamp", "state", definition);
+        Same(definition.Calls, ["state lamp is_on=bool:true", "available lamp yes"], "only the value set is handed over");
+        Check(!definition.Calls.Any(c => c.Contains("brightness", StringComparison.Ordinal)), "the brightness, left unset, is not handed over: " + string.Join(" | ", definition.Calls));
+    }
+
+    /// <summary>
+    /// A value that cannot be worked out (a value node that throws, wired over the unset value the editor leaves) marks the
+    /// entity unavailable and sets no state; the run fails with the value's own error.
+    /// </summary>
+    static async Task AFailingValueMakesTheEntityUnavailable()
+    {
+        var broken = N("bad", "custom", new JsonObject
+        {
+            ["source"] = "public static class CustomNode\n{\n    [Node(\"Broken\", Pure = true)]\n    public static bool Run() => throw new InvalidOperationException(\"no reading\");\n}",
+            ["arguments"] = new JsonObject(),
+        });
+        var values = new JsonObject { ["is_on"] = JsonSerializer.SerializeToNode(Unset) };
+        using var compiled = await Compiled.Of(Nodes([Hub("door", "door", "binary_sensor", values), broken], D("bad", "door", "is_on", "result")), "an Entity node with a failing value");
+        var definition = new FakeDefinition();
+        var error = await Fails(() => compiled.Run("door", "state", definition), "an Entity node whose value fails");
+        Check(error.Message.Contains("no reading", StringComparison.Ordinal), "the run fails with the value's error: " + error.Message);
+        Same(definition.Calls, ["available door no"], "the entity is marked unavailable, and no state is set");
+    }
+
+    /// <summary>Each command runs the steps connected to its pin, and only those.</summary>
+    static async Task ACommandRunsTheStepsOnItsPin()
+    {
+        var graph = Nodes(
+            [Hub("relay", "relay", "switch"), SetState("set_on", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }), SetState("set_off", "relay", new JsonObject { ["is_on"] = Lit("boolean", false) })],
+            Flow("relay", "command:turn_on", "set_on"), Flow("relay", "command:turn_off", "set_off"));
+        using var compiled = await Compiled.Of(graph, "a switch node with both commands");
+        var definition = new FakeDefinition();
+        await compiled.Run("relay", "command:turn_on", definition);
+        Same(definition.Calls, ["state relay is_on=bool:true"], "Turn on runs its steps");
+        definition.Calls.Clear();
+        await compiled.Run("relay", "command:turn_off", definition);
+        Same(definition.Calls, ["state relay is_on=bool:false"], "Turn off runs its steps");
+    }
+
+    /// <summary>
+    /// A command's value is read on its flow from the command's data; a command that came without it (one the host could
+    /// not fill: it fills the catalog's default, see <c>EntityGraphTests.ALightNodeTurnedOnWithoutABrightnessIsAtFull</c>)
+    /// fails the step that reads it, in words.
+    /// </summary>
+    static async Task ACommandsValueIsReadOnItsFlow()
+    {
+        var graph = Nodes([Hub("lamp", "lamp", "light", more: new JsonObject { ["name"] = "Lamp", ["options"] = new JsonObject { ["dimmable"] = true } }), SetState("set", "lamp")],
+            Flow("lamp", "command:turn_on", "set"), D("lamp", "set", "brightness", "command:turn_on:brightness"));
+        using var compiled = await Compiled.Of(graph, "a light node reading its brightness");
+        var definition = new FakeDefinition();
+        var sink = new TraceSink();
+        await compiled.Run("lamp", "command:turn_on", definition, TriggerPayload.Command("lamp", "turn_on", JsonSerializer.SerializeToElement(new { brightness = 40 })), sink);
+        Same(definition.Calls, ["state lamp brightness=double:40"], "the command's brightness is the state's");
+        Check(sink.Event("lamp")["outputs"]?["command:turn_on:brightness"]?["v"]?.GetValue<double>() == 40, "the node is traced with the command's value: " + sink.Event("lamp").ToJsonString());
+        definition.Calls.Clear();
+        var absent = await Fails(() => compiled.Run("lamp", "command:turn_on", definition, TriggerPayload.Command("lamp", "turn_on", null)), "a command without its value");
+        Check(absent.Message == "Set state: Turn on came without a brightness, and Lamp has none", "the step reading the value fails in words: " + absent.Message);
+        Same(definition.Calls, [], "nothing is set");
+    }
+
+    /// <summary>A camera node's frame pin runs the steps connected to it, which show a frame.</summary>
+    static async Task AFrameRunsTheStepsOnItsPin()
+    {
+        var picture = Picture();
+        var asked = Cameras((ok, _) => ok(picture));
+        using var compiled = await Compiled.Of(Nodes(
+            [Hub("cam", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect"), N("show", "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) })],
+            Flow("cam", "frame", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")), "a camera node's frame flow");
+        var definition = new FakeDefinition { DefinitionId = "lens" };
+        await compiled.Run("cam", "frame", definition);
+        Same(definition.Calls, ["frame lens 1 drawing(s)"], "Show frame hands the picture with its rectangle to the definition");
+        Same(asked, ["lens camera.porch"], "the picture is taken under the definition's id");
+    }
+
+    /// <summary>
+    /// A node's roots are its wired flows, before the old kinds': its state when a value is supplied, each command whose
+    /// pin is wired, its frame when wired; each named for the run history. A node with nothing supplied or wired has none.
+    /// </summary>
+    static void TheRootsOfANodeAreItsWiredFlows()
+    {
+        var door = Hub("door", "door", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", true) }, new JsonObject { ["name"] = "" });
+        var relay = Hub("relay", "relay", "switch", more: new JsonObject { ["name"] = "Relay" });
+        var cam = Hub("cam", "lens", "camera");
+        var graph = Nodes([door, relay, cam, N("old", "entity_command", new { entity = "other", command = "turn_on" }), Said("x")],
+            Flow("relay", "command:turn_on", "x"), Flow("relay", "command:turn_off", "x"), Flow("cam", "frame", "x"));
+        var roots = DefinitionGraph.Roots(graph, VisualCatalogSnapshot.BuiltIn);
+        Same(roots.States, [VisualNodeCatalog.FlowMethod(door, "state")], "the door's state is a State");
+        Check(roots.StateEntities[VisualNodeCatalog.FlowMethod(door, "state")] == "door", "of the door");
+        Same([.. roots.Commands.Select(p => p.Key + "=" + p.Value)],
+            [$"relay:turn_on={VisualNodeCatalog.FlowMethod(relay, "command:turn_on")}", $"relay:turn_off={VisualNodeCatalog.FlowMethod(relay, "command:turn_off")}", $"other:turn_on={VisualNodeCatalog.EffectiveTriggerMethod(N("old", "entity_command"))}"],
+            "each wired command is a command flow, then the old kind's");
+        Check(roots.Frames["lens"] == VisualNodeCatalog.FlowMethod(cam, "frame"), "the camera's frame flow");
+        var flows = new[] { door, relay, cam }.SelectMany(n => DefinitionGraph.HubFlows(n, graph, VisualCatalogSnapshot.BuiltIn)).ToArray();
+        Same([.. flows.Select(f => $"{f.NodeId} {f.Port} {f.Kind} {f.Key} {f.Command ?? "-"} {f.Label} {f.Method}")],
+            [$"door state state door - door: State {VisualNodeCatalog.FlowMethod(door, "state")}",
+             $"relay command:turn_on command relay turn_on Relay: Turn on {VisualNodeCatalog.FlowMethod(relay, "command:turn_on")}",
+             $"relay command:turn_off command relay turn_off Relay: Turn off {VisualNodeCatalog.FlowMethod(relay, "command:turn_off")}",
+             $"cam frame frame lens - lens: When a frame is needed {VisualNodeCatalog.FlowMethod(cam, "frame")}"],
+            "the flows, in order, named by the entity's name, else its key");
+        var unnamed = Hub("n", "", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", false) }, new JsonObject { ["name"] = "" });
+        Check(DefinitionGraph.HubFlows(unnamed, Nodes([unnamed]), VisualCatalogSnapshot.BuiltIn).Single().Label == "Entity: State", "an entity with neither name nor key is named Entity");
+
+        var half = Hub("relay", "relay", "switch");
+        var halfRoots = DefinitionGraph.Roots(Nodes([half, Said("x")], Flow("relay", "command:turn_on", "x")), VisualCatalogSnapshot.BuiltIn);
+        Check(halfRoots.Commands.ContainsKey("relay:turn_on") && !halfRoots.Commands.ContainsKey("relay:turn_off") && halfRoots.States.Count == 0,
+            "a command whose pin is not wired has no flow: " + string.Join(",", halfRoots.Commands.Keys));
+        static JsonObject Light() => Hub("lamp", "lamp", "light", new JsonObject { ["is_on"] = JsonSerializer.SerializeToNode(Unset) });
+        var light = Light();
+        Check(DefinitionGraph.HubFlows(light, Nodes([light]), VisualCatalogSnapshot.BuiltIn).Count == 0, "a node with nothing supplied and nothing wired has no flow");
+        var wiredLight = Light();
+        var wired = Nodes([wiredLight, Constant("c", true)], D("c", "lamp", "is_on"));
+        Check(DefinitionGraph.HubFlows(wiredLight, wired, VisualCatalogSnapshot.BuiltIn).Select(f => f.Port).SequenceEqual(["state"]), "a wired value is supplied over the unset one");
+    }
+
+    /// <summary>A graph whose only Entity node has no flow builds a class with no action and no flow method.</summary>
+    static async Task AGraphOfANodeWithoutFlowsCompiles()
+    {
+        using var compiled = await Compiled.Of(Nodes([Hub("b", "press", "button")]), "a button node with nothing connected");
+        var type = compiled.Assembly.GetType("VisualAutomation")!;
+        Check(!type.GetMethods().Any(m => m.Name.StartsWith("Run_", StringComparison.Ordinal)), "the class has no flow method: " + string.Join(",", type.GetMethods().Select(m => m.Name)));
+        Check(((Automation)Activator.CreateInstance(type)!).Configure().Actions.Count == 0, "and no action");
+    }
+
+    /// <summary>A node's run history switches decide which of its flows are recorded: by default its commands only.</summary>
+    static void HistoryFollowsTheNodesSwitches()
+    {
+        static HubFlow[] Flows(JsonObject? history)
+        {
+            var more = new JsonObject { ["options"] = new JsonObject { ["dimmable"] = true } };
+            if (history != null) more["history"] = history;
+            var light = Hub("lamp", "lamp", "light", new JsonObject { ["is_on"] = Lit("boolean", true) }, more);
+            var cam = Hub("cam", "lens", "camera", more: history == null ? null : new JsonObject { ["history"] = history.DeepClone() });
+            var graph = Nodes([light, cam, Said("x")], Flow("lamp", "command:turn_on", "x"), Flow("cam", "frame", "x"));
+            return [.. DefinitionGraph.HubFlows(light, graph, VisualCatalogSnapshot.BuiltIn), .. DefinitionGraph.HubFlows(cam, graph, VisualCatalogSnapshot.BuiltIn)];
+        }
+        Same([.. Flows(null).Select(f => f.Kind + "=" + f.TrackHistory)], ["state=False", "command=True", "frame=False"], "by default only commands are recorded");
+        Same([.. Flows(new JsonObject { ["state"] = true, ["commands"] = false, ["frame"] = true }).Select(f => f.Kind + "=" + f.TrackHistory)], ["state=True", "command=False", "frame=True"],
+            "the switches flip them");
     }
 }

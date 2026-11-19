@@ -36,7 +36,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// at startup and by hand, and the entities whose changes start it (from the graph, the root's id and the snapshot).
     /// A State is worked out at startup and again whenever an entity it reads changes, a newer change restarting it; a
     /// When commanded flow runs each command in turn; When started runs once; When a frame is needed runs when its camera's
-    /// host asks, one frame at a time (the host never asks again while one runs). None is run by hand.
+    /// host asks, one frame at a time (the host never asks again while one runs). None is run by hand. An Entity node's
+    /// flows (<see cref="DefinitionGraph.HubFlows"/>) run as these do: its state as a State, a command as When commanded, its frame as When a frame is needed.
     /// </summary>
     static readonly Dictionary<string,(string Mode,bool Startup,bool Manual,Func<JsonObject,string,VisualCatalogSnapshot,IEnumerable<string>> Entities)> RootActions=new(StringComparer.Ordinal) {
         ["entity_state"]=("Restart",true,false,StateDependencies.Of),
@@ -341,8 +342,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                     compiledConversions.Add(Text(node,"id"),(ClrExpression(from.Symbol),ClrExpression(to.Symbol)));
             }
             // Every node that starts a flow of its own, in id order: an automation's triggers, and an entity graph's triggers,
-            // States, When commanded and When started steps alike. An Entity node only declares an entity: no action runs it.
-            var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)&&!VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n,snapshot),"entity")).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal).ToArray();
+            // States, When commanded and When started steps alike, each with one action; and its Entity nodes, with one per
+            // flow they start (DefinitionGraph.HubFlows), none for a node with nothing supplied or wired.
+            var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal)
+                .SelectMany(n=>VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n,snapshot),"entity")?DefinitionGraph.HubFlows(n,graph,snapshot).Select(f=>(Node:n,Flow:(HubFlow?)f)):[(n,(HubFlow?)null)]).ToArray();
+            var hubFlows=roots.Any(r=>r.Flow!=null);
             // Internal identifiers are deterministic and cannot shadow authored identifiers.
             var authored=graph.ToJsonString()+string.Join("\n",snapshot.Sources.Select(s=>s.Source));var prefix="__visual_";while(authored.Contains(prefix,StringComparison.Ordinal))prefix+="x";
             var embedded=EmbeddedCatalog(graph,snapshot);var embeddedTypes=embedded["types"]!.AsObject();
@@ -351,9 +355,14 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             Add("public override global::HassSharp.AutomationConfiguration Configure() => new(");
             static string References(IEnumerable<string> ids)=>"["+string.Join(",",ids.Select(id=>$"new global::HassSharp.EntityReference({Q(id)})"))+"]";
             for(var i=0;i<roots.Length;i++) {
-                var root=roots[i];current=Text(root,"id");var cfg=root["config"]!;var entities="[]";var schedules="[]";var triggers="[]";
+                var (root,hubFlow)=roots[i];current=Text(root,"id");var cfg=root["config"]!;var entities="[]";var schedules="[]";var triggers="[]";
                 string mode;bool startup,manual;
-                if(Text(root,"kind") is var rootKind&&rootKind!="trigger") {
+                if(hubFlow!=null) {
+                    // An Entity node's state is worked out as a State's is; a command runs as When commanded does, a frame as When a frame is needed.
+                    (mode,startup,manual)=hubFlow.Kind switch{"state"=>("Restart",true,false),"command"=>("Queued",false,false),_=>("Single",false,false)};
+                    if(hubFlow.Kind=="state")entities=References(StateDependencies.Of(graph,current,snapshot));
+                }
+                else if(Text(root,"kind") is var rootKind&&rootKind!="trigger") {
                     if(!RootActions.TryGetValue(rootKind,out var action))throw new InvalidOperationException($"No action for the root kind {rootKind}");
                     (mode,startup,manual)=(action.Mode,action.Startup,action.Manual);entities=References(action.Entities(graph,current,snapshot));
                 }
@@ -369,7 +378,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                     if(kind=="ha")triggers=$"[new global::HassSharp.HomeAssistantTrigger({Q(current)},{Q(cfg["trigger"]!.ToJsonString())})]";
                     mode=Text(cfg,"mode","Single");startup=cfg["startup"]?.GetValue<bool>()??kind=="startup";manual=cfg["manual"]?.GetValue<bool>()??true;
                 }
-                Section(current,$"new global::HassSharp.AutomationAction(nameof({VisualNodeCatalog.EffectiveTriggerMethod(root)}),global::HassSharp.AutomationMode.{mode},Startup:{startup.ToString().ToLowerInvariant()},Manual:{manual.ToString().ToLowerInvariant()},Entities:{entities},Schedules:{schedules},Triggers:{triggers}){(i+1<roots.Length?",":"")}");
+                Section(current,$"new global::HassSharp.AutomationAction(nameof({hubFlow?.Method??VisualNodeCatalog.EffectiveTriggerMethod(root)}),global::HassSharp.AutomationMode.{mode},Startup:{startup.ToString().ToLowerInvariant()},Manual:{manual.ToString().ToLowerInvariant()},Entities:{entities},Schedules:{schedules},Triggers:{triggers}){(i+1<roots.Length?",":"")}");
             }
             Add(");");
             // A library node is dispatched by its kind; a Custom C# node, exactly alike, by its own method.
@@ -380,14 +389,19 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 var method=MethodOf(node)!;
                 Add($"private delegate {ClrExpression(method.Method.ReturnType)} {delegates[MethodKey(node)]}({string.Join(",",method.Parameters.Select(p=>ClrExpression(p.Symbol.Type)+" @"+p.Name))});");
             }
-            foreach(var root in roots)Section(Text(root,"id"),$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
+            // An Entity node's flow is run from its node and port. Only a graph with such a flow gives the run a port, so
+            // every other graph's source stays as it was.
+            var flowPort=prefix+"port";
+            foreach(var (root,hubFlow) in roots)Section(Text(root,"id"),hubFlow!=null
+                ?$"public global::System.Threading.Tasks.Task {hubFlow.Method}() => {run}({Q(Text(root,"id"))},{Q(hubFlow.Port)});"
+                :$"public global::System.Threading.Tasks.Task {VisualNodeCatalog.EffectiveTriggerMethod(root)}() => {run}({Q(Text(root,"id"))});");
             // In the automation's own load context, so System.Text.Json's caches of its types go when it unloads.
             Add($"private static readonly global::System.Text.Json.JsonSerializerOptions {prefix}json = global::HassSharp.VisualRuntime.JsonOptions();");
             // The entity classes the automation was compiled against make the handles its nodes take from entity ids.
-            Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}) => new global::HassSharp.VisualRuntime({Pieces(graph.ToJsonString())},{Pieces(embedded.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
+            Add($"private global::System.Threading.Tasks.Task {run}(string {nodeId}{(hubFlows?$",string? {flowPort}=null":"")}) => new global::HassSharp.VisualRuntime({Pieces(graph.ToJsonString())},{Pieces(embedded.ToJsonString())},new global::System.Collections.Generic.Dictionary<string,global::System.Type> {{");
             var clrTypes=snapshot.Types.Values.Concat(snapshot.Custom.Values.SelectMany(c=>c.Types)).DistinctBy(t=>t.Id);
             foreach(var type in clrTypes.Where(t=>embeddedTypes.ContainsKey(t.Id)).OrderBy(t=>t.Id,StringComparer.Ordinal))Add($"[{Q(type.Id)}]=typeof({(type.Symbol.TypeKind==TypeKind.Dynamic ? "global::System.Object" : type.Symbol.WithNullableAnnotation(NullableAnnotation.NotAnnotated).ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}),");
-            Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}},{prefix}json,global::HassSharp.Entities.EntityHandles.Create).RunAsync({nodeId});");
+            Add($"}},TriggerData,CancellationToken,{handler},new global::System.Collections.Generic.HashSet<string>{{{string.Join(",",compiledConversions.Keys.Select(Q))}}},new global::System.Collections.Generic.Dictionary<string,string>{{{string.Join(",",comparisonTypes.Select(p=>"["+Q(p.Key)+"]="+Q(p.Value)))}}},{prefix}json,global::HassSharp.Entities.EntityHandles.Create).RunAsync({nodeId}{(hubFlows?","+flowPort:"")});");
             Add($"private async global::System.Threading.Tasks.Task {handler}(string {nodeId},global::HassSharp.VisualScope {scope},global::HassSharp.VisualRuntime {engine}) {{");
             Add("await global::System.Threading.Tasks.Task.CompletedTask;");
             Add($"switch({nodeId}) {{");

@@ -78,10 +78,14 @@ public partial class HassSharpManager
         var catalog = document.EmbeddedCatalog ?? VisualGenerator.EmbeddedCatalog(graph, SavedLibraries(services).Preview.Snapshot).ToJsonString();
         var snapshot = VisualCatalogSnapshot.BuiltIn.WithRoot(JsonNode.Parse(catalog)!.AsObject());
         var roots = DefinitionGraph.Roots(graph, snapshot);
-        // An Entity node declares an entity and starts no flow of its own.
-        var triggers = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot) && !VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n, snapshot), "entity"))
+        // An Entity node has one entry per flow it starts, named for its entity and its pin; every other root one of its own.
+        var rootNodes = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot)).ToArray();
+        bool Hub(JsonObject node) => VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(node, snapshot), "entity");
+        var triggers = rootNodes.Where(n => !Hub(n))
             .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"),
                 VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null, TrackHistory(n, snapshot)), StringComparer.Ordinal);
+        foreach (var flow in rootNodes.Where(Hub).SelectMany(n => DefinitionGraph.HubFlows(n, graph, snapshot)))
+            triggers[flow.Method] = new VisualTrigger(flow.NodeId, flow.Label, flow.TrackHistory);
         var script = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
         script.DesignatedRootType = "VisualAutomation";
         script.VisualRevision = document.Revision;

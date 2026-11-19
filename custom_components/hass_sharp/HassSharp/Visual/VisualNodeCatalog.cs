@@ -335,6 +335,11 @@ public static class VisualNodeCatalog
     internal static IEnumerable<JsonObject> Declarations(JsonObject node, string key) => (node["config"]?[key] as JsonArray ?? []).OfType<JsonObject>();
     internal static string ResolveType(string type, JsonObject node) => type.StartsWith('$') ? Text(node["config"], type[1..]) : type;
     public static string EffectiveTriggerMethod(JsonObject node) => "Run_" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(Text(node, "id")));
+    /// <summary>
+    /// The method of one flow of a node that starts several (an Entity node: its state, each command, its frame): the
+    /// node's (<see cref="EffectiveTriggerMethod"/>), then <c>_</c> and the port in hex, so no two ports share one.
+    /// </summary>
+    public static string FlowMethod(JsonObject node, string port) => EffectiveTriggerMethod(node) + "_" + Convert.ToHexString(System.Text.Encoding.UTF8.GetBytes(port));
     internal static string TriggerType(JsonObject node, VisualCatalogSnapshot snapshot) => Text(node["config"], "type", Text(Spec(node, snapshot)?["config"]?["type"], "default"));
     public static bool CompatibleTypes(string source, string target, VisualCatalogSnapshot? snapshot = null) => (snapshot ?? VisualCatalogSnapshot.BuiltIn).IsAssignable(source, target);
     public static string[] ExecutionPorts(JsonObject node, VisualCatalogSnapshot? snapshot = null)
@@ -448,7 +453,7 @@ public static class VisualNodeCatalog
     {
         var ports = new JsonObject();
         foreach (var (command, entry) in DeclaredDomain(node, catalog)?["commands"] as JsonObject ?? [])
-            foreach (var (name, value) in entry?["data"] as JsonObject ?? [])
+            foreach (var (name, value) in (entry as JsonObject)?["data"] as JsonObject ?? [])
             {
                 var port = CommandValueOutput(name, value);
                 port["group"] = "command:" + command;

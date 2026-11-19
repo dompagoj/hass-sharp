@@ -350,10 +350,13 @@ public sealed class VisualRuntime
     }
     JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
-    // A Custom C# node's pins are its signature's; a State's or Set state's its entity's (see EntityInputs); every other node's are its kind's.
-    JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Text(Spec(id),"dynamicInputs")=="entity"?EntityInputs(id):Spec(id)?["inputs"];
+    // A Custom C# node's pins are its signature's; a State's, Set state's or Entity node's its entity's (see EntityInputs); every other node's are its kind's.
+    JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Text(Spec(id),"dynamicInputs") is "entity" or "declared"?EntityInputs(id):Spec(id)?["inputs"];
     readonly Dictionary<string,JsonObject> entityInputs=[];
-    /// <summary>The pins of a node whose inputs are its entity's state values, as the validators resolve them from the definition the catalog carries.</summary>
+    /// <summary>
+    /// The pins of a node whose inputs are its entity's state values, as the validators resolve them: from the definition
+    /// the catalog carries, or for an Entity node from the type it declares.
+    /// </summary>
     JsonObject EntityInputs(string id) {
         lock(entityInputs) {
             if(!entityInputs.TryGetValue(id,out var ports))entityInputs[id]=ports=VisualNodeCatalog.DataInputs(nodes[id],null,VisualCatalogSnapshot.BuiltIn.WithRoot(catalog));
@@ -376,13 +379,17 @@ public sealed class VisualRuntime
         try {definition.SetAvailable(key,false);}
         catch(Exception error) {try{Logger.Warn($"Run {InvocationContext.Current?.RunId}: {Title(id)} could not mark {key} unavailable: {error.GetType().Name}: {error.Message}");}catch{}}
     }
-    // A When commanded step's outputs are its command's data values (see CommandOutputs).
-    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Text(Spec(id),"dynamicOutputs")=="command"?CommandOutputs(id):Spec(id)?["outputs"];
+    // A When commanded step's outputs are its command's data values, an Entity node's those of each of its commands (see CommandOutputs).
+    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Text(Spec(id),"dynamicOutputs") is "command" or "declared"?CommandOutputs(id):Spec(id)?["outputs"];
     readonly Dictionary<string,JsonObject> commandOutputs=[];
-    /// <summary>The outputs of a When commanded step, as the validators resolve them from the definition the catalog carries.</summary>
+    /// <summary>
+    /// The outputs of a When commanded step, as the validators resolve them from the definition the catalog carries; of an
+    /// Entity node, <c>command:&lt;command&gt;:&lt;value&gt;</c> for each value of each command of the type it declares.
+    /// </summary>
     JsonObject CommandOutputs(string id) {
         lock(commandOutputs) {
-            if(!commandOutputs.TryGetValue(id,out var ports))commandOutputs[id]=ports=VisualNodeCatalog.CommandOutputs(nodes[id],catalog);
+            if(!commandOutputs.TryGetValue(id,out var ports))
+                commandOutputs[id]=ports=Text(Spec(id),"dynamicOutputs")=="declared"?VisualNodeCatalog.DataOutputs(nodes[id],catalog):VisualNodeCatalog.CommandOutputs(nodes[id],catalog);
             return ports;
         }
     }
@@ -392,7 +399,12 @@ public sealed class VisualRuntime
     /// <summary>A step's input as the canvas names it: "Delay · Seconds".</summary>
     string Pin(string id,string port)=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?[port],port);
     string? Next(string node,string port="next")=>flow.GetValueOrDefault((node,port));
-    public async Task RunAsync(string root) {
+    /// <summary>The pin an Entity node at the root of this run starts its flow at (<c>state</c> for its state, which has none); null for any other run.</summary>
+    string? startPort;
+    /// <param name="root">The node the run starts at.</param>
+    /// <param name="port">For an Entity node, which of its flows: <c>state</c>, <c>command:&lt;command&gt;</c> or <c>frame</c>.</param>
+    public async Task RunAsync(string root,string? port=null) {
+        startPort=port;
         trace=VisualTrace.Create(root,nodes.Keys,TraceInputType,TraceOutputType);
         try {await Walk(root,new VisualScope{CancellationToken=lifetime.Token},0);external.ThrowIfCancellationRequested();}
         catch(OperationCanceledException) when(Volatile.Read(ref stopped)!=0 && !external.IsCancellationRequested) {if(InvocationContext.Current is {} run)run.Stopped=true;}
@@ -436,7 +448,7 @@ public sealed class VisualRuntime
             object? value;
             // A value that cannot be copied into a loop or branch fails the step that reads it there, named as people see it.
             try {if(!scope.TryGetOutput(source,out value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
-                ? Text(nodes[source.Item1],"kind")=="entity_command" ? AbsentCommandValue(node,source.Item1,source.Item2,reason)
+                ? Text(nodes[source.Item1],"kind") is "entity_command" or "entity" ? AbsentCommandValue(node,source.Item1,source.Item2,reason)
                 : $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
                 : HeadBody(source) ? $"{Pin(node,port)} reads the body of {Title(source.Item1)}, which uses HEAD and gets none; choose GET to read it"
                 : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");}
@@ -450,12 +462,15 @@ public sealed class VisualRuntime
     /// <summary>
     /// A step reading a value of its command's data that the command came without, which its entity could not give
     /// either (see <c>DefinitionHost.Filled</c>), in words for the person who gave the command, without ids: "Set state:
-    /// Turn on came without a brightness, and Lamp has none".
+    /// Turn on came without a brightness, and Lamp has none". <paramref name="command"/> is the When commanded step, or the
+    /// Entity node whose output <c>command:&lt;command&gt;:&lt;value&gt;</c> <paramref name="port"/> is.
     /// </summary>
     string AbsentCommandValue(string reader,string command,string port,string? reason) {
-        var cfg=nodes[command]["config"];var key=Text(cfg,"entity");
-        var row=VisualNodeCatalog.EntityDomain(catalog,key);var entity=VisualNodeCatalog.DefinitionEntity(catalog,key);
-        var commandLabel=Text(row?["commands"]?[Text(cfg,"command")],"label",Text(cfg,"command"));
+        var node=nodes[command];var cfg=node["config"];var hub=Text(node,"kind")=="entity";
+        var key=EntityKey(command);var given=hub?port.Split(':')[1]:Text(cfg,"command");
+        var row=hub?VisualNodeCatalog.DeclaredDomain(node,catalog):VisualNodeCatalog.EntityDomain(catalog,key);
+        var entity=hub?VisualNodeCatalog.EntityDescription(node):VisualNodeCatalog.DefinitionEntity(catalog,key);
+        var commandLabel=Text(row?["commands"]?[given],"label",given);
         var value=VisualGraphValidator.Words.PortLabel(CommandOutputs(command)[port],port).ToLowerInvariant();
         var name=Text(entity,"name") is {Length:>0} named?named:key;
         return reason==null
@@ -626,11 +641,13 @@ public sealed class VisualRuntime
                 if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
                 // An entity node acts on the definition of the run in progress, which only an entity definition's run has.
                 var definition=EntityKinds.Contains(kind)?Definition():null;Dictionary<string,object?>? state=null;HashSet<string>? hidden=null;
-                if(kind=="entity_state") {
-                    // A State whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
+                if(kind=="entity_state" || kind=="entity" && startPort==StateFlow) {
+                    // A State (or an Entity node's state) whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
                     try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id,out hidden);}
-                    catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {MarkUnavailable(definition!,Text(cfg,"entity"),id);throw;}
+                    catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {MarkUnavailable(definition!,EntityKey(id),id);throw;}
                 }
+                // An Entity node's command or frame flow does not work out its state values.
+                else if(kind=="entity")ev=Begin();
                 else {
                     if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
                     ev=Begin();
@@ -666,6 +683,11 @@ public sealed class VisualRuntime
                     // When commanded gives its command's data; When started and When a frame is needed only start their flows.
                     case "entity_command":Command(id,scope);break;
                     case "entity_setup":case "camera_frame":break;
+                    // An Entity node starts the flow of its run's pin: its state, set as a State's is; a command's or its frame's steps.
+                    case "entity":
+                        if(EntityFlow(id,scope,definition!,state,hidden) is {} pin){port=pin;next=Next(id,pin);}
+                        else next=null;
+                        break;
                     case "set_entity_state":var values=EntityValues(scope,id,out var secret);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values,secret);break;
                     case "set_entity_available":var available=Input<bool>(scope,id,"available");ThrowIfCancelled(scope);definition!.SetAvailable(Text(cfg,"entity"),available);break;
                     // The definition keeps a copy of the picture as its camera's current frame.
@@ -835,19 +857,44 @@ public sealed class VisualRuntime
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
-    static readonly HashSet<string> EntityKinds=new(["entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot","camera_frame","show_frame"],StringComparer.Ordinal);
+    static readonly HashSet<string> EntityKinds=new(["entity","entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot","camera_frame","show_frame"],StringComparer.Ordinal);
+    /// <summary>The port of an Entity node's state flow, which has no pin.</summary>
+    const string StateFlow="state";
+    /// <summary>The key of the entity a node acts on: an Entity node's own, else the one its <c>entity</c> names.</summary>
+    string EntityKey(string id)=>Text(nodes[id]["config"],Text(nodes[id],"kind")=="entity"?"key":"entity");
     /// <summary>
-    /// The state values a State or Set state step hands its definition: one for each of its pins (the state keys of its
-    /// entity's domain) that is required or given a value (<see cref="Supplied"/>), as <see cref="EntityStateValue"/>
-    /// gives it, so the entity keeps the values it is not given; <paramref name="hidden"/> has the pins whose values are
-    /// secret (<see cref="SecretInput"/>), which the definition does not quote.
+    /// Runs what the Entity node <paramref name="id"/> does at the start of its run's flow (<see cref="startPort"/>): for
+    /// its state, hands <paramref name="state"/> to <paramref name="definition"/> and marks the entity available, as a
+    /// State does (a run already cancelled does neither), and gives null: no step follows. For a command, gives each of
+    /// that command's values from its data as When commanded does (<see cref="Command"/>), and gives the pin, whose steps
+    /// run next; for its frame, the pin alone.
+    /// </summary>
+    string? EntityFlow(string id,VisualScope scope,IDefinitionRuntime definition,Dictionary<string,object?>? state,HashSet<string>? hidden) {
+        var port=startPort??throw new InvalidOperationException($"{Title(id)} runs only as the start of one of its flows");
+        if(port==StateFlow) {
+            ThrowIfCancelled(scope);definition.SetState(EntityKey(id),state!,hidden!);definition.SetAvailable(EntityKey(id),true);
+            return null;
+        }
+        if(port.StartsWith("command:",StringComparison.Ordinal)) {
+            // The command's values are command:<command>:<value>, under its pin command:<command>.
+            foreach(var (output,spec) in CommandOutputs(id))if(output.StartsWith(port+":",StringComparison.Ordinal))TriggerOutput(id,output,spec,scope);
+        }
+        return port;
+    }
+    /// <summary>
+    /// The state values a State, Set state step or Entity node hands its definition: one for each of its pins (the state
+    /// keys of its entity's domain) that is required or given a value (<see cref="Supplied"/>; an Entity node's are
+    /// under its <c>arguments</c>), as <see cref="EntityStateValue"/> gives it, so the entity keeps the values it is not
+    /// given; <paramref name="hidden"/> has the pins whose values are secret (<see cref="SecretInput"/>), which the
+    /// definition does not quote.
     /// </summary>
     Dictionary<string,object?> EntityValues(VisualScope scope,string id,out HashSet<string> hidden) {
         var values=new Dictionary<string,object?>(StringComparer.Ordinal);hidden=new(StringComparer.Ordinal);
+        var cfg=nodes[id]["config"];var stored=Text(Spec(id),"argumentStorage")=="arguments"?cfg?["arguments"] as JsonObject:cfg;
         foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
-            if(!(spec?["required"] is JsonValue r&&r.TryGetValue<bool>(out var required)&&required) && !Supplied(id,port,nodes[id]["config"]?[port]))continue;
+            if(!(spec?["required"] is JsonValue r&&r.TryGetValue<bool>(out var required)&&required) && !Supplied(id,port,stored?[port]))continue;
             var given=Input(scope,id,port);
-            values[port]=Guarded(()=>EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,Text(nodes[id]["config"],"entity"))),
+            values[port]=Guarded(()=>EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,EntityKey(id))),
                 error=>error is InvalidOperationException&&SecretInput(id,port,given),()=>Hidden(id,port));
             if(SecretInput(id,port,values[port]))hidden.Add(port);
         }

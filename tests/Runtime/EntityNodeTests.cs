@@ -18,7 +18,9 @@ static class EntityNodeTests
             (nameof(NodesDeclareEntities), NodesDeclareEntities),
             (nameof(ANodeReplacesAListedEntityOfItsKey), ANodeReplacesAListedEntityOfItsKey),
             (nameof(AGraphOfTheWrongShapeDeclaresNothing), AGraphOfTheWrongShapeDeclaresNothing),
-            (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins) })
+            (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins),
+            (nameof(ACommandEntryThatIsNotAnObjectHasNoValues), ACommandEntryThatIsNotAnObjectHasNoValues),
+            (nameof(FlowsAreNamedByNodeAndPort), FlowsAreNamedByNodeAndPort) })
         {
             try
             {
@@ -84,5 +86,22 @@ static class EntityNodeTests
         var unknown = Hub("u", "u", "nothing");
         Check(VisualNodeCatalog.DataInputs(unknown).Count == 0 && VisualNodeCatalog.ExecutionPorts(unknown).Length == 0, "an unknown type has no pins");
         Check(VisualNodeCatalog.DataInputs(Hub("d", "", "light")).Count == 2, "the pins do not wait for a key");
+    }
+
+    /// <summary>A command entry of a catalog that is not an object gives its Entity node no values, as in TypeScript, rather than failing.</summary>
+    static void ACommandEntryThatIsNotAnObjectHasNoValues()
+    {
+        var catalog = (JsonObject)VisualNodeCatalog.Root.DeepClone();
+        catalog["entityDomains"]!["light"]!["commands"]!["turn_on"] = 5;
+        Check(VisualNodeCatalog.DataOutputs(Hub("l", "lamp", "light"), catalog).Count == 0, "a command entry that is not an object has no values");
+    }
+
+    /// <summary>One Entity node starts several flows, so a flow's method is named by the node and its port.</summary>
+    static void FlowsAreNamedByNodeAndPort()
+    {
+        var hub = Hub("l", "lamp", "light");
+        Check(VisualNodeCatalog.FlowMethod(hub, "state") == "Run_6C_7374617465", "a flow's method is the node's and the port's, in hex: " + VisualNodeCatalog.FlowMethod(hub, "state"));
+        Check(VisualNodeCatalog.FlowMethod(hub, "command:turn_on") != VisualNodeCatalog.FlowMethod(hub, "command:turn_off"), "each port has its own");
+        Check(VisualNodeCatalog.FlowMethod(hub, "state").StartsWith(VisualNodeCatalog.EffectiveTriggerMethod(hub) + "_", StringComparison.Ordinal), "a flow's method starts with its node's");
     }
 }
