@@ -43,7 +43,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     public DefinitionPreview Preview(DefinitionBody body, VisualCatalogSnapshot snapshot)
     {
         var errors = new List<VisualDiagnostic>();
-        void Error(string code, string message, string? input = null, string? port = null) => errors.Add(new(null, message, 3, InputId: input, PortId: port, Code: code));
+        void Error(string code, string message, string? input = null, string? port = null, string? node = null) => errors.Add(new(node, message, 3, InputId: input, PortId: port, Code: code));
 
         if (string.IsNullOrWhiteSpace(body.Name) || body.Name.Length > 120) Error("definition.name", "Give the definition a name of up to 120 characters");
         var kind = body.Logic?.Kind;
@@ -63,8 +63,11 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         }
 
         // The document's problems come first: its graph is not checked against a definition that would only repeat them.
-        if (errors.Count > 0) return new(false, errors, "", type);
-        return kind == "graph" ? GenerateGraph(body, snapshot) : Generate(type!, snapshot);
+        // A problem on an Entity node is the graph's, reported with the rest of the graph's, and leaves it with no source.
+        if (errors.Any(e => e.NodeId == null)) return new(false, errors, "", type);
+        if (kind != "graph") return Generate(type!, snapshot);
+        var preview = GenerateGraph(body, snapshot);
+        return errors.Count == 0 ? preview : preview with { Valid = false, Diagnostics = [.. errors, .. preview.Diagnostics], Source = "", SourceMap = [], EmbeddedCatalog = null };
     }
 
     /// <summary>

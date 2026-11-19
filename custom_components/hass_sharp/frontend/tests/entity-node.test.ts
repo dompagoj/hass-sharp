@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words, type Graph } from '../src/visual/contract'
 import { definitionNames, runName } from '../src/components/TriggerSummary'
-import { connectNodes, updateNode, type VisualGraph } from '../src/visual/graph'
+import { connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { editorGraph } from '../src/entities/model'
 
@@ -113,4 +113,58 @@ it('a run of a node\'s flow reads as the entity and the flow', () => {
   expect(runName(flowMethod(cameras.nodes[2], 'command:turn_on'), named)).toBe('Entity: Turn on')
   // A port the node does not have is no run of it, and keeps its recorded name.
   expect(runName(flowMethod(graph.nodes[0], 'frame'), names)).toBe(flowMethod(graph.nodes[0], 'frame'))
+})
+
+it('a light\'s Brightness can be connected before On, and the node then asks for On', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  graph = add(graph, 'constant', 'c', { type: 'number', value: lit('number', 128) })
+  const wired = connectData(graph, 'c', 'value', 'l', 'brightness')
+  expect(wired).not.toBe(graph)
+  expect(validateGraph(wired).filter(d => d.severity === 3)).toMatchObject([{ nodeId: 'l', inputId: 'is_on', code: 'entity.partialState', message: 'Lamp has a value for Brightness but none for On: connect or set On too' }])
+  // A hover says what the drop says.
+  expect(dataConnectionError(graph, 'c', 'value', 'l', 'brightness', nodeCatalog, { quick: true })).toBeUndefined()
+  // With On connected too, the node is whole again.
+  const whole = connectData(add(wired, 'constant', 'on', { type: 'boolean', value: lit('boolean', true) }), 'on', 'value', 'l', 'is_on')
+  expect(validateGraph(whole).filter(d => d.severity === 3)).toEqual([])
+})
+
+it('the editor refuses a wire that reads a command\'s value from a step another command also runs', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) })
+  graph = connectNodes(connectNodes(graph, 'l', 'set', 'command:turn_on'), 'l', 'set', 'command:turn_off')
+  expect(graph.edges.flatMap(e => e.kind === 'data' ? [] : [e.port])).toEqual(['command:turn_on', 'command:turn_off'])
+  const refusal = 'Set state reads Brightness from Turn on of Lamp but also runs from Turn off of Lamp, where there is no Brightness'
+  // connectData refuses by throwing what is wrong, as every refused connection does; the hover says the same.
+  expect(() => connectData(graph, 'l', 'command:turn_on:brightness', 'set', 'brightness')).toThrow(refusal)
+  expect(dataConnectionError(graph, 'l', 'command:turn_on:brightness', 'set', 'brightness', nodeCatalog, { quick: true })).toBe(refusal)
+  const one = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  const alone = connectNodes(add(one, 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) }), 'l', 'set', 'command:turn_on')
+  const read = connectData(alone, 'l', 'command:turn_on:brightness', 'set', 'brightness')
+  expect(read).not.toBe(alone)
+  expect(validateGraph(read).filter(d => d.severity === 3)).toEqual([])
+  expect(dataConnectionError(alone, 'l', 'command:turn_on:brightness', 'set', 'brightness', nodeCatalog, { quick: true })).toBeUndefined()
+})
+
+it('a state value of the node cannot be connected to a step, and a hover says so', () => {
+  let graph = add(empty(), 'entity', 'd', { key: 'door', domain: 'binary_sensor', name: 'Door' })
+  graph = add(graph, 'trigger', 't', { type: 'manual' })
+  graph = add(graph, 'read_entity', 'read', { entity: lit('entity_id', 'binary_sensor.motion') })
+  graph = add(graph, 'convert', 'c', { type: 'boolean' })
+  graph = connectData(connectNodes(graph, 't', 'read'), 'read', 'value', 'c', 'value')
+  const refusal = 'On of Door cannot read Read entity, which runs in a flow: use a Set state step after Read entity instead'
+  expect(() => connectData(graph, 'c', 'value', 'd', 'is_on')).toThrow(refusal)
+  expect(dataConnectionError(graph, 'c', 'value', 'd', 'is_on', nodeCatalog, { quick: true })).toBe(refusal)
+})
+
+it('a declaring node is named by its entity in messages and run names', () => {
+  const graph = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor', name: '  Front door ' })
+  const named = graph.nodes[0]
+  expect(words.stepName(named)).toBe('Front door')
+  expect(entityNodeName(named)).toBe('Front door')
+  expect(words.stepName({ ...named, config: { ...named.config, name: ' ' } })).toBe('door')
+  // Its own label is not its name: a node is named by its entity, else its kind.
+  expect(words.stepName({ ...named, label: 'Something else', config: { ...named.config, name: '', key: '' } })).toBe('Entity')
+  // Any other step keeps its label, and declares no entity.
+  expect(entityNodeName({ id: 'l', kind: 'log', label: 'Log', config: {} })).toBeUndefined()
+  expect(runName(flowMethod(named, 'state'), definitionNames(graph, nodeCatalog))).toBe('Front door: State')
 })

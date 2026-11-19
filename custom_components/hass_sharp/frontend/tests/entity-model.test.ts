@@ -100,7 +100,8 @@ describe('editor graph', () => {
     expect(() => definitionBody(plugGraph())).toThrow(/definition/)
   })
 
-  // Decision 1: the device sits in graph.definition.device; the validator reads only entities and settings.
+  // Decision 1: the device sits in graph.definition.device; the validator reads entities and settings, and of the device
+  // only whether there is one (its entities then need no names), so a fixture's device is given with every member.
   describe('validates as the shared fixture expects, with the device and every member of the definition in it', () => {
     function patched(patch: Record<string, unknown>): contract.VisualCatalogSnapshot {
       const merge = (target: Record<string, unknown>, source: Record<string, unknown>) => {
@@ -123,7 +124,7 @@ describe('editor graph', () => {
       const graph = structuredClone(fixture.graph)
       const body: DefinitionBody = {
         name: graph.name,
-        device: { manufacturer: 'Acme', model: 'P1', swVersion: '1.2', hwVersion: null, configurationUrl: 'http://10.0.0.5', suggestedArea: 'Kitchen', via: { definition: 'hub', deviceId: null } },
+        device: graph.definition.device && typeof graph.definition.device === 'object' ? { manufacturer: 'Acme', model: 'P1', swVersion: '1.2', hwVersion: null, configurationUrl: 'http://10.0.0.5', suggestedArea: 'Kitchen', via: { definition: 'hub', deviceId: null } } : null,
         settings: graph.definition.settings.map((s: any, i: number) => i % 2
           ? { ...s, value: null, label: `Setting ${s.key}`, secret: true, hasValue: true }
           : { ...s, value: s.type === 'number' ? 4 : s.type === 'boolean' ? true : 'text', label: `Setting ${s.key}` }),

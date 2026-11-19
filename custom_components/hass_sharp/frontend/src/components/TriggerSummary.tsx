@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import type { RunTrigger } from '../types'
-import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, executionLabel, executionPorts, flowMethod, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
+import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, entityNodeName, executionLabel, executionPorts, flowMethod, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
 import { nodeTitle } from '../visual/flow/flowModel'
 
 /**
@@ -29,18 +29,14 @@ export function definitionNames(graph: Graph | undefined, catalog: VisualCatalog
   const roots: Record<string, string> = {}
   for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
     if (!record(node) || typeof node.id !== 'string' || !isRoot(node, known)) continue
-    if (declaresEntity(node, known)) for (const port of ['state', ...executionPorts(node, known)])
-      roots[flowMethod(node, port)] = `${entityName(node)}: ${port === 'state' ? 'State' : executionLabel(node, port, known) ?? port}`
+    // An Entity node's flows run under `flowMethod`, named by its entity as the validator names it (as
+    // `DefinitionGraph.HubFlows` does).
+    const entity = entityNodeName(node, known)
+    if (entity !== undefined) for (const port of ['state', ...executionPorts(node, known)])
+      roots[flowMethod(node, port)] = `${entity}: ${port === 'state' ? 'State' : executionLabel(node, port, known) ?? port}`
     else roots[effectiveTriggerMethod(node)] = nodeTitle(node, known)
   }
   return { entities, domains: catalog?.entityDomains, roots }
-}
-/** Whether the node is an Entity node (its kind declares an entity), whose flows run under `flowMethod`. */
-const declaresEntity = (node: GraphNode, catalog: VisualCatalogSnapshot) => Object.hasOwn(catalog.nodes, node.kind) && catalog.nodes[node.kind]?.declares === 'entity'
-/** An Entity node's entity as its runs name it: its name, else its key, else `Entity` (as `DefinitionGraph.HubFlows` does). */
-const entityName = (node: GraphNode) => {
-  const config: unknown = node.config, name = record(config) ? config.name : undefined, key = record(config) ? config.key : undefined
-  return typeof name === 'string' && name ? name : typeof key === 'string' && key ? key : 'Entity'
 }
 /**
  * What a run is called: as recorded, unless that is the generated method name of a root step of the graph shown (an

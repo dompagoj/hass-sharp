@@ -39,16 +39,19 @@ internal static class DefinitionGraph
     /// A copy of the definition's graph with <c>definition</c> = <c>{entities, settings}</c>: the document's entities as
     /// it gives them, in its order, and each setting's key and type only. A setting's value, label and secret flag never
     /// reach the graph (nor the source it embeds in): a value may be secret, and changing one must not change the
-    /// source. Any <c>definition</c> already in the graph is replaced. Without a graph, the definition alone.
+    /// source. A definition with a device has an empty <c>device</c> object, which only says it has one (its entities
+    /// then need no names). Any <c>definition</c> already in the graph is replaced. Without a graph, the definition alone.
     /// </summary>
     internal static JsonObject Compose(DefinitionBody body)
     {
         var graph = Decompose(body.Logic?.Graph ?? []);
-        graph["definition"] = new JsonObject
+        var definition = new JsonObject
         {
             ["entities"] = body.Entities?.DeepClone() ?? new JsonArray(),
             ["settings"] = new JsonArray((body.Settings ?? []).Select(s => (JsonNode)new JsonObject { ["key"] = s?.Key, ["type"] = s?.Type }).ToArray()),
         };
+        if (body.Device != null) definition["device"] = new JsonObject();
+        graph["definition"] = definition;
         return graph;
     }
 
@@ -118,7 +121,7 @@ internal static class DefinitionGraph
         var id = VisualNodeCatalog.Text(node, "id");
         var config = node["config"] as JsonObject;
         var key = VisualNodeCatalog.Text(config, "key");
-        var name = VisualNodeCatalog.Text(config, "name") is { Length: > 0 } named ? named : key is { Length: > 0 } ? key : "Entity";
+        var name = VisualGraphValidator.Words.EntityName(node, VisualNodeCatalog.Spec(node, snapshot));
         var row = VisualNodeCatalog.DeclaredDomain(node, snapshot.Root);
         var history = config?["history"] as JsonObject;
         bool Recorded(string flag, bool fallback) => history?[flag] is JsonValue value && value.TryGetValue<bool>(out var on) ? on : fallback;

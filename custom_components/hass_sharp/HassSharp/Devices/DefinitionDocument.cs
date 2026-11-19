@@ -7,9 +7,9 @@ namespace HassSharp;
 
 /// <summary>
 /// One problem of a definition: its code, its message, the key of the entity or setting it is about and, for an entity's
-/// option, the key of that option (null when it is about no one option).
+/// option, the key of that option (null when it is about no one option); and the Entity node it is on, if any.
 /// </summary>
-internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null);
+internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null, string? node = null);
 
 /// <summary>
 /// The checks of a graph definition's document, before its graph is looked at: its entities and settings, as
@@ -29,7 +29,9 @@ internal static class DefinitionDocument
     /// its own of the form entity keys take, its description fields of their types, a domain the catalog's
     /// <c>entityDomains</c> describes and only options that domain takes, each of its type, and every option it needs
     /// (<see cref="Options"/>); each setting has a key of its own and a type a graph reads, and a value of that type or
-    /// none. An entity member none of these name is kept as given.
+    /// none. An entity member none of these name is kept as given. An Entity node's options are checked as a listed
+    /// entity's when its type is one the catalog describes, each problem on the node, about <c>option:&lt;option&gt;</c>; the
+    /// rest of the node (its key, type, name and fields) is the validator's, which checks it on the node too.
     /// </summary>
     /// <param name="error">Called with each problem's code, message, the key of the entity or setting it is about and, for an option, the option's key.</param>
     internal static void Check(DefinitionBody body, JsonObject catalog, DefinitionProblem error)
@@ -58,6 +60,10 @@ internal static class DefinitionDocument
             if (domains[domain] is not JsonObject spec) { error("definition.entityDomain", $"Entity {key} has the domain {domain}, which a definition built from nodes cannot create; choose {Or(domains.Select(d => d.Key))}", key); continue; }
             Options(key, entity, domain, spec, error);
         }
+        // Options that are not an object are the node's Options field's problem, said by the validator.
+        foreach (var (nodeId, entity) in nodes)
+            if (IsText(entity["domain"], out var domain) && domains[domain] is JsonObject spec && (entity["options"] is JsonObject || !entity.ContainsKey("options")))
+                Options(VisualNodeCatalog.Text(entity, "key"), entity, domain, spec, (code, message, _, option, _) => error(code, message, option == null ? null : "option:" + option, null, nodeId));
         var settings = body.Settings ?? [];
         var settingKeys = new HashSet<string>(StringComparer.Ordinal); var repeatedSettings = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (setting, index) in settings.Select((s, i) => (s, i + 1)))

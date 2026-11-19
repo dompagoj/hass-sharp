@@ -35,10 +35,11 @@ public static class VisualGraphValidator
         "node.invalid", "node.duplicate", "node.unknownKind", "node.unreachable", "limit.nesting",
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
-        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult",
+        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow",
         "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
-        "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "node.document", "node.singleton", "root.incoming",
-        "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value",
+        "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
+        "node.document", "node.singleton", "root.incoming",
+        "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
         "http.url", "http.body", "download.checksum", "camera.entity", "camera.duplicate", "camera.no_frame",
     ];
 
@@ -87,13 +88,26 @@ public static class VisualGraphValidator
         }
         /// <summary>
         /// A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
-        /// kind's catalog label, else its kind in words.
+        /// kind's catalog label, else its kind in words. A node that declares an entity is named by it (<see cref="EntityName"/>).
         /// </summary>
         internal static string StepName(JsonObject node, JsonNode? spec) =>
-            node["label"] is JsonValue l && l.TryGetValue<string>(out var label) && Trimmed(label).Length > 0 ? Trimmed(label)
+            Declares(spec, "entity") ? EntityName(node, spec)
+            : node["label"] is JsonValue l && l.TryGetValue<string>(out var label) && Trimmed(label).Length > 0 ? Trimmed(label)
             : Text(CustomSignature(node, spec), "title") is { } title && Trimmed(title).Length > 0 ? Trimmed(title)
-            : Text(spec, "label") is { } kindLabel && Trimmed(kindLabel).Length > 0 ? Trimmed(kindLabel)
+            : KindName(node, spec);
+        /// <summary>A node's kind as people read it: its catalog label, else its kind in words.</summary>
+        static string KindName(JsonObject node, JsonNode? spec) =>
+            Text(spec, "label") is { } kindLabel && Trimmed(kindLabel).Length > 0 ? Trimmed(kindLabel)
             : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
+        /// <summary>
+        /// An Entity node's entity as people read it, in the validator's messages and in its runs' names: its name, else its
+        /// key, each trimmed, else its kind's label; never a label of the node's own. Mirrored by <c>entityNodeName</c> in
+        /// <c>contract.ts</c>.
+        /// </summary>
+        internal static string EntityName(JsonObject node, JsonNode? spec) =>
+            Trimmed(Text(node["config"], "name")) is { Length: > 0 } name ? name
+            : Trimmed(Text(node["config"], "key")) is { Length: > 0 } key ? key
+            : KindName(node, spec);
         /// <summary>A step that execution never reaches, and what to do about it.</summary>
         internal static string Unreachable(string step) => $"{step} is not connected into the flow; connect a step to its execution input";
         /// <summary>A step order wire into or out of a value node.</summary>
@@ -423,6 +437,27 @@ public static class VisualGraphValidator
         internal static string FrameDuplicate(string name, string label) => $"{Name(name)} already has {Article(label)} {label} step; delete this one or choose another camera";
         /// <summary>A camera no Show frame step shows a frame for, named by its name.</summary>
         internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: add {Article(label)} {label} step for it";
+        // An Entity node's entity, named by EntityName.
+        /// <summary>What an Entity node's key must be, as an entity key is (<c>SharpEntity.KeyPattern</c>).</summary>
+        internal const string EntityKeyPattern = "^[a-z][a-z0-9_]{0,39}$";
+        /// <summary>An Entity node without a key.</summary>
+        internal const string EntityKeyMissing = "Give this entity a key, such as power";
+        /// <summary>An Entity node's key that is not of the form entity keys take, in the words of the document's check.</summary>
+        internal static string EntityKey(string key) => $"Entity key {key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters";
+        /// <summary>An Entity node of the key an earlier one declares.</summary>
+        internal static string KeyTaken(string key, string first) => $"The key {key} is already used by {first}: give this entity its own";
+        /// <summary>An Entity node of a type the catalog's <c>entityDomains</c> does not describe.</summary>
+        internal static string NotAnEntityType(string domain) => $"{domain} is not an entity type: choose one from the list";
+        /// <summary>An Entity node of a definition without a device, with no name.</summary>
+        internal const string EntityNameMissing = "Name this entity: it has no device, so Home Assistant shows it by its own name";
+        /// <summary>An Entity node given some of its state values (by their labels, joined) and not one its type needs.</summary>
+        internal static string PartialState(string name, string given, string missing) => $"{name} has a value for {given} but none for {missing}: connect or set {missing} too";
+        /// <summary>A state value of an Entity node that reads a step's output: its state is worked out in no flow.</summary>
+        internal static string StateSource(string value, string name, string step) => $"{value} of {name} cannot read {step}, which runs in a flow: use a Set state step after {step} instead";
+        /// <summary>A step reading a command's value that another flow runs too, named by where that flow starts.</summary>
+        internal static string FlowValue(string step, string value, string command, string name, string other) => $"{step} reads {value} from {command} of {name} but also runs from {other}, where there is no {value}";
+        /// <summary>A command pin of an Entity node with no step connected.</summary>
+        internal static string NothingOn(string name, string command) => $"{name} does nothing on {command}: connect a step to {command}";
     }
 
     sealed class Validation(VisualCatalogSnapshot snapshot)
@@ -625,13 +660,17 @@ public static class VisualGraphValidator
         string document = "automation";
         bool EntityGraph => document == "entity";
         static bool IsText(JsonNode? value) => value is JsonValue v && v.TryGetValue<string>(out _);
+        /// <summary>Whether the definition has a device (<c>definition.device</c> is an object), which names its entities.</summary>
+        bool device;
         /// <summary>
         /// The definition a graph carries: an object with a list of entities (or none, when Entity nodes declare them all),
         /// each with a text key and domain, and a list of settings, each with a text key and type; each entity of a domain
-        /// <c>entityDomains</c> describes, each setting of a type a setting can have, and no key twice in either list.
+        /// <c>entityDomains</c> describes, each setting of a type a setting can have, and no key twice in either list. Its
+        /// <c>device</c>, an object when it has one, is read too (<see cref="device"/>).
         /// </summary>
         void Definition(JsonNode? definition)
         {
+            device = definition is JsonObject { } given && given["device"] is JsonObject;
             if (definition is not JsonObject d || (d.ContainsKey("entities") ? d["entities"] : new JsonArray()) is not JsonArray entities || d["settings"] is not JsonArray settings ||
                 !entities.All(e => e is JsonObject o && IsText(o["key"]) && IsText(o["domain"])) || !settings.All(s => s is JsonObject o && IsText(o["key"]) && IsText(o["type"])))
             { Error(null, Words.DefinitionUnreadable, code: "definition.invalid"); return; }
@@ -653,7 +692,8 @@ public static class VisualGraphValidator
         /// <summary>
         /// The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
         /// When commanded per command, a State reading an entity given over a wire, a command no step handles, one When a
-        /// frame is needed per camera, and a camera no Show frame step shows a frame for.
+        /// frame is needed per camera, a camera no Show frame step shows a frame for, one Entity node per key, and the
+        /// flows of Entity nodes (<see cref="EntityScopes"/>).
         /// </summary>
         void GraphRules()
         {
@@ -673,8 +713,9 @@ public static class VisualGraphValidator
             // warned about for the first such input given over a wire, unless that wire comes from a Constant of an entity
             // id type, whose entity is followed as chosen (StateDependencies.Of). The warning is the reader's own, on no
             // input: a wire into it is allowed (connectData), at the cost it names.
+            // An Entity node whose state is worked out (a value of it is given) is such a State.
             var readers = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var state in OfKind("entity_state"))
+            foreach (var state in nodes.Values.Where(n => Kind(n) == "entity_state" || Declares(Spec(n), "entity") && DataInputs(n).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
                 foreach (var reader in ValueUpstream(state, nodes, data, Pure))
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
@@ -692,7 +733,94 @@ public static class VisualGraphValidator
             foreach (var camera in DefinitionItems(Root, "entities").Where(e => IsCamera(Text(e, "key")) && !declared.Contains(Text(e, "key"))))
                 if (!OfKind("show_frame").Any(n => Choice(n, "entity") == Text(camera, "key")))
                     errors.Add(new(null, Words.NoFrame(EntityName(Text(camera, "key")), KindLabel("show_frame")), 2, Code: "camera.no_frame"));
+            // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
+            // camera, a Show frame step that names it.
+            var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            foreach (var hub in nodes.Values.Where(n => Declares(Spec(n), "entity")))
+            {
+                var name = Words.StepName(hub, Spec(hub));
+                if (Choice(hub, "key") is var key && Words.Trimmed(key).Length > 0 && !keys.TryAdd(key, hub))
+                    Error(Id(hub), Words.KeyTaken(key, Words.StepName(keys[key], Spec(keys[key]))), "key", code: "definition.duplicateEntity");
+                foreach (var (command, entry) in DeclaredDomain(hub, Root)?["commands"] as JsonObject ?? [])
+                    if (!outgoing[Id(hub)].Any(e => FlowPort(hub, e) == "command:" + command))
+                        errors.Add(new(Id(hub), Words.NothingOn(name, Text(entry, "label", Words.KeyWords(command))), 2, PortId: "command:" + command, Code: "command.unhandled"));
+                if (Choice(hub, "domain") == "camera" && !OfKind("show_frame").Any(n => Choice(n, "entity") == Choice(hub, "key")))
+                    errors.Add(new(Id(hub), Words.NoFrame(name, KindLabel("show_frame")), 2, PortId: "frame", Code: "camera.no_frame"));
+            }
+            EntityScopes();
         }
+        /// <summary>
+        /// The flows of Entity nodes: a state value reads no step that runs in a flow (<see cref="StateSource"/>), its state
+        /// being worked out in none; and a step reads a command's value only when no other flow runs it (<see cref="FlowPins"/>),
+        /// each reported once per input, for the first such value it reads.
+        /// </summary>
+        void EntityScopes()
+        {
+            foreach (var hub in nodes.Values.Where(n => Declares(Spec(n), "entity")))
+                foreach (var (port, input) in DataInputs(hub))
+                    if (StateSource(hub, port) is { } step)
+                        Error(Id(hub), Words.StateSource(Words.PortLabel(input, port), Words.StepName(hub, Spec(hub)), Words.StepName(step, Spec(step))), port, port, "scope.stateSource");
+            var pins = FlowPins();
+            foreach (var edge in data)
+            {
+                var reader = nodes[Text(edge, "target")]; var input = Text(edge, "targetPort");
+                if (Pure(reader) || !ReferenceEquals(incoming[(Id(reader), input)], edge)) continue;
+                var source = nodes[Text(edge, "source")];
+                var read = Pure(source) ? PureSources(source) : DataOutputs(source)[Text(edge, "sourcePort")] is JsonObject output ? [(source, Text(edge, "sourcePort"), output)] : [];
+                foreach (var (hub, port, value) in read)
+                {
+                    if (!Declares(Spec(hub), "entity") || Text(value, "group") is not { Length: > 0 } own) continue;
+                    var other = pins.Find(p => p.Reached.Contains(Id(reader)) && !(p.Root == hub && p.Port == own));
+                    if (other.Root == null) continue;
+                    Error(Id(reader), Words.FlowValue(Words.StepName(reader, Spec(reader)), Words.PortLabel(value, port), PinLabel(hub, own), Words.StepName(hub, Spec(hub)),
+                        other.Port == null ? Words.StepName(other.Root, Spec(other.Root)) : $"{PinLabel(other.Root, other.Port)} of {Words.StepName(other.Root, Spec(other.Root))}"), input, input, "scope.flow");
+                    break;
+                }
+            }
+        }
+        /// <summary>
+        /// The step a state value of an Entity node reads: the source of the wire into it, else the first step a value node
+        /// on that wire reads, depth first in the order of the graph's value wires; null when nothing or only values are read.
+        /// Mirrored by <c>stateSource</c> in <c>contract.ts</c>.
+        /// </summary>
+        JsonObject? StateSource(JsonObject hub, string port)
+        {
+            if (!incoming.TryGetValue((Id(hub), port), out var wire)) return null;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            JsonObject? Visit(JsonObject source)
+            {
+                if (!Pure(source)) return source;
+                if (!seen.Add(Id(source))) return null;
+                foreach (var edge in data.Where(e => Text(e, "target") == Id(source)))
+                    if (Visit(nodes[Text(edge, "source")]) is { } step) return step;
+                return null;
+            }
+            return Visit(nodes[Text(wire, "source")]);
+        }
+        /// <summary>
+        /// Where the graph's flows start, in node order: each pin of an Entity node (its port), and each other root as a whole
+        /// (no port), each with the steps reached from it along step order wires. Mirrored by <c>flowPins</c> in <c>contract.ts</c>.
+        /// </summary>
+        List<(JsonObject Root, string? Port, HashSet<string> Reached)> FlowPins()
+        {
+            HashSet<string> Reached(IEnumerable<JsonObject> wires)
+            {
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var stack = new Stack<string>(wires.Select(e => Text(e, "target")));
+                while (stack.TryPop(out var id))
+                    if (seen.Add(id) && outgoing.TryGetValue(id, out var next)) foreach (var edge in next) stack.Push(Text(edge, "target"));
+                return seen;
+            }
+            var pins = new List<(JsonObject, string?, HashSet<string>)>();
+            foreach (var root in nodes.Values.Where(n => IsRoot(n, snapshot)))
+                if (Declares(Spec(root), "entity")) foreach (var port in ExecutionPorts(root)) pins.Add((root, port, Reached(outgoing[Id(root)].Where(e => FlowPort(root, e) == port))));
+                else pins.Add((root, null, Reached(outgoing[Id(root)])));
+            return pins;
+        }
+        /// <summary>An Entity node's pin as people read it: its command's label, or its type's frame label.</summary>
+        string PinLabel(JsonObject hub, string port) => DeclaredDomain(hub, Root) is var row && port.StartsWith("command:", StringComparison.Ordinal)
+            ? Text(row?["commands"]?[port["command:".Length..]], "label", Words.KeyWords(port["command:".Length..]))
+            : Text(row?["frame"], "label", "When a frame is needed");
         /// <summary>Whether the definition's entity with this key is a camera.</summary>
         bool IsCamera(string key) => Text(DefinitionEntity(Root, key), "domain") == "camera";
         /// <summary>The definition's entity with this key as a sentence names it: its name, else its key.</summary>
@@ -882,6 +1010,25 @@ public static class VisualGraphValidator
                 if (row["state"] is not JsonObject { Count: > 0 }) Error(id, Words.Stateless(Text(row, "label", Words.DomainWords(Text(described, "domain")))), "entity", code: "entity.stateless");
                 else if (DataInputs(node) is var values && !values.Any(p => Bool(p.Value, "required")) && !values.Any(p => Supplied(node, p.Key)))
                     Error(id, Words.NoValue(KindLabel(kind)), code: "entity.no_value");
+            }
+            // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
+            // device names its entities, and none of its state values or each one its type needs. A field that is not text
+            // is the config rule's below.
+            if (EntityGraph && Declares(spec, "entity"))
+            {
+                string? Typed(string field) => !cfg.ContainsKey(field) ? "" : cfg[field] is JsonValue v && v.TryGetValue<string>(out var typed) ? typed : null;
+                if (Typed("key") is { } key)
+                    if (Words.Trimmed(key).Length == 0) Error(id, Words.EntityKeyMissing, "key", code: "definition.entityKey");
+                    else if (!Match(key, Words.EntityKeyPattern)) Error(id, Words.EntityKey(key), "key", code: "definition.entityKey");
+                // A type left out is the config rule's; one given blank is said the same way.
+                if (Typed("domain") is { } domain && cfg.ContainsKey("domain"))
+                    if (Words.Trimmed(domain).Length == 0) Error(id, $"{ConfigLabel(spec["config"]?["domain"], "domain")} is required", "domain");
+                    else if (DeclaredDomain(node, Root) == null) Error(id, Words.NotAnEntityType(domain), "domain", code: "definition.entityDomain");
+                if (Typed("name") is { } name && Words.Trimmed(name).Length == 0 && !device) Error(id, Words.EntityNameMissing, "name", code: "entity.name");
+                if (DeclaredDomain(node, Root)?["state"] is JsonObject state && DataInputs(node) is var values && values.Where(p => Supplied(node, p.Key)).ToList() is { Count: > 0 } given)
+                    foreach (var (port, input) in values)
+                        if (!Supplied(node, port) && Bool(state[port], "required", true))
+                            Error(id, Words.PartialState(Words.StepName(node, spec), string.Join(", ", given.Select(p => Words.PortLabel(p.Value, p.Key))), Words.PortLabel(input, port)), port, code: "entity.partialState");
             }
             if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))
                 Error(id, Words.UnknownSetting(settingKey, ConfigLabel(spec["config"]?["key"], "key")), "key", code: "setting.unknown");

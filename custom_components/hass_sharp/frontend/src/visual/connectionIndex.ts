@@ -8,6 +8,7 @@ import {
   dataInputs,
   graphDocument,
   dataOutputs,
+  entityScopes,
   isAssignable,
   isPure,
   nodeCatalog,
@@ -96,6 +97,11 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     if (d.portId) add(byPort, pairKey(d.nodeId, d.portId), i)
   })
   const hasDataCycle = origins.some(o => o.kind === 'dataCycle')
+  // An entity graph's Entity nodes: what a state value reads, and which flows a step reading a command's value runs in,
+  // are worked out again for each wire (`entityScopes`), so none of those problems is carried over. Nor is a node's
+  // request for its other state values, which connectData never refuses for.
+  const hubs = graphDocument(graph) === 'entity' && [...analysis.nodes.values()].some(n => Object.hasOwn(catalog.nodes, n.kind) && catalog.nodes[n.kind].declares === 'entity')
+  const reworked = new Set(['entity.partialState', 'scope.stateSource', 'scope.flow'])
   // The scope problems the graph has, by step input and message.
   const oldScope = new Set(diagnostics.filter(d => d.code === 'scope.data').map(d => JSON.stringify([d.nodeId, d.inputId, d.message])))
   const adjacency = new Map<string, string[]>()
@@ -172,7 +178,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     const messages = new Set<string>()
     // Carried-over diagnostics reject when they match connectData's filters.
     for (const i of [...(byInput.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(targetId, targetPort)) ?? []), ...(byPort.get(pairKey(sourceId, sourcePort)) ?? []).filter(i => diagnostics[i].inputId === undefined)].sort((a, b) => a - b))
-      if (!volatile(origins[i])) messages.add(diagnostics[i].message)
+      if (!volatile(origins[i]) && !reworked.has(diagnostics[i].code ?? '')) messages.add(diagnostics[i].message)
     // A wire into the input a Select property node reads retypes its output, and every output resolved from it, as for
     // the graph connectData makes. The new edge is typed under that graph too: when it closes a cycle through the node,
     // its own source has no type there, and the validator words only the cycle.
@@ -206,6 +212,12 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     // The new wire lies on a cycle. Without one in the graph, a path from the target back to the source cannot use
     // the wire it replaces, so the memoised reach of the current graph answers.
     const rewired = () => [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { source: sourceId, target: targetId }]
+    // The flows of Entity nodes with the wire in place of any into the input: a problem that is new, or on the input.
+    if (hubs) {
+      const data: DataEdge[] = [...analysis.data.filter(e => !(e.target === targetId && e.targetPort === targetPort)), { id: 'candidate', kind: 'data', source: sourceId, target: targetId, sourcePort, targetPort }]
+      for (const d of entityScopes(analysis.nodes, data, analysis.outgoing, catalog))
+        if (!old.has(JSON.stringify(d)) || (d.nodeId === targetId && d.inputId === targetPort)) messages.add(d.message)
+    }
     if (sourceId === targetId || (hasDataCycle ? closesDataCycle(rewired(), sourceId, targetId) : reach(targetId).has(sourceId))) messages.add(words.ownResult(words.stepName(target, catalog)))
     // A body wired into an HTTP request whose method sends none (http.body); the method is config, which a wire leaves as it is.
     if (target.kind === 'http_request' && targetPort === 'body' && input) {

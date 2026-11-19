@@ -102,6 +102,8 @@ static class EntityStoreTests
             (nameof(ComposeCarriesNoSettingValuesOrSecrets), () => ComposeCarriesNoSettingValuesOrSecrets(snapshot)),
             (nameof(GraphDocumentChecks), () => GraphDocumentChecks(snapshot)),
             (nameof(OptionProblemsNameTheirOption), () => OptionProblemsNameTheirOption(snapshot)),
+            (nameof(ANodesOptionProblemIsOnItsNode), () => ANodesOptionProblemIsOnItsNode(snapshot)),
+            (nameof(ADeviceMarksTheGraph), ADeviceMarksTheGraph),
             (nameof(ValidDocumentsAreValidDefinitions), () => ValidDocumentsAreValidDefinitions(snapshot)),
             (nameof(RemovingAnEntityStillNamedByANodeIsRefused), () => RemovingAnEntityStillNamedByANodeIsRefused(snapshot)),
             (nameof(PreviewReturnsTheGraphsWarnings), () => PreviewReturnsTheGraphsWarnings(snapshot)),
@@ -312,21 +314,70 @@ static class EntityStoreTests
             var entity = new JsonObject { ["key"] = item["key"]!.DeepClone(), ["domain"] = item["domain"]!.DeepClone() };
             if (item["name"] is { } name) entity["name"] = name.DeepClone();
             if (item.ContainsKey("options")) entity["options"] = item["options"]?.DeepClone();
-            var preview = generator.Preview(GraphBody(Graph("Options", []), [entity]), snapshot);
-            var got = preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.PortId ?? "null"} {d.NodeId ?? "null"} {d.Message}").ToArray();
-            var wanted = item["problems"]!.AsArray().OfType<JsonObject>().ToArray();
-            bool Matches(VisualDiagnostic d, JsonObject w) => d.Code == w["code"]!.GetValue<string>() && d.InputId == w["inputId"]?.GetValue<string>()
-                && d.PortId == w["portId"]?.GetValue<string>() && d.NodeId == null && d.Severity == 3
-                && (w["message"] is { } message ? d.Message == message.GetValue<string>() : d.Message.StartsWith(w["messageStartsWith"]!.GetValue<string>(), StringComparison.Ordinal));
-            if (preview.Diagnostics.Count != wanted.Length || !preview.Diagnostics.Zip(wanted).All(pair => Matches(pair.First, pair.Second)))
-                failures.Add($"{item["what"]}: expected {string.Join(" | ", wanted.Select(w => w.ToJsonString()))}, got {string.Join(" | ", got)}");
+            // A case marked node gives the entity as an Entity node, whose problems are on it, about option:<option>; the
+            // graph's own problems (it has no step, and may have no name) are not the case's.
+            var node = item["node"]?.GetValue<bool>() == true;
+            var preview = generator.Preview(node ? GraphBody(Graph("Options", [new JsonObject { ["id"] = "e", ["kind"] = "entity", ["config"] = entity }]), []) : GraphBody(Graph("Options", []), [entity]), snapshot);
+            var diagnostics = preview.Diagnostics.Where(d => !node || d.Code == "definition.entityOption").ToList();
+            var got = diagnostics.Select(d => $"{d.Code} {d.InputId} {d.PortId ?? "null"} {d.NodeId ?? "null"} {d.Message}").ToArray();
+            var wanted = item["problems"]!.AsArray().OfType<JsonObject>().Select(w => (Want: w, Input: node ? "option:" + w["portId"]!.GetValue<string>() : w["inputId"]?.GetValue<string>(),
+                Port: node ? null : w["portId"]?.GetValue<string>(), Node: node ? "e" : null)).ToArray();
+            bool Matches(VisualDiagnostic d, (JsonObject Want, string? Input, string? Port, string? Node) w) => d.Code == w.Want["code"]!.GetValue<string>() && d.InputId == w.Input
+                && d.PortId == w.Port && d.NodeId == w.Node && d.Severity == 3
+                && (w.Want["message"] is { } message ? d.Message == message.GetValue<string>() : d.Message.StartsWith(w.Want["messageStartsWith"]!.GetValue<string>(), StringComparison.Ordinal));
+            if (diagnostics.Count != wanted.Length || !diagnostics.Zip(wanted).All(pair => Matches(pair.First, pair.Second)))
+                failures.Add($"{item["what"]}: expected {string.Join(" | ", wanted.Select(w => w.Want.ToJsonString()))}, got {string.Join(" | ", got)}");
+            if (node && (preview.Valid || preview.Source != ""))
+                failures.Add($"{item["what"]}: a problem on a node leaves the preview invalid, with no source");
             // The preview and save answers serialize the diagnostics as they are: the option goes out as portId.
-            var answered = JsonSerializer.SerializeToNode(preview.Diagnostics, VisualStore.Json)!.AsArray();
-            if (!answered.OfType<JsonObject>().Zip(wanted).All(pair => pair.First.ContainsKey("portId") && pair.First["portId"]?.ToJsonString() == pair.Second["portId"]?.ToJsonString()))
+            var answered = JsonSerializer.SerializeToNode(diagnostics, VisualStore.Json)!.AsArray();
+            if (!answered.OfType<JsonObject>().Zip(wanted).All(pair => pair.First.ContainsKey("portId") && pair.First["portId"]?.ToJsonString() == (pair.Second.Port == null ? null : JsonValue.Create(pair.Second.Port).ToJsonString())))
                 failures.Add($"{item["what"]}: the answer's portId: {answered.ToJsonString()}");
         }
         if (failures.Count > 0) throw new Exception($"{failures.Count} of {cases.Count} option problem cases failing:\n" + string.Join("\n", failures));
         Console.WriteLine($"PASS entity store: each of {cases.Count} option problems of the shared fixture is at its entity and option, in the labels' words");
+    }
+
+    /// <summary>
+    /// An Entity node's options are checked as a listed entity's, and a problem with one is on its node, about
+    /// <c>option:&lt;option&gt;</c>: the graph is checked all the same, its problems reported with it, and the preview has no
+    /// source.
+    /// </summary>
+    static void ANodesOptionProblemIsOnItsNode(VisualCatalogSnapshot snapshot)
+    {
+        var generator = new DefinitionGenerator();
+        var select = new JsonObject { ["id"] = "mode", ["kind"] = "entity", ["config"] = new JsonObject { ["key"] = "mode", ["domain"] = "select", ["name"] = "Mode" } };
+        var preview = generator.Preview(GraphBody(Graph("Mode", [select]), []), snapshot);
+        var errors = preview.Diagnostics.Where(d => d.Severity == 3).ToList();
+        Check(errors.Count == 1, "a select without options has one problem: " + Codes(preview));
+        Check(errors[0] is { NodeId: "mode", InputId: "option:options", PortId: null, Code: "definition.entityOption" } && errors[0].Message == "Mode needs options: a select cannot work without it",
+            $"the problem is on the node, about its option: {errors[0].NodeId} {errors[0].InputId} {errors[0].PortId} {errors[0].Code} {errors[0].Message}");
+        Check(!preview.Valid && preview.Source == "" && preview.SourceMap.Count == 0 && preview.EmbeddedCatalog == null, "a problem on a node leaves the preview invalid, with no source");
+        // The graph is checked with it: a problem elsewhere in it is reported too, not hidden behind the node's.
+        var log = N("log", "log", new { value = Lit("string", "Ran") });
+        var both = generator.Preview(GraphBody(Graph("Mode", [(JsonObject)select.DeepClone(), (JsonObject)log.DeepClone()]), []), snapshot);
+        var codes = both.Diagnostics.Where(d => d.Severity == 3).Select(d => $"{d.Code} {d.NodeId} {d.InputId}").ToList();
+        Check(codes.Contains("definition.entityOption mode option:options") && codes.Contains("node.unreachable log ") && codes.Count == 2, "the node's problem and the graph's are both reported: " + Codes(both));
+        Check(!both.Valid && both.Source == "", "with both, the preview is invalid, with no source");
+        // A problem of the document on no node still comes alone, before the graph is looked at.
+        var named = generator.Preview(GraphBody(Graph("Mode", [(JsonObject)select.DeepClone(), (JsonObject)log.DeepClone()]), [], name: ""), snapshot);
+        Check(named.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entityOption"]), "a problem on no node answers the document's problems alone: " + Codes(named));
+        Console.WriteLine("PASS entity store: a problem with an Entity node's option is on its node, reported with the graph's own");
+    }
+
+    /// <summary>The graph composed for a definition with a device marks it with an empty <c>device</c>, so that its entities need no names of their own.</summary>
+    static void ADeviceMarksTheGraph()
+    {
+        var body = GraphBody(MotionGraph(), MotionEntities());
+        Check(DefinitionGraph.Compose(body)["definition"] is JsonObject without && !without.ContainsKey("device"), "without a device, the definition has no device key");
+        var device = body with { Device = new DefinitionDevice("Acme", "Motion", null, null, null, null, null) };
+        Check(DefinitionGraph.Compose(device)["definition"]?["device"] is JsonObject { Count: 0 }, "with one, its device is an empty object: " + DefinitionGraph.Compose(device)["definition"]?.ToJsonString());
+        var nameless = new JsonObject { ["id"] = "door", ["kind"] = "entity", ["config"] = new JsonObject { ["key"] = "door", ["domain"] = "binary_sensor", ["name"] = "" } };
+        var generator = new DefinitionGenerator();
+        Check(generator.Preview(GraphBody(Graph("Door", [nameless]), []), VisualCatalogSnapshot.BuiltIn).Diagnostics.Any(d => d is { Code: "entity.name", NodeId: "door", InputId: "name" }), "an entity of no device needs a name");
+        Check(generator.Preview(GraphBody(Graph("Door", [(JsonObject)nameless.DeepClone()]), []) with { Device = new DefinitionDevice(null, null, null, null, null, null, null) }, VisualCatalogSnapshot.BuiltIn)
+            is { Valid: true } valid && !valid.Diagnostics.Any(d => d.Code == "entity.name"), "an entity of a device needs none");
+        Console.WriteLine("PASS entity store: a definition's device is marked on its composed graph, and an entity of one needs no name");
     }
 
     /// <summary>

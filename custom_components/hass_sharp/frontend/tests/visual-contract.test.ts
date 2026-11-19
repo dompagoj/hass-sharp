@@ -10,8 +10,8 @@ import { readFileSync } from 'node:fs'
 import { distinctTypeLabels, labelDepth, typeColor, typeLabel } from '../src/visual/typeLabels'
 
 interface ValidationCase {
-  name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; contains?: string
-  warning?: string; warningInputId?: string; warningNodeId?: string | null; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
+  name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; portId?: string; contains?: string
+  warning?: string; warningInputId?: string; warningPortId?: string; warningNodeId?: string | null; noDiagnostics?: boolean; services?: boolean; maxValidationMs?: number; catalogPatch?: Record<string, unknown>
   /** Every diagnostic message, sorted by code unit: both validators word them byte for byte alike. */
   messages?: string[]
   /** The code of every diagnostic that has one, sorted: both validators classify structural problems alike. */
@@ -50,11 +50,12 @@ describe('shared visual graph validation contract', () => {
     const errors = diagnostics.filter(d => d.severity === 3)
     expect(errors.length === 0, JSON.stringify(errors)).toBe(fixture.valid)
     if (!fixture.valid) expect(errors.some(e =>
-      (!fixture.nodeId || e.nodeId === fixture.nodeId) && (!fixture.inputId || e.inputId === fixture.inputId) &&
+      (!fixture.nodeId || e.nodeId === fixture.nodeId) && (!fixture.inputId || e.inputId === fixture.inputId) && (!fixture.portId || e.portId === fixture.portId) &&
       (!fixture.contains || e.message.toLowerCase().includes(fixture.contains.toLowerCase())))).toBe(true)
     const warning = fixture.warning
     if (warning !== undefined) expect(diagnostics.some(d => d.severity === 2 && d.message.toLowerCase().includes(warning.toLowerCase()) &&
       (fixture.warningInputId === undefined || d.inputId === fixture.warningInputId) &&
+      (fixture.warningPortId === undefined || d.portId === fixture.warningPortId) &&
       // warningNodeId, when the case has the key, is the node the warning is on; null for one on no node.
       (!('warningNodeId' in fixture) || (d.nodeId ?? null) === fixture.warningNodeId)), `expected warning "${warning}", got ${JSON.stringify(diagnostics)}`).toBe(true)
     if (fixture.noDiagnostics) expect(diagnostics).toEqual([])

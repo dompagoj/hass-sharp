@@ -20,7 +20,8 @@ static class EntityNodeTests
             (nameof(AGraphOfTheWrongShapeDeclaresNothing), AGraphOfTheWrongShapeDeclaresNothing),
             (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins),
             (nameof(ACommandEntryThatIsNotAnObjectHasNoValues), ACommandEntryThatIsNotAnObjectHasNoValues),
-            (nameof(FlowsAreNamedByNodeAndPort), FlowsAreNamedByNodeAndPort) })
+            (nameof(FlowsAreNamedByNodeAndPort), FlowsAreNamedByNodeAndPort),
+            (nameof(ANodeIsNamedByItsEntity), ANodeIsNamedByItsEntity) })
         {
             try
             {
@@ -94,6 +95,24 @@ static class EntityNodeTests
         var catalog = (JsonObject)VisualNodeCatalog.Root.DeepClone();
         catalog["entityDomains"]!["light"]!["commands"]!["turn_on"] = 5;
         Check(VisualNodeCatalog.DataOutputs(Hub("l", "lamp", "light"), catalog).Count == 0, "a command entry that is not an object has no values");
+    }
+
+    /// <summary>
+    /// A declaring node is named by its entity in the validator's messages and in its runs' names: its name, else its
+    /// key, each trimmed, else its kind's label; never by a label of its own.
+    /// </summary>
+    static void ANodeIsNamedByItsEntity()
+    {
+        var snapshot = VisualCatalogSnapshot.BuiltIn;
+        string Named(JsonObject node) => VisualGraphValidator.Words.StepName(node, VisualNodeCatalog.Spec(node, snapshot));
+        Check(Named(Hub("l", "lamp", "light", new() { ["name"] = "  Lamp " })) == "Lamp", "by its name, trimmed");
+        Check(Named(Hub("l", " lamp ", "light", new() { ["name"] = " " })) == "lamp", "else by its key");
+        var bare = Hub("l", "", "light", new() { ["name"] = "" });
+        bare["label"] = "Something else";
+        Check(Named(bare) == "Entity", "else by its kind's label, not its own: " + Named(bare));
+        var hub = Hub("l", "lamp", "light", new() { ["name"] = "  Lamp ", ["arguments"] = new JsonObject { ["is_on"] = new JsonObject { ["kind"] = "literal", ["type"] = "boolean", ["value"] = true } } });
+        var flows = DefinitionGraph.HubFlows(hub, Graph(null, hub), snapshot);
+        Check(string.Join(",", flows.Select(f => f.Label)) == "Lamp: State", "its runs are named the same: " + string.Join(",", flows.Select(f => f.Label)));
     }
 
     /// <summary>One Entity node starts several flows, so a flow's method is named by the node and its port.</summary>

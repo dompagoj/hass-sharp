@@ -1,4 +1,4 @@
-import { nodeCatalog, words, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { declaredEntities, nodeCatalog, words, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
 import type { DefinitionBody, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
 import type { VisualGraph } from '../src/visual/graph'
@@ -201,18 +201,23 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const empty = (value: unknown) => value === undefined || value === null
   const problem = (code: string, message: string, inputId: string | null = null, portId: string | null = null): VisualDiagnostic =>
     ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId, code })
-  /** The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them. */
+  /**
+   * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a listed entity
+   * whose key an Entity node declares is checked on its node, whose options' problems are on it, about `option:<option>`.
+   */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 120) problems.push(problem('definition.name', 'Give the definition a name of up to 120 characters'))
     if (body.logic?.kind !== 'graph') return problems
+    const nodes = declaredEntities(body.logic.graph), declared = new Set(nodes.map(d => d.entity.key))
     const entities: unknown[] = body.entities ?? []
-    if (!entities.length) problems.push(problem('definition.entitiesRequired', 'Add an entity: a definition built from nodes creates the entities it lists, and lists none'))
+    if (!entities.length && !nodes.length) problems.push(problem('definition.entitiesRequired', 'Add an entity: a definition built from nodes creates the entities it lists, and lists none'))
     const keys = new Set<string>(), repeated = new Set<string>()
     entities.forEach((entity: any, i) => {
       const index = i + 1
       if (!entity || typeof entity !== 'object' || Array.isArray(entity)) return problems.push(problem('definition.entityKey', `Entity ${index} is not an entity: give each entity a key and a domain`))
       const key = entity.key
+      if (typeof key === 'string' && declared.has(key)) return
       if (typeof key !== 'string') return problems.push(problem('definition.entityKey', `Give entity ${index} a key, such as ${index === 1 ? 'power' : `power_${index}`}`))
       if (!/^[a-z][a-z0-9_]{0,39}$/.test(key)) problems.push(problem('definition.entityKey', `Entity key ${key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters`, key))
       if (keys.has(key) && !repeated.has(key)) { repeated.add(key); problems.push(problem('definition.duplicateEntity', `Two entities have the key ${key}; give each a key of its own`, key)) }
@@ -223,6 +228,12 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       if (!Object.hasOwn(domains, domain)) return problems.push(problem('definition.entityDomain', `Entity ${key} has the domain ${domain}, which a definition built from nodes cannot create; choose ${words.or(Object.keys(domains))}`, key))
       problems.push(...optionProblems(key, domain, entity.options, typeof entity.name === 'string' && entity.name.trim() ? entity.name : undefined))
     })
+    for (const { nodeId, entity } of nodes) {
+      const domain = entity.domain, options = entity.options
+      if (typeof domain !== 'string' || !Object.hasOwn(nodeCatalog.entityDomains ?? {}, domain) || (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options)))) continue
+      for (const found of optionProblems(typeof entity.key === 'string' ? entity.key : '', domain, options, typeof entity.name === 'string' && entity.name.trim() ? entity.name : undefined))
+        problems.push({ ...found, nodeId, inputId: `option:${found.portId}`, portId: null })
+    }
     return problems
   }
   /**
@@ -319,7 +330,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   }
   const preview = (body: DefinitionBody, before?: EntityDocument) => {
     const problems = [...documentProblems(body), ...classProblems(body, before)]
-    const diagnostics = problems.length ? problems : structuredClone(controls.diagnostics)
+    // A problem on an Entity node is the graph's: reported with the graph's own, as the server does.
+    const diagnostics = problems.some(p => p.nodeId === null) ? problems : [...problems, ...structuredClone(controls.diagnostics)]
     const valid = !diagnostics.some(d => d.severity >= 3)
     return { valid, diagnostics, source: valid ? '// HassSharp entity definition (fixture)' : '', sourceMap: [] }
   }

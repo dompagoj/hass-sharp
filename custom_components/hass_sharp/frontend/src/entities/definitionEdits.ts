@@ -1,4 +1,4 @@
-import { entityTypeLabel, words, type ConfigSpec, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
+import { declaredEntities, entityTypeLabel, words, type ConfigSpec, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
@@ -120,6 +120,9 @@ export function readNumber(typed: string, whole = false): number | null | undefi
 
 const optionProblem = (key: string, option: string, message: string): VisualDiagnostic =>
   ({ nodeId: null, inputId: key, portId: option, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
+/** A problem with an option of the entity an Entity node declares: on the node, about `option:<option>`. */
+const nodeOptionProblem = (nodeId: string, option: string, message: string): VisualDiagnostic =>
+  ({ nodeId, inputId: `option:${option}`, portId: null, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
 /** An option as a problem names it: its label, else its key in words, as its field is labelled. */
 export const optionLabel = (option: string, rule: ConfigSpec | undefined) =>
   typeof rule?.label === 'string' && rule.label ? rule.label : words.key(option)
@@ -141,25 +144,31 @@ function outsideRange(rule: ConfigSpec, value: number): string | undefined {
  * (`DefinitionDocument.Options`), about the same entity and option (`inputId`, `portId`), so its answer about the same
  * option is not shown twice: an option the type needs left empty, a number option holding a text that is not a number
  * (kept as typed, so it can be finished), and a number outside the range its rule gives. Each blocks Save; the server
- * checks the rest.
+ * checks the rest. The entity an Entity node declares is checked the same, each problem on its node (`nodeId`) about
+ * `option:<option>`, in place of a listed one of its key; one whose options are not an object is its Options field's.
  */
 export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualDiagnostic[] {
   const problems: VisualDiagnostic[] = []
-  for (const entity of definitionOf(graph).entities) {
+  const check = (entity: Partial<DefinitionEntity>, problem: (key: string, option: string, message: string) => VisualDiagnostic) => {
     const domains = catalog.entityDomains
     const row = domains && typeof entity.domain === 'string' && Object.hasOwn(domains, entity.domain) ? domains[entity.domain] : undefined
-    if (!row || typeof entity.key !== 'string') continue
-    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = entityNamed(entity)
+    if (!row || typeof entity.key !== 'string' || typeof entity.domain !== 'string') return
+    if (entity.options !== undefined && (entity.options === null || typeof entity.options !== 'object' || Array.isArray(entity.options))) return
+    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = entityNamed(entity as { key: string })
     for (const [option, rule] of Object.entries(row.options ?? {})) {
       const value = Object.hasOwn(options, option) ? options[option] : undefined
       const range = rule.type === 'number' && typeof value === 'number' && Number.isFinite(value) ? outsideRange(rule, value) : undefined
-      if (rule.type === 'number' && typeof value === 'string') problems.push(optionProblem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes a number`))
-      else if (range) problems.push(optionProblem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes ${range}, not ${value}`))
+      if (rule.type === 'number' && typeof value === 'string') problems.push(problem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes a number`))
+      else if (range) problems.push(problem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes ${range}, not ${value}`))
       else if (rule.required === true && (value === undefined || value === null))
         // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
-        problems.push(optionProblem(entity.key, option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
+        problems.push(problem(entity.key, option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
     }
   }
+  const nodes = declaredEntities(graph, catalog), declared = new Set(nodes.map(d => d.entity.key))
+  for (const entity of definitionOf(graph).entities) if (!declared.has(entity.key)) check(entity, optionProblem)
+  // A node without a text key is named by none, as the server names it.
+  for (const { nodeId, entity } of nodes) check({ ...entity, key: typeof entity.key === 'string' ? entity.key : '' } as Partial<DefinitionEntity>, (_key, option, message) => nodeOptionProblem(nodeId, option, message))
   return problems
 }
 

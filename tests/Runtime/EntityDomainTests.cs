@@ -115,6 +115,35 @@ static class EntityDomainTests
                 }
             }
         }
+        // An Entity node gives none of its state values or each one its type needs (entity.partialState): a value it may
+        // leave out is one the class may leave unknown, checked above. Given only the others, it asks for each needed one.
+        foreach (var (_, domain) in SharpDomains.All)
+        {
+            var state = domains![domain]!["state"]!.AsObject();
+            JsonNode Value(JsonNode? spec) => spec!["types"]![0]!.GetValue<string>() switch
+            {
+                "boolean" => new JsonObject { ["kind"] = "literal", ["type"] = "boolean", ["value"] = true },
+                "number" => new JsonObject { ["kind"] = "literal", ["type"] = "number", ["value"] = 1 },
+                var type => new JsonObject { ["kind"] = "literal", ["type"] = type, ["value"] = "a" },
+            };
+            List<string> Asked(IEnumerable<string> given)
+            {
+                var arguments = new JsonObject();
+                foreach (var key in given) arguments[key] = Value(state[key]);
+                var graph = new JsonObject
+                {
+                    ["version"] = 5, ["name"] = "Values", ["edges"] = new JsonArray(), ["definition"] = new JsonObject { ["settings"] = new JsonArray(), ["device"] = new JsonObject() },
+                    ["nodes"] = new JsonArray(EntityNodeTests.Hub("e", "e", domain, new() { ["arguments"] = arguments })),
+                };
+                return VisualGraphValidator.Validate(graph).Where(d => d.Code == "entity.partialState").Select(d => d.InputId!).ToList();
+            }
+            var needed = state.Where(p => !Optional(p.Value)).Select(p => p.Key).ToList();
+            var optional = state.Where(p => Optional(p.Value)).Select(p => p.Key).ToList();
+            Check(Asked([]).Count == 0, $"{domain}: a node given no state value asks for none");
+            Check(Asked(needed).Count == 0 && Asked(state.Select(p => p.Key)).Count == 0, $"{domain}: a node given each value its type needs is whole");
+            foreach (var one in optional)
+                Check(string.Join(",", Asked([one])) == string.Join(",", needed), $"{domain}: a node given only {one} asks for {string.Join(", ", needed)}: {string.Join(", ", Asked([one]))}");
+        }
         // The domains a graph defines are the catalog's, each with the catalog's state keys in its order.
         Check(string.Join(", ", SharpDomains.Graph.Keys.Order(StringComparer.Ordinal)) == string.Join(", ", domains!.Select(p => p.Key).Order(StringComparer.Ordinal)),
             $"the domains a graph creates are entityDomains': {string.Join(", ", SharpDomains.Graph.Keys)}, {Keys(domains)}");

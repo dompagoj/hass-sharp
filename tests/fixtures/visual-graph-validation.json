@@ -37803,7 +37803,7 @@
     ]
   },
   {
-    "name": "an Entity node that runs nothing is not warned about by the rules of When commanded and Show frame steps",
+    "name": "an Entity node that runs nothing is warned about on its pins, not by the rules of When commanded and Show frame steps",
     "graph": {
       "version": 5,
       "name": "Relay",
@@ -37833,7 +37833,19 @@
       }
     },
     "valid": true,
-    "noDiagnostics": true
+    "warning": "Relay does nothing on Turn on: connect a step to Turn on",
+    "warningNodeId": "relay",
+    "warningPortId": "command:turn_on",
+    "messages": [
+      "Camera never shows a frame: add a Show frame step for it",
+      "Relay does nothing on Turn off: connect a step to Turn off",
+      "Relay does nothing on Turn on: connect a step to Turn on"
+    ],
+    "codes": [
+      "camera.no_frame",
+      "command.unhandled",
+      "command.unhandled"
+    ]
   },
   {
     "name": "code definition.invalid: entities that are not a list",
@@ -37857,6 +37869,759 @@
     ],
     "codes": [
       "definition.invalid"
+    ]
+  },
+  {
+    "name": "an Entity node needs a key",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "key",
+    "messages": [
+      "Give this entity a key, such as power"
+    ],
+    "codes": [
+      "definition.entityKey"
+    ]
+  },
+  {
+    "name": "an Entity node's key is lowercase letters, digits and underscores",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "Front Door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "key",
+    "messages": [
+      "Entity key Front Door is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters"
+    ],
+    "codes": [
+      "definition.entityKey"
+    ]
+  },
+  {
+    "name": "two Entity nodes cannot share a key",
+    "graph": {
+      "version": 5,
+      "name": "Doors",
+      "nodes": [
+        {
+          "id": "a",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Front door"
+          }
+        },
+        {
+          "id": "b",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Back door"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "key",
+    "messages": [
+      "The key door is already used by Front door: give this entity its own"
+    ],
+    "codes": [
+      "definition.duplicateEntity"
+    ]
+  },
+  {
+    "name": "an Entity node's type is one Home Assistant has",
+    "graph": {
+      "version": 5,
+      "name": "Fan",
+      "nodes": [
+        {
+          "id": "fan",
+          "kind": "entity",
+          "config": {
+            "key": "fan",
+            "domain": "fan",
+            "name": "Fan"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "fan",
+    "inputId": "domain",
+    "messages": [
+      "fan is not an entity type: choose one from the list"
+    ],
+    "codes": [
+      "definition.entityDomain"
+    ]
+  },
+  {
+    "name": "an Entity node needs a type",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "domain",
+    "messages": [
+      "Type is required"
+    ]
+  },
+  {
+    "name": "an entity without a device needs a name",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": ""
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "name",
+    "messages": [
+      "Name this entity: it has no device, so Home Assistant shows it by its own name"
+    ],
+    "codes": [
+      "entity.name"
+    ]
+  },
+  {
+    "name": "an entity of a device needs no name",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": ""
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {}
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a light with a brightness needs to know whether it is on",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "arguments": {
+              "brightness": {
+                "kind": "literal",
+                "type": "number",
+                "value": 128
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "is_on",
+    "messages": [
+      "Lamp has a value for Brightness but none for On: connect or set On too",
+      "Lamp does nothing on Turn on: connect a step to Turn on",
+      "Lamp does nothing on Turn off: connect a step to Turn off"
+    ],
+    "codes": [
+      "entity.partialState",
+      "command.unhandled",
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "a light that is only on or off is whole",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "messages": [
+      "Lamp does nothing on Turn on: connect a step to Turn on",
+      "Lamp does nothing on Turn off: connect a step to Turn off"
+    ],
+    "codes": [
+      "command.unhandled",
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "a cover with only a position is whole",
+    "graph": {
+      "version": 5,
+      "name": "Blind",
+      "nodes": [
+        {
+          "id": "c",
+          "kind": "entity",
+          "config": {
+            "key": "blind",
+            "domain": "cover",
+            "name": "Blind",
+            "arguments": {
+              "position": {
+                "kind": "literal",
+                "type": "number",
+                "value": 50
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "messages": [
+      "Blind does nothing on Open: connect a step to Open",
+      "Blind does nothing on Close: connect a step to Close",
+      "Blind does nothing on Stop: connect a step to Stop",
+      "Blind does nothing on Set position: connect a step to Set position"
+    ],
+    "codes": [
+      "command.unhandled",
+      "command.unhandled",
+      "command.unhandled",
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "a state value cannot read a step that runs in a flow",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "read",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.motion"
+            }
+          }
+        },
+        {
+          "id": "c",
+          "kind": "convert",
+          "config": {
+            "type": "boolean",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:read",
+          "source": "t",
+          "target": "read"
+        },
+        {
+          "id": "read.value:c.value",
+          "kind": "data",
+          "source": "read",
+          "target": "c",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "c.value:door.is_on",
+          "kind": "data",
+          "source": "c",
+          "target": "door",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "is_on",
+    "portId": "is_on",
+    "messages": [
+      "On of Door cannot read Read entity, which runs in a flow: use a Set state step after Read entity instead"
+    ],
+    "codes": [
+      "scope.stateSource"
+    ]
+  },
+  {
+    "name": "a state value cannot read the node's own command value",
+    "graph": {
+      "version": 5,
+      "name": "Level",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "entity",
+          "config": {
+            "key": "level",
+            "domain": "number",
+            "name": "Level"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "l.command:set_value:value:l.value",
+          "kind": "data",
+          "source": "l",
+          "target": "l",
+          "sourcePort": "command:set_value:value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "messages": [
+      "Value of Level cannot read Level, which runs in a flow: use a Set state step after Level instead",
+      "Level would depend on its own result",
+      "Level does nothing on Set value: connect a step to Set value"
+    ],
+    "codes": [
+      "scope.stateSource",
+      "cycle.data",
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "two commands can share a step",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [
+        {
+          "id": "relay",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay"
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Ran"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "relay:command:turn_on:log",
+          "source": "relay",
+          "target": "log",
+          "port": "command:turn_on"
+        },
+        {
+          "id": "relay:command:turn_off:log",
+          "source": "relay",
+          "target": "log",
+          "port": "command:turn_off"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a command's value is read only by steps of that command",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp"
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Ran"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "l:command:turn_on:log",
+          "source": "l",
+          "target": "log",
+          "port": "command:turn_on"
+        },
+        {
+          "id": "l:command:turn_off:log",
+          "source": "l",
+          "target": "log",
+          "port": "command:turn_off"
+        },
+        {
+          "id": "l.command:turn_on:brightness:log.value",
+          "kind": "data",
+          "source": "l",
+          "target": "log",
+          "sourcePort": "command:turn_on:brightness",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "log",
+    "inputId": "value",
+    "portId": "value",
+    "messages": [
+      "Log reads Brightness from Turn on of Lamp but also runs from Turn off of Lamp, where there is no Brightness"
+    ],
+    "codes": [
+      "scope.flow"
+    ]
+  },
+  {
+    "name": "a command without steps is a warning on its pin",
+    "graph": {
+      "version": 5,
+      "name": "Relay",
+      "nodes": [
+        {
+          "id": "relay",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay"
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Ran"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "relay:command:turn_on:log",
+          "source": "relay",
+          "target": "log",
+          "port": "command:turn_on"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "Relay does nothing on Turn off: connect a step to Turn off",
+    "warningNodeId": "relay",
+    "warningPortId": "command:turn_off",
+    "messages": [
+      "Relay does nothing on Turn off: connect a step to Turn off"
+    ],
+    "codes": [
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "a camera that shows no frame is a warning on its pin",
+    "graph": {
+      "version": 5,
+      "name": "Cam",
+      "nodes": [
+        {
+          "id": "cam",
+          "kind": "entity",
+          "config": {
+            "key": "cam",
+            "domain": "camera",
+            "name": "Cam"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "Cam never shows a frame: add a Show frame step for it",
+    "warningNodeId": "cam",
+    "warningPortId": "frame",
+    "messages": [
+      "Cam never shows a frame: add a Show frame step for it"
+    ],
+    "codes": [
+      "camera.no_frame"
+    ]
+  },
+  {
+    "name": "a value of an Entity node that reads an entity given over a wire is warned about",
+    "graph": {
+      "version": 5,
+      "name": "Wired entity",
+      "nodes": [
+        {
+          "id": "c",
+          "kind": "convert",
+          "config": {
+            "type": "entity_id",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "binary_sensor.door"
+            }
+          }
+        },
+        {
+          "id": "is",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        },
+        {
+          "id": "not",
+          "kind": "not",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "closed",
+          "kind": "entity",
+          "config": {
+            "key": "closed",
+            "domain": "binary_sensor",
+            "name": "Closed"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "c.value:is.entity",
+          "kind": "data",
+          "source": "c",
+          "target": "is",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "is.value:not.value",
+          "kind": "data",
+          "source": "is",
+          "target": "not",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "not.value:closed.is_on",
+          "kind": "data",
+          "source": "not",
+          "target": "closed",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "gets its entity over a wire",
+    "warningNodeId": "is",
+    "messages": [
+      "Has state gets its entity over a wire, so Closed is not worked out again when that entity changes; choose the entity in Entity instead"
+    ],
+    "codes": [
+      "state.dynamicSource"
     ]
   }
 ]

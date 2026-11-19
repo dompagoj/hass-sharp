@@ -791,6 +791,21 @@ export const targetKeyMessage = (key: string) => `Target can only contain entity
  * `VisualGraphValidator.Words`; type names are those of `typeLabel`. No indefinite article precedes a word the
  * validator does not choose itself (a type name, a domain, a label).
  */
+/** A node's kind as people read it: its catalog label, else its kind in words. */
+function kindName(node: GraphNode, catalog: VisualCatalogSnapshot): string {
+  const kindLabel = typeof node.kind === 'string' && Object.hasOwn(catalog.nodes, node.kind) && typeof catalog.nodes[node.kind].label === 'string' ? catalog.nodes[node.kind].label.replace(blankEnds, '') : ''
+  return kindLabel || words.key(typeof node.kind === 'string' ? node.kind : '')
+}
+/**
+ * The entity a node declares as people read it, in the validator's messages and in its runs' names: its name, else its
+ * key, each trimmed, else its kind's label; never a label of the node's own. Undefined for a node that declares no
+ * entity. Mirrors `VisualGraphValidator.Words.EntityName`.
+ */
+export function entityNodeName(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
+  if (nodeSpec(node.kind, catalog)?.declares !== 'entity') return undefined
+  const config = record(node.config) ? node.config : {}
+  return text(config.name).replace(blankEnds, '') || text(config.key).replace(blankEnds, '') || kindName(node, catalog)
+}
 /** JavaScript's whitespace, spelled out so `VisualGraphValidator.Words.Name` trims the very same characters. */
 const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g
 const youSound = ['uni', 'use', 'usa', 'usu', 'uti', 'ura', 'ure', 'uri', 'uro', 'ubi']
@@ -823,14 +838,14 @@ export const words = {
   pathTilde: 'Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off',
   /**
    * A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
-   * kind's catalog label, else its kind in words.
+   * kind's catalog label, else its kind in words. A node that declares an entity is named by it (`entityNodeName`).
    */
   stepName: (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string => {
+    const entity = entityNodeName(node, catalog)
+    if (entity !== undefined) return entity
     const label = typeof node.label === 'string' ? node.label.replace(blankEnds, '') : ''
     const title = customSignature(node, catalog)?.title.replace(blankEnds, '') ?? ''
-    if (label || title) return label || title
-    const kindLabel = typeof node.kind === 'string' && Object.hasOwn(catalog.nodes, node.kind) && typeof catalog.nodes[node.kind].label === 'string' ? catalog.nodes[node.kind].label.replace(blankEnds, '') : ''
-    return label || kindLabel || words.key(typeof node.kind === 'string' ? node.kind : '')
+    return label || title || kindName(node, catalog)
   },
   /** A step that execution never reaches, and what to do about it. */
   unreachable: (step: string) => `${step} is not connected into the flow; connect a step to its execution input`,
@@ -994,6 +1009,27 @@ export const words = {
   frameDuplicate: (name: string, label: string) => `${words.name(name)} already has ${words.article(label)} ${label} step; delete this one or choose another camera`,
   /** A camera no Show frame step shows a frame for, named by its name. */
   noFrame: (name: string, label: string) => `${words.name(name)} never shows a frame: add ${words.article(label)} ${label} step for it`,
+  // An Entity node's entity, named by entityNodeName.
+  /** What an Entity node's key must be, as an entity key is (`SharpEntity.KeyPattern`). */
+  entityKeyPattern: '^[a-z][a-z0-9_]{0,39}$',
+  /** An Entity node without a key. */
+  entityKeyMissing: 'Give this entity a key, such as power',
+  /** An Entity node's key that is not of the form entity keys take, in the words of the document's check. */
+  entityKey: (key: string) => `Entity key ${key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters`,
+  /** An Entity node of the key an earlier one declares. */
+  keyTaken: (key: string, first: string) => `The key ${key} is already used by ${first}: give this entity its own`,
+  /** An Entity node of a type the catalog's `entityDomains` does not describe. */
+  notAnEntityType: (domain: string) => `${domain} is not an entity type: choose one from the list`,
+  /** An Entity node of a definition without a device, with no name. */
+  entityNameMissing: 'Name this entity: it has no device, so Home Assistant shows it by its own name',
+  /** An Entity node given some of its state values (by their labels, joined) and not one its type needs. */
+  partialState: (name: string, given: string, missing: string) => `${name} has a value for ${given} but none for ${missing}: connect or set ${missing} too`,
+  /** A state value of an Entity node that reads a step's output: its state is worked out in no flow. */
+  stateSource: (value: string, name: string, step: string) => `${value} of ${name} cannot read ${step}, which runs in a flow: use a Set state step after ${step} instead`,
+  /** A step reading a command's value that another flow runs too, named by where that flow starts. */
+  flowValue: (step: string, value: string, command: string, name: string, other: string) => `${step} reads ${value} from ${command} of ${name} but also runs from ${other}, where there is no ${value}`,
+  /** A command pin of an Entity node with no step connected. */
+  nothingOn: (name: string, command: string) => `${name} does nothing on ${command}: connect a step to ${command}`,
 }
 /** The service a service node calls, named in its messages; undefined for other nodes or without a service id. */
 const serviceName = (node: GraphNode, catalog: VisualCatalogSnapshot) => nodeSpec(node.kind, catalog)?.dynamicInputs === 'service' && typeof node.config.service === 'string' && node.config.service ? node.config.service : undefined
@@ -1077,10 +1113,11 @@ export const diagnosticCodes = [
   'node.invalid', 'node.duplicate', 'node.unknownKind', 'node.unreachable', 'limit.nesting',
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
-  'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult',
+  'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow',
   'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
-  'definition.invalid', 'definition.unknownEntity', 'definition.unknownCommand', 'node.document', 'node.singleton', 'root.incoming',
-  'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value',
+  'definition.invalid', 'definition.unknownEntity', 'definition.unknownCommand', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
+  'node.document', 'node.singleton', 'root.incoming',
+  'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
   'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.duplicate', 'camera.no_frame',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
@@ -1114,6 +1151,8 @@ export interface GraphAnalysis {
   nodes: Map<string, GraphNode>
   /** Well-formed data edges whose endpoints exist. */
   data: DataEdge[]
+  /** Each node's step order wires out, by node id: those between steps whose endpoints exist. */
+  outgoing: Map<string, ExecutionEdge[]>
   scopes: Map<string, Scope>
   /** The type each input resolves to (wire, literal or first visible variable producer); undefined when unbound. */
   resolved: Map<string, Record<string, string | undefined>>
@@ -1192,18 +1231,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
    * graph's value wires, depth first. A step reading the value node must be able to read each of them.
    */
   function pureSources(start: GraphNode) {
-    const found: { node: GraphNode; port: string; output: OutputSpec }[] = [], seen = new Set([start.id])
-    const visit = (node: GraphNode) => {
-      for (const edge of data) if (edge.target === node.id) {
-        const source = nodes.get(edge.source)!, port = edge.sourcePort
-        if (pure(source)) { if (!seen.has(source.id)) { seen.add(source.id); visit(source) } }
-        else { const output = dataOutputs(source)[port]; if (output && !found.some(f => f.node === source && f.port === port)) found.push({ node: source, port, output }) }
-      }
-    }
-    visit(start)
-    return found
+    return valueSources(start, nodes, data, catalog)
   }
-  const analysis = (complete: boolean): GraphAnalysis => ({ diagnostics: errors, origins, complete, nodes, data, scopes, resolved: resolvedTypes, ownerOf, visible, pureSources })
+  const outgoing = new Map<string, ExecutionEdge[]>()
+  const analysis = (complete: boolean): GraphAnalysis => ({ diagnostics: errors, origins, complete, nodes, data, outgoing, scopes, resolved: resolvedTypes, ownerOf, visible, pureSources })
   if (!record(value) || value.version !== catalog.graphVersion) { error(null, `Expected graph version ${catalog.graphVersion}`, undefined, undefined, 'graph.version'); return analysis(false) }
   if (typeof value.name !== 'string' || !value.name.trim()) error(null, 'Graph name is required', undefined, undefined, 'graph.name')
   if (Object.hasOwn(value, 'imports')) error(null, words.imports)
@@ -1214,6 +1245,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const document = graphDocument(graph), entityGraph = document === 'entity'
   if ((!graph.nodes.length && document === 'automation') || overLimit(catalog, graph)) { error(null, words.graphLimit(document), undefined, undefined, 'graph.limit'); return analysis(false) }
   // Only an object definition makes an entity graph; any other value of the key is ignored, as it always was.
+  // Whether the definition has a device (its `device` is an object), which names its entities.
+  let hasDevice = false
   if (entityGraph) checkDefinition(graph.definition)
   // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only once
   // the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
@@ -1224,7 +1257,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     else nodes.set(node.id, node)
     if (!nodeSpec(node.kind)) error(node.id, typeof node.kind === 'string' && node.kind.startsWith('library:') ? words.missingLibraryNode : 'Unknown node kind', undefined, undefined, 'node.unknownKind')
   }
-  const outgoing = new Map([...nodes.keys()].map(id => [id, [] as ExecutionEdge[]]))
+  for (const id of nodes.keys()) outgoing.set(id, [])
   const dataIndex = new Map<DataEdge, number>()
   const edgeIds = new Set<string>()
   for (const [index, edge] of graph.edges.entries()) {
@@ -1452,6 +1485,33 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         if (!values.some(([, input]) => input.required) && !values.some(([port]) => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
       }
     }
+    // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
+    // device names its entities, and none of its state values or each one its type needs. A field that is not text is
+    // the config rule's below.
+    if (entityGraph && spec.declares === 'entity') {
+      const typed = (field: string) => !Object.hasOwn(node.config, field) ? '' : typeof node.config[field] === 'string' ? node.config[field] as string : undefined
+      const key = typed('key')
+      if (key !== undefined) {
+        if (!key.replace(blankEnds, '')) error(node.id, words.entityKeyMissing, 'key', undefined, 'definition.entityKey')
+        else if (!matches(key, words.entityKeyPattern)) error(node.id, words.entityKey(key), 'key', undefined, 'definition.entityKey')
+      }
+      // A type left out is the config rule's; one given blank is said the same way.
+      const domain = typed('domain')
+      if (domain !== undefined && Object.hasOwn(node.config, 'domain')) {
+        if (!domain.replace(blankEnds, '')) error(node.id, `${configLabel(spec.config.domain, 'domain')} is required`, 'domain')
+        else if (!declaredDomain(node, catalog)) error(node.id, words.notAnEntityType(domain), 'domain', undefined, 'definition.entityDomain')
+      }
+      const name = typed('name')
+      if (name !== undefined && !name.replace(blankEnds, '') && !hasDevice) error(node.id, words.entityNameMissing, 'name', undefined, 'entity.name')
+      const state = declaredDomain(node, catalog)?.state
+      const values = Object.entries(dataInputs(node)), given = values.filter(([port]) => supplied(node, port))
+      if (record(state) && given.length)
+        for (const [port, input] of values) {
+          const entry: unknown = Object.hasOwn(state, port) ? state[port] : undefined
+          if (!supplied(node, port) && (record(entry) && typeof entry.required === 'boolean' ? entry.required : true))
+            error(node.id, words.partialState(words.stepName(node, catalog), given.map(([p, i]) => words.portLabel(i, p)).join(', '), words.portLabel(input, port)), port, undefined, 'entity.partialState')
+        }
+    }
     if (entityGraph && node.kind === 'setting' && typeof node.config.key === 'string' && !definitionItems(catalog, 'settings').some(s => s.key === node.config.key))
       error(node.id, words.unknownSetting(node.config.key, configLabel(spec.config.key, 'key')), 'key', undefined, 'setting.unknown')
     for (const [field, rule] of Object.entries(spec.config)) {
@@ -1584,10 +1644,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   /**
    * The definition a graph carries: an object with a list of entities (or none, when Entity nodes declare them all), each
    * with a text key and domain, and a list of settings, each with a text key and type; each entity of a domain
-   * `entityDomains` describes, each setting of a type a setting can have, and no key twice in either list. Mirrors
-   * `VisualGraphValidator` `Definition`.
+   * `entityDomains` describes, each setting of a type a setting can have, and no key twice in either list. Its `device`,
+   * an object when it has one, is read too (`hasDevice`). Mirrors `VisualGraphValidator` `Definition`.
    */
   function checkDefinition(definition: unknown) {
+    hasDevice = record(definition) && record(definition.device)
     const entities = record(definition) ? (definition.entities === undefined ? [] : definition.entities) : undefined, settings = record(definition) ? definition.settings : undefined
     if (!Array.isArray(entities) || !Array.isArray(settings) || !entities.every(e => record(e) && typeof e.key === 'string' && typeof e.domain === 'string') ||
       !settings.every(s => record(s) && typeof s.key === 'string' && typeof s.type === 'string')) { error(null, words.definitionUnreadable, undefined, undefined, 'definition.invalid'); return }
@@ -1605,7 +1666,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   /**
    * The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
    * When commanded per command, a State reading an entity given over a wire, a command no step handles, one When a frame
-   * is needed per camera, and a camera no Show frame step shows a frame for. Mirrors `VisualGraphValidator` `GraphRules`.
+   * is needed per camera, a camera no Show frame step shows a frame for, one Entity node per key, and the flows of Entity
+   * nodes (`entityScopes`). Mirrors `VisualGraphValidator` `GraphRules`.
    */
   function graphRules() {
     const byId = (a: GraphNode, b: GraphNode) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0
@@ -1629,8 +1691,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // about for the first such input given over a wire, unless that wire comes from a Constant of an entity id type, whose
     // entity is followed as chosen. The warning is the reader's own, on no input: a wire into it is allowed
     // (connectData), at the cost it names.
+    // An Entity node whose state is worked out (a value of it is given) is such a State.
     const readers = new Set<string>()
-    for (const state of ofKind('entity_state'))
+    for (const state of [...nodes.values()].filter(n => n.kind === 'entity_state' || nodeSpec(n.kind)?.declares === 'entity' && Object.keys(dataInputs(n)).some(p => supplied(n, p))).sort(byId))
       for (const reader of valueUpstream(state, nodes, data, pure)) {
         if (readers.has(reader.id)) continue
         const wired = Object.entries(dataInputs(reader)).find(([port, input]) => {
@@ -1657,7 +1720,116 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (!ofKind('show_frame').some(n => choice(n, 'entity') === camera.key)) {
         errors.push({ nodeId: null, message: words.noFrame(cameraName(catalog, text(camera.key)), kindLabel('show_frame')), severity: 2, code: 'camera.no_frame' }); origins.push(origin)
       }
+    // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
+    // camera, a Show frame step that names it.
+    const keys = new Map<string, GraphNode>()
+    for (const hub of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity')) {
+      const name = words.stepName(hub, catalog), key = choice(hub, 'key'), first = keys.get(key)
+      if (key.replace(blankEnds, '') && first) error(hub.id, words.keyTaken(key, words.stepName(first, catalog)), 'key', undefined, 'definition.duplicateEntity')
+      else if (key.replace(blankEnds, '')) keys.set(key, hub)
+      const row = declaredDomain(hub, catalog)
+      for (const command of Object.keys(record(row?.commands) ? row.commands : {}))
+        if (!outgoing.get(hub.id)!.some(e => flowPort(hub, e) === `command:${command}`)) {
+          errors.push({ nodeId: hub.id, message: words.nothingOn(name, entityCommandLabel(catalog, choice(hub, 'domain'), command)), severity: 2, portId: `command:${command}`, code: 'command.unhandled' }); origins.push(origin)
+        }
+      if (choice(hub, 'domain') === 'camera' && !ofKind('show_frame').some(n => choice(n, 'entity') === choice(hub, 'key'))) {
+        errors.push({ nodeId: hub.id, message: words.noFrame(name, kindLabel('show_frame')), severity: 2, portId: 'frame', code: 'camera.no_frame' }); origins.push(origin)
+      }
+    }
+    for (const found of entityScopes(nodes, data, outgoing, catalog)) { errors.push(found); origins.push(origin) }
   }
+}
+/**
+ * The step outputs a value node reads, directly or through other value nodes: each once, in the order of the graph's
+ * value wires, depth first. A step reading the value node must be able to read each of them.
+ */
+export function valueSources(start: GraphNode, nodes: ReadonlyMap<string, GraphNode>, data: readonly DataEdge[], catalog: VisualCatalogSnapshot): { node: GraphNode; port: string; output: OutputSpec }[] {
+  const found: { node: GraphNode; port: string; output: OutputSpec }[] = [], seen = new Set([start.id])
+  const visit = (node: GraphNode) => {
+    for (const edge of data) if (edge.target === node.id) {
+      const source = nodes.get(edge.source)!, port = edge.sourcePort
+      if (isPure(source, catalog)) { if (!seen.has(source.id)) { seen.add(source.id); visit(source) } }
+      else { const output = dataOutputs(source, catalog)[port]; if (output && !found.some(f => f.node === source && f.port === port)) found.push({ node: source, port, output }) }
+    }
+  }
+  visit(start)
+  return found
+}
+/**
+ * The flows of Entity nodes, from the validator's nodes, value wires and step order wires: a state value reads no step
+ * that runs in a flow (`stateSource`), its state being worked out in none; and a step reads a command's value only when no
+ * other flow runs it (`flowPins`), each reported once per input, for the first such value it reads. The connection index
+ * works these out again for a wire it weighs. Mirrors `VisualGraphValidator` `EntityScopes`.
+ */
+export function entityScopes(nodes: ReadonlyMap<string, GraphNode>, data: readonly DataEdge[], outgoing: ReadonlyMap<string, readonly ExecutionEdge[]>, catalog: VisualCatalogSnapshot): GraphDiagnostic[] {
+  const found: GraphDiagnostic[] = []
+  const error = (nodeId: string, message: string, port: string, code: DiagnosticCode) => found.push({ nodeId, message, severity: 3, inputId: port, portId: port, code })
+  const declares = (node: GraphNode) => nodeSpec(node.kind, catalog)?.declares === 'entity'
+  for (const hub of [...nodes.values()].filter(declares))
+    for (const [port, input] of Object.entries(dataInputs(hub, undefined, catalog))) {
+      const step = stateSource(hub, port, nodes, data, catalog)
+      if (step) error(hub.id, words.stateSource(words.portLabel(input, port), words.stepName(hub, catalog), words.stepName(step, catalog)), port, 'scope.stateSource')
+    }
+  const pins = flowPins(nodes, outgoing, catalog)
+  const first = new Map<string, DataEdge>()
+  for (const edge of data) { const key = JSON.stringify([edge.target, edge.targetPort]); if (!first.has(key)) first.set(key, edge) }
+  for (const edge of data) {
+    const reader = nodes.get(edge.target)!, input = edge.targetPort
+    if (isPure(reader, catalog) || first.get(JSON.stringify([reader.id, input])) !== edge) continue
+    const source = nodes.get(edge.source)!, output = dataOutputs(source, catalog)[edge.sourcePort]
+    const read = isPure(source, catalog) ? valueSources(source, nodes, data, catalog) : output ? [{ node: source, port: edge.sourcePort, output }] : []
+    for (const { node: hub, port, output: value } of read) {
+      const own = value.group
+      if (!declares(hub) || typeof own !== 'string' || !own) continue
+      const other = pins.find(p => p.reached.has(reader.id) && !(p.root === hub && p.port === own))
+      if (!other) continue
+      error(reader.id, words.flowValue(words.stepName(reader, catalog), words.portLabel(value, port), pinLabel(hub, own, catalog), words.stepName(hub, catalog),
+        other.port === undefined ? words.stepName(other.root, catalog) : `${pinLabel(other.root, other.port, catalog)} of ${words.stepName(other.root, catalog)}`), input, 'scope.flow')
+      break
+    }
+  }
+  return found
+}
+/**
+ * The step a state value of an Entity node reads: the source of the wire into it, else the first step a value node on
+ * that wire reads, depth first in the order of the graph's value wires; undefined when nothing or only values are read.
+ * Mirrors `VisualGraphValidator` `StateSource`.
+ */
+export function stateSource(hub: GraphNode, port: string, nodes: ReadonlyMap<string, GraphNode>, data: readonly DataEdge[], catalog: VisualCatalogSnapshot): GraphNode | undefined {
+  const wire = data.find(e => e.target === hub.id && e.targetPort === port)
+  if (!wire) return undefined
+  const seen = new Set<string>()
+  const visit = (source: GraphNode): GraphNode | undefined => {
+    if (!isPure(source, catalog)) return source
+    if (seen.has(source.id)) return undefined
+    seen.add(source.id)
+    for (const edge of data) if (edge.target === source.id) { const step = visit(nodes.get(edge.source)!); if (step) return step }
+    return undefined
+  }
+  return visit(nodes.get(wire.source)!)
+}
+/**
+ * Where the graph's flows start, in node order: each pin of an Entity node (its port), and each other root as a whole
+ * (no port), each with the steps reached from it along step order wires. Mirrors `VisualGraphValidator` `FlowPins`.
+ */
+export function flowPins(nodes: ReadonlyMap<string, GraphNode>, outgoing: ReadonlyMap<string, readonly ExecutionEdge[]>, catalog: VisualCatalogSnapshot): { root: GraphNode; port?: string; reached: Set<string> }[] {
+  const reached = (wires: readonly ExecutionEdge[]) => {
+    const seen = new Set<string>(), stack = wires.map(e => e.target)
+    while (stack.length) { const id = stack.pop()!; if (!seen.has(id)) { seen.add(id); for (const edge of outgoing.get(id) ?? []) stack.push(edge.target) } }
+    return seen
+  }
+  const pins: { root: GraphNode; port?: string; reached: Set<string> }[] = []
+  for (const root of [...nodes.values()].filter(n => isRoot(n, catalog)))
+    if (nodeSpec(root.kind, catalog)?.declares === 'entity')
+      for (const port of executionPorts(root, catalog)) pins.push({ root, port, reached: reached((outgoing.get(root.id) ?? []).filter(e => flowPort(root, e) === port)) })
+    else pins.push({ root, reached: reached(outgoing.get(root.id) ?? []) })
+  return pins
+}
+/** An Entity node's pin as people read it: its command's label, or its type's frame label. */
+function pinLabel(hub: GraphNode, port: string, catalog: VisualCatalogSnapshot): string {
+  if (port.startsWith('command:')) return entityCommandLabel(catalog, text(hub.config.domain), port.slice('command:'.length))
+  const frame = declaredDomain(hub, catalog)?.frame
+  return text(record(frame) ? frame.label : undefined, 'When a frame is needed')
 }
 
 export function fillGraphLayout<T extends { nodes: GraphNode[] }>(graph: T): T {
@@ -1724,8 +1896,9 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // A Select property node that now has a value says which property to choose (or that its chosen one is missing): that
   // is about the node, not a problem the wire causes; one on the input the wire fills still refuses it.
   // A reader that now gets its entity over a wire is warned that a State reading it cannot watch that entity: the
-  // warning names the cost, and the wire is allowed.
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'state.dynamicSource' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
+  // warning names the cost, and the wire is allowed. An Entity node given one of its state values asks for the others
+  // its type needs: they can only be connected one at a time.
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)
