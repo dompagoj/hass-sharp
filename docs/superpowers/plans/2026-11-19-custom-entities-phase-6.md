@@ -162,3 +162,40 @@
 ## Carried forward
 
 Stays where it is listed: the items the earlier plans mark "Not tied to a phase", the test-hardening lists, and the follow-up project (NuGet packages and in-process inference). The user's MCP authoring guide design is separate work; after this phase its tool counts are 26 and 16.
+
+## Outcome of phase 6, and what it hands on
+
+Phase 6 ended at `fc6ce92` (19 commits after `b73ab59`: Tasks 1–5 with eleven fix rounds between them, one fix wave after the whole-phase review, and one further scoped fix; Task 6 was the build, the live checks and the walk-through). All suites pass (runtime 537 PASS lines with no warnings, editor 22, frontend 1835 in 70 files, Python 205 on the host with 67 skipped and 217 in the container with none skipped, packaging 11), and both packaging smokes pass in the container.
+
+Checked live on a throwaway Home Assistant 2026.11.1 through its MCP server with a real MCP client: 167 scripted checks (the 26 tools and their annotations; the derived motion sensor built with `entities_preview` and `entities_save` and following its sources; `entities_run`, `trace` and `entities_history`; an automation and a definition under one id; a secret's value in no answer, log or stored file; ordinary wrong requests refused in sentences; the read-only server and a non-administrator; each of the five examples saved and deleted), run again after the fix wave. A fresh agent that knew only the tools built the derived sensor in eight calls with no refusal. The guide's panel steps for the same sensor were followed as written in a browser, with Run now on a definition's Trigger, Part of, the 430 px layout and the dark theme.
+
+Where the text above differs from what was built, this section is right:
+
+- **Run history.** Each step's "Track in run history" is honoured: on by default for When commanded and When started, off for State, When a frame is needed and a Trigger inside a definition; a run started by hand is always recorded. (The plan's "command and setup runs are always recorded, a State's never" was wrong.)
+- **A Stop step** records the run as Stopped, not as succeeded: a command's service call succeeds, When started lets the definition start, and a Stopped State run neither makes the entity unavailable nor clears an earlier failure.
+- **What a State follows.** Only entities chosen (not wired) on an entity input of a pure value step upstream — Has state, Current state, a Constant of an entity id type, or such an input of a library or Custom C# value step. An entity read by Read entity, a Setting, or a wired-in id is not followed. The catalog's `entity_state` description, the rules text and the panel help say so.
+- **`get_node_schema`** answers an entity-only kind without `document` as before, and adds `entityDomains` for `entity_state`, `set_entity_state` and `entity_command`.
+- **`entities_preview` and `entities_save`** answer without `source` and `sourceMap` (about 2 KB and 3 KB instead of about 118 KB each); `entities_read` and the websocket API keep both.
+- **`entities_list`** sends a `types` request beside `list` when a class definition is listed, to tell whether it is a device.
+- **`CameraSnapshot(entityId, CancellationToken)`** is `protected`, like the one-argument form.
+- **Panel.** A definition's Run now is unavailable while there are unsaved changes; Part of is also on a class definition's device form; an off definition opens with nothing to save; renaming a key keeps focus.
+- **Home Assistant's tools hook.** `llm.py` now answers `async_get_tools` with nothing: Home Assistant 2026.11 calls it on every integration's `llm` module, and without it logged an error with a traceback each time the Assist or Home Assistant API was built (older than this phase).
+- **Facts found, now in the docs.** A definition saved off creates its entities the first time it is turned on. `device.via` is not checked on save: a parent Home Assistant does not have is left out, and a cycle is not refused (Home Assistant 2026.11.1 accepts it silently). No graph step joins text.
+
+### Left as it is
+
+- Answer sizes elsewhere: `get_capabilities` for entity documents is about 346 KB, `entities_read` about 119 KB for a four-step definition, `library_save` about 1.2 MB; the automation `preview`, `save` and `read` carry their generated source as before (their schemas were frozen in this phase).
+- Messages: an HTTP step's `responseType` refusal names the panel's labels, not the values to send; a cleared secret setting is reported as "hidden" where it is empty; a camera's failure log line does not name the source camera (the save's warning does); `history` and `read` of an id only a definition has answer "Visual document not found".
+- Panel: an off definition switched on in the editor that then fails to start shows "Nothing to save" until the saved graph is reloaded; undoing a key rename collapses its row; a definition saved without positions (through MCP) opens with overlapping steps until Tidy layout; `reload()` after a switch elsewhere resets undo.
+- Not checked live: `entities_run` at the instant a save replaces the definition; a class's `[Setting(Secret = true)]` through MCP; an MCP client from outside the container.
+- The task reviews' deferred minors that the whole-phase review judged safe (test-hardening and wording; the refusal hints' rarer shapes m2–m7).
+- An activation alert shown for a definition that is on stays when the definition is then turned off with the switch (older than this phase).
+- The whole-phase review was split in two readers by area (backend and MCP; panel and docs), each told to read across.
+
+### Not tied to a phase
+
+In addition to the earlier plans' lists:
+
+- A "Join text" step would let a nodes-only definition build several addresses from one setting.
+- "Call get_node_schema for every kind you add" costs an assistant calls for nothing when it copies an example unchanged; it belongs with the MCP authoring guide design (`docs/superpowers/specs/2026-11-15-mcp-authoring-guide-design.md`, not started; its tool counts are now 26 and 16).
+- The follow-up project stays as planned: NuGet packages and in-process inference.
