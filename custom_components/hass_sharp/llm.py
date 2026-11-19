@@ -306,35 +306,54 @@ async def run_history(service_api, automation_id, args):
 
 
 def wrong_document(operation, args):
-    """For arguments refused by the schema: the sentence that says which tool takes them when they are the other kind of
-    document (an automation graph for a definition's tool, a definition for an automation's), else None."""
+    """For arguments refused by the schema: the sentences that say what to send instead when they are the other kind of
+    document (an automation graph for a definition's tool, a definition for an automation's) or a definition put
+    together wrongly, else None. Each case and its sentence is a row of test_the_wrong_kind_of_document_is_refused_in_words."""
     if not isinstance(args, dict):
         return None
     if operation in ("entities_preview", "entities_save"):
         definition = args.get("definition")
+        twin = operation.removeprefix("entities_")
         takes = f'{operation} takes a definition: {{name, entities, logic: {{kind: "graph", graph}}}}'
-        # Only what really is an automation's graph (or save's argument) goes to the automation tool.
-        # An automation's read document has its graph at the top and no name.
-        automation = isinstance(definition, dict) and "logic" not in definition and (
-            "nodes" in definition or "edges" in definition or "graph" in definition and "name" not in definition)
-        if "graph" in args or not isinstance(definition, dict) or automation:
-            return (f'{takes}; for an automation use {operation.removeprefix("entities_")}. '
-                    'A definition from a C# class has logic: {kind: "class", type} instead')
+        use_automation_tool = (f'{takes}; for an automation use {twin}. '
+                               'A definition from a C# class has logic: {kind: "class", type} instead')
+        if "graph" in args:
+            # Save's argument: an automation's graph, or a definition sent under the wrong name.
+            graph = args["graph"]
+            definition_like = isinstance(graph, dict) and any(key in graph for key in ("entities", "settings", "device", "logic"))
+            return f"{takes}: send it as definition, not graph" if definition_like else use_automation_tool
+        if not isinstance(definition, dict):
+            return f'{takes}, or logic: {{kind: "class", type}} for a C# class'
+        # Only what has none of a definition's own parts is an automation's: its graph (which has a name and a
+        # version of its own), or its read document (its graph at the top, and no name).
+        parts = [key for key in ("entities", "settings", "device", "logic") if key in definition]
+        flat = "nodes" in definition or "edges" in definition
+        if not parts and (flat or "graph" in definition and "name" not in definition):
+            return use_automation_tool
         sentences = []
         if "logic" not in definition and "graph" in definition:
             sentences.append(f"{takes}: the graph goes inside logic, and entities and settings beside name")
-        # A whole entities_read answer sent back: its revision would hide a stale copy, so it is refused, not trimmed.
-        if stored := [key for key in STORED_DOCUMENT_KEYS if key in definition]:
+        elif "logic" not in definition and flat:
+            sentences.append(f"{takes}: the nodes and edges go inside logic.graph, as {{version, name, nodes, edges}}, and entities and settings beside name")
+        # A whole entities_read answer sent back: its revision would hide a stale copy, so it is refused, not trimmed. A
+        # version beside nodes and edges is the graph's own.
+        if stored := [key for key in STORED_DOCUMENT_KEYS if key in definition and not (key == "version" and flat)]:
             sentences.append("Send as definition only name, device, settings, entities and logic: remove " + ", ".join(sorted(stored))
                              + ", which an entities_read answer adds; id and expectedRevision (the revision read) are arguments of their own")
         logic = definition.get("logic")
         graph = logic.get("graph") if isinstance(logic, dict) else None
-        # A definition run's trace graph (trace with graph: true) is composed with a definition {entities, settings}.
         if isinstance(graph, dict) and (misplaced := [key for key in ("definition", "entities", "settings", "device", "logic") if key in graph]):
-            # Its settings are {key, type} only (DefinitionGraph.Compose): saved, they would clear every value and secret flag.
-            sentences.append("The graph inside logic holds only version, name, nodes and edges: remove its " + " and ".join(misplaced)
-                             + ". Take the definition's entities and settings from entities_read, not from a trace: a trace graph's settings carry no values,"
-                             " labels or secret flags, so saving them would clear every setting's value")
+            removal = "The graph inside logic holds only version, name, nodes and edges: remove its " + " and ".join(misplaced)
+            if "definition" in misplaced:
+                # Copied from a definition run's trace graph (trace with graph: true), which DefinitionGraph.Compose makes:
+                # its settings are {key, type} only, so saving them would clear every value and secret flag.
+                sentences.append(removal + ". Take the definition's entities and settings from entities_read, not from a trace: a trace graph's"
+                                 " settings carry no values, labels or secret flags, so saving them would clear every setting's value")
+            elif own := [key for key in ("entities", "settings", "device") if key in misplaced]:
+                # Written into the graph by hand: they keep their values, and their place is the definition's top.
+                sentences.append(removal + ". Put its " + " and ".join(own) + " at the top of the definition, beside name and logic")
+            else:
+                sentences.append(removal)
         if isinstance(logic, dict) and logic.get("kind") not in ("graph", "class"):
             sentences.append('logic.kind is "graph" (with graph, a graph of the steps get_capabilities lists for document "entity") '
                              'or "class" (with type, a type id from entities_types)')
