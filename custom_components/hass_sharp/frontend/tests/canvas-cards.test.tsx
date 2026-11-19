@@ -1060,8 +1060,9 @@ it('on a screen 900 px or wider, a run whose path needs more than halfway out op
       centred.calls = []
       centred.fits = []
       dispose = render(() => <FlowAdapter graph={graph} readOnly trace={value} onSelect={() => {}} />, host())
-      // It either fits the path or centres on one step.
-      await vi.waitFor(() => expect(paths().length + centred.calls.length).toBeGreaterThan(0))
+      // It either fits the path or centres on one step. The first render of the flow can take over a second on a
+      // loaded CI runner.
+      await vi.waitFor(() => expect(paths().length + centred.calls.length).toBeGreaterThan(0), { timeout: 5000 })
       await new Promise(resolve => setTimeout(resolve, 100))
     }
     const centre = () => centred.calls as [number, number, { zoom: number }][]
