@@ -801,5 +801,809 @@
         }
       ]
     }
-  }
+  },
+  "definitions": [
+    {
+      "title": "Motion in either room",
+      "description": "A binary sensor that is on while there is motion in the hallway or in the kitchen. Two Has state steps feed an Or step, whose result is the State of the any_motion entity, worked out again whenever either motion sensor changes.",
+      "definition": {
+        "name": "Motion in either room",
+        "device": null,
+        "settings": [],
+        "entities": [
+          {
+            "key": "any_motion",
+            "domain": "binary_sensor",
+            "name": "Any motion",
+            "deviceClass": "motion"
+          }
+        ],
+        "logic": {
+          "kind": "graph",
+          "graph": {
+            "version": 5,
+            "name": "Motion in either room",
+            "nodes": [
+              {
+                "id": "hallway",
+                "kind": "entity_is",
+                "config": {
+                  "entity": {
+                    "kind": "literal",
+                    "type": "entity_id",
+                    "value": "binary_sensor.hallway_motion"
+                  },
+                  "state": {
+                    "kind": "literal",
+                    "type": "string",
+                    "value": "on"
+                  }
+                },
+                "position": {
+                  "x": 60,
+                  "y": 100
+                }
+              },
+              {
+                "id": "kitchen",
+                "kind": "entity_is",
+                "config": {
+                  "entity": {
+                    "kind": "literal",
+                    "type": "entity_id",
+                    "value": "binary_sensor.kitchen_motion"
+                  },
+                  "state": {
+                    "kind": "literal",
+                    "type": "string",
+                    "value": "on"
+                  }
+                },
+                "position": {
+                  "x": 60,
+                  "y": 280
+                }
+              },
+              {
+                "id": "either",
+                "kind": "or",
+                "config": {
+                  "left": {
+                    "kind": "unset"
+                  },
+                  "right": {
+                    "kind": "unset"
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 100
+                }
+              },
+              {
+                "id": "state",
+                "kind": "entity_state",
+                "config": {
+                  "entity": "any_motion"
+                },
+                "position": {
+                  "x": 660,
+                  "y": 100
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "hallway.value:either.left",
+                "kind": "data",
+                "source": "hallway",
+                "target": "either",
+                "sourcePort": "value",
+                "targetPort": "left"
+              },
+              {
+                "id": "kitchen.value:either.right",
+                "kind": "data",
+                "source": "kitchen",
+                "target": "either",
+                "sourcePort": "value",
+                "targetPort": "right"
+              },
+              {
+                "id": "either.value:state.is_on",
+                "kind": "data",
+                "source": "either",
+                "target": "state",
+                "sourcePort": "value",
+                "targetPort": "is_on"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Plug over HTTP",
+      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status and sets the relay switch and the power sensor from it with Get field and Set state. Each When commanded step turns the plug on or off with an HTTP request, then sets the switch.",
+      "definition": {
+        "name": "Plug over HTTP",
+        "device": {
+          "manufacturer": null,
+          "model": "Smart plug",
+          "swVersion": null,
+          "hwVersion": null,
+          "configurationUrl": null,
+          "suggestedArea": "Living room",
+          "via": null
+        },
+        "settings": [
+          {
+            "key": "address",
+            "label": "Address",
+            "type": "string",
+            "value": "http://192.168.1.50/rpc"
+          }
+        ],
+        "entities": [
+          {
+            "key": "relay",
+            "domain": "switch",
+            "name": "Relay",
+            "deviceClass": "outlet"
+          },
+          {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power",
+            "deviceClass": "power",
+            "options": {
+              "unit": "W",
+              "stateClass": "measurement"
+            }
+          }
+        ],
+        "logic": {
+          "kind": "graph",
+          "graph": {
+            "version": 5,
+            "name": "Plug over HTTP",
+            "nodes": [
+              {
+                "id": "poll",
+                "kind": "trigger",
+                "config": {
+                  "type": "ha",
+                  "trigger": {
+                    "trigger": "time_pattern",
+                    "seconds": "/10"
+                  },
+                  "manual": true,
+                  "trackHistory": false
+                },
+                "label": "Every 10 seconds",
+                "position": {
+                  "x": 60,
+                  "y": 100
+                }
+              },
+              {
+                "id": "address",
+                "kind": "setting",
+                "config": {
+                  "key": "address"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 280
+                }
+              },
+              {
+                "id": "status",
+                "kind": "http_request",
+                "config": {
+                  "method": "POST",
+                  "responseType": "object",
+                  "timeout": 5,
+                  "url": {
+                    "kind": "unset"
+                  },
+                  "body": {
+                    "kind": "literal",
+                    "type": "object",
+                    "value": {
+                      "id": 1,
+                      "method": "Switch.GetStatus",
+                      "params": {
+                        "id": 0
+                      }
+                    }
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 100
+                }
+              },
+              {
+                "id": "output",
+                "kind": "get_field",
+                "config": {
+                  "pointer": "/result/output",
+                  "type": "boolean",
+                  "value": {
+                    "kind": "unset"
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 280
+                }
+              },
+              {
+                "id": "watts",
+                "kind": "get_field",
+                "config": {
+                  "pointer": "/result/apower",
+                  "type": "number",
+                  "value": {
+                    "kind": "unset"
+                  }
+                },
+                "position": {
+                  "x": 960,
+                  "y": 280
+                }
+              },
+              {
+                "id": "set_relay",
+                "kind": "set_entity_state",
+                "config": {
+                  "entity": "relay"
+                },
+                "position": {
+                  "x": 660,
+                  "y": 100
+                }
+              },
+              {
+                "id": "set_power",
+                "kind": "set_entity_state",
+                "config": {
+                  "entity": "power"
+                },
+                "position": {
+                  "x": 960,
+                  "y": 100
+                }
+              },
+              {
+                "id": "turn_on",
+                "kind": "entity_command",
+                "config": {
+                  "entity": "relay",
+                  "command": "turn_on"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 460
+                }
+              },
+              {
+                "id": "switch_on",
+                "kind": "http_request",
+                "config": {
+                  "method": "POST",
+                  "responseType": "object",
+                  "timeout": 5,
+                  "url": {
+                    "kind": "unset"
+                  },
+                  "body": {
+                    "kind": "literal",
+                    "type": "object",
+                    "value": {
+                      "id": 1,
+                      "method": "Switch.Set",
+                      "params": {
+                        "id": 0,
+                        "on": true
+                      }
+                    }
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 460
+                }
+              },
+              {
+                "id": "set_on",
+                "kind": "set_entity_state",
+                "config": {
+                  "entity": "relay",
+                  "is_on": {
+                    "kind": "literal",
+                    "type": "boolean",
+                    "value": true
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 460
+                }
+              },
+              {
+                "id": "turn_off",
+                "kind": "entity_command",
+                "config": {
+                  "entity": "relay",
+                  "command": "turn_off"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 640
+                }
+              },
+              {
+                "id": "switch_off",
+                "kind": "http_request",
+                "config": {
+                  "method": "POST",
+                  "responseType": "object",
+                  "timeout": 5,
+                  "url": {
+                    "kind": "unset"
+                  },
+                  "body": {
+                    "kind": "literal",
+                    "type": "object",
+                    "value": {
+                      "id": 1,
+                      "method": "Switch.Set",
+                      "params": {
+                        "id": 0,
+                        "on": false
+                      }
+                    }
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 640
+                }
+              },
+              {
+                "id": "set_off",
+                "kind": "set_entity_state",
+                "config": {
+                  "entity": "relay",
+                  "is_on": {
+                    "kind": "literal",
+                    "type": "boolean",
+                    "value": false
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 640
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "poll:next:status",
+                "source": "poll",
+                "target": "status",
+                "port": "next"
+              },
+              {
+                "id": "status:next:set_relay",
+                "source": "status",
+                "target": "set_relay",
+                "port": "next"
+              },
+              {
+                "id": "set_relay:next:set_power",
+                "source": "set_relay",
+                "target": "set_power",
+                "port": "next"
+              },
+              {
+                "id": "address.value:status.url",
+                "kind": "data",
+                "source": "address",
+                "target": "status",
+                "sourcePort": "value",
+                "targetPort": "url"
+              },
+              {
+                "id": "status.body:output.value",
+                "kind": "data",
+                "source": "status",
+                "target": "output",
+                "sourcePort": "body",
+                "targetPort": "value"
+              },
+              {
+                "id": "status.body:watts.value",
+                "kind": "data",
+                "source": "status",
+                "target": "watts",
+                "sourcePort": "body",
+                "targetPort": "value"
+              },
+              {
+                "id": "output.value:set_relay.is_on",
+                "kind": "data",
+                "source": "output",
+                "target": "set_relay",
+                "sourcePort": "value",
+                "targetPort": "is_on"
+              },
+              {
+                "id": "watts.value:set_power.value",
+                "kind": "data",
+                "source": "watts",
+                "target": "set_power",
+                "sourcePort": "value",
+                "targetPort": "value"
+              },
+              {
+                "id": "turn_on:next:switch_on",
+                "source": "turn_on",
+                "target": "switch_on",
+                "port": "next"
+              },
+              {
+                "id": "switch_on:next:set_on",
+                "source": "switch_on",
+                "target": "set_on",
+                "port": "next"
+              },
+              {
+                "id": "address.value:switch_on.url",
+                "kind": "data",
+                "source": "address",
+                "target": "switch_on",
+                "sourcePort": "value",
+                "targetPort": "url"
+              },
+              {
+                "id": "turn_off:next:switch_off",
+                "source": "turn_off",
+                "target": "switch_off",
+                "port": "next"
+              },
+              {
+                "id": "switch_off:next:set_off",
+                "source": "switch_off",
+                "target": "set_off",
+                "port": "next"
+              },
+              {
+                "id": "address.value:switch_off.url",
+                "kind": "data",
+                "source": "address",
+                "target": "switch_off",
+                "sourcePort": "value",
+                "targetPort": "url"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Camera with a box",
+      "description": "A camera that shows the front door's picture with a box and a caption drawn on it. When a frame is needed runs Take a picture, and Show frame shows that picture after Draw rectangle and Draw text; nothing runs while nobody is watching.",
+      "definition": {
+        "name": "Camera with a box",
+        "device": null,
+        "settings": [],
+        "entities": [
+          {
+            "key": "boxed",
+            "domain": "camera",
+            "name": "Front door with a box",
+            "options": {
+              "frame_interval": 2
+            }
+          }
+        ],
+        "logic": {
+          "kind": "graph",
+          "graph": {
+            "version": 5,
+            "name": "Camera with a box",
+            "nodes": [
+              {
+                "id": "frame",
+                "kind": "camera_frame",
+                "config": {
+                  "entity": "boxed"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 100
+                }
+              },
+              {
+                "id": "picture",
+                "kind": "camera_snapshot",
+                "config": {
+                  "entity": {
+                    "kind": "literal",
+                    "type": "entity_id:camera",
+                    "value": "camera.front_door"
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 100
+                }
+              },
+              {
+                "id": "box",
+                "kind": "image_draw_rect",
+                "config": {
+                  "color": "Yellow",
+                  "thickness": 4,
+                  "image": {
+                    "kind": "unset"
+                  },
+                  "x": {
+                    "kind": "literal",
+                    "type": "number",
+                    "value": 40
+                  },
+                  "y": {
+                    "kind": "literal",
+                    "type": "number",
+                    "value": 40
+                  },
+                  "width": {
+                    "kind": "literal",
+                    "type": "number",
+                    "value": 240
+                  },
+                  "height": {
+                    "kind": "literal",
+                    "type": "number",
+                    "value": 160
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 280
+                }
+              },
+              {
+                "id": "caption",
+                "kind": "image_draw_text",
+                "config": {
+                  "color": "White",
+                  "size": 24,
+                  "background": true,
+                  "image": {
+                    "kind": "unset"
+                  },
+                  "text": {
+                    "kind": "literal",
+                    "type": "string",
+                    "value": "Front door"
+                  },
+                  "x": {
+                    "kind": "literal",
+                    "type": "number",
+                    "value": 40
+                  },
+                  "y": {
+                    "kind": "literal",
+                    "type": "number",
+                    "value": 8
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 280
+                }
+              },
+              {
+                "id": "show",
+                "kind": "show_frame",
+                "config": {
+                  "entity": "boxed",
+                  "image": {
+                    "kind": "unset"
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 100
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "frame:next:picture",
+                "source": "frame",
+                "target": "picture",
+                "port": "next"
+              },
+              {
+                "id": "picture:next:show",
+                "source": "picture",
+                "target": "show",
+                "port": "next"
+              },
+              {
+                "id": "picture.image:box.image",
+                "kind": "data",
+                "source": "picture",
+                "target": "box",
+                "sourcePort": "image",
+                "targetPort": "image"
+              },
+              {
+                "id": "box.image:caption.image",
+                "kind": "data",
+                "source": "box",
+                "target": "caption",
+                "sourcePort": "image",
+                "targetPort": "image"
+              },
+              {
+                "id": "caption.image:show.image",
+                "kind": "data",
+                "source": "caption",
+                "target": "show",
+                "sourcePort": "image",
+                "targetPort": "image"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "File at setup",
+      "description": "Downloads a file once when the definition starts, keeps it by its checksum, logs where it is and shows that path as a sensor's state. The address and the checksum are placeholders: replace both with your file's own before you save it, or its When started step fails.",
+      "definition": {
+        "name": "File at setup",
+        "device": null,
+        "settings": [],
+        "entities": [
+          {
+            "key": "model",
+            "domain": "sensor",
+            "name": "Model file",
+            "entityCategory": "diagnostic"
+          }
+        ],
+        "logic": {
+          "kind": "graph",
+          "graph": {
+            "version": 5,
+            "name": "File at setup",
+            "nodes": [
+              {
+                "id": "setup",
+                "kind": "entity_setup",
+                "config": {},
+                "position": {
+                  "x": 60,
+                  "y": 100
+                }
+              },
+              {
+                "id": "download",
+                "kind": "download_file",
+                "config": {
+                  "url": {
+                    "kind": "literal",
+                    "type": "string",
+                    "value": "https://example.com/models/model.tflite"
+                  },
+                  "sha256": {
+                    "kind": "literal",
+                    "type": "string",
+                    "value": "0000000000000000000000000000000000000000000000000000000000000000"
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 100
+                }
+              },
+              {
+                "id": "log",
+                "kind": "log",
+                "config": {
+                  "level": "Info",
+                  "value": {
+                    "kind": "unset"
+                  }
+                },
+                "position": {
+                  "x": 660,
+                  "y": 100
+                }
+              },
+              {
+                "id": "set_path",
+                "kind": "set_entity_state",
+                "config": {
+                  "entity": "model"
+                },
+                "position": {
+                  "x": 960,
+                  "y": 100
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "setup:next:download",
+                "source": "setup",
+                "target": "download",
+                "port": "next"
+              },
+              {
+                "id": "download:next:log",
+                "source": "download",
+                "target": "log",
+                "port": "next"
+              },
+              {
+                "id": "log:next:set_path",
+                "source": "log",
+                "target": "set_path",
+                "port": "next"
+              },
+              {
+                "id": "download.path:log.value",
+                "kind": "data",
+                "source": "download",
+                "target": "log",
+                "sourcePort": "path",
+                "targetPort": "value"
+              },
+              {
+                "id": "download.path:set_path.value",
+                "kind": "data",
+                "source": "download",
+                "target": "set_path",
+                "sourcePort": "path",
+                "targetPort": "value"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Plug from a class",
+      "description": "The plug over HTTP written as a C# class in a node library: SmartPlug is a SharpDevice with an Address setting, a relay switch and a power sensor, which it polls every 10 seconds with Every and turns on and off over Http. The definition creates the class and gives its setting a value; save the library first.",
+      "definition": {
+        "name": "Plug from a class",
+        "device": null,
+        "settings": [
+          {
+            "key": "Address",
+            "value": "http://192.168.1.50/rpc"
+          }
+        ],
+        "entities": [],
+        "logic": {
+          "kind": "class",
+          "type": "library:example_plug:NodeLib.SmartPlug"
+        }
+      },
+      "library": {
+        "id": "example_plug",
+        "name": "SmartPlug.cs",
+        "source": "using System.Net.Http;\nusing System.Text;\nusing System.Text.Json.Nodes;\n\n/// <summary>A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.</summary>\npublic class SmartPlug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50/rpc.</summary>\n    [Setting(\"Address\")] public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n    readonly SharpSensor power;\n\n    /// <summary>Adds the plug's two entities, the switch turning the plug on and off.</summary>\n    public SmartPlug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n        power = Add(new SharpSensor(\"power\", \"Power\") { DeviceClass = \"power\", Unit = \"W\", StateClass = \"measurement\" });\n    }\n\n    /// <summary>Reads the plug's status every 10 seconds while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromSeconds(10), Poll);\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Sets the switch and the sensor from the plug's status.</summary>\n    async Task Poll()\n    {\n        var status = await Call(\"Switch.GetStatus\", new JsonObject { [\"id\"] = 0 });\n        relay.IsOn = status?[\"output\"]?.GetValue<bool>();\n        power.Value = status?[\"apower\"]?.GetValue<double>();\n    }\n\n    /// <summary>Turns the plug on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        await Call(\"Switch.Set\", new JsonObject { [\"id\"] = 0, [\"on\"] = on });\n        relay.IsOn = on;\n    }\n\n    /// <summary>Sends one request to the plug and returns its result.</summary>\n    async Task<JsonNode?> Call(string method, JsonObject parameters)\n    {\n        var request = new JsonObject { [\"id\"] = 1, [\"method\"] = method, [\"params\"] = parameters };\n        using var content = new StringContent(request.ToJsonString(), Encoding.UTF8, \"application/json\");\n        using var response = await Http.PostAsync(Address, content, Stopping);\n        response.EnsureSuccessStatusCode();\n        return JsonNode.Parse(await response.Content.ReadAsStringAsync(Stopping))?[\"result\"];\n    }\n}"
+      }
+    }
+  ]
 }

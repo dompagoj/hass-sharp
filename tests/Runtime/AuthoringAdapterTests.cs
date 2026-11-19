@@ -68,6 +68,7 @@ static class AuthoringAdapterTests
             Clean(library["graph"]!.AsObject(),candidate.Snapshot,"complete read-entity/custom-library example");
             var pureKinds=library["graph"]!["nodes"]!.AsArray().Select(n=>n!["kind"]!.GetValue<string>()).Where(k=>candidate.Snapshot.Root["nodes"]?[k]?["pure"]?.GetValue<bool>()==true).ToArray();
             VisualExecutionTests.Check(pureKinds.Length==1&&pureKinds[0].StartsWith("library:example:",StringComparison.Ordinal),"the library example uses a pure library method: "+string.Join(", ",pureKinds));
+            ExampleDefinitions(examples["definitions"]!.AsArray(),exampleDiagnostics,builtIn,services);
             // service_ports: the ports MCP shows for a service are the validator's own (DataInputs/DataOutputs).
             manager.SetServiceDescriptions(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")));
             async Task<JsonNode> Ports(string service)=>JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(new{operation="service_ports",service})))!;
@@ -135,5 +136,49 @@ static class AuthoringAdapterTests
             Console.WriteLine("PASS atomic visual run / stale activation rejection");
         }
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration=previous; Directory.Delete(path,true); }
+    }
+
+    /// <summary>
+    /// The example definitions <c>get_capabilities</c> gives for an entity document, in their order: each previews with no
+    /// diagnostics at all, with and without the service schemas (with its library compiled into the snapshot when it has
+    /// one), lays out every step and carries no secret's value; together they use every kind an author is shown by them;
+    /// the class example's library compiles alone and declares a device with a setting, which the definition creates.
+    /// </summary>
+    static void ExampleDefinitions(JsonArray definitions,DiagnosticsProvider diagnostics,VisualCatalogSnapshot builtIn,ServiceSchemaCatalog services)
+    {
+        string[] titles=["Motion in either room","Plug over HTTP","Camera with a box","File at setup","Plug from a class"];
+        VisualExecutionTests.Check(definitions.Select(d=>d!["title"]!.GetValue<string>()).SequenceEqual(titles),"the example definitions are the five, in order: "+string.Join(", ",definitions.Select(d=>d!["title"])));
+        var kinds=new HashSet<string>(StringComparer.Ordinal);
+        foreach(var example in definitions)
+        {
+            var title=example!["title"]!.GetValue<string>();
+            VisualExecutionTests.Check(!string.IsNullOrWhiteSpace(example["description"]?.GetValue<string>()),$"example definition {title} has a description");
+            var snapshot=builtIn;
+            if(example["library"] is JsonObject library)
+            {
+                var compiled=new NodeLibraryCompiler(diagnostics).Preview([new(library["id"]!.GetValue<string>(),library["source"]!.GetValue<string>(),1)]);
+                VisualExecutionTests.Check(compiled.Valid&&compiled.Diagnostics.Length==0,$"example definition {title}: its library compiles alone with no diagnostics: "+JsonSerializer.Serialize(compiled.Diagnostics));
+                var devices=compiled.Snapshot.EntityTypes.Values.Where(t=>t.Kind=="device"&&t.Settings.Length>0).ToArray();
+                VisualExecutionTests.Check(devices.Length>0,$"example definition {title}: its library declares a SharpDevice with a [Setting]");
+                VisualExecutionTests.Check(devices.Any(t=>t.Id==example["definition"]!["logic"]!["type"]?.GetValue<string>()),$"example definition {title} creates the library's device: "+example["definition"]!["logic"]!.ToJsonString());
+                snapshot=compiled.Snapshot;
+            }
+            var body=example["definition"]!.Deserialize<DefinitionBody>(VisualStore.Json)!;
+            foreach(var (name,attached) in new[]{("without services",snapshot),("with services",snapshot.WithServices(services))})
+            {
+                var preview=new DefinitionGenerator(diagnostics).Preview(body,attached);
+                VisualExecutionTests.Check(preview.Valid&&preview.Diagnostics.Count==0,$"example definition {title} validates and compiles {name} with no diagnostics: "+JsonSerializer.Serialize(preview.Diagnostics));
+            }
+            VisualExecutionTests.Check((body.Settings??[]).All(s=>!s.Secret||s.Value==null),$"example definition {title}: no secret setting carries a value");
+            if(body.Logic.Graph is not { } graph) continue;
+            foreach(var node in graph["nodes"]!.AsArray())
+            {
+                VisualExecutionTests.Check(node!["position"] is JsonObject&&node["size"]==null,$"example definition {title}: step {node["id"]} has a position and no size");
+                kinds.Add(node["kind"]!.GetValue<string>());
+            }
+        }
+        string[] shown=["camera_snapshot","image_draw_rect","image_draw_text","camera_frame","show_frame","http_request","download_file","entity_setup","entity_command","set_entity_state","entity_state","entity_is","setting"];
+        VisualExecutionTests.Check(shown.All(kinds.Contains),"the example definitions use every kind they show: missing "+string.Join(", ",shown.Where(k=>!kinds.Contains(k))));
+        Console.WriteLine("PASS the example definitions preview with no diagnostics, lay out their steps, carry no secret and use every kind they show");
     }
 }
