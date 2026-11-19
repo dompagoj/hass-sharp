@@ -62,10 +62,12 @@ def runnable_triggers(document, graph=None):
 
 def definition_triggers(document):
     """A definition's Trigger steps as an automation's are given (`runnable_triggers`), read from its `logic.graph`;
-    none for a class definition."""
+    none for a class definition. One runs only while the definition runs its saved revision and is running (not still
+    in setup, nor failed), as .NET's `run` requires."""
     logic = document.get("logic")
     graph = logic.get("graph") if isinstance(logic, dict) and logic.get("kind") == "graph" else None
-    return runnable_triggers(document, graph) if isinstance(graph, dict) else []
+    running = bool(document.get("currentRevisionActive") and document.get("status") == "running")
+    return runnable_triggers({**document, "currentRevisionActive": running}, graph) if isinstance(graph, dict) else []
 
 
 class AuthoringService:

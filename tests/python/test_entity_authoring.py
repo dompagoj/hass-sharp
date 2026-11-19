@@ -245,7 +245,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
             {'id': 'press', 'kind': 'trigger', 'config': {'type': 'manual'}},
             {'id': 'closed', 'kind': 'trigger', 'config': {'type': 'manual', 'manual': False}},
             {'id': 'set', 'kind': 'set_entity_state', 'config': {'entity': 'relay'}}]}
-        self.documents = {'plug': {'logic': {'kind': 'graph', 'graph': graph}, 'currentRevisionActive': True},
+        self.documents = {'plug': {'logic': {'kind': 'graph', 'graph': graph}, 'currentRevisionActive': True, 'status': 'running'},
                           'plug2': {'logic': {'kind': 'class', 'type': 'library:shelly:NodeLib.Plug'}, 'currentRevisionActive': True}}
         steps = [{'triggerId': 'press', 'method': 'Run_' + 'press'.encode().hex().upper(), 'manual': True, 'runnable': True},
                  {'triggerId': 'closed', 'method': 'Run_' + 'closed'.encode().hex().upper(), 'manual': False, 'runnable': False}]
@@ -257,8 +257,13 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved['result']['document']['triggers'], steps)
         self.assertNotIn('triggers', saved['result'])
         self.assertEqual((await self.send({'operation': 'read', 'id': 'plug2'}))['result']['triggers'], [])
-        # One whose saved revision does not run has none that can be run.
-        self.documents['plug']['currentRevisionActive'] = False
+        # One whose saved revision runs but has not started, or whose start failed, has none that can be run, as run refuses them.
+        for status in ('setup', 'failed'):
+            with self.subTest(status=status):
+                self.documents['plug']['status'] = status
+                self.assertEqual([t['runnable'] for t in (await self.send({'operation': 'read', 'id': 'plug'}))['result']['triggers']], [False, False])
+        # Nor one whose saved revision does not run.
+        self.documents['plug'].update(status='running', currentRevisionActive=False)
         self.assertEqual([t['runnable'] for t in (await self.send({'operation': 'read', 'id': 'plug'}))['result']['triggers']], [False, False])
 
     async def test_other_operations_are_passed_through(self):
