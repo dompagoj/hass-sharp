@@ -65,7 +65,8 @@ definition envelope"), `storage` (the file could not be read or written) and
   values as data outputs `command:<command>:<value>`; a camera has `frame`) and
   `options`; `entityCategory` is `config` or `diagnostic`. An entity of a
   definition without a device needs a `name`. The answered document lists them
-  under `entities`, for reading only.
+  under `entities`, for reading only; a class's entities are in
+  `registeredEntities`.
 - `device`: null for none, or, for a class, null for the class's own (a
   `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
   swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is

@@ -245,9 +245,10 @@ envelope; validation, conflicts and revisions work as above.
    it gives device details, or its class derives from `SharpDevice` (for a class no
    node library offers any more, whether it gives device details).
    `entities_read({id})` returns one complete document, with its `revision`,
-   `source`, `automationId` and `registeredEntities`, and `entities`, the entities
-   its Entity nodes declare, for reading only. Read before every edit, and send
-   back only `name`, `device`, `settings` and `logic`.
+   `source`, `automationId` and `registeredEntities`, and, for a graph,
+   `entities`, the entities its Entity nodes declare, for reading only (a class's
+   entities come from its code and are in `registeredEntities`). Read before every
+   edit, and send back only `name`, `device`, `settings` and `logic`.
 4. `entities_preview({definition})` validates and compiles a definition, `{name,
    device?, settings?, logic}` with `logic` `{kind:"graph", graph}` or
    `{kind:"class", type}`, without creating anything. It returns `valid`,

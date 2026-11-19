@@ -1021,7 +1021,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                        'trackHistory','permanent','new','JPEG','8 s','own camera','hasValue','via'):
             self.assertIn(phrase,definitions)
         # A request lists no entities: entities_read's list is for reading only.
-        self.assertIn('for reading only: send back name, device, settings and logic',definitions)
+        self.assertIn("for reading only (a class's entities are in registeredEntities): send back name, device, settings and logic",definitions)
         self.assertNotIn('entities [{',definitions)
         # A Stop step's run is recorded as Stopped, and it is no failure: the command's service call succeeds.
         self.assertIn('records it as Stopped',definitions)
@@ -1071,6 +1071,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # A definition is sent without entities: its graph's Entity nodes declare them.
         self.assertIn('definition is {name, device?, settings?, logic} with logic',descriptions['entities_preview'])
         self.assertIn('send back only name, device, settings and logic as the definition',descriptions['entities_read'])
+        # A class's read answer lists no entities (its stored list is the one it was sent): they are in registeredEntities.
+        self.assertIn("a class's entities come from its code and are in registeredEntities",descriptions['entities_read'])
+        self.assertNotIn("or a class's code",descriptions['entities_read'])
         self.assertIn('Send a secret setting back unchanged to keep its value, with a new value to replace it, or with value null and no hasValue to clear it. Ask the user first.',descriptions['entities_save'])
         self.assertIn('A new id uses expectedRevision 0 (new is not an id).',descriptions['entities_save'])
         self.assertIn('A command is not run this way: call the entity\'s service in Home Assistant.',descriptions['entities_run'])
