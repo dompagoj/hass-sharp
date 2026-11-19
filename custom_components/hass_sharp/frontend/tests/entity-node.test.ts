@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, executionLabel, executionPorts, nodeCatalog, setInput, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
+import { definitionNames, runName } from '../src/components/TriggerSummary'
 import { connectNodes, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { editorGraph } from '../src/entities/model'
@@ -86,4 +87,30 @@ it('a step can be connected to a command, and the card lists each command with i
   // A step order wire names its execution pin as port (sourcePort is a value wire's).
   expect(graph.edges.some(e => e.kind !== 'data' && e.source === 'l' && e.target === 'log' && e.port === 'command:turn_on')).toBe(true)
   expect(rightColumn(graph, 'l')).toEqual(['Turn on', 'Brightness', 'Turn off'])
+})
+
+it('a flow is named by node and port, as the server names it', () => {
+  const light = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' }).nodes[0]
+  expect(flowMethod(light, 'state')).toBe('Run_6C_7374617465')
+  // VisualNodeCatalog.FlowMethod: the node's method, then the hex of the port's UTF-8.
+  expect(flowMethod(light, 'command:turn_on')).toBe('Run_6C_636F6D6D616E643A7475726E5F6F6E')
+})
+
+it('a run of a node\'s flow reads as the entity and the flow', () => {
+  const graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  const names = definitionNames(graph, nodeCatalog)!
+  expect(runName(flowMethod(graph.nodes[0], 'command:turn_on'), names)).toBe('Lamp: Turn on')
+  expect(runName(flowMethod(graph.nodes[0], 'command:turn_off'), names)).toBe('Lamp: Turn off')
+  expect(runName(flowMethod(graph.nodes[0], 'state'), names)).toBe('Lamp: State')
+  expect(names.entities!.map(e => e.key)).toEqual(['lamp'])
+  // A camera's frame flow; a nameless entity by its key, and one with neither as Entity.
+  let cameras = add(empty(), 'entity', 'c', { key: 'door_cam', domain: 'camera', name: 'Front door' })
+  cameras = add(cameras, 'entity', 'k', { key: 'yard', domain: 'camera', name: '' })
+  cameras = add(cameras, 'entity', 'n', { key: '', domain: 'switch', name: '' })
+  const named = definitionNames(cameras, nodeCatalog)!
+  expect(runName(flowMethod(cameras.nodes[0], 'frame'), named)).toBe('Front door: When a frame is needed')
+  expect(runName(flowMethod(cameras.nodes[1], 'state'), named)).toBe('yard: State')
+  expect(runName(flowMethod(cameras.nodes[2], 'command:turn_on'), named)).toBe('Entity: Turn on')
+  // A port the node does not have is no run of it, and keeps its recorded name.
+  expect(runName(flowMethod(graph.nodes[0], 'frame'), names)).toBe(flowMethod(graph.nodes[0], 'frame'))
 })

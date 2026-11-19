@@ -402,10 +402,10 @@ public sealed class VisualRuntime
     /// <summary>The pin an Entity node at the root of this run starts its flow at (<c>state</c> for its state, which has none); null for any other run.</summary>
     string? startPort;
     /// <param name="root">The node the run starts at.</param>
-    /// <param name="port">For an Entity node, which of its flows: <c>state</c>, <c>command:&lt;command&gt;</c> or <c>frame</c>.</param>
+    /// <param name="port">For an Entity node, which of its flows: <c>state</c>, <c>command:&lt;command&gt;</c> or <c>frame</c>; its trace names it (<c>rootPort</c>).</param>
     public async Task RunAsync(string root,string? port=null) {
         startPort=port;
-        trace=VisualTrace.Create(root,nodes.Keys,TraceInputType,TraceOutputType);
+        trace=VisualTrace.Create(root,nodes.Keys,TraceInputType,TraceOutputType,port:port);
         try {await Walk(root,new VisualScope{CancellationToken=lifetime.Token},0);external.ThrowIfCancellationRequested();}
         catch(OperationCanceledException) when(Volatile.Read(ref stopped)!=0 && !external.IsCancellationRequested) {if(InvocationContext.Current is {} run)run.Stopped=true;}
         finally {trace?.Complete();externalRegistration.Dispose();try{await externalCleanup;}catch when(external.IsCancellationRequested){}lifetime.Dispose();}

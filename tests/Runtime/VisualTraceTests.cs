@@ -6,7 +6,7 @@ using static VisualExecutionTests;
 // Per-node trace recorder (contract C10): events, ports, values, frames, caps, flushes and the untraced path.
 static class VisualTraceTests
 {
-    sealed record Write(JsonObject Doc, int Count, bool Truncated, bool Final, bool Immediate, int Bytes);
+    sealed record Write(JsonObject Doc, int Count, bool Truncated, bool Final, bool Immediate, int Bytes, string Json);
 
     sealed class Sink : IRunTraceSink
     {
@@ -16,7 +16,7 @@ static class VisualTraceTests
         void IRunTraceSink.Write(string json, int eventCount, bool truncated, bool final, bool immediate)
         {
             if (Throws) throw new InvalidOperationException("sink unavailable");
-            var write = new Write(JsonNode.Parse(json)!.AsObject(), eventCount, truncated, final, immediate, System.Text.Encoding.UTF8.GetByteCount(json));
+            var write = new Write(JsonNode.Parse(json)!.AsObject(), eventCount, truncated, final, immediate, System.Text.Encoding.UTF8.GetByteCount(json), json);
             lock (gate) writes.Add(write);
         }
         public Write[] Writes { get { lock (gate) return writes.ToArray(); } }
@@ -91,7 +91,10 @@ static class VisualTraceTests
     // The document and its events have exactly the C10 fields.
     static void Shape(JsonObject doc)
     {
-        Check(doc.Select(p => p.Key).SequenceEqual(["format", "runId", "rootNodeId", "startedUtc", "complete", "truncated", "dropped", "trigger", "events", "summary"]), "document fields: " + string.Join(",", doc.Select(p => p.Key)));
+        // rootPort only for a run of an Entity node's flow.
+        Check(doc.Select(p => p.Key).SequenceEqual(doc.ContainsKey("rootPort")
+            ? ["format", "runId", "rootNodeId", "rootPort", "startedUtc", "complete", "truncated", "dropped", "trigger", "events", "summary"]
+            : ["format", "runId", "rootNodeId", "startedUtc", "complete", "truncated", "dropped", "trigger", "events", "summary"]), "document fields: " + string.Join(",", doc.Select(p => p.Key)));
         Check(doc["format"]!.GetValue<int>() == 1 && doc["trigger"] is JsonObject && DateTime.TryParse(S(doc["startedUtc"]), out _), "document header");
         string[] allowed = ["seq", "node", "frame", "t", "ms", "status", "port", "inputs", "outputs", "error", "trunc"];
         foreach (var e in Events(doc).Select(e => e!.AsObject()))
@@ -721,6 +724,54 @@ static class VisualTraceTests
                 Check(Events(doc).Count == 1003 && doc["complete"]!.GetValue<bool>() && time.Pending == 0, $"final document: {Events(doc).Count} events, {time.Pending} timers");
                 trace.Waiting(); time.Advance(TimeSpan.FromSeconds(2));
                 Check(sink.Writes.Length == before + during + 1, "a store after the final document");
+                return Task.CompletedTask;
+            });
+
+            await Test("a run of an Entity node's flow names its port in the header, and any other run is written as before", () =>
+            {
+                Write Recorded(string id, string root, string? port, Action<VisualTrace>? fill = null)
+                {
+                    var sink = new Sink(); var prior = InvocationContext.Current;
+                    InvocationContext.Current = new InvocationContext(id, InvocationCause.Manual, null, TriggerPayload.Manual()) { TraceSink = sink };
+                    VisualTrace recorder;
+                    try { recorder = VisualTrace.Create(root, [root], (_, _) => null, (_, _) => null, port: port)!; }
+                    finally { InvocationContext.Current = prior; }
+                    fill?.Invoke(recorder);
+                    recorder.Complete();
+                    _ = sink.Final;
+                    return sink.Writes[^1];
+                }
+                // Without a port: exactly the bytes an automation's trace has always had.
+                var plain = Recorded("run-plain", "t", null);
+                var started = S(plain.Doc["startedUtc"]);
+                Check(plain.Json == "{\"format\":1,\"runId\":\"run-plain\",\"rootNodeId\":\"t\",\"startedUtc\":\"" + started + "\",\"complete\":true,\"truncated\":false,\"dropped\":0,\"trigger\":{\"platform\":\"manual\"},\"events\":[],\"summary\":{}}", "a trace without a port: " + plain.Json);
+                Shape(plain.Doc);
+                // With one: the same document with rootPort after rootNodeId.
+                var commanded = Recorded("run-port", "relay", "command:turn_on");
+                Check(commanded.Json == "{\"format\":1,\"runId\":\"run-port\",\"rootNodeId\":\"relay\",\"rootPort\":\"command:turn_on\",\"startedUtc\":\"" + S(commanded.Doc["startedUtc"]) + "\",\"complete\":true,\"truncated\":false,\"dropped\":0,\"trigger\":{\"platform\":\"manual\"},\"events\":[],\"summary\":{}}", "a trace with a port: " + commanded.Json);
+                Shape(commanded.Doc);
+                // The longest port (select_option is the longest command) on a node whose id is as long as the longest key
+                // (40 characters), with events whose values pass 256 KiB: the oldest lose their values and the trace stays within it.
+                var node = new string('k', 40);
+                Write Full(string port)
+                {
+                    var full = Recorded("run-full", node, port, recorder =>
+                    {
+                        for (var i = 0; i < 400; i++)
+                        {
+                            var ev = recorder.Start("", node)!;
+                            recorder.Input(ev, node, "value", new string('v', 1000), null);
+                            recorder.End(ev, "ok", "next", null);
+                        }
+                    });
+                    Check(full.Bytes <= VisualTrace.MaxTraceBytes && Events(full.Doc).Count == 400 && Events(full.Doc)[0]!["trunc"] != null && Events(full.Doc)[^1]!["trunc"] == null, $"a full trace with a port of {port.Length} characters: {full.Bytes} bytes");
+                    Check(S(full.Doc["rootNodeId"]) == node && S(full.Doc["rootPort"]) == port, "the full trace's header: " + full.Json[..200]);
+                    Shape(full.Doc);
+                    return full;
+                }
+                Full("command:select_option");
+                // The port is counted in the size: one far longer than any pin (more than the estimates' slack) still fits.
+                Full("command:" + new string('p', 16_000));
                 return Task.CompletedTask;
             });
 

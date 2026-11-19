@@ -176,7 +176,7 @@ tool descriptions summarise the workflow below and the entity typing rule.
    [run history](backend/run-history.md) for the run fields.
 10. `trace({runId,node?,graph?,offset?,limit?})` reads one run's trace. By default it returns the
    run, `live`, the snapshot identity (`revision`, `visualId`, `visualRevision`),
-   and the trace's `rootNodeId`, `startedUtc`, `complete`, `truncated`, `dropped`,
+   and the trace's `rootNodeId`, `rootPort` (only for a run of an Entity node's flow), `startedUtc`, `complete`, `truncated`, `dropped`,
    `summary` and a page of the events in order without their values (node, frame,
    status, port, `t`, `ms`, error), with `totalEvents`. `node` returns that node's
    events with their `inputs` and `outputs`, or `not_found` when it never ran;

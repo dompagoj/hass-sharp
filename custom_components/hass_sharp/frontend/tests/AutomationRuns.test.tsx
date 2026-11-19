@@ -511,6 +511,21 @@ it('titles an entity definition\'s run by its root step when it carries that ste
   expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['When a frame is needed', 'When started', 'On turn on', 'Run_676F6E65', 'Run_6C6F67'])
 })
 
+it('titles a run of an Entity node\'s flow by the entity and the flow when it carries the flow\'s method name', async () => {
+  const hubGraph = { version: 5, name: 'Lamp', edges: [],
+    nodes: [{ id: 'l', kind: 'entity', config: { key: 'lamp', domain: 'light', name: 'Lamp' }, position: at }],
+    definition: { entities: [], settings: [] },
+  } as unknown as Graph
+  const runs = [
+    // Run_6C_ and the hex of command:turn_on, then of state (flowMethod).
+    record({ runId: 'run-2', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Command', trigger: { kind: 'command', entity: 'lamp', command: 'turn_on' }, actionLabel: 'Run_6C_636F6D6D616E643A7475726E5F6F6E' }),
+    record({ runId: 'run-1', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Startup', trigger: { kind: 'startup' }, actionLabel: 'Run_6C_7374617465' }),
+  ]
+  const { root } = setupDefinition(async () => page(runs), { triggerNames: definitionNames(hubGraph, nodeCatalog) })
+  await vi.waitFor(() => expect(rows(root)).toHaveLength(2))
+  expect(rows(root).map(row => row.querySelector('.hs-run-label')!.textContent)).toEqual(['Lamp: Turn on', 'Lamp: State'])
+})
+
 it('keeps an automation\'s run names as recorded: its graph gives no names', async () => {
   const automation = { version: 5, name: 'Heating', edges: [], nodes: [{ id: 't1', kind: 'trigger', config: {}, position: at }] } as unknown as Graph
   expect(definitionNames(automation, nodeCatalog)).toBeUndefined()

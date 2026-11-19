@@ -474,6 +474,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call('trace',{'runId':'r1','node':'svc'})).data['result']['trace']['limit'],self.adapter.TRACE_NODE_PAGE)
         for args in ({'runId':'r1','limit':0},{'runId':'r1','limit':True},{'runId':'r1','offset':-1}):
             self.assertTrue((await self.call('trace',args)).error)
+        # A trace without rootPort (an automation's run) gets no such key; a run of an Entity node's flow keeps it.
+        self.assertNotIn('rootPort',(await self.call('trace',{'runId':'r1'})).data['result']['trace'])
+        self.service.trace.return_value['trace']['rootPort']='command:turn_on'
+        view=(await self.call('trace',{'runId':'r1'})).data['result']['trace']
+        self.assertEqual((view['rootNodeId'],view['rootPort']),('t','command:turn_on'))
+        self.assertEqual(list(view)[:2],['rootNodeId','rootPort'])
 
     # An entity definition as an assistant writes it (the body of the panel's preview and save).
     GRAPH={'version':5,'name':'Motion','nodes':[{'id':'hall','kind':'entity_is','config':{}},{'id':'state','kind':'entity_state','config':{'entity':'any_motion'}}],'edges':[]}

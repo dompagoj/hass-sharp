@@ -98,6 +98,9 @@ automations have no snapshot and no trace.
  "summary":{"svc":{"count":3,"failed":0,"last":"ok"}}}
 ```
 
+- `rootPort` follows `rootNodeId` only in a run of an Entity node's flow: the pin it
+  started at (`command:<command>` or `frame`), or `state` for its state. Every flow of
+  one Entity node has the node as its `rootNodeId`. Other runs have no `rootPort`.
 - `trigger` is the normalised trigger payload, at most 16 KiB.
 - One event per node execution, in order. `status` is `ok`, `error` (the node
   failed and followed its `error` port), `failed` (the node failed and the failure

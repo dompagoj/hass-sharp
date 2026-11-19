@@ -101,6 +101,7 @@ static class EntityGraphGeneratorTests
             (nameof(DependenciesComeFromChosenEntitiesOnly), DependenciesComeFromChosenEntitiesOnly),
             (nameof(ValueUpstreamWalksValueWiresOnly), () => { ValueUpstreamWalksValueWiresOnly(); return Task.CompletedTask; }),
             (nameof(CommandAndSetupRootsBecomeActions), CommandAndSetupRootsBecomeActions),
+            (nameof(AnEntityNodesFlowsBecomeActions), AnEntityNodesFlowsBecomeActions),
             (nameof(ATriggerInAnEntityGraphKeepsItsOwnAction), ATriggerInAnEntityGraphKeepsItsOwnAction),
             (nameof(AutomationSourceIsUnchanged), () => { AutomationSourceIsUnchanged(); return Task.CompletedTask; }) })
             try { await test(); }
@@ -273,6 +274,32 @@ static class EntityGraphGeneratorTests
         Embeds(preview, graph, ["entity_command", "entity_setup", "set_entity_state", "set_entity_available"], "the relay");
         Same(await Compiled(preview, "the relay"),
             [Describe("off", AutomationMode.Queued, false, false), Describe("on", AutomationMode.Queued, false, false), Describe("setup", AutomationMode.Single, false, false)], "the relay's compiled configuration");
+    }
+
+    /// <summary>
+    /// An Entity node's flows, each an action named by node and port (<see cref="VisualNodeCatalog.FlowMethod"/>): its state is
+    /// worked out at startup and again, restarting, when an entity its values read changes (<see cref="StateDependencies.Of"/>),
+    /// a command flow is queued and a camera's frame flow runs one at a time; none is run by hand.
+    /// </summary>
+    static async Task AnEntityNodesFlowsBecomeActions()
+    {
+        var graph = Entity(
+            [EntityNodeTests.Hub("cam", "door_cam", "camera"), EntityNodeTests.Hub("lamp", "lamp", "light"), Is("e", "binary_sensor.door"),
+             N("on", "log", new { value = Lit("string", "on") }), N("frame", "log", new { value = Lit("string", "frame") })],
+            [D("e", "lamp", "is_on"), E("lamp", "on", "command:turn_on"), E("cam", "frame", "frame")], []);
+        Same(StateDependencies.Of(graph, "lamp", BuiltIn), ["binary_sensor.door"], "the lamp's state depends on the entity its value reads");
+        var preview = Preview(graph, "the lamp and the camera");
+        static string Method(string node, string port) => VisualNodeCatalog.FlowMethod(new JsonObject { ["id"] = node }, port);
+        static string Line(string node, string port, string mode, bool startup, params string[] entities) =>
+            $"{Action}nameof({Method(node, port)}),global::HassSharp.AutomationMode.{mode},Startup:{(startup ? "true" : "false")},Manual:false," +
+            $"Entities:[{string.Join(",", entities.Select(e => $"new global::HassSharp.EntityReference({JsonSerializer.Serialize(e)})"))}],Schedules:[],Triggers:[])";
+        // The nodes in id order, each node's flows in its order: state, then each command wired, then the frame.
+        Same(ActionLines(preview), [Line("cam", "frame", "Single", false), Line("lamp", "state", "Restart", true, "binary_sensor.door"), Line("lamp", "command:turn_on", "Queued", false)], "the flows' actions");
+        static string Described(string node, string port, AutomationMode mode, bool startup, params string[] entities) =>
+            $"{Method(node, port)} {mode} startup={startup} manual=False entities={Texts(entities)} schedules=0 triggers=0";
+        Same(await Compiled(preview, "the lamp and the camera"),
+            [Described("cam", "frame", AutomationMode.Single, false), Described("lamp", "state", AutomationMode.Restart, true, "binary_sensor.door"), Described("lamp", "command:turn_on", AutomationMode.Queued, false)],
+            "the flows' compiled configuration");
     }
 
     static async Task ATriggerInAnEntityGraphKeepsItsOwnAction()

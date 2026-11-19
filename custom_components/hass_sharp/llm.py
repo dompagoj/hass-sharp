@@ -634,7 +634,9 @@ def trace_view(data, node, include_graph, offset, limit):
     trace = data.get("trace")
     if trace is not None:
         events = trace.get("events") or []
-        view = {key: trace.get(key) for key in ("rootNodeId", "startedUtc", "complete", "truncated", "dropped", "summary")}
+        # rootPort only when the trace has one (a run of an Entity node's flow names the pin it started at).
+        view = {key: trace.get(key) for key in ("rootNodeId", "rootPort", "startedUtc", "complete", "truncated", "dropped", "summary")
+                if key != "rootPort" or key in trace}
         if node is None:
             events = [{key: value for key, value in event.items() if key not in ("inputs", "outputs")} for event in events]
         else:

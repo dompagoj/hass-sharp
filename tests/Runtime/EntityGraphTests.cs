@@ -481,6 +481,12 @@ static class EntityGraphTests
         var runs = CommandRuns(rig, automationId);
         Check(runs.Length == 2 && runs.All(r => r["status"]!.GetValue<string>() == "Succeeded" && r["triggerNodeId"]!.GetValue<string>() == "relay"), "both command runs are recorded, of the node: " + Lines(runs.Select(r => r.ToJsonString())));
         Check(runs.Select(r => r["actionLabel"]!.GetValue<string>()).SequenceEqual(["Relay: Turn off", "Relay: Turn on"]), "each run is named by the entity and its command: " + Lines(runs.Select(r => r.ToJsonString())));
+        // The trace tells the flows apart: the node, and the pin its flow starts at.
+        foreach (var (run, port) in runs.Zip(["command:turn_off", "command:turn_on"]))
+        {
+            var trace = JsonNode.Parse(rig.Api.GetRunTrace(run["runId"]!.GetValue<string>()))!["trace"]!;
+            Check(trace["rootNodeId"]!.GetValue<string>() == "relay" && trace["rootPort"]?.GetValue<string>() == port, $"the trace of {port} names the node and its pin: " + trace.ToJsonString()[..Math.Min(300, trace.ToJsonString().Length)]);
+        }
     }
 
     /// <summary>The hub form of <see cref="ACommandWithoutAFlowFails"/>: a command whose pin has no step fails, naming the entity and the command.</summary>

@@ -40,7 +40,8 @@ sealed class VisualTrace
     // {"seq":100000,"node":,"frame":,"t":<12>,"ms":<12>,"status":"cancelled","port":"error"},
     // ,"inputs":{} and ,"outputs":{}; ,"error":{"type":,"message":}; ,"trunc":true;
     // "<node>":{"count":100000,"failed":100000,"last":"cancelled"},
-    const int HeaderBytes = 200, EventBytes = 104, InputsBytes = 12, OutputsBytes = 13, ErrorBytes = 32, TruncBytes = 13, SummaryBytes = 56;
+    // ,"rootPort": before the port, when the run has one.
+    const int HeaderBytes = 200, RootPortBytes = 12, EventBytes = 104, InputsBytes = 12, OutputsBytes = 13, ErrorBytes = 32, TruncBytes = 13, SummaryBytes = 56;
 
     static readonly ConditionalWeakTable<IRunTraceSink, object> claimed = new();
     /// <summary>Recorders created in this process; a run without a sink never creates one.</summary>
@@ -103,6 +104,8 @@ sealed class VisualTrace
     readonly IRunTraceSink sink;
     readonly TimeProvider time;
     readonly string runId, root, startedUtc;
+    /// <summary>The pin of the Entity node <c>root</c> whose flow this run is (<c>rootPort</c>); null for any other run, whose header has none.</summary>
+    readonly string? port;
     readonly long origin;
     readonly long created;
     readonly Action<Action>? run;
@@ -123,30 +126,32 @@ sealed class VisualTrace
     ITimer? timer;
     TimeSpan timerDue;
 
-    VisualTrace(IRunTraceSink sink, InvocationContext context, string root, IEnumerable<string> nodes,
+    VisualTrace(IRunTraceSink sink, InvocationContext context, string root, string? port, IEnumerable<string> nodes,
         Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider time, Action<Action>? run)
     {
-        this.sink = sink; this.time = time; this.run = run; runId = context.RunId; this.root = root; this.inputType = inputType; this.outputType = outputType;
+        this.sink = sink; this.time = time; this.run = run; runId = context.RunId; this.root = root; this.port = port; this.inputType = inputType; this.outputType = outputType;
         startedUtc = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         origin = Stopwatch.GetTimestamp();
         created = time.GetTimestamp();
         try { (trigger, truncated) = TraceJson.Trigger(context.Payload); }
         catch (Exception error) { trigger = "{}"u8.ToArray(); truncated = true; Fail(error); }
-        size = HeaderBytes + TraceJson.Length(runId) + TraceJson.Length(root) + trigger.Length;
+        size = HeaderBytes + TraceJson.Length(runId) + TraceJson.Length(root) + (port == null ? 0 : RootPortBytes + TraceJson.Length(port)) + trigger.Length;
         foreach (var node in nodes) size += TraceJson.Length(node) + SummaryBytes;
     }
 
     /// <summary>The recorder of the current run, or null when it has no sink (or another runtime already records it).</summary>
     /// <param name="time">The clock for store gaps and timers; the system clock by default.</param>
     /// <param name="run">Runs the writer when a store is due; the thread pool by default (tests run it inline).</param>
-    internal static VisualTrace? Create(string root, IEnumerable<string> nodes, Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider? time = null, Action<Action>? run = null)
+    /// <param name="port">For a run of an Entity node's flow, the pin it starts at (<c>state</c> for its state), written as
+    /// <c>rootPort</c>; null for any other run, whose document is written exactly as before.</param>
+    internal static VisualTrace? Create(string root, IEnumerable<string> nodes, Func<string, string, string?> inputType, Func<string, string, string?> outputType, TimeProvider? time = null, Action<Action>? run = null, string? port = null)
     {
         if (InvocationContext.Current is not { TraceSink: { } sink } context) return null;
         try
         {
             if (!claimed.TryAdd(sink, context)) return null;
             Interlocked.Increment(ref Created);
-            return new VisualTrace(sink, context, root, nodes, inputType, outputType, time ?? TimeProvider.System, run);
+            return new VisualTrace(sink, context, root, port, nodes, inputType, outputType, time ?? TimeProvider.System, run);
         }
         catch (Exception error) { Log(context.RunId, error); return null; }
     }
@@ -466,7 +471,9 @@ sealed class VisualTrace
     void Header(Utf8JsonWriter w, bool complete, bool cut, int lost)
     {
         w.WriteStartObject();
-        w.WriteNumber("format", 1); w.WriteString("runId", runId); w.WriteString("rootNodeId", root); w.WriteString("startedUtc", startedUtc);
+        w.WriteNumber("format", 1); w.WriteString("runId", runId); w.WriteString("rootNodeId", root);
+        if (port != null) w.WriteString("rootPort", port);
+        w.WriteString("startedUtc", startedUtc);
         w.WriteBoolean("complete", complete); w.WriteBoolean("truncated", cut); w.WriteNumber("dropped", lost);
     }
 

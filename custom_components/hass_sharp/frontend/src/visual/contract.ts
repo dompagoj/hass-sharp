@@ -33,13 +33,13 @@ export interface InputSpec {
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
-/** `when` names a boolean config key; the output exists only while it is true. */
 /**
- * An output pin. `propertyOf` names an input: the output has the type of the property `config.property` names, of the
- * value wired into that input (as `withGraphTypes` resolves it under `resolvedOutputs`), and `type` is empty.
+ * An output pin. `when` names a boolean config key; the output exists only while it is true. `propertyOf` names an
+ * input: the output has the type of the property `config.property` names, of the value wired into that input (as
+ * `withGraphTypes` resolves it under `resolvedOutputs`), and `type` is empty. `scope` names the owner's scope port the
+ * value is read in (For each's item in Body, a flow's value on that flow). `group` names the execution pin the output is
+ * drawn under (an Entity node's command): layout only, it is not a scope.
  */
-/** `scope` names the owner's scope port the value is read in (For each's item in Body, a flow's value on that flow). */
-/** `group` names the execution pin the output is drawn under (an Entity node's command): layout only, it is not a scope. */
 export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; scope?: string; group?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
 /**
  * `root`: the node starts a flow of its own (as a trigger does); `documents`: the kinds of graph it works in (any when
@@ -74,9 +74,9 @@ export interface ServicesSection { servicesGeneration: string; items: Record<str
 export interface EntityValueSpec { types: string[]; label?: string; required?: boolean }
 /**
  * One entity domain a definition's graph can define: its state values (inputs of State and Set state), its commands,
- * each with the values of its data (outputs of When commanded), and its options.
+ * each with the values of its data (outputs of When commanded), and its options. `frame`: the type is asked for frames
+ * (a camera), and its Entity node has a `frame` execution pin with this label.
  */
-/** `frame`: the type is asked for frames (a camera), and its Entity node has a `frame` execution pin with this label. */
 export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; frame?: { label: string }; options: Record<string, ConfigSpec> }
 /**
  * A data value of a command: `default` is what the host gives a flow when Home Assistant sends none and the entity has no
@@ -91,7 +91,13 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const declarations = (node: GraphNode, key: 'carry' | 'exports') => (Array.isArray(node.config[key]) ? node.config[key] as unknown[] : []).filter(record)
 const text = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
 const configuredType = (type: string, node: GraphNode) => type.startsWith('$') ? text(node.config[type.slice(1)]) : type
-export const effectiveTriggerMethod = (node: GraphNode) => 'Run_' + Array.from(new TextEncoder().encode(node.id), byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('')
+const hexUtf8 = (text: string) => Array.from(new TextEncoder().encode(text), byte => byte.toString(16).padStart(2, '0').toUpperCase()).join('')
+export const effectiveTriggerMethod = (node: GraphNode) => 'Run_' + hexUtf8(node.id)
+/**
+ * The method of one flow an Entity node starts, as a run of it records it: the node's method, then the hex of the port's
+ * UTF-8 (`state`, `command:<command>` or `frame`). Mirrors `VisualNodeCatalog.FlowMethod`.
+ */
+export const flowMethod = (node: GraphNode, port: string) => effectiveTriggerMethod(node) + '_' + hexUtf8(port)
 
 // The C1 type rule, mirrored by HassSharp/Visual/VisualTypes.cs. Refinement is decided before
 // root assignability: a refined type is never reached from its base implicitly.

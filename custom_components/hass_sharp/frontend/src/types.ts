@@ -463,6 +463,8 @@ export interface RunTrace {
   format: 1
   runId: string
   rootNodeId: string
+  /** A run of an Entity node's flow: the pin it started at (`command:<command>`, `frame`), or `state`. Absent for any other run. */
+  rootPort?: string
   startedUtc: string
   complete: boolean
   truncated: boolean

@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import type { RunTrigger } from '../types'
-import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
+import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, executionLabel, executionPorts, flowMethod, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
 import { nodeTitle } from '../visual/flow/flowModel'
 
 /**
@@ -10,7 +10,11 @@ import { nodeTitle } from '../visual/flow/flowModel'
 export interface TriggerNames {
   entities?: readonly { key: string; name?: string | null; domain?: string | null }[]
   domains?: Record<string, EntityDomainSpec>
-  /** Each root step of the graph by the method name a run of it records when it has none of its own (`Run_…`): its title. */
+  /**
+   * Each root step of the graph by the method name a run of it records when it has none of its own (`Run_…`): its title;
+   * and each flow of an Entity node by its method (`flowMethod`): `{Name}: State`, `{Name}: {Command}` or
+   * `{Name}: When a frame is needed`, as the server names its runs.
+   */
   roots?: Readonly<Record<string, string>>
 }
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -23,13 +27,26 @@ export function definitionNames(graph: Graph | undefined, catalog: VisualCatalog
   if (!Array.isArray(listed)) return
   const entities = listed.filter(record).filter((entity): entity is { key: string } => typeof entity.key === 'string')
   const roots: Record<string, string> = {}
-  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) if (record(node) && typeof node.id === 'string' && isRoot(node, known)) roots[effectiveTriggerMethod(node)] = nodeTitle(node, known)
+  for (const node of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+    if (!record(node) || typeof node.id !== 'string' || !isRoot(node, known)) continue
+    if (declaresEntity(node, known)) for (const port of ['state', ...executionPorts(node, known)])
+      roots[flowMethod(node, port)] = `${entityName(node)}: ${port === 'state' ? 'State' : executionLabel(node, port, known) ?? port}`
+    else roots[effectiveTriggerMethod(node)] = nodeTitle(node, known)
+  }
   return { entities, domains: catalog?.entityDomains, roots }
+}
+/** Whether the node is an Entity node (its kind declares an entity), whose flows run under `flowMethod`. */
+const declaresEntity = (node: GraphNode, catalog: VisualCatalogSnapshot) => Object.hasOwn(catalog.nodes, node.kind) && catalog.nodes[node.kind]?.declares === 'entity'
+/** An Entity node's entity as its runs name it: its name, else its key, else `Entity` (as `DefinitionGraph.HubFlows` does). */
+const entityName = (node: GraphNode) => {
+  const config: unknown = node.config, name = record(config) ? config.name : undefined, key = record(config) ? config.key : undefined
+  return typeof name === 'string' && name ? name : typeof key === 'string' && key ? key : 'Entity'
 }
 /**
  * What a run is called: as recorded, unless that is the generated method name of a root step of the graph shown (an
- * entity definition's root runs under one), which reads as the step's title ("When a frame is needed"). An automation's
- * names give no roots, so its runs keep their names.
+ * entity definition's root runs under one), which reads as the step's title ("When a frame is needed"), or of a flow of
+ * an Entity node, which reads as the entity and the flow ("Lamp: Turn on"). An automation's names give no roots, so its
+ * runs keep their names.
  */
 export const runName = (recorded: string, names?: TriggerNames) => names?.roots && Object.hasOwn(names.roots, recorded) ? names.roots[recorded] : recorded
 /**
