@@ -901,7 +901,8 @@ export const words = {
   /** A State or Set state step given none of its entity's state values, none of which is required. */
   noValue: (step: string) => `${step} needs at least one value`,
   /** A command of an entity no When commanded step handles. */
-  commandUnhandled: (domain: string, key: string, command: string, label: string) => `${domain} ${words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
+  /** A command of an entity that no When commanded step handles, the entity named by its name and key (its key alone when it has no name). */
+  commandUnhandled: (domain: string, key: string, name: string, command: string, label: string) => `${domain} ${name.replace(blankEnds, '') ? `${name.replace(blankEnds, '')} (${key})` : words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
   /** A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one. */
   notACamera: (name: string, anyCamera: boolean) => anyCamera ? `${words.name(name)} is not a camera; choose one of this definition's cameras` : `${words.name(name)} is not a camera; add a camera to this definition first`,
   /** A second When a frame is needed step for one camera, named by its name. */
@@ -1558,7 +1559,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const domain = entityDomain(catalog, text(entity.key))
       if (domain) for (const command of Object.keys(record(domain.commands) ? domain.commands : {}))
         if (!commands.some(n => choice(n, 'entity') === entity.key && choice(n, 'command') === command)) {
-          errors.push({ nodeId: null, message: words.commandUnhandled(entityTypeLabel(catalog, text(entity.domain)), text(entity.key), entityCommandLabel(catalog, text(entity.domain), command), kindLabel('entity_command')), severity: 2, code: 'command.unhandled' }); origins.push(origin)
+          errors.push({ nodeId: null, message: words.commandUnhandled(entityTypeLabel(catalog, text(entity.domain)), text(entity.key), text(entity.name), entityCommandLabel(catalog, text(entity.domain), command), kindLabel('entity_command')), severity: 2, code: 'command.unhandled' }); origins.push(origin)
         }
     }
     // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.

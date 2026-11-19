@@ -426,10 +426,15 @@ static class EntityGraphTests
     static async Task ACommandWithoutAFlowFails()
     {
         await using var rig = await Rig.Start("no-flow");
-        // The warning is the definition's, on no node: no node handles the command.
-        static bool Unhandled(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2 && d["nodeId"] == null) == true;
+        // The warning is the definition's, on no node: no node handles the command. It names the entity by its name and key.
+        static bool Unhandled(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["code"]!.GetValue<string>() == "command.unhandled" && d["severity"]!.GetValue<int>() == 2 && d["nodeId"] == null
+            && d["message"]!.GetValue<string>() == "Switch Relay (relay) does nothing on Turn on; add a When commanded step for it") == true;
         var preview = await rig.Ok(new { operation = "preview", definition = Relay(turnOn: false) });
         Check(preview["valid"]!.GetValue<bool>() && Unhandled(preview["diagnostics"]), "the preview warns of the command no flow handles: " + preview["diagnostics"]?.ToJsonString());
+        var unnamed = Relay(turnOn: false);
+        unnamed["entities"]![0]!.AsObject().Remove("name");
+        var byKey = (await rig.Ok(new { operation = "preview", definition = unnamed }))["diagnostics"]!.AsArray().Select(d => d!["message"]!.GetValue<string>()).ToArray();
+        Check(byKey.Contains("Switch relay does nothing on Turn on; add a When commanded step for it"), "an entity without a name is named by its key: " + string.Join(" | ", byKey));
         var saved = await rig.Save("relay", Relay(turnOn: false));
         Check(Unhandled(saved["diagnostics"]) && saved["active"]!.GetValue<bool>(), "the save warns of the command no flow handles, and runs: " + saved.ToJsonString());
         await rig.Until("relay:relay", _ => true, "the switch starts");
@@ -2578,13 +2583,13 @@ static class EntityGraphTests
         }
         Check(rig.Home.Pictures().Length == 6, $"each request an interval apart ran the flow: {rig.Home.Pictures().Length} pictures");
         var problems = Problems(rig);
-        Check(problems.Length == 1 && problems[0].StartsWith("Annotated: Annotated (annotated) could not make a frame: ", StringComparison.Ordinal) && problems[0].Contains("Camera camera.front is off", StringComparison.Ordinal),
+        Check(problems.Length == 1 && problems[0].StartsWith("Annotated: Annotated could not make a frame: ", StringComparison.Ordinal) && problems[0].Contains("Camera camera.front is off", StringComparison.Ordinal),
             "five failures for one reason log one line, the camera's: " + Lines(problems));
         Volatile.Write(ref answer, 2);
         await Task.Delay(30);
         var again = await Frame(rig);
         Check(!Same(again, good) && again is [0xFF, 0xD8, ..], "the camera makes frames again");
-        Check(rig.Home.Logs(PyLogLevel.Info).Count(line => line == "Annotated: Annotated (annotated) makes frames again") == 1 && Problems(rig).Length == 1,
+        Check(rig.Home.Logs(PyLogLevel.Info).Count(line => line == "Annotated: Annotated makes frames again") == 1 && Problems(rig).Length == 1,
             "the recovery is logged once: " + Lines(rig.Home.Logs()));
     }
 
@@ -2658,12 +2663,12 @@ static class EntityGraphTests
         }
         Check(rig.Home.Pictures().Length == 3, $"the second request started a flow of its own: {rig.Home.Pictures().Length} pictures");
         Check(Cancelled().All(r => r["error"]?.GetValue<string>() == "Took longer than 0.2 s"), "the runs say why they were cancelled: " + Lines(Cancelled().Select(r => r.ToJsonString())));
-        Check(Problems(rig).SequenceEqual(["Annotated: Annotated (annotated) could not make a frame: it took longer than 0.2 s"]), "the time limit is logged once: " + Lines(Problems(rig)));
+        Check(Problems(rig).SequenceEqual(["Annotated: Annotated could not make a frame: it took longer than 0.2 s"]), "the time limit is logged once: " + Lines(Problems(rig)));
         Volatile.Write(ref answer, 2);
         await Task.Delay(30);
         var again = await Frame(rig);
         Check(!Same(again, good) && again is [0xFF, 0xD8, ..], "the camera makes frames again by itself");
-        Check(rig.Home.Logs(PyLogLevel.Info).Count(line => line == "Annotated: Annotated (annotated) makes frames again") == 1, "and says so once: " + Lines(rig.Home.Logs()));
+        Check(rig.Home.Logs(PyLogLevel.Info).Count(line => line == "Annotated: Annotated makes frames again") == 1, "and says so once: " + Lines(rig.Home.Logs()));
     }
 
     /// <summary>A revision saved while a frame flow waits for its picture: the old flow is cancelled, its request ends, the new revision serves frames.</summary>

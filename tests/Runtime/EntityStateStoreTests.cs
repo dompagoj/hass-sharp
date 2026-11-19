@@ -141,7 +141,7 @@ static class EntityStateStoreTests
                 store.Load();
                 Check(!store.TryGet("relay:relay", out _) && store.Ids().Length == 0, $"{what}: an unreadable file has states");
                 var warnings = scratch.Warnings();
-                Check(warnings.Length == 1 && warnings[0].StartsWith("Cannot read the entities' last states (", StringComparison.Ordinal) && warnings[0].Contains("entities start without them"),
+                Check(warnings.Length == 1 && warnings[0].StartsWith("Cannot read the entities' last states (", StringComparison.Ordinal) && warnings[0].Contains("the entities start with no value until they are set again"),
                     $"{what}: warned " + string.Join(" | ", warnings));
                 if (what == "a directory") Directory.Delete(scratch.File);
                 if (what == "unreadable") Mode(scratch.File, UnixFileMode.UserRead | UnixFileMode.UserWrite);
@@ -176,7 +176,7 @@ static class EntityStateStoreTests
             Check(store.TryGet("a:again", out var again) && again.ToJsonString() == """{"value":2}""", "an id written twice keeps the last: " + again.ToJsonString());
             Check(store.TryGet("a:kept", out var kept) && kept.ToJsonString() == """{"is_on":true}""", "a well-formed entry: " + kept.ToJsonString());
             var warnings = scratch.Warnings();
-            Check(warnings.Length == 1 && warnings[0].EndsWith("entities start without them: 4 entries are not well formed and are left out", StringComparison.Ordinal),
+            Check(warnings.Length == 1 && warnings[0].EndsWith("the entities start with no value until they are set again: 4 entries are not well formed and are left out", StringComparison.Ordinal),
                 "the entries left out are warned of once: " + string.Join(" | ", warnings));
         }
         Console.WriteLine("PASS entity restore: nothing a state file holds throws: one that cannot be read is logged once, taken as empty and replaced; an entry not well formed is left out and the others kept");

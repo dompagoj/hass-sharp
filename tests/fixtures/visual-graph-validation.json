@@ -34496,7 +34496,8 @@
         "entities": [
           {
             "key": "relay",
-            "domain": "switch"
+            "domain": "switch",
+            "name": "Relay"
           }
         ],
         "settings": []
@@ -34506,8 +34507,8 @@
     "warning": "does nothing on",
     "warningNodeId": null,
     "messages": [
-      "Switch relay does nothing on Turn off; add a When commanded step for it",
-      "Switch relay does nothing on Turn on; add a When commanded step for it"
+      "Switch Relay (relay) does nothing on Turn off; add a When commanded step for it",
+      "Switch Relay (relay) does nothing on Turn on; add a When commanded step for it"
     ],
     "codes": [
       "command.unhandled",

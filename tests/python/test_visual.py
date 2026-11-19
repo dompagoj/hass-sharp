@@ -154,8 +154,8 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         results, errors = await self.send(handlers['hass_sharp/entities'], hass, {'request': request})
         self.assertEqual(errors, [])
         self.assertEqual(calls, [request])
-        # Each listed definition gains its entity registry entries (test_entity_authoring.py): none here.
-        self.assertEqual(results, [(1, {**envelope, 'result': [{'id': 'porch', 'enabled': True, 'registeredEntities': []}]})])
+        # Each listed definition gains its entity registry entries and its Trigger steps (test_entity_authoring.py): none here.
+        self.assertEqual(results, [(1, {**envelope, 'result': [{'id': 'porch', 'enabled': True, 'registeredEntities': [], 'triggers': []}]})])
         # A refusal from .NET is an envelope like any other and is answered as a result.
         refused = {'version': 1, 'ok': False, 'error': {'code': 'not_found', 'detail': 'No such definition'}}
         envelope = refused

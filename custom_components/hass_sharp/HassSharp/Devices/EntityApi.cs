@@ -316,9 +316,50 @@ public partial class HassSharpManager
     static object PreviewJson(DefinitionPreview preview) => new { valid = preview.Valid, diagnostics = preview.Diagnostics, source = preview.Source, sourceMap = preview.SourceMap };
 
     /// <summary>
+    /// The request's definition with each Custom C# step's pins written from its code first when it asks so
+    /// (<c>deriveSignatures</c>), as an automation's request does (<see cref="VisualGenerator.DeriveSignatures(JsonObject, VisualCatalogSnapshot, out List{VisualDiagnostic})"/>);
+    /// a class, or a request that does not ask, as it came.
+    /// </summary>
+    /// <param name="removed">What deriving removed (values and wires of pins the code no longer has), one warning each; empty when nothing was derived.</param>
+    DefinitionBody DerivedBody(JsonObject request, GeneratedServiceCalls? services, VisualCatalogSnapshot authoring, out List<VisualDiagnostic> removed)
+    {
+        removed = [];
+        var body = DefinitionBody(request);
+        if (ApiRequest.OptionalBool(request, "deriveSignatures") != true || body.Logic is not { Kind: "graph", Graph: { } graph }) return body;
+        return body with { Logic = body.Logic with { Graph = new VisualGenerator(_diagnosticsProvider, services).DeriveSignatures(graph, authoring, out removed) } };
+    }
+
+    /// <summary>
+    /// Runs a graph definition's Trigger step now, as Run now runs an automation's (<see cref="DispatchVisual"/>): through
+    /// the same manual path, so the run is recorded with its trace whatever the step's history setting. Only a Trigger
+    /// that permits manual runs, of a definition that is on and runs its saved revision.
+    /// </summary>
+    /// <returns><c>{version, runId}</c> once the run's first record is written.</returns>
+    /// <exception cref="ArgumentException">The step is not the definition's, or not a Trigger.</exception>
+    /// <exception cref="InvalidOperationException">The definition is a class, is off, does not run its saved revision, or the Trigger permits no manual runs.</exception>
+    object DispatchDefinition(EntityDefinitionDocument document, string triggerId, VisualCatalogSnapshot snapshot)
+    {
+        if (document.Logic is not { Kind: "graph", Graph: { } graph }) throw new InvalidOperationException("A class definition has no steps to run");
+        if (!document.Enabled) throw new InvalidOperationException("The entity definition is off");
+        var json = EntityJson(document, snapshot);
+        if (!json["currentRevisionActive"]!.GetValue<bool>() || json["status"]!.GetValue<string>() != "running")
+            throw new InvalidOperationException("The saved revision of this entity definition is not running: "
+                + (_loadErrors.TryGetValue(EntityRuntimePath(document.Id), out var error) ? error : RunningHost(document.Id) is { Status: "failed", Error: { } failure } ? failure : "it has not started"));
+        var node = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(n => VisualNodeCatalog.Text(n, "id") == triggerId) ?? throw new ArgumentException("Trigger not found");
+        if (VisualNodeCatalog.Text(node, "kind") != "trigger")
+            throw new ArgumentException($"Only a Trigger step can be run by hand; {VisualGraphValidator.Words.StepName(node, VisualNodeCatalog.Spec(node, snapshot))} is not one");
+        if (!(node["config"]?["manual"] is JsonValue manual && manual.TryGetValue<bool>(out var allowed) ? allowed : true)) throw new InvalidOperationException("Trigger does not permit manual execution");
+        // A trigger run by hand carries what an automation's does (the entity's current state for an entity trigger).
+        var payload = TriggerPayload.Manual(VisualNodeCatalog.TriggerType(node, VisualCatalogSnapshot.BuiltIn), node["config"] as JsonObject, PyInterop.Entity);
+        return new { version = 1, runId = _userScriptManager.DispatchManual(json["automationId"]!.GetValue<string>(), "VisualAutomation", VisualNodeCatalog.EffectiveTriggerMethod(node), payload) };
+    }
+
+    /// <summary>
     /// The entity definitions' JSON API, answered in the envelope <see cref="VisualRequest"/> uses: <c>types</c>,
-    /// <c>list</c>, <c>read</c>, <c>preview</c>, <c>save</c>, <c>set_enabled</c> and <c>delete</c>. Saving or turning on a
-    /// definition runs it; turning it off or deleting it unloads it.
+    /// <c>list</c>, <c>read</c>, <c>preview</c>, <c>save</c>, <c>set_enabled</c>, <c>delete</c> and <c>run</c> (a Trigger
+    /// step, by hand). Saving or turning on a definition runs it; turning it off or deleting it unloads it. Preview and save
+    /// take <c>deriveSignatures</c>, as an automation's do: each Custom C# step's pins are first written from its code,
+    /// what that removed is answered as warnings, and a preview answers the graph with those pins as <c>graph</c>.
     /// </summary>
     /// <param name="requestJson">The request: <c>operation</c> and that operation's fields.</param>
     /// <returns><c>{version, ok: true, result}</c>, or <c>{version, ok: false, error: {code, detail}}</c>.</returns>
@@ -330,7 +371,7 @@ public partial class HassSharpManager
             var request = ApiRequest.Parse(requestJson);
             var operation = ApiRequest.String(request, "operation");
             // Before any field an operation reads: an unknown one is answered as such, not as a field it lacks.
-            if (operation is not ("types" or "list" or "read" or "preview" or "save" or "set_enabled" or "delete")) throw new ArgumentException("Unknown entity operation");
+            if (operation is not ("types" or "list" or "read" or "preview" or "save" or "set_enabled" or "delete" or "run")) throw new ArgumentException("Unknown entity operation");
             object result;
             // One read of the typed service calls for the whole request, as VisualRequest does.
             var services = _diagnosticsProvider.ServiceCalls();
@@ -343,9 +384,15 @@ public partial class HassSharpManager
                 result = new { types = snapshot.EntityTypes.Values.OrderBy(t => t.Id, StringComparer.Ordinal).ToArray(), generation = libraries.Generation };
             else if (operation == "preview")
             {
-                var preview = DefinitionGeneratorWith(services).Preview(DefinitionBody(request), authoring);
+                var body = DerivedBody(request, services, authoring, out var removed);
+                var preview = DefinitionGeneratorWith(services).Preview(body, authoring);
                 // A graph's entity ids that Home Assistant does not have are advice, as an automation's are.
-                result = PreviewJson(preview.Graph == null ? preview : preview with { Diagnostics = [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)] });
+                preview = preview with { Diagnostics = [.. removed, .. preview.Diagnostics, .. preview.Graph == null ? [] : EntityWarnings(preview.Graph, authoring)] };
+                // Deriving answers the graph with the pins it wrote, and nothing else of the definition (its settings may be secret).
+                result = ApiRequest.OptionalBool(request, "deriveSignatures") == true
+                    ? new { valid = preview.Valid, diagnostics = preview.Diagnostics, source = preview.Source, sourceMap = preview.SourceMap,
+                        graph = body.Logic is { Kind: "graph", Graph: { } derived } ? DefinitionGraph.Decompose(preview.Graph ?? derived) : null }
+                    : PreviewJson(preview);
             }
             // Listing omits the generated source and its map; "read" returns them. The entities page's list (view "home")
             // adds how each definition has been running, as the automations page's does.
@@ -367,6 +414,7 @@ public partial class HassSharpManager
             {
                 var id = ApiRequest.String(request, "id");
                 if (operation == "read") result = EntityJson(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"), snapshot);
+                else if (operation == "run") result = DispatchDefinition(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"), ApiRequest.String(request, "triggerId"), snapshot);
                 else if (operation == "set_enabled")
                 {
                     var enabled = ApiRequest.Bool(request, "enabled");
@@ -399,11 +447,11 @@ public partial class HassSharpManager
                     {
                         EntityDefinitionDocument? before = null;
                         try { before = store.Read(id); } catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { }
-                        var document = store.Save(id, DefinitionBody(request), revision, authoring, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"), out var preview);
+                        var document = store.Save(id, DerivedBody(request, services, authoring, out var removed), revision, authoring, libraries.Generation, ApiRequest.OptionalBool(request, "enabled"), out var preview);
                         ForgetRetyped(before, document);
                         // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation;
-                        // so are a graph's entity ids that Home Assistant does not have (EntityWarnings never throws).
-                        result = await ActivateDefinition(document, services, preview.Graph == null ? preview.Diagnostics : [.. preview.Diagnostics, .. EntityWarnings(preview.Graph, authoring)], snapshot);
+                        // so are what deriving removed and a graph's entity ids that Home Assistant does not have (EntityWarnings never throws).
+                        result = await ActivateDefinition(document, services, [.. removed, .. preview.Diagnostics, .. preview.Graph == null ? [] : EntityWarnings(preview.Graph, authoring)], snapshot);
                     }
                     else if (operation == "delete")
                     {

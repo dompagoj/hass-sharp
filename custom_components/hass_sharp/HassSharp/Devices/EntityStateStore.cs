@@ -71,7 +71,7 @@ internal sealed class EntityStateStore(string path)
             states = read;
         }
         if (problem != null)
-            try { Logger.Warn($"Cannot read the entities' last states ({path}); entities start without them: {problem}"); } catch { }
+            try { Logger.Warn($"Cannot read the entities' last states ({path}); the entities start with no value until they are set again: {problem}"); } catch { }
     }
 
     // Reads the file's entries into read: an id written twice keeps the last, and an entry that is not an object of

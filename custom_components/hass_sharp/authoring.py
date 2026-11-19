@@ -50,11 +50,22 @@ def registered_entities(hass, entry_id):
     return found
 
 
-def runnable_triggers(document):
+def runnable_triggers(document, graph=None):
+    """The Trigger steps of the document's graph (an automation's `graph` unless another is given), each with whether
+    Run now may run it."""
+    graph = document.get("graph", {}) if graph is None else graph
     return [{"triggerId": node["id"], "method": "Run_" + node["id"].encode().hex().upper(),
              "manual": node.get("config", {}).get("manual", True),
              "runnable": bool(document.get("currentRevisionActive") and node.get("config", {}).get("manual", True))}
-            for node in document.get("graph", {}).get("nodes", []) if node.get("kind") == "trigger"]
+            for node in graph.get("nodes", []) if node.get("kind") == "trigger"]
+
+
+def definition_triggers(document):
+    """A definition's Trigger steps as an automation's are given (`runnable_triggers`), read from its `logic.graph`;
+    none for a class definition."""
+    logic = document.get("logic")
+    graph = logic.get("graph") if isinstance(logic, dict) and logic.get("kind") == "graph" else None
+    return runnable_triggers(document, graph) if isinstance(graph, dict) else []
 
 
 class AuthoringService:
@@ -118,9 +129,11 @@ class AuthoringService:
         return await self._request(self.manager.NodeLibraryRequest, request, is_admin=is_admin)
 
     async def entities(self, request, *, is_admin):
-        """An entity definition request, answered by .NET. A graph definition's Home Assistant triggers are checked on
-        preview and save as an automation's are (`visual`), and every definition a list, read or save answers gains
-        `registeredEntities`: its entities in the entity registry, which has them while it is off or failed too."""
+        """An entity definition request, answered by .NET (`run` too, which runs a Trigger step by hand). A graph
+        definition's Home Assistant triggers are checked on preview and save as an automation's are (`visual`), with
+        `deriveSignatures` passed on to that preview, and every definition a list, read or save answers gains
+        `registeredEntities`, its entities in the entity registry, which has them while it is off or failed too, and
+        `triggers`, its Trigger steps as an automation's are given (none for a class)."""
         if not is_admin:
             raise PermissionError("Administrator required")
         if not isinstance(request, dict):
@@ -132,7 +145,9 @@ class AuthoringService:
         request = json.loads(json.dumps(request))
         operation = request.get("operation")
         if operation in ("preview", "save") and (graph := definition_graph(request)) is not None:
-            preview_request = {"operation": "preview", "definition": request["definition"]}
+            # deriveSignatures: the managed side writes each Custom C# step's pins from its code first, as for an automation.
+            derive = request.get("deriveSignatures") is True
+            preview_request = {"operation": "preview", "definition": request["definition"], **({"deriveSignatures": True} if derive else {})}
             if (answer := await self._checked_preview(self.manager.EntityRequest, operation, preview_request, graph)) is not None:
                 return answer
         result = await self._request(self.manager.EntityRequest, request, is_admin=True)
@@ -141,6 +156,7 @@ class AuthoringService:
             registered = registered_entities(self.hass, entry_id)
             for document in answered_documents(operation, result["result"]):
                 document["registeredEntities"] = registered.get(document.get("id"), [])
+                document["triggers"] = definition_triggers(document)
         return result
 
     async def run_now(self, automation_id, class_name, method, *, is_admin):

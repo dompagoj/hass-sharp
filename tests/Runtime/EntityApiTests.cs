@@ -73,8 +73,152 @@ static class EntityApiTests
         {
             await api.Init();
             await Scenario(api, home);
+            await DerivesCustomPins(api);
+            await RunsATriggerStep(api, home);
         }
         finally { await api.UnloadAsync(); }
+    }
+
+    static JsonObject N(string id, string kind, object? config = null) => VisualExecutionTests.N(id, kind, config);
+    static JsonObject Lit(string type, object? value) => VisualExecutionTests.Lit(type, value);
+    static JsonObject Next(string source, string target) { var wire = VisualExecutionTests.E(source, target); wire["id"] = $"{source}:next:{target}"; return wire; }
+    static JsonObject Data(string source, string target, string targetPort, string sourcePort = "value")
+    { var wire = VisualExecutionTests.D(source, target, targetPort, sourcePort); wire["id"] = $"{source}.{sourcePort}:{target}.{targetPort}"; return wire; }
+    static JsonObject Graph(string name, JsonObject[] nodes, params JsonObject[] edges) =>
+        new() { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) };
+    static JsonObject GraphDefinition(string name, JsonObject graph, params (string Key, string Domain)[] entities) => new()
+    {
+        ["name"] = name, ["settings"] = new JsonArray(),
+        ["entities"] = new JsonArray(entities.Select(e => (JsonNode)new JsonObject { ["key"] = e.Key, ["domain"] = e.Domain }).ToArray()),
+        ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph },
+    };
+
+    /// <summary>
+    /// <c>run</c> runs a graph definition's Trigger step by hand, as Run now runs an automation's: answered with a run id
+    /// once the run is recorded (also when the step records no runs of its own), which sets the step's state and has a
+    /// trace. Refused, in words, for an unknown definition, a step that is no Trigger, a Trigger closed to manual runs, a
+    /// definition that is off, one whose saved revision does not run, and a class definition. An automation of the same
+    /// id is another document: each run lands in its own history.
+    /// </summary>
+    static async Task RunsATriggerStep(HassSharpManager api, EntityTestHome home)
+    {
+        async Task<JsonNode> Entity(object request) => JsonNode.Parse(await api.EntityRequest(JsonSerializer.Serialize(request)))!;
+        async Task<JsonObject> Ok(object request)
+        {
+            var answer = await Entity(request);
+            Check(answer["ok"]!.GetValue<bool>(), "the request failed: " + answer.ToJsonString());
+            return answer["result"]!.AsObject();
+        }
+        async Task Refused(object request, string code, string detail, string what)
+        {
+            var answer = await Entity(request);
+            Check(answer.ToJsonString() == JsonSerializer.Serialize(new { version = 1, ok = false, error = new { code, detail } }), what + ": " + answer.ToJsonString());
+        }
+        JsonObject[] History(string automationId) => JsonNode.Parse(api.GetRunHistory(automationId, 0, 100, null))!["runs"]!.AsArray().Select(r => r!.AsObject()).ToArray();
+        var scripts = (UserScriptManager)typeof(HassSharpManager).GetField("_userScriptManager", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(api)!;
+        Task Flushed() => scripts.Pump.FlushAsync();
+
+        // A manual Trigger that records no runs of its own and sets the sensor, one closed to manual runs, and, when asked, a
+        // When started flow that fails (a Convert step that cannot convert its text).
+        JsonObject Button(bool failingSetup = false)
+        {
+            var press = N("press", "trigger", new { type = "manual", trackHistory = false });
+            press["label"] = "Press";
+            JsonObject[] nodes = [press, N("set", "set_entity_state", new JsonObject { ["entity"] = "last", ["value"] = Lit("string", "pressed") }),
+                N("closed", "trigger", new { type = "manual", manual = false }), N("say", "log", new { value = Lit("string", "closed") })];
+            JsonObject[] edges = [Next("press", "set"), Next("closed", "say")];
+            if (failingSetup)
+                (nodes, edges) = ([.. nodes, N("start", "entity_setup"), N("conv", "convert", new { type = "number", value = Lit("string", "warm") }),
+                    N("first", "set_entity_state", new JsonObject { ["entity"] = "last" })], [.. edges, Next("start", "first"), Data("conv", "first", "value")]);
+            return GraphDefinition("Button", Graph("Button", nodes, edges), ("last", "sensor"));
+        }
+        var saved = await Ok(new { operation = "save", id = "button", expectedRevision = 0, definition = Button() });
+        Check(saved["document"]!["status"]!.GetValue<string>() == "running", "the button runs: " + saved.ToJsonString());
+        var automationId = saved["document"]!["automationId"]!.GetValue<string>();
+
+        var ran = await Ok(new { operation = "run", id = "button", triggerId = "press" });
+        Check(ran.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(["runId", "version"]) && ran["version"]!.GetValue<int>() == 1, "run answers a run id: " + ran.ToJsonString());
+        var runId = ran["runId"]!.GetValue<string>();
+        await EntityTestHome.Until(() => History(automationId).Any(r => r["runId"]!.GetValue<string>() == runId && r["status"]!.GetValue<string>() == "Succeeded"), "the run ends");
+        await Flushed();
+        Check(home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "button:last" && s["values"]?["value"]?.GetValue<string>() == "pressed"), "the run set the sensor's state");
+        Check(JsonNode.Parse(api.GetRunTrace(runId)) is { } trace && trace["run"]!["cause"]!.GetValue<string>() == "Manual" && trace["run"]!["triggerNodeId"]!.GetValue<string>() == "press"
+            && trace["run"]!["visualId"]!.GetValue<string>() == "button" && trace["trace"] != null, "the run is recorded with its trace, though its step records none of its own: " + api.GetRunTrace(runId));
+        Check(History(automationId).Length == 1, "only the manual run is recorded: " + string.Join(" | ", History(automationId).Select(r => r.ToJsonString())));
+
+        await Refused(new { operation = "run", id = "nothing", triggerId = "press" }, "not_found", "Entity definition not found", "an unknown definition");
+        await Refused(new { operation = "run", id = "button", triggerId = "set" }, "invalid_request", "Only a Trigger step can be run by hand; Set state is not one", "a step that is no Trigger");
+        await Refused(new { operation = "run", id = "button", triggerId = "nope" }, "invalid_request", "Trigger not found", "a step the graph has not");
+        await Refused(new { operation = "run", id = "button", triggerId = "closed" }, "invalid_request", "Trigger does not permit manual execution", "a Trigger closed to manual runs");
+
+        await Ok(new { operation = "set_enabled", id = "button", enabled = false });
+        await Refused(new { operation = "run", id = "button", triggerId = "press" }, "invalid_request", "The entity definition is off", "a definition that is off");
+        await Ok(new { operation = "set_enabled", id = "button", enabled = true });
+
+        // A new revision whose When started fails: the one before runs on, but it is not the saved one.
+        var failing = await Ok(new { operation = "save", id = "button", expectedRevision = 1, definition = Button(failingSetup: true) });
+        var reason = failing["activationError"]!.GetValue<string>();
+        Check(!failing["active"]!.GetValue<bool>() && reason.StartsWith("Convert", StringComparison.Ordinal), "the new revision does not start: " + failing.ToJsonString());
+        await Refused(new { operation = "run", id = "button", triggerId = "press" }, "invalid_request", "The saved revision of this entity definition is not running: " + reason, "a saved revision that does not run");
+        Check(History(automationId).Count(r => r["cause"]!.GetValue<string>() == "Manual") == 1, "a refused run is recorded: " + string.Join(" | ", History(automationId).Select(r => r.ToJsonString())));
+        await Ok(new { operation = "save", id = "button", expectedRevision = 2, definition = Button() });
+
+        await Ok(new { operation = "save", id = "plain", expectedRevision = 0, definition = Definition("Plain plug", "10.0.0.5") });
+        await Refused(new { operation = "run", id = "plain", triggerId = "press" }, "invalid_request", "A class definition has no steps to run", "a class definition");
+        Console.WriteLine("PASS entity api: run runs a Trigger step by hand and records it with its trace; an unknown definition, a step that is no Trigger, a closed Trigger, a definition off or not running its saved revision, and a class are refused");
+
+        // An automation and a definition of one id: each run is in its own history only.
+        var automation = Graph("Porch", [N("t", "trigger", new { type = "manual" }), N("say", "log", new { value = Lit("string", "automation") })], Next("t", "say"));
+        var visual = JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "porch", expectedRevision = 0, graph = automation })))!;
+        Check(visual["ok"]!.GetValue<bool>() && visual["result"]!["active"]!.GetValue<bool>(), "the automation porch saves: " + visual.ToJsonString());
+        var porch = Graph("Porch", [N("t", "trigger", new { type = "manual" }), N("set", "set_entity_state", new JsonObject { ["entity"] = "seen", ["value"] = Lit("string", "yes") })], Next("t", "set"));
+        var definition = await Ok(new { operation = "save", id = "porch", expectedRevision = 0, definition = GraphDefinition("Porch", porch, ("seen", "sensor")) });
+        var (automationHistory, definitionHistory) = (visual["result"]!["document"]!["automationId"]!.GetValue<string>(), definition["document"]!["automationId"]!.GetValue<string>());
+        Check(automationHistory != definitionHistory, "the automation and the definition share a history: " + automationHistory);
+        var visualRun = JsonNode.Parse(await api.VisualRequest(JsonSerializer.Serialize(new { operation = "run", id = "porch", triggerId = "t" })))!["result"]!["runId"]!.GetValue<string>();
+        var definitionRun = (await Ok(new { operation = "run", id = "porch", triggerId = "t" }))["runId"]!.GetValue<string>();
+        await EntityTestHome.Until(() => History(automationHistory).Length == 1 && History(definitionHistory).Length == 1
+            && History(automationHistory)[0]["status"]!.GetValue<string>() == "Succeeded" && History(definitionHistory)[0]["status"]!.GetValue<string>() == "Succeeded", "both runs end");
+        Check(History(automationHistory).Single()["runId"]!.GetValue<string>() == visualRun && History(definitionHistory).Single()["runId"]!.GetValue<string>() == definitionRun
+            && History(definitionHistory).Single()["visualId"]!.GetValue<string>() == "porch", "each history holds its own run only");
+        Console.WriteLine("PASS entity api: run of a definition reaches the definition, not the automation of the same id, and each history holds its own run");
+    }
+
+    /// <summary>
+    /// <c>deriveSignatures</c> on preview and save writes each Custom C# step's pins from its code first, as an automation's
+    /// does: a step sent with its code and values alone previews invalid without it, valid with it, answered with the graph
+    /// with those pins and nothing else of the definition; a save with it stores that graph. What deriving removed is
+    /// answered as warnings.
+    /// </summary>
+    static async Task DerivesCustomPins(HassSharpManager api)
+    {
+        async Task<JsonObject> Ok(object request)
+        {
+            var answer = JsonNode.Parse(await api.EntityRequest(JsonSerializer.Serialize(request)))!;
+            Check(answer["ok"]!.GetValue<bool>(), "the request failed: " + answer.ToJsonString());
+            return answer["result"]!.AsObject();
+        }
+        const string twice = "public static class CustomNode\n{\n    [Node(\"Twice\", Pure = true)]\n    public static double Run(double value) => value * 2;\n}";
+        var code = N("twice", "custom", new JsonObject { ["source"] = twice, ["arguments"] = new JsonObject { ["value"] = Lit("number", 3), ["gone"] = Lit("number", 1) } });
+        var definition = GraphDefinition("Twice", Graph("Twice", [code, N("s", "entity_state", new { entity = "level" })], Data("twice", "s", "value", "result")), ("level", "sensor"));
+        static bool Removed(JsonNode? diagnostics) => diagnostics?.AsArray().Any(d => d!["nodeId"]?.GetValue<string>() == "twice" && d["severity"]!.GetValue<int>() == 2
+            && d["message"]!.GetValue<string>() == "Removed the value of Gone: the code no longer has that input") == true;
+
+        var plain = await Ok(new { operation = "preview", definition });
+        Check(!plain["valid"]!.GetValue<bool>() && !plain.ContainsKey("graph"), "without deriveSignatures a step without its pins is invalid: " + plain.ToJsonString());
+        var derived = await Ok(new { operation = "preview", definition, deriveSignatures = true });
+        Check(derived["valid"]!.GetValue<bool>() && Removed(derived["diagnostics"]), "with it the preview is valid and says what it removed: " + derived["diagnostics"]!.ToJsonString());
+        Check(derived.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(["diagnostics", "graph", "source", "sourceMap", "valid"]) && !derived["graph"]!.AsObject().ContainsKey("definition"),
+            "the preview answers the graph and nothing else of the definition: " + string.Join(", ", derived.Select(p => p.Key)));
+        var node = derived["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "twice")!;
+        Check(node["config"]!["signature"]?["inputs"]?["value"] != null && node["config"]!["signature"]!["outputs"]!["result"] != null && node["config"]!["arguments"]!.AsObject().Select(p => p.Key).SequenceEqual(["value"]),
+            "the graph has the step's pins from its code: " + node.ToJsonString());
+
+        var saved = await Ok(new { operation = "save", id = "twice", expectedRevision = 0, definition, deriveSignatures = true });
+        Check(saved["active"]!.GetValue<bool>() && Removed(saved["diagnostics"]), "the save runs and says what it removed: " + saved.ToJsonString());
+        var stored = (await Ok(new { operation = "read", id = "twice" }))["logic"]!["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "twice")!;
+        Check(JsonNode.DeepEquals(stored["config"]!["signature"], node["config"]!["signature"]) && stored["config"]!["arguments"]!.AsObject().Count == 1, "the save stores the derived graph: " + stored.ToJsonString());
+        Console.WriteLine("PASS entity api: deriveSignatures writes a Custom C# step's pins from its code on preview and save, answers the derived graph alone and warns of what it removed");
     }
 
     static async Task Scenario(HassSharpManager api, EntityTestHome home)

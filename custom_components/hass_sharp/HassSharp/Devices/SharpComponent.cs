@@ -178,6 +178,20 @@ public abstract class SharpComponent
     protected Task<SharpImage> CameraSnapshot(string entityId) =>
         HassCameras.SnapshotAsync(Host?.DefinitionId ?? "", entityId, Host?.Calls ?? CancellationToken.None);
 
+    /// <summary>
+    /// Takes a picture with one of Home Assistant's cameras, as <see cref="CameraSnapshot(string)"/> does, and stops waiting
+    /// for it as soon as <paramref name="cancellation"/> is cancelled, such as <see cref="Stopping"/> as the definition stops.
+    /// </summary>
+    /// <param name="entityId">The camera, such as <c>camera.front_door</c>.</param>
+    /// <param name="cancellation">Ends the wait; the picture Home Assistant still sends is then dropped.</param>
+    /// <exception cref="InvalidOperationException">Home Assistant gave no picture; the message says why.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellation"/> was cancelled before the picture came.</exception>
+    protected async Task<SharpImage> CameraSnapshot(string entityId, CancellationToken cancellation)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(Host?.Calls ?? CancellationToken.None, cancellation);
+        return await HassCameras.SnapshotAsync(Host?.DefinitionId ?? "", entityId, linked.Token);
+    }
+
     /// <summary>Writes a message to the Home Assistant log.</summary>
     /// <param name="message">The message.</param>
     /// <param name="level">How important it is; Info unless given.</param>

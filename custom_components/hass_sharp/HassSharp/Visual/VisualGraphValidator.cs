@@ -414,8 +414,9 @@ public static class VisualGraphValidator
         internal static string Stateless(string type) => $"{Capital(Article(type))} {type.ToLowerInvariant()} has no state to set";
         /// <summary>A State or Set state step given none of its entity's state values, none of which is required.</summary>
         internal static string NoValue(string step) => $"{step} needs at least one value";
-        /// <summary>A command of an entity no When commanded step handles.</summary>
-        internal static string CommandUnhandled(string domain, string key, string command, string label) => $"{domain} {Name(key)} does nothing on {command}; add {Article(label)} {label} step for it";
+        /// <summary>A command of an entity that no When commanded step handles, the entity named by its name and key (its key alone when it has no name).</summary>
+        internal static string CommandUnhandled(string domain, string key, string? name, string command, string label) =>
+            $"{domain} {(Trimmed(name ?? "") is { Length: > 0 } named ? $"{named} ({key})" : Name(key))} does nothing on {command}; add {Article(label)} {label} step for it";
         /// <summary>A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one.</summary>
         internal static string NotACamera(string name, bool anyCamera) => anyCamera ? $"{Name(name)} is not a camera; choose one of this definition's cameras" : $"{Name(name)} is not a camera; add a camera to this definition first";
         /// <summary>A second When a frame is needed step for one camera, named by its name.</summary>
@@ -682,7 +683,7 @@ public static class VisualGraphValidator
                 if (EntityDomain(Root, Text(entity, "key")) is { } domain)
                     foreach (var (command, _) in domain["commands"] as JsonObject ?? [])
                         if (!commands.Any(n => Choice(n, "entity") == Text(entity, "key") && Choice(n, "command") == command))
-                            errors.Add(new(null, Words.CommandUnhandled(Text(domain, "label", Words.DomainWords(Text(entity, "domain"))), Text(entity, "key"), CommandLabel(Text(entity, "key"), command), KindLabel("entity_command")), 2, Code: "command.unhandled"));
+                            errors.Add(new(null, Words.CommandUnhandled(Text(domain, "label", Words.DomainWords(Text(entity, "domain"))), Text(entity, "key"), Text(entity, "name"), CommandLabel(Text(entity, "key"), command), KindLabel("entity_command")), 2, Code: "command.unhandled"));
             // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
             var frames = OfKind("camera_frame").Where(n => IsCamera(Choice(n, "entity"))).ToList();
             foreach (var node in Later(frames, n => Choice(n, "entity"))) Error(Id(node), Words.FrameDuplicate(EntityName(Choice(node, "entity")), KindLabel("camera_frame")), "entity", code: "camera.duplicate");

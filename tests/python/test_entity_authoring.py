@@ -1,5 +1,6 @@
 """The hass_sharp/entities route's Python side: the Home Assistant triggers of a graph definition are validated on
-preview and save, as an automation's are, and the answered definitions list their entity registry entries.
+preview and save, as an automation's are, with deriveSignatures passed on to that preview; the answered definitions
+list their entity registry entries and their Trigger steps; run goes to .NET as it is.
 
 .NET, the entity registry and Home Assistant's trigger schemas are fakes; the trigger check is native_triggers.py's
 own `async_validate_graph_triggers`, with Home Assistant's normalization replaced.
@@ -73,6 +74,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.requests = []
         self.dotnet_threads = set()
         self.refuse = None  # an error envelope .NET answers instead, for the next request
+        self.documents = {}  # what .NET's documents of these ids carry besides its own fields, such as their logic
         self.registry = Registry([
             entry('switch.porch_plug', 'plug:relay', original_name='Relay'),
             entry('sensor.plug_power', 'plug:power', name='Power use', original_name='Power', disabled_by='user'),
@@ -109,7 +111,8 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
             return json.dumps(refused)
         operation = request.get('operation')
         def document(definition_id):
-            return {'version': 1, 'id': definition_id, 'revision': 2, 'name': definition_id, 'status': 'off', 'liveEntities': []}
+            return {'version': 1, 'id': definition_id, 'revision': 2, 'name': definition_id, 'status': 'off', 'liveEntities': [],
+                    **copy.deepcopy(self.documents.get(definition_id, {}))}
         result = {
             'types': lambda: {'types': [], 'generation': 'g1'},
             'list': lambda: [document('lonely'), document('plug'), document('plug2')],
@@ -119,6 +122,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
                              'activationError': 'Not active'},
             'set_enabled': lambda: {'id': request['id'], 'enabled': request['enabled'], 'active': False, 'activationError': None},
             'delete': lambda: {'deleted': True},
+            'run': lambda: {'version': 1, 'runId': 'run1'},
         }[operation]()
         return json.dumps({'version': 1, 'ok': True, 'result': result})
 
@@ -195,7 +199,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
                        'disabled': False}]})
         # The rest of each document as .NET answered it.
         self.assertEqual(listed['result'][1], {'version': 1, 'id': 'plug', 'revision': 2, 'name': 'plug', 'status': 'off',
-                                               'liveEntities': [], 'registeredEntities': self.plug_entities()})
+                                               'liveEntities': [], 'registeredEntities': self.plug_entities(), 'triggers': []})
         # One pass over the serving config entry's entries for the whole answer, on the event loop, never in .NET's thread.
         self.assertEqual(self.registry.reads, [(ENTRY, self.loop_thread)])
         self.assertNotIn(self.loop_thread, self.dotnet_threads)
@@ -221,8 +225,45 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(e['name'], e['disabled']) for e in read['result']['registeredEntities']],
                          [(None, False), ('Power use', True), ('Porch plug', False)])
 
+    async def test_derive_signatures_reaches_the_preview(self):
+        graph = definition(nodes=[trigger('poll', {'trigger': 'state', 'entity_id': 'switch.plug'})])
+        preview = {'operation': 'preview', 'definition': graph, 'deriveSignatures': True}
+        await self.send(preview)
+        self.assertEqual(self.requests, [preview])
+        # A save checks the derived graph's triggers in a preview that derives too, then goes to .NET as it was sent.
+        self.requests.clear()
+        save = {'operation': 'save', 'id': 'plug', 'expectedRevision': 0, 'definition': graph, 'deriveSignatures': True}
+        self.assertTrue((await self.send(save))['ok'])
+        self.assertEqual(self.requests, [preview, save])
+        # Anything but true derives nothing in the preview.
+        self.requests.clear()
+        await self.send({**save, 'deriveSignatures': 'yes'})
+        self.assertEqual(self.requests[0], {'operation': 'preview', 'definition': graph})
+
+    async def test_documents_list_their_trigger_steps(self):
+        graph = {'version': 5, 'edges': [], 'nodes': [
+            {'id': 'press', 'kind': 'trigger', 'config': {'type': 'manual'}},
+            {'id': 'closed', 'kind': 'trigger', 'config': {'type': 'manual', 'manual': False}},
+            {'id': 'set', 'kind': 'set_entity_state', 'config': {'entity': 'relay'}}]}
+        self.documents = {'plug': {'logic': {'kind': 'graph', 'graph': graph}, 'currentRevisionActive': True},
+                          'plug2': {'logic': {'kind': 'class', 'type': 'library:shelly:NodeLib.Plug'}, 'currentRevisionActive': True}}
+        steps = [{'triggerId': 'press', 'method': 'Run_' + 'press'.encode().hex().upper(), 'manual': True, 'runnable': True},
+                 {'triggerId': 'closed', 'method': 'Run_' + 'closed'.encode().hex().upper(), 'manual': False, 'runnable': False}]
+        listed = await self.send({'operation': 'list'})
+        # As an automation's are given; a class definition has none, nor one whose logic is not there.
+        self.assertEqual({d['id']: d['triggers'] for d in listed['result']}, {'lonely': [], 'plug': steps, 'plug2': []})
+        self.assertEqual((await self.send({'operation': 'read', 'id': 'plug'}))['result']['triggers'], steps)
+        saved = await self.send({'operation': 'save', 'id': 'plug', 'expectedRevision': 2, 'definition': definition('class')})
+        self.assertEqual(saved['result']['document']['triggers'], steps)
+        self.assertNotIn('triggers', saved['result'])
+        self.assertEqual((await self.send({'operation': 'read', 'id': 'plug2'}))['result']['triggers'], [])
+        # One whose saved revision does not run has none that can be run.
+        self.documents['plug']['currentRevisionActive'] = False
+        self.assertEqual([t['runnable'] for t in (await self.send({'operation': 'read', 'id': 'plug'}))['result']['triggers']], [False, False])
+
     async def test_other_operations_are_passed_through(self):
         for request in ({'operation': 'types'}, {'operation': 'set_enabled', 'id': 'plug', 'enabled': False},
+                        {'operation': 'run', 'id': 'plug', 'triggerId': 'press'},
                         {'operation': 'delete', 'id': 'plug', 'expectedRevision': 2},
                         {'operation': 'preview', 'definition': definition('class')}):
             with self.subTest(operation=request['operation']):
@@ -235,7 +276,9 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
                                  ({'operation': 'read', 'id': 'gone'}, ('not_found', 'Entity definition not found')),
                                  ({'operation': 'save', 'id': 'plug', 'expectedRevision': 1, 'definition': definition('class')},
                                   ('conflict', 'Revision conflict; reload the current document')),
-                                 ({'operation': 'rename', 'id': 'plug'}, ('invalid_request', 'Unknown entity operation'))):
+                                 ({'operation': 'rename', 'id': 'plug'}, ('invalid_request', 'Unknown entity operation')),
+                                 ({'operation': 'run', 'id': 'plug', 'triggerId': 'set'},
+                                  ('invalid_request', 'Only a Trigger step can be run by hand; Set state is not one'))):
             with self.subTest(operation=request['operation']):
                 self.refuse = {'version': 1, 'ok': False, 'error': {'code': refusal[0], 'detail': refusal[1]}}
                 expected = copy.deepcopy(self.refuse)

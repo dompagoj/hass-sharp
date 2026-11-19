@@ -262,6 +262,12 @@ describe('the image type', () => {
     expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.entity', 'camera.duplicate', 'camera.no_frame']))
   })
 })
+it('names an entity whose command no When commanded step handles by its name and key, or by its key alone', () => {
+  const relay = (name?: string): Graph => ({ version: 5, name: 'Relay', nodes: [], edges: [], definition: { entities: [{ key: 'relay', domain: 'switch', ...(name === undefined ? {} : { name }) }], settings: [] } })
+  const unhandled = (graph: Graph) => contract.validateGraph(graph).filter(d => d.code === 'command.unhandled').map(d => d.message).sort()
+  expect(unhandled(relay(' Relay '))).toEqual(['Switch Relay (relay) does nothing on Turn off; add a When commanded step for it', 'Switch Relay (relay) does nothing on Turn on; add a When commanded step for it'])
+  for (const name of [undefined, '', '  ']) expect(unhandled(relay(name))).toEqual(['Switch relay does nothing on Turn off; add a When commanded step for it', 'Switch relay does nothing on Turn on; add a When commanded step for it'])
+})
 it('any number goes into any numeric pin, except a nullable one into a pin that cannot hold null', () => {
   const cases: [string, string, boolean][] = [
     ['number', 'global::System.Int32', true], ['global::System.Int32', 'number', true], ['global::System.Double', 'global::System.Int32', true],

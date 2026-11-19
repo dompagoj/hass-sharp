@@ -58,8 +58,17 @@ static class CameraTests
             protected override async Task Start() { if (AppContext.GetData("HassSharp.CameraTests.Start") is Func<Task> wait) await wait(); }
             protected override async Task Stop() { if (AppContext.GetData("HassSharp.CameraTests.Stop") is Func<Task> wait) await wait(); }
         }
+        public class Taker : SharpCamera
+        {
+            public Taker() : base("main", "Taker") { }
+            protected override Task Start()
+            {
+                AppContext.SetData("HassSharp.CameraTests.Take", new Func<CancellationToken?, Task<SharpImage>>(token => token is { } given ? CameraSnapshot("camera.porch", given) : CameraSnapshot("camera.porch")));
+                return Task.CompletedTask;
+            }
+        }
         """;
-    const string FeedKey = "HassSharp.CameraTests.Feed", DoorKey = "HassSharp.CameraTests.Door", StartKey = "HassSharp.CameraTests.Start", StopKey = "HassSharp.CameraTests.Stop", SlowKey = "HassSharp.CameraTests.Slow";
+    const string FeedKey = "HassSharp.CameraTests.Feed", DoorKey = "HassSharp.CameraTests.Door", StartKey = "HassSharp.CameraTests.Start", StopKey = "HassSharp.CameraTests.Stop", SlowKey = "HassSharp.CameraTests.Slow", TakeKey = "HassSharp.CameraTests.Take";
 
     static int calls;
     // What the feed's next frames do; each call is counted.
@@ -124,7 +133,9 @@ static class CameraTests
             await Unencodable(api, home);
             await Saved(api, home, Ok);
             await Stopped(api, home, Ok);
+            await Replaced(api, Ok);
             await Snapshots(api, home, Ok);
+            await Cancellable(api, home, Ok);
             await Options(api, home, Ok);
             await Recovered(api, home);
             await WithoutTheLibrary(api, home);
@@ -138,6 +149,7 @@ static class CameraTests
             AppContext.SetData(StartKey, null);
             AppContext.SetData(StopKey, null);
             AppContext.SetData(SlowKey, null);
+            AppContext.SetData(TakeKey, null);
         }
     }
 
@@ -196,7 +208,7 @@ static class CameraTests
 
     static async Task Failing(HassSharpManager api, EntityTestHome home)
     {
-        string[] Errors() => home.Logs(PyLogLevel.Error).Where(line => line.StartsWith("Feed: View (view) could not make a frame: ", StringComparison.Ordinal)).ToArray();
+        string[] Errors() => home.Logs(PyLogLevel.Error).Where(line => line.StartsWith("Feed: View could not make a frame: ", StringComparison.Ordinal)).ToArray();
         Feed(_ => throw new InvalidOperationException("the lens is covered"));
         var before = Calls;
         for (var i = 0; i < 6; i++)
@@ -205,15 +217,15 @@ static class CameraTests
             Check(Width(await api.CameraImage("feed:view")) == 24, $"failure {i + 1} answers the last good frame");
         }
         Check(Calls == before + 6, $"six requests an interval apart try six times, not {Calls - before}");
-        Check(Errors().SequenceEqual(["Feed: View (view) could not make a frame: the lens is covered"]), "six failures for one reason log one error: " + string.Join(" | ", Errors()));
-        Check(home.Logs(PyLogLevel.Debug).Count(line => line.StartsWith("Feed: View (view) could not make a frame: System.InvalidOperationException: the lens is covered", StringComparison.Ordinal)) == 6,
+        Check(Errors().SequenceEqual(["Feed: View could not make a frame: the lens is covered"]), "six failures for one reason log one error: " + string.Join(" | ", Errors()));
+        Check(home.Logs(PyLogLevel.Debug).Count(line => line.StartsWith("Feed: View could not make a frame: System.InvalidOperationException: the lens is covered", StringComparison.Ordinal)) == 6,
             "each failure is logged whole at Debug");
         Feed(Picture(25));
         await Task.Delay(30);
         Check(Width(await api.CameraImage("feed:view")) == 25, "the camera makes frames again");
         await Task.Delay(30);
         Check(Width(await api.CameraImage("feed:view")) == 25, "and again");
-        Check(home.Logs(PyLogLevel.Info).Count(line => line == "Feed: View (view) makes frames again") == 1 && Errors().Length == 1, "the recovery is logged once: " + string.Join(" | ", home.Logs()));
+        Check(home.Logs(PyLogLevel.Info).Count(line => line == "Feed: View makes frames again") == 1 && Errors().Length == 1, "the recovery is logged once: " + string.Join(" | ", home.Logs()));
 
         // The last good frame is given for a while (1 s here, 30 s in Home Assistant), then the request fails with the reason.
         CameraFrames.GoodFor = TimeSpan.FromSeconds(1);
@@ -223,7 +235,7 @@ static class CameraTests
         Check(Width(await api.CameraImage("feed:view")) == 25, "a failure soon after the last good frame answers it");
         await Task.Delay(TimeSpan.FromSeconds(1.2) - since.Elapsed);
         var stale = await Throws<InvalidOperationException>(() => api.CameraImage("feed:view"), "a failure long after the last good frame");
-        Check(stale.Message == "View (view) could not make a frame: the camera is off", "the request fails with the reason: " + stale.Message);
+        Check(stale.Message == "View could not make a frame: the camera is off", "the request fails with the reason: " + stale.Message);
         Check(Errors().Length == 2, "another reason logs again: " + string.Join(" | ", Errors()));
 
         // A frame slower than the limit fails as a timeout. While it still runs no other is started, however long it
@@ -250,9 +262,9 @@ static class CameraTests
         Check(Calls == before + 1, $"no second frame is started while the slow one still runs, not {Calls - before}");
         await Task.Delay(TimeSpan.FromSeconds(1.8) - good.Elapsed);
         var slow = await Throws<TimeoutException>(() => api.CameraImage("feed:view"), "a request long after the last good frame, the slow one still running");
-        Check(slow.Message == "View (view) could not make a frame: it took longer than 0.2 s", "the request fails with the timeout: " + slow.Message);
+        Check(slow.Message == "View could not make a frame: it took longer than 0.2 s", "the request fails with the timeout: " + slow.Message);
         Check(Calls == before + 1, $"still no second frame is started, not {Calls - before}");
-        Check(Errors().Count(line => line == "Feed: View (view) could not make a frame: it took longer than 0.2 s") == 1, "the timeout is logged once: " + string.Join(" | ", Errors()));
+        Check(Errors().Count(line => line == "Feed: View could not make a frame: it took longer than 0.2 s") == 1, "the timeout is logged once: " + string.Join(" | ", Errors()));
         late.SetResult(SharpImage.Blank(27, 8));
         Feed(Picture(28));
         // Its end reaches the host through a pool continuation.
@@ -292,7 +304,7 @@ static class CameraTests
             await EntityTestHome.Until(() => !slow.Frames.Busy, "the failed attempt has ended");
             await Task.Delay(60);
             Check(Width(await api.CameraImage("slow:main")) == 41 && slow.Frames.Begun == made + 2, $"a failed attempt does not hold up the next one for 0.8 of the interval ({slow.Frames.Begun - made} made)");
-            Check(home.Logs(PyLogLevel.Info).Contains("Slow: Slow (main) makes frames again"), "and it makes frames again: " + string.Join(" | ", home.Logs()));
+            Check(home.Logs(PyLogLevel.Info).Contains("Slow: Slow makes frames again"), "and it makes frames again: " + string.Join(" | ", home.Logs()));
         }
         finally
         {
@@ -345,7 +357,7 @@ static class CameraTests
     /// </summary>
     static async Task Unencodable(HassSharpManager api, EntityTestHome home)
     {
-        string[] Errors() => home.Logs(PyLogLevel.Error).Where(line => line.StartsWith("Pusher: Pusher (main) could not make a frame: ", StringComparison.Ordinal)).ToArray();
+        string[] Errors() => home.Logs(PyLogLevel.Error).Where(line => line.StartsWith("Pusher: Pusher could not make a frame: ", StringComparison.Ordinal)).ToArray();
         CameraFrames.GoodFor = TimeSpan.FromSeconds(1);
         try
         {
@@ -357,15 +369,15 @@ static class CameraTests
             for (var i = 0; i < 2; i++) Check(Width(await api.CameraImage("pusher:main")) == 34, $"request {i + 1} for a picture over 40 megapixels answers the last good frame");
             pusher.Show(SharpImage.Load(Damaged()).DrawRect(1, 1, 4, 4));
             Check(Width(await api.CameraImage("pusher:main")) == 34, "a damaged picture answers the last good frame");
-            Check(Errors().Length == 2 && Errors()[0] == "Pusher: Pusher (main) could not make a frame: The picture is larger than 40 megapixels" && Errors()[1].StartsWith("Pusher: Pusher (main) could not make a frame: The picture could not be read", StringComparison.Ordinal),
+            Check(Errors().Length == 2 && Errors()[0] == "Pusher: Pusher could not make a frame: The picture is larger than 40 megapixels" && Errors()[1].StartsWith("Pusher: Pusher could not make a frame: The picture could not be read", StringComparison.Ordinal),
                 "one line for each reason: " + string.Join(" | ", Errors()));
             await Task.Delay(TimeSpan.FromSeconds(1.3) - good.Elapsed);
             var failed = await Throws<InvalidOperationException>(() => api.CameraImage("pusher:main"), "a damaged picture long after the last good frame");
-            Check(failed.Message.StartsWith("Pusher (main) could not make a frame: The picture could not be read", StringComparison.Ordinal), "the request fails with the reason: " + failed.Message);
+            Check(failed.Message.StartsWith("Pusher could not make a frame: The picture could not be read", StringComparison.Ordinal), "the request fails with the reason: " + failed.Message);
             Check(Errors().Length == 2, "the same reason is not logged again: " + string.Join(" | ", Errors()));
             pusher.Show(SharpImage.Blank(36, 8));
             Check(Width(await api.CameraImage("pusher:main")) == 36 && Width(await api.CameraImage("pusher:main")) == 36, "a frame that can be encoded is the answer again");
-            Check(home.Logs(PyLogLevel.Info).Count(line => line == "Pusher: Pusher (main) makes frames again") == 1, "and that is said once: " + string.Join(" | ", home.Logs()));
+            Check(home.Logs(PyLogLevel.Info).Count(line => line == "Pusher: Pusher makes frames again") == 1, "and that is said once: " + string.Join(" | ", home.Logs()));
 
             // The pool's threads read a picture 38 wide; one cut before its size is refused, not drawn black at that size.
             var other = SharpImage.Blank(38, 8).ToJpeg();
@@ -373,7 +385,7 @@ static class CameraTests
             pusher.Show(SharpImage.Load(CutBeforeItsSize()).DrawRect(1, 1, 4, 4));
             var answered = Width(await api.CameraImage("pusher:main"));
             Check(answered == 36, $"a picture cut before its size answers the last good frame, not one {answered} wide");
-            Check(Errors().Length == 3 && Errors()[2].StartsWith("Pusher: Pusher (main) could not make a frame: The picture could not be read", StringComparison.Ordinal),
+            Check(Errors().Length == 3 && Errors()[2].StartsWith("Pusher: Pusher could not make a frame: The picture could not be read", StringComparison.Ordinal),
                 "and says it could not be read: " + string.Join(" | ", Errors()));
         }
         finally { CameraFrames.GoodFor = TimeSpan.FromSeconds(30); }
@@ -518,6 +530,51 @@ static class CameraTests
         Console.WriteLine("PASS camera: turning a definition off cancels the frame being made and answers its request at once with the last good frame, or refuses it when there is none; later requests are refused; a revision saved meanwhile answers the request in flight with the last good frame and serves frames");
     }
 
+    /// <summary>
+    /// A request to a camera that makes its frames which has found its definition running, and reaches making a frame just
+    /// as a save replaces the definition (the replaced revision has stopped, its stop has not yet cancelled what it runs):
+    /// the last good frame, as when the stop overtakes the making; none is made. A save cancels the replaced revision's
+    /// lifetime before stopping it, which cancels what it runs first; here its stop is begun as the save swaps it out,
+    /// before that (as one called by itself is), and both points are held by hooks.
+    /// </summary>
+    static async Task Replaced(HassSharpManager api, Func<object, Task<JsonObject>> ok)
+    {
+        Feed(Picture(32));
+        await Task.Delay(30);
+        Check(Width(await api.CameraImage("feed:view")) == 32, "a good frame before the save");
+        await Task.Delay(30);
+        var old = Running(api, "feed:view").Host;
+        var (checkedRunning, release) = (new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        Task<byte[]>? waiting = null;
+        var stoppingAtTheMark = true;
+        // The request waits once it has found the definition running; the stop lets it go on once the replaced revision
+        // has stopped, before the stop cancels what it runs, and waits for its answer there.
+        old.FrameChecked = () => { checkedRunning.TrySetResult(); return release.Task; };
+        old.StopMarked = () =>
+        {
+            stoppingAtTheMark = old.Stopping.IsCancellationRequested;
+            release.TrySetResult();
+            try { waiting!.Wait(TimeSpan.FromSeconds(5)); } catch (AggregateException) { }
+        };
+        Scripts(api).Swapped = () => _ = old.StopAsync();
+        try
+        {
+            var made = Calls;
+            waiting = api.CameraImage("feed:view");
+            Check(await Task.WhenAny(checkedRunning.Task, Task.Delay(TimeSpan.FromSeconds(5))) == checkedRunning.Task, "the request finds the definition running");
+            var revision = (await ok(new { operation = "read", id = "feed" }))["revision"]!.GetValue<long>();
+            var saved = await ok(new { operation = "save", id = "feed", expectedRevision = revision, definition = Definition("Feed", "Feed") });
+            Check(saved["active"]!.GetValue<bool>() && Running(api, "feed:view").Host != old, "the new revision runs: " + saved.ToJsonString());
+            Check(!stoppingAtTheMark && waiting.IsCompleted, $"the request was answered while the replaced revision stopped, before its stop was cancelled ({stoppingAtTheMark})");
+            byte[] picture;
+            try { picture = await waiting; }
+            catch (Exception refused) { throw new Exception($"the request in flight as the save replaced its definition was refused ({refused.GetType().Name}): {refused.Message}"); }
+            Check(Width(picture) == 32 && Calls == made, $"the request gets the good frame, and none is made ({Calls - made})");
+        }
+        finally { Scripts(api).Swapped = null; }
+        Console.WriteLine("PASS camera: a request that reaches making a frame as a save replaces its definition, before its stop is cancelled, gets the last good frame, and none is made");
+    }
+
     static async Task Snapshots(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)
     {
         // A picture of another camera, drawn on.
@@ -533,11 +590,11 @@ static class CameraTests
         await Task.Delay(80);
         home.AnswerPictures = (_, _, _, fail) => fail("Camera camera.porch is off");
         var off = await Throws<InvalidOperationException>(() => api.CameraImage("door:main"), "a camera that is off");
-        Check(off.Message == "Door (main) could not make a frame: Camera camera.porch is off", "Home Assistant's error: " + off.Message);
+        Check(off.Message == "Door could not make a frame: Camera camera.porch is off", "Home Assistant's error: " + off.Message);
         await Task.Delay(30);
         home.AnswerPictures = (_, _, answer, _) => answer([]);
         var empty = await Throws<InvalidOperationException>(() => api.CameraImage("door:main"), "a camera that gives nothing");
-        Check(empty.Message == "Door (main) could not make a frame: camera.porch gave no picture", "no picture: " + empty.Message);
+        Check(empty.Message == "Door could not make a frame: camera.porch gave no picture", "no picture: " + empty.Message);
         // Home Assistant or HassSharp stopping while the picture is taken is no failure of the camera: no line is logged.
         string[] DoorErrors() => home.Logs(PyLogLevel.Error).Where(line => line.StartsWith("Door: ", StringComparison.Ordinal)).ToArray();
         var logged = DoorErrors().Length;
@@ -546,7 +603,7 @@ static class CameraTests
             await Task.Delay(30);
             home.AnswerPictures = (_, _, _, fail) => fail(stopping);
             var stopped = await Throws<InvalidOperationException>(() => api.CameraImage("door:main"), stopping);
-            Check(stopped.Message == "Door (main) could not make a frame: " + stopping, "the request says why: " + stopped.Message);
+            Check(stopped.Message == "Door could not make a frame: " + stopping, "the request says why: " + stopped.Message);
         }
         Check(DoorErrors().Length == logged, "a picture not taken because Home Assistant or HassSharp stops is not logged as a failure: " + string.Join(" | ", DoorErrors()));
         CameraFrames.GoodFor = TimeSpan.FromSeconds(30);
@@ -578,6 +635,39 @@ static class CameraTests
         Console.WriteLine("PASS camera: a class takes a picture of another camera through Home Assistant and draws on it; Home Assistant's error and an empty answer fail with their reason, and a picture being taken is cut when the definition stops, its request answered with the last good frame; a picture not taken because Home Assistant or HassSharp stops is not logged");
     }
 
+    /// <summary>
+    /// <c>CameraSnapshot</c> with a token of the caller's: cancelling it ends the wait at once. Without one it waits as
+    /// before: for the picture, or until the definition's stop stops waiting for its code.
+    /// </summary>
+    static async Task Cancellable(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)
+    {
+        var saved = await ok(new { operation = "save", id = "taker", expectedRevision = 0, definition = Definition("Taker", "Taker") });
+        Check(saved["active"]!.GetValue<bool>(), "the taker runs: " + saved.ToJsonString());
+        var take = (Func<CancellationToken?, Task<SharpImage>>)AppContext.GetData(TakeKey)!;
+        var porch = SharpImage.Blank(40, 30, SharpColor.White).ToJpeg();
+        home.AnswerPictures = (_, _, answer, _) => answer(porch);
+        using (var unused = new CancellationTokenSource())
+            Check((await take(unused.Token)).Width == 40 && (await take(null)).Width == 40, "both forms answer the picture");
+
+        home.AnswerPictures = (_, _, _, _) => { };
+        var asked = home.Pictures().Length;
+        using var cancel = new CancellationTokenSource();
+        var cancellable = take(cancel.Token);
+        var plain = take(null);
+        await EntityTestHome.Until(() => home.Pictures().Length == asked + 2, "both pictures are asked for");
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        cancel.Cancel();
+        try { await cancellable.WaitAsync(TimeSpan.FromSeconds(5)); throw new Exception("a cancelled wait answered a picture"); }
+        catch (OperationCanceledException) { }
+        Check(clock.Elapsed < TimeSpan.FromSeconds(1), $"cancelling the token ended the wait in {clock.ElapsedMilliseconds} ms");
+        await Task.Delay(50);
+        Check(!plain.IsCompleted, "the form without a token still waits for the picture");
+        await ok(new { operation = "set_enabled", id = "taker", enabled = false });
+        try { await plain.WaitAsync(TimeSpan.FromSeconds(5)); throw new Exception("the wait without a token answered a picture"); }
+        catch (OperationCanceledException) { }
+        Console.WriteLine("PASS camera: CameraSnapshot with a token ends its wait as the token is cancelled; without one it waits for the picture or the definition's stop, as before");
+    }
+
     static async Task Options(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)
     {
         object Lens(object? frameInterval) => new
@@ -602,7 +692,7 @@ static class CameraTests
         var (host, camera) = Running(api, "lens:lens");
         Check(camera.FrameInterval == 2, "the camera has its frame interval");
         var dark = await Throws<InvalidOperationException>(() => api.CameraImage("lens:lens"), "a camera built from nodes that has shown nothing");
-        Check(dark.Message == "Lens (lens) has not shown a frame yet", "a camera built from nodes that has shown nothing: " + dark.Message);
+        Check(dark.Message == "Lens has not shown a frame yet", "a camera built from nodes that has shown nothing: " + dark.Message);
 
         // An interval of 200 ms here (2 × 100 ms): two requests at once are well within 0.8 of it, and 250 ms apart well past it.
         CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(100);
@@ -615,7 +705,7 @@ static class CameraTests
         var never = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.FrameNeeded("lens", () => { Interlocked.Increment(ref hangs); return never.Task; });
         var hanging = await Throws<TimeoutException>(() => api.CameraImage("lens:lens"), "a frame flow that hangs on a camera with no frame");
-        Check(hanging.Message == "Lens (lens) could not make a frame: it took longer than 0.1 s" && hangs == 1, $"the request times out ({hangs}): " + hanging.Message);
+        Check(hanging.Message == "Lens could not make a frame: it took longer than 0.1 s" && hangs == 1, $"the request times out ({hangs}): " + hanging.Message);
         await Task.Delay(250);
         var still = await Throws<TimeoutException>(() => api.CameraImage("lens:lens"), "a request while the flow still hangs");
         Check(still.Message == hanging.Message && hangs == 1, $"the next request gets its outcome without starting another ({hangs}): " + still.Message);
@@ -659,7 +749,7 @@ static class CameraTests
         // Frames 2 ms apart: the second request starts an attempt of its own as soon as the first one has ended.
         CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(1);
         var (host, camera) = Running(api, "lens:lens");
-        string[] Lines() => home.Logs().Where(line => line.StartsWith("Lens: Lens (lens) ", StringComparison.Ordinal)).ToArray();
+        string[] Lines() => home.Logs().Where(line => line.StartsWith("Lens: Lens ", StringComparison.Ordinal)).ToArray();
         var from = Lines().Length;
         host.FrameNeeded("lens", () => { host.SetFrame("lens", SharpImage.Blank(6000, 4000).DrawRect(1, 1, 10, 10)); return Task.CompletedTask; });
         await Task.Delay(20);
@@ -669,9 +759,9 @@ static class CameraTests
         var second = api.CameraImage("lens:lens");
         Check(Width(await first) == 6000 && Width(await second) == 6000, "both requests get the large frame");
         var lines = Lines().Skip(from).ToArray();
-        var failed = Array.IndexOf(lines, "Lens: Lens (lens) could not make a frame: the rain came in");
+        var failed = Array.IndexOf(lines, "Lens: Lens could not make a frame: the rain came in");
         Check(failed >= 0, "the newer failure is logged: " + string.Join(" | ", lines));
-        Check(!lines.Skip(failed + 1).Contains("Lens: Lens (lens) makes frames again"), "no line says the camera works again after the newer failure: " + string.Join(" | ", lines));
+        Check(!lines.Skip(failed + 1).Contains("Lens: Lens makes frames again"), "no line says the camera works again after the newer failure: " + string.Join(" | ", lines));
         Console.WriteLine("PASS camera: a request that shared a frame made well says the camera works again only while no newer attempt has failed");
     }
 
@@ -689,10 +779,10 @@ static class CameraTests
             for (var i = 0; i < 3; i++)
             {
                 var missing = await Throws<InvalidOperationException>(() => api.CameraImage("marked:main"), "a drawn frame without the library");
-                Check(missing.Message == "Marked (main) could not make a frame: " + TurboJpeg.Missing, "a drawn frame without the library: " + missing.Message);
+                Check(missing.Message == "Marked could not make a frame: " + TurboJpeg.Missing, "a drawn frame without the library: " + missing.Message);
             }
             var lines = home.Logs(PyLogLevel.Error).Where(line => line.StartsWith("Marked: ", StringComparison.Ordinal)).ToArray();
-            Check(lines.SequenceEqual(["Marked: Marked (main) could not make a frame: " + TurboJpeg.Missing]), "one line names the library: " + string.Join(" | ", lines));
+            Check(lines.SequenceEqual(["Marked: Marked could not make a frame: " + TurboJpeg.Missing]), "one line names the library: " + string.Join(" | ", lines));
         }
         finally { TurboJpeg.Disabled = false; }
         Console.WriteLine("PASS camera: without libjpeg-turbo the definition starts, a picture passed on is answered and a drawn one fails with one line in the log naming the library");
