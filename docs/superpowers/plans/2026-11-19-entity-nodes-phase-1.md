@@ -23,7 +23,7 @@
 
 ## Review Focus
 
-1. **A kind this Home Assistant cannot create** (`createNodeAt` returns the same graph, as for a library node no longer offered): the preview shows its label and description without pins, and nothing throws. Test in Task 2.
+1. ~~A kind this Home Assistant cannot create.~~ Dropped while executing: without a pending connection `canCreateNode` refuses only kinds the catalog lacks, and those already render nothing (item 3). `KindPreview` keeps a one-line guard for a `createNodeAt` that returns the same graph; nothing can reach it today, so it has no test.
 2. **A step is selected, then a library item is clicked:** the panel shows the preview, no card stays selected, and pressing Delete on the canvas removes nothing. Test in Task 3.
 3. **The previewed kind leaves the catalog** (a node library saved elsewhere drops it): the panel falls back to the overview. Test in Task 2.
 4. **The search hides the previewed item:** the preview stays until something is selected or it is closed. Test in Task 3.
@@ -138,14 +138,6 @@ it('falls back to the overview when the catalog has no such kind', () => {
   expect(root.querySelector('.hs-insp-overview')).not.toBeNull()
 })
 
-it('describes a kind this Home Assistant cannot create without its pins', () => {
-  // A catalog whose node cannot be created here: createNodeAt returns the graph unchanged.
-  const root = mount({ preview: uncreatableKind, catalog: catalogWithUncreatable })
-  const panel = root.querySelector('[aria-label="Step details"]')!
-  expect(panel.querySelector('h2')!.textContent).toBe(catalogWithUncreatable.nodes[uncreatableKind].label)
-  expect(panel.querySelector('[aria-label="Inputs"], [aria-label="Outputs"]')).toBeNull()
-})
-
 it('Close details asks the page to drop the preview', () => {
   const closed = vi.fn()
   const root = mount({ preview: 'delay', onPreviewClose: closed })
@@ -154,7 +146,7 @@ it('Close details asks the page to drop the preview', () => {
 })
 ```
 
-Build `catalogWithUncreatable` from whatever `canCreateNode` in `src/visual/graph.ts` refuses (read it; a singleton root already in the graph is one such case, and then `graph` carries that root).
+A new `preview` also reopens a sheet the user closed, as a new selection does (added while executing, with a test).
 
 - [ ] **Step 2: Run** `bun run test tests/kind-preview.test.tsx`. Expected: FAIL, `preview` is not a prop and nothing renders `Step details`.
 
