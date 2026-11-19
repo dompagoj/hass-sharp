@@ -228,7 +228,8 @@ public static class NodeLibraryTests
         if (scenario is null or "generic")
         {
             // Run potentially unbounded discovery in a disposable child, so the regression itself
-            // has a hard deadline and cannot exhaust the full test harness's stack or memory.
+            // has a hard deadline and cannot exhaust the full test harness's stack or memory. The child takes about a
+            // second here and 14 s with every core busy (a process start and a first compile); unbounded, it never ends.
             using var process = new System.Diagnostics.Process { StartInfo = new("dotnet") {
                 RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false } };
             process.StartInfo.ArgumentList.Add(typeof(NodeLibraryTests).Assembly.Location);
@@ -236,11 +237,11 @@ public static class NodeLibraryTests
             process.Start();
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
-            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60)); }
             catch (TimeoutException)
             {
                 process.Kill(entireProcessTree: true); await process.WaitForExitAsync();
-                throw new Exception("Expanding generic preview must terminate within ten seconds");
+                throw new Exception("Expanding generic preview must terminate within a minute");
             }
             Check(process.ExitCode == 0, "Expanding generic preview must terminate successfully: " + (await error)[..Math.Min(500, (await error).Length)]);
             Check((await output).Contains("PASS expanding generic preview"), "expanding generic child completed assertions");
