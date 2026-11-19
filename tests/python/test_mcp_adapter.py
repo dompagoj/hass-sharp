@@ -611,6 +611,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result.data['error']['code'],'internal',name)
             self.assertNotIn('hunter2',json.dumps(result.data))
             self.assertNotIn('hunter2','\n'.join(logs.output))
+            # A save stored its change before the answer came: the refusal says so, so that it is read again, not saved again.
+            if name=='entities_save':
+                self.assertIn('The change was saved',result.data['error']['detail'])
+                self.assertIn('entities_read',result.data['error']['detail'])
+            else:
+                self.assertEqual(result.data['error']['detail'],'The answer held the value of a secret setting, so it was not passed on; check integration logs')
         # So does a library save that rebuilds a definition (its answer lists the definitions it rebuilt).
         async def library(request,is_admin):
             return {'version':1,'ok':True,'result':{'saved':True,'definitions':[{'id':'porch','saved':True,'document':self.entity_document(settings=leaked)}],'invalidDefinitions':[]}}
@@ -618,6 +624,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs('custom_components.HassSharp',level='WARNING'):
             result=await self.call('library_save',{'id':'lib','name':'Lib','source':'','expectedRevision':1})
         self.assertEqual(result.data['error']['code'],'internal')
+        self.assertIn('The change was saved',result.data['error']['detail'])
         self.assertNotIn('hunter2',json.dumps(result.data))
         # Masked, it passes.
         async def masked(request,is_admin):
@@ -663,7 +670,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         entity_sentence='entities_save takes a definition: {name, entities, logic: {kind: "graph", graph}}; for an automation use save'
         for name,args,sentence in (
                 ('entities_save',{'id':'x','expectedRevision':0,'definition':automation},entity_sentence),
-                ('entities_save',{'id':'x','expectedRevision':0,'definition':{'name':'Porch','graph':automation}},entity_sentence),
+                ('entities_save',{'id':'x','expectedRevision':0,'definition':{'name':'Porch','graph':automation}},'the graph goes inside logic'),
                 ('entities_save',{'id':'x','expectedRevision':0,'graph':automation},entity_sentence),
                 ('entities_preview',{'definition':automation},'entities_preview takes a definition: {name, entities, logic: {kind: "graph", graph}}; for an automation use preview'),
                 ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'script','graph':automation}}},'logic.kind is "graph"'),
@@ -675,6 +682,24 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             refused=(await self.call(name,args)).data['error']
             self.assertEqual(refused['code'],'invalid_request',name)
             self.assertIn(sentence,refused['detail'],(name,args))
+        # Only a graph that really is an automation's (nodes and edges at the top, no logic) is sent to save.
+        self.assertNotIn('for an automation',(await self.call('entities_save',{'id':'x','expectedRevision':0,'definition':{'name':'Porch','graph':automation}})).data['error']['detail'])
+        # A definition run's trace graph (trace with graph: true) is the graph composed with a definition {entities, settings};
+        # copied into logic, it is refused with what to remove.
+        composed={**self.GRAPH,'definition':{'entities':self.DEFINITION['entities'],'settings':[{'key':'address','type':'string'}]}}
+        detail=(await self.call('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph','graph':composed}}})).data['error']['detail']
+        self.assertIn('The graph inside logic holds only version, name, nodes and edges: remove its definition',detail)
+        self.assertIn('entities and settings go at the top of the definition',detail)
+        self.assertNotIn('for an automation',detail)
+        detail=(await self.call('entities_preview',{'definition':{**self.DEFINITION,'logic':{'kind':'graph','graph':{**self.GRAPH,'entities':[],'settings':[]}}}})).data['error']['detail']
+        self.assertIn('remove its entities and settings',detail)
+        # A whole stored document sent back as the definition: what to send instead, never "use save".
+        stored=self.entity_document()
+        stored['logic']['graph']['nodes']=[{key:value for key,value in n.items() if key!='size'} for n in stored['logic']['graph']['nodes']]
+        detail=(await self.call('entities_save',{'id':'porch','expectedRevision':4,'definition':stored})).data['error']['detail']
+        self.assertIn('Send as definition only name, device, settings, entities and logic: remove activationError, active, automationId,',detail)
+        self.assertIn('id and expectedRevision',detail)
+        self.assertNotIn('for an automation',detail)
         self.service.visual.assert_not_called()
         self.service.entities.assert_not_called()
         # The top of a definition is strict; what is inside a setting, an entity or the device is the server's to check.
@@ -708,6 +733,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         for phrase in ('entity_state','entity_command','set_entity_state','entityDomains[domain].commands','entityDomains[domain].state','30 s','Stop','setting',
                        'trackHistory','permanent','new','JPEG','8 s','own camera','hasValue','via'):
             self.assertIn(phrase,definitions)
+        # A Stop step's run is recorded as Stopped, and it is no failure: the command's service call succeeds.
+        self.assertIn('records it as Stopped',definitions)
+        self.assertIn('the service call that sent the command succeeds',definitions)
+        self.assertNotIn('as succeeded',definitions)
         self.assertEqual(result['guidance'],self.adapter.PROMPT)
         whole=(await self.call('get_node_schema',{'document':'entity'})).data['result']['catalog']
         self.assertEqual(set(whole['nodes']),set(result['catalog']['nodes']))
