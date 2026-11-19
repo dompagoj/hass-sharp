@@ -193,15 +193,21 @@ describe('secret settings', () => {
 })
 
 describe('a new graph definition', () => {
-  it('has one binary sensor named after it, no device, no settings and no steps', () => {
+  it('has one Entity node, a binary sensor named after it, and no listed entity, device, settings or other step', () => {
     expect(newGraphDefinition('Any motion')).toEqual({
-      name: 'Any motion', device: null, settings: [],
-      entities: [{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion' }],
-      logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } },
+      name: 'Any motion', device: null, settings: [], entities: [],
+      logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [], nodes: [{
+        id: 'entity-1', kind: 'entity', position: { x: 60, y: 100 },
+        config: { key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {}, history: {}, arguments: {} },
+      }] } },
     })
+    // A name that is blank gives the node no name, never a blank or null one.
+    const unnamed = newGraphDefinition('  ').logic as { graph: contract.Graph }
+    expect(unnamed.graph.nodes[0].config).not.toHaveProperty('name')
+    expect(unnamed.graph.nodes[0].config.key).toBe('entity')
   })
   it('keys its entity by the name within the entity key rule', () => {
-    const key = (name: string) => newGraphDefinition(name).entities![0].key
+    const key = (name: string) => (newGraphDefinition(name).logic as { graph: contract.Graph }).graph.nodes[0].config.key
     expect(key('Hall — Motion 2')).toBe('hall_motion_2')
     expect(key('2nd floor')).toBe('nd_floor')
     expect(key('Été')).toBe('ete')

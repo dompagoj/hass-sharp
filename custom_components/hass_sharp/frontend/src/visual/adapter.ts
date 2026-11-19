@@ -1,6 +1,6 @@
 import type { Accessor, Component, JSX } from 'solid-js'
 import type { QueryClient } from '@tanstack/solid-query'
-import type { GraphDocument, VisualCatalogSnapshot } from './contract'
+import type { Graph, GraphDocument, VisualCatalogSnapshot } from './contract'
 import type { SourceRange, VisualDiagnostic, VisualPreview } from './api'
 import type { VisualGraph } from './graph'
 import type { SummaryNames } from './nodeSummary'
@@ -218,6 +218,12 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
    * copy lacks (an entity definition's secrets that were not typed here). Without it, or an answer of undefined, nothing.
    */
   copyNotice?(copied: VisualGraph): string | undefined
+  /**
+   * What deleting the steps `ids` asks first, as a confirmation's title and text (an entity definition's Entity node
+   * that steps left behind still use); undefined when it asks nothing. Without it, or with that answer, steps are
+   * deleted at once.
+   */
+  removal?(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot): { title: string; body: string } | undefined
   /** The help dialog, opened from the "⋯" menu (no Help item without it). */
   help?: Component<{ open: boolean; onClose(): void }>
 }

@@ -80,6 +80,11 @@ export interface InspectorProps {
   onQuickAdd?(): void
   /** The saved document's entities as Home Assistant has them, for the panel of a step that declares one. */
   savedEntities?: SavedEntities
+  /**
+   * Asked before steps are deleted (Delete in the panel): `proceed` deletes them, and is not called when the page
+   * decides against it. Without it, steps are deleted at once.
+   */
+  onBeforeDelete?: (ids: string[], proceed: () => void) => void
 }
 
 /**
@@ -158,10 +163,14 @@ export function Inspector(props: InspectorProps) {
     if (selection.length === 1 && ids.length === 1) selectAndFocus(ids[0])
   }
   const remove = (selection: string[]) => {
-    const next = selection.reduce((graph, id) => removeNode(graph, id, props.catalog), props.graph)
-    props.commit(next)
-    // The panel that held focus goes away with the steps; the canvas keeps it.
-    selectAndFocus(undefined)
+    const proceed = () => {
+      const next = selection.reduce((graph, id) => removeNode(graph, id, props.catalog), props.graph)
+      props.commit(next)
+      // The panel that held focus goes away with the steps; the canvas keeps it.
+      selectAndFocus(undefined)
+    }
+    if (props.onBeforeDelete) props.onBeforeDelete(selection, proceed)
+    else proceed()
   }
   const tidy = (selection: string[]) => {
     const canvas = workspace()

@@ -3,7 +3,10 @@ import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, d
 import { definitionNames, runName } from '../src/components/TriggerSummary'
 import { connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
-import { editorGraph } from '../src/entities/model'
+import { copySteps, pasteSteps } from '../src/visual/clipboard'
+import { editorGraph, newGraphDefinition } from '../src/entities/model'
+import { renameDefinition } from '../src/entities/definitionEdits'
+import { refitNotice, retypeNode } from '../src/entities/NodePickers'
 
 const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
 const empty = (entities: Record<string, unknown>[] = []): VisualGraph => ({ version: 5, name: 'Nodes', nodes: [], edges: [], definition: { entities, settings: [] } as never })
@@ -46,8 +49,98 @@ it('the editor does not list an entity that a node declares', () => {
 it('a new Entity node does not take the key of the definition\'s one setting', () => {
   const graph: VisualGraph = { version: 5, name: 'Nodes', nodes: [], edges: [], definition: { entities: [], settings: [{ key: 'delay', type: 'number' }] } as never }
   const node = addGraphNode(graph, 'entity', 'a', nodeCatalog).nodes[0]
-  expect(node.config.key).toBeUndefined()
+  expect(node.config.key).toBe('binary_sensor')
   expect(Object.values(node.config)).not.toContain('delay')
+})
+
+it('a dropped Entity node arrives named and with a key of its own', () => {
+  let graph = add(empty(), 'entity', 'a')
+  expect(graph.nodes[0].config).toMatchObject({ domain: 'binary_sensor', name: 'Binary sensor', key: 'binary_sensor' })
+  graph = add(graph, 'entity', 'b')
+  expect(graph.nodes[1].config.key).toBe('binary_sensor_2')
+  expect(validateGraph(graph).filter(d => d.severity === 3)).toEqual([])
+  // A key a listed entity has is taken too.
+  expect(addGraphNode(empty([{ key: 'binary_sensor', domain: 'switch' }]), 'entity', 'c', nodeCatalog).nodes[0].config.key).toBe('binary_sensor_2')
+  // Its name is its own: the node carries no label, and no member is null.
+  expect(graph.nodes[0]).not.toHaveProperty('label')
+  expect(Object.values(graph.nodes[0].config)).not.toContain(null)
+  // Any other step keeps its kind's label.
+  expect(add(graph, 'log', 'log').nodes.at(-1)!.label).toBe('Log')
+})
+
+it('a type change drops what the new type does not have and says so', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true }, arguments: { is_on: lit('boolean', true), brightness: lit('number', 128) } })
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true), brightness: lit('number', 10) })
+  graph = connectNodes(graph, 'l', 'set', 'command:turn_on')
+  const { graph: retyped, removed } = retypeNode(graph, 'l', 'binary_sensor', nodeCatalog)
+  const node = retyped.nodes.find(n => n.id === 'l')!
+  expect(node.config).toMatchObject({ domain: 'binary_sensor', options: {}, arguments: { is_on: lit('boolean', true) } })
+  expect(node.config.arguments).toEqual({ is_on: lit('boolean', true) })
+  expect(retyped.edges.some(e => e.source === 'l')).toBe(false)
+  expect(retyped.nodes.find(n => n.id === 'set')!.config).not.toHaveProperty('brightness')
+  expect(validateGraph(retyped).some(d => d.message.startsWith('Unknown input'))).toBe(false)
+  expect(refitNotice(removed)).toMatch(/^Removed 1 connection/)
+  expect(refitNotice(removed)).toBe('Removed 1 connection that no longer fits: Turn on. Cleared 2 values that no longer fit: Brightness.')
+  // The same type changes nothing.
+  expect(retypeNode(graph, 'l', 'light', nodeCatalog).graph).toBe(graph)
+})
+
+it('a type change removes the wires into a value the new type does not have, and out of a value it does not give', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  graph = add(graph, 'constant', 'c', { type: 'number', value: lit('number', 128) })
+  graph = connectData(graph, 'c', 'value', 'l', 'brightness')
+  graph = add(graph, 'log', 'log')
+  graph = connectData(connectNodes(graph, 'l', 'log', 'command:turn_on'), 'l', 'command:turn_on:brightness', 'log', 'value')
+  const { graph: retyped, removed } = retypeNode(graph, 'l', 'switch', nodeCatalog)
+  expect(retyped.edges.filter(e => e.source === 'l' || e.target === 'l').map(e => e.kind === 'data' ? `${e.sourcePort}->${e.targetPort}` : e.port))
+    .toEqual(['command:turn_on'])
+  expect(refitNotice(removed)).toBe('Removed 2 connections that no longer fit: Brightness.')
+  expect(validateGraph(retyped).some(d => d.code === 'port.unknownInput' || d.code === 'port.unknownOutput' || d.code === 'port.unknownExecution')).toBe(false)
+})
+
+/** Copies the steps `ids` with the clipboard and pastes them beside where they were. */
+const paste = (graph: VisualGraph, ids: string[]) => {
+  const result = pasteSteps(graph, copySteps(graph, ids)!, nodeCatalog, { offset: { x: 40, y: 40 } })
+  if ('error' in result) throw new Error(result.error)
+  return result.graph
+}
+
+it('a pasted Entity node gets a key of its own and its pasted steps follow it', () => {
+  let graph = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) })
+  graph = add(graph, 'set_entity_available', 'outside', { entity: 'lamp' })
+  const pasted = paste(graph, ['l', 'set'])
+  const copies = pasted.nodes.slice(graph.nodes.length)
+  expect(copies.find(n => n.kind === 'entity')!.config.key).toBe('lamp_2')
+  expect(copies.find(n => n.kind === 'set_entity_state')!.config.entity).toBe('lamp_2')
+  expect(pasted.nodes.find(n => n.id === 'outside')!.config.entity).toBe('lamp')
+  expect(pasted.nodes.find(n => n.id === 'set')!.config.entity).toBe('lamp')
+  expect(validateGraph(pasted).some(d => d.code === 'definition.duplicateEntity')).toBe(false)
+  // A step pasted without its Entity node keeps the key it named.
+  expect(paste(graph, ['set']).nodes.at(-1)!.config.entity).toBe('lamp')
+  // Pasted again, the next copy takes the next free key.
+  expect(paste(pasted, ['l']).nodes.at(-1)!.config.key).toBe('lamp_3')
+})
+
+it('a new definition starts with one Entity node that follows its name until it is saved', () => {
+  const graph = editorGraph(newGraphDefinition('Front door'))
+  expect(graph.nodes.map(n => [n.kind, n.config.key, n.config.name])).toEqual([['entity', 'front_door', 'Front door']])
+  expect((graph.definition as never as { entities: unknown[] }).entities).toEqual([])
+  const renamed = renameDefinition(graph, 'Back door', false)
+  expect(renamed.nodes[0].config).toMatchObject({ key: 'back_door', name: 'Back door' })
+  expect(renameDefinition(graph, 'Back door', true).nodes[0].config.key).toBe('front_door')
+  // A binary sensor, valid as it is, with no label and no null member.
+  expect(graph.nodes[0].config.domain).toBe('binary_sensor')
+  expect(graph.nodes[0]).not.toHaveProperty('label')
+  expect(Object.values(graph.nodes[0].config)).not.toContain(null)
+  expect(validateGraph(graph).filter(d => d.severity === 3)).toEqual([])
+  // Cleared, the name is left out (never null or blank) and the key is the one a nameless entity gets.
+  const cleared = renameDefinition(renamed, '', false)
+  expect(cleared.nodes[0].config).not.toHaveProperty('name')
+  expect(cleared.nodes[0].config.key).toBe('entity')
+  // Once the person has named or keyed it themselves, it no longer follows.
+  const named = updateNode(graph, graph.nodes[0].id, { config: { ...graph.nodes[0].config, name: 'Porch' } })
+  expect(renameDefinition(named, 'Back door', false).nodes[0].config).toMatchObject({ key: 'front_door', name: 'Porch' })
 })
 
 /** The labels of a node's right column, top to bottom: each execution pin with the values under it. */

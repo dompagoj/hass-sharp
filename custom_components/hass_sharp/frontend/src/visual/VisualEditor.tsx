@@ -399,6 +399,21 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   /** What Home Assistant has of the saved document's entities (an Entity node's saved key and entity id). */
   const savedEntities = createMemo(() => adapter.savedEntities?.(context(id => inPanel(() => choose(id)))))
 
+  // ---- Deleting steps the document asks about first (an entity definition's Entity node that steps still use).
+  const [removal, setRemoval] = createSignal<{ title: string; body: string; proceed: () => void }>()
+  /** Deletes the steps at once, or once the person confirms what the adapter asks; undefined when it never asks. */
+  const beforeDelete = adapter.removal && ((ids: string[], proceed: () => void) => {
+    const question = adapter.removal!(graph(), ids, session.catalog())
+    if (question) setRemoval({ ...question, proceed })
+    else proceed()
+  })
+  // Closed first, so focus goes back to where it was; the delete then moves it where deleting steps does.
+  const confirmRemoval = () => {
+    const proceed = removal()?.proceed
+    setRemoval(undefined)
+    proceed?.()
+  }
+
   // ---- Full screen: the library and the drawer fold away; the inspector floats; a compact bar stays.
   let libraryBefore = false
   const fullscreenPage = createFullscreenPage({
@@ -566,6 +581,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             controls={controls => (flow = controls)}
             onEditCode={editCode}
             label={texts.canvasLabel}
+            onBeforeDelete={beforeDelete}
           />
         </div>
         <Inspector
@@ -595,6 +611,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           onEditCode={editCode}
           onNotice={text => flow?.notify(text, { keep: true })}
           savedEntities={savedEntities()}
+          onBeforeDelete={beforeDelete}
         />
       </div>
       <BottomDrawer
@@ -678,6 +695,16 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
         <Show when={codeDirty() || session.restoredCode()}>
           <p>Code you have not applied stays in the code editor whichever you choose: apply it there, then save.</p>
         </Show>
+      </Dialog>
+      <Dialog open={!!removal()} title={removal()?.title ?? ''} width="small" onClose={() => setRemoval(undefined)}
+        footer={
+          <>
+            <Button autofocus onClick={() => setRemoval(undefined)}>Cancel</Button>
+            <Button variant="danger" onClick={confirmRemoval}>Delete</Button>
+          </>
+        }
+      >
+        <p>{removal()?.body}</p>
       </Dialog>
       <Dialog open={!!session.restoreOffer()} title="Restore unsaved changes?" width="small" preventClose onClose={() => {}}
         footer={

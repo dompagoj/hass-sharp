@@ -68,6 +68,11 @@ export interface FlowAdapterProps {
   onEditCode?(id: string): void
   /** The canvas's accessible name (default: an automation's); read only, ", read only" follows it. */
   label?: string
+  /**
+   * Asked before steps are deleted (the Delete key): `proceed` deletes them, and is not called when the page decides
+   * against it (the person cancelled). Without it, steps are deleted at once.
+   */
+  onBeforeDelete?: (ids: string[], proceed: () => void) => void
 }
 
 /** What the page may ask of the canvas: its own Duplicate, a cleared selection, a pan and its notice. */
@@ -830,11 +835,15 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     if (edgeId) return removeWire(edgeId)
     const ids = targets(target)
     if (ids.length) {
-      let next = graph()
-      for (const id of ids) next = removeNode(next, id, catalog())
-      select([])
-      change(next)
-      focusCanvas()
+      const remove = () => {
+        let next = graph()
+        for (const id of ids) next = removeNode(next, id, catalog())
+        select([])
+        change(next)
+        focusCanvas()
+      }
+      if (props.onBeforeDelete) props.onBeforeDelete(ids, remove)
+      else remove()
       return
     }
     const edge = selection().edge

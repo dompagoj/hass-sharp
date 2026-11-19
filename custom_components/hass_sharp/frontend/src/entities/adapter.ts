@@ -6,7 +6,7 @@ import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult }
 import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
 import { icons } from '../visual/icons'
-import { copyNotice, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
+import { copyNotice, entityRemoval, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
 import { deviceMemory } from './DeviceForm'
 import { EntityHelp } from './EntityHelp'
 import { definitionBody, definitionId, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
@@ -122,6 +122,8 @@ export function entityAdapter(
     // A problem about no step and no row of the form is listed at the form's top.
     overviewProblem: diagnostic => problemRow(diagnostic) ?? (diagnostic.nodeId || diagnostic.startLine != null ? undefined : 'problems'),
     check: optionProblems,
+    // Deleting an Entity node that steps left behind still use asks first.
+    removal: entityRemoval,
     copyNotice,
     help: EntityHelp,
   }

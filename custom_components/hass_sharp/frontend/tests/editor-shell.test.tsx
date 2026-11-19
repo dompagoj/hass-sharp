@@ -8,6 +8,7 @@ import { connectData, nodeCatalog } from '../src/visual/contract'
 import { soon } from '../src/visual/soon'
 import { manualTriggers, RunNowButton } from '../src/visual/RunNow'
 import { acceptedRun } from '../src/components/runDispatch'
+import { entityAdapter } from '../src/entities/adapter'
 
 import { HassCtx } from '../src/context'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -984,6 +985,126 @@ it('reads the last run again until it has ended, without the Runs tab, and then 
     await vi.advanceTimersByTimeAsync(30_000)
     expect(reads()).toBe(after)
   } finally { vi.useRealTimers() }
+})
+
+/** An entity definition's editor (its adapter) opened on `graph`, a definition not saved yet. */
+function mountDefinition(graph: VisualGraph) {
+  const host = root(), fixture = visualFixture()
+  const adapter = { ...entityAdapter(fixture as any), starter: () => structuredClone(graph) }
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  dispose = render(() => <QueryClientProvider client={client}><HassCtx.Provider value={{ ...fixture, user: { is_admin: true } } as any}>
+    <RealVisualEditor name={graph.name} adapter={adapter} />
+  </HassCtx.Provider></QueryClientProvider>, host)
+  return host
+}
+/** A definition with the Entity node Lamp (key lamp) and a Set state step that sets it on Turn on; `more` adds steps. */
+function lampDefinition(more: (graph: VisualGraph) => VisualGraph = graph => graph): VisualGraph {
+  let graph: VisualGraph = { version: 5, name: 'Lights', nodes: [], edges: [], definition: { entities: [], settings: [], device: null } as never }
+  graph = addNode(graph, 'entity', 'lamp')
+  graph = updateNode(graph, 'lamp', { config: { ...graph.nodes[0].config, key: 'lamp', domain: 'light', name: 'Lamp' }, position: { x: 60, y: 100 } })
+  graph = addNode(graph, 'set_entity_state', 'set')
+  graph = updateNode(graph, 'set', { config: { entity: 'lamp', is_on: { kind: 'literal', type: 'boolean', value: true } }, position: { x: 400, y: 100 } })
+  return more(connectNodes(graph, 'lamp', 'set', 'command:turn_on'))
+}
+const dialog = (host: Element) => host.querySelector<HTMLDialogElement>('dialog[open]')
+const cards = (host: Element) => [...host.querySelectorAll('.solid-flow__node .hs-card__title')].map(title => title.textContent)
+const clickCard = (host: Element, id: string, init: MouseEventInit = {}) => {
+  const card = host.querySelector(`.solid-flow__node[data-id="${id}"]`)!
+  card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, view: window, ...init }))
+  window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, view: window, ...init }))
+  card.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, view: window, ...init }))
+}
+const unknownLamp = 'This definition has no entity lamp; choose one of its entities or add it'
+/** The messages of a card's problem tag. */
+const cardProblems = (host: Element, id: string) => host.querySelector(`.solid-flow__node[data-id="${id}"] .hs-node-errors`)?.textContent ?? ''
+
+it('deleting an Entity node that steps use asks first', async () => {
+  const host = mountDefinition(lampDefinition())
+  await vi.waitFor(() => expect(cards(host)).toContain('Lamp'))
+  const canvas = host.querySelector<HTMLElement>('.hs-flow')!
+  clickCard(host, 'lamp')
+  await vi.waitFor(() => expect(inspectorOf(host).querySelector('.hs-insp-node[data-node-id="lamp"]')).not.toBeNull())
+  canvas.focus()
+  key(canvas, 'Delete')
+  await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
+  expect(dialog(host)!.textContent).toContain('Delete this entity?')
+  expect(dialog(host)!.textContent).toContain('1 step uses this entity. They will show a problem until you change or remove them.')
+  expect(button(dialog(host)!, 'Delete')).toBeDefined()
+  // Cancel deletes nothing, and focus goes back to where it was.
+  button(dialog(host)!, 'Cancel').click()
+  expect(dialog(host)).toBeNull()
+  expect(cards(host)).toContain('Lamp')
+  expect(json(host).nodes.map((n: { id: string }) => n.id)).toEqual(['lamp', 'set'])
+  expect(document.activeElement).toBe(canvas)
+  // So does Escape.
+  key(canvas, 'Delete')
+  await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
+  key(dialog(host)!, 'Escape')
+  expect(dialog(host)).toBeNull()
+  expect(cards(host)).toContain('Lamp')
+  expect(button(host, 'Undo').disabled).toBe(true)
+  // Delete: the node is gone, and the step says it names an entity the definition no longer has.
+  key(canvas, 'Delete')
+  await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
+  button(dialog(host)!, 'Delete').click()
+  expect(dialog(host)).toBeNull()
+  expect(cards(host)).not.toContain('Lamp')
+  expect(json(host).nodes.map((n: { id: string }) => n.id)).toEqual(['set'])
+  await vi.waitFor(() => expect(cardProblems(host, 'set')).toContain(unknownLamp))
+  // One undo step brings it back.
+  button(host, 'Undo').click()
+  await vi.waitFor(() => expect(cards(host)).toContain('Lamp'))
+  expect(json(host).nodes.map((n: { id: string }) => n.id)).toEqual(['lamp', 'set'])
+  expect(button(host, 'Undo').disabled).toBe(true)
+})
+
+it('deleting an Entity node nothing uses, or together with every step that uses it, does not ask', async () => {
+  const host = mountDefinition(lampDefinition(graph => {
+    const added = addNode(graph, 'entity', 'desk')
+    return updateNode(added, 'desk', { config: { ...added.nodes.at(-1)!.config, key: 'desk', domain: 'switch', name: 'Desk' }, position: { x: 60, y: 400 } })
+  }))
+  await vi.waitFor(() => expect(cards(host)).toContain('Desk'))
+  const canvas = host.querySelector<HTMLElement>('.hs-flow')!
+  clickCard(host, 'desk')
+  await vi.waitFor(() => expect(inspectorOf(host).querySelector('.hs-insp-node[data-node-id="desk"]')).not.toBeNull())
+  key(canvas, 'Delete')
+  expect(dialog(host)).toBeNull()
+  expect(cards(host)).not.toContain('Desk')
+  // The Entity node with the one step that uses it.
+  clickCard(host, 'lamp'); clickCard(host, 'set', { shiftKey: true })
+  await vi.waitFor(() => expect(host.querySelector('[aria-label="Selection"]')).not.toBeNull())
+  key(canvas, 'Delete')
+  expect(dialog(host)).toBeNull()
+  expect(json(host).nodes).toEqual([])
+})
+
+it('the right panel\'s Delete asks the same question', async () => {
+  const host = mountDefinition(lampDefinition())
+  await vi.waitFor(() => expect(cards(host)).toContain('Lamp'))
+  clickCard(host, 'lamp')
+  await vi.waitFor(() => expect(inspectorOf(host).querySelector('.hs-insp-node[data-node-id="lamp"]')).not.toBeNull())
+  const actions = button(inspectorOf(host), 'Node actions')
+  const remove = () => {
+    actions.click()
+    const item = [...inspectorOf(host).querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Delete')
+    expect(item).toBeDefined()
+    item!.click()
+  }
+  remove()
+  await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
+  expect(dialog(host)!.textContent).toContain('Delete this entity?')
+  expect(dialog(host)!.textContent).toContain('1 step uses this entity. They will show a problem until you change or remove them.')
+  key(dialog(host)!, 'Escape')
+  expect(dialog(host)).toBeNull()
+  expect(cards(host)).toContain('Lamp')
+  // Focus is back on the menu's button, in the panel that is still there.
+  expect(document.activeElement).toBe(actions)
+  remove()
+  await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
+  button(dialog(host)!, 'Delete').click()
+  expect(cards(host)).not.toContain('Lamp')
+  expect(inspectorOf(host).querySelector('.hs-insp-node[data-node-id="lamp"]')).toBeNull()
+  await vi.waitFor(() => expect(cardProblems(host, 'set')).toContain(unknownLamp))
 })
 
 it('stops reading the last run again when the page goes, even while it is running', async () => {

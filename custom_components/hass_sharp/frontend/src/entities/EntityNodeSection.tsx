@@ -3,7 +3,7 @@ import { declaredDomain, declaredEntities, entityTypeLabel, words, type ConfigSp
 import { definitionOf, keyProblem, keyRule, readNumber } from './definitionEdits'
 import { ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey } from './model'
-import type { StepPickerContext } from './NodePickers'
+import { refitNotice, retypeNode, type StepPickerContext } from './NodePickers'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
@@ -45,6 +45,13 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     ...definitionOf(ctx.graph()).entities.map(e => e.key),
     ...declaredEntities(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.entity.key)),
   ]
+  // A new type, as one change: what no longer fits it goes, and the notice says what.
+  const retype = (value: string) => {
+    const { graph, removed } = retypeNode(ctx.graph(), ctx.node().id, value, ctx.catalog())
+    ctx.onGraphChange(graph)
+    const notice = refitNotice(removed)
+    if (notice) ctx.onNotice?.(notice)
+  }
   const types = () => Object.keys(ctx.catalog().entityDomains ?? {})
   const typeChoices = () => [
     ...(types().includes(domain()) ? [] : [{ value: domain(), label: entityTypeLabel(ctx.catalog(), domain()) }]),
@@ -91,7 +98,7 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
         </Show>
       </At>
       <At id="domain">
-        <SelectField name="domain" label="Type" value={domain()} choices={typeChoices()} errors={ctx.errorsFor('domain')} onChange={value => set('domain', value)}
+        <SelectField name="domain" label="Type" value={domain()} choices={typeChoices()} errors={ctx.errorsFor('domain')} onChange={retype}
           hint="Steps that use the entity follow its type." />
       </At>
       <At id="deviceClass">

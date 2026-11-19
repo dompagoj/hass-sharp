@@ -1,4 +1,4 @@
-import { declaredEntities, entityTypeLabel, words, type ConfigSpec, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
+import { declaredEntities, entityTypeLabel, freeKey, words, type ConfigSpec, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
@@ -22,11 +22,7 @@ export function definitionOf(graph: VisualGraph): EditorDefinition {
 const withDefinition = (graph: VisualGraph, change: Partial<EditorDefinition>): VisualGraph =>
   ({ ...graph, definition: { ...definitionOf(graph), ...(graph.definition ?? {}), ...change } as unknown as GraphDefinition })
 
-/** `base`, else `base_2`, `base_3`… past the keys `taken`. */
-export function freeKey(base: string, taken: string[]): string {
-  if (!taken.includes(base)) return base
-  for (let n = 2; ; n++) if (!taken.includes(`${base}_${n}`)) return `${base}_${n}`
-}
+export { freeKey }
 
 /** Why `text` cannot be the new key of an entity among `others`; undefined when it can. */
 export function keyProblem(text: string, others: string[]): string | undefined {
@@ -49,9 +45,31 @@ export const maskedSecret = (setting: DefinitionSetting) => setting.secret === t
 
 // ---- Entities
 
-/** The steps that name the definition's entity `key`. */
-export const stepsUsingEntity = (graph: VisualGraph, key: string) =>
-  graph.nodes.filter(node => definitionEntityKinds.includes(node.kind) && node.config?.entity === key)
+/** The steps that name the definition's entity `key`, but those of `except`. */
+export const stepsUsingEntity = (graph: VisualGraph, key: string, except: ReadonlySet<string> = new Set()) =>
+  graph.nodes.filter(node => definitionEntityKinds.includes(node.kind) && node.config?.entity === key && !except.has(node.id))
+
+/**
+ * What deleting the steps `ids` asks first, when among them are Entity nodes whose entities steps left behind still
+ * name (a key no listed entity or other Entity node gives): those steps would then show a problem. Undefined when
+ * nothing would: the steps are deleted at once.
+ */
+export function entityRemoval(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot): { title: string; body: string } | undefined {
+  const deleted = new Set(ids)
+  const declared = declaredEntities(graph, catalog)
+  const going = declared.filter(d => deleted.has(d.nodeId))
+  if (!going.length) return
+  // A key the definition still gives after the delete (listed, or declared by a node that stays) leaves no step without it.
+  const staying = new Set([...definitionOf(graph).entities.map(e => e.key), ...declared.filter(d => !deleted.has(d.nodeId)).map(d => d.entity.key)])
+  const keys = new Set(going.map(d => d.entity.key).filter((key): key is string => typeof key === 'string' && key !== '' && !staying.has(key)))
+  const steps = [...keys].reduce((count, key) => count + stepsUsingEntity(graph, key, deleted).length, 0)
+  if (!steps) return
+  const several = going.length > 1
+  return {
+    title: several ? 'Delete these entities?' : 'Delete this entity?',
+    body: `${steps === 1 ? '1 step uses' : `${steps} steps use`} ${several ? 'these entities' : 'this entity'}. They will show a problem until you change or remove them.`,
+  }
+}
 
 /** A new entity of the type `domain` with a free key, at the end. */
 export function addEntity(graph: VisualGraph, domain: string): { graph: VisualGraph; key: string } {
@@ -173,13 +191,31 @@ export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapsho
 }
 
 /**
- * The definition renamed to `name` before its first save: its first entity follows the name (key and name) while it
- * still has what the name gave it, so the person who never touched it gets an entity named after the definition.
+ * The definition renamed to `name` before its first save: its entity follows the name (key and name) while it still
+ * has what the name gave it, so the person who never touched it gets an entity named after the definition. That is
+ * the first Entity node (the starter's), else the first listed entity.
  */
 export function renameDefinition(graph: VisualGraph, name: string, saved: boolean): VisualGraph {
   const renamed = { ...graph, name }
+  if (saved) return renamed
+  // As the starter names it: no name for a blank one.
+  const given = (text: string) => (text.trim() ? text : undefined)
+  const follows = (entity: { key?: unknown; name?: unknown }) => entity.key === entityKey(graph.name) && entity.name === given(graph.name)
+  const [starter] = declaredEntities(graph)
+  if (starter && follows(starter.entity)) {
+    const { nodeId, entity } = starter
+    const keyed = renameEntityKey(renamed, entity.key as string, entityKey(name), nodeId)
+    return {
+      ...keyed,
+      nodes: keyed.nodes.map(node => {
+        if (node.id !== nodeId) return node
+        const { name: _name, ...config } = node.config
+        return { ...node, config: { ...config, ...(given(name) ? { name } : {}) } }
+      }),
+    }
+  }
   const first = definitionOf(graph).entities[0]
-  if (saved || !first || first.key !== entityKey(graph.name) || (first.name ?? '') !== graph.name) return renamed
+  if (!first || first.key !== entityKey(graph.name) || (first.name ?? '') !== graph.name) return renamed
   const keyed = renameEntityKey(renamed, first.key, entityKey(name))
   return updateEntity(keyed, definitionOf(keyed).entities[0].key, { name: name || undefined })
 }

@@ -242,6 +242,30 @@ export function declaredEntities(graph: unknown, catalog: VisualCatalogSnapshot 
     .map(node => ({ nodeId: text(node.id), entity: entityDescription(node as unknown as GraphNode) }))
 }
 /**
+ * The keys a graph's definition already gives its entities: those its `definition` lists and those its nodes declare,
+ * each text key once; none for a graph that is not an entity definition's.
+ */
+export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
+  const listed = record(graph) && record(graph.definition) && Array.isArray(graph.definition.entities) ? graph.definition.entities as unknown[] : []
+  const keys = [...listed.filter(record).map(e => e.key), ...declaredEntities(graph, catalog).map(d => d.entity.key)]
+  return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
+}
+/** `base`, else `base_2`, `base_3`… past the keys `taken`. */
+export function freeKey(base: string, taken: readonly string[]): string {
+  if (!taken.includes(base)) return base
+  for (let n = 2; ; n++) if (!taken.includes(`${base}_${n}`)) return `${base}_${n}`
+}
+/** Lower case without accents (`Café` → `cafe`), each run of other characters one `_`, no `_` at either end. */
+export const slug = (name: string) =>
+  name.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^[_-]+|[_-]+$/g, '')
+/** The text without `_` or `-` at its end. */
+export const trimSeparators = (text: string) => text.replace(/[_-]+$/, '')
+/** An entity key from a name: it starts with a letter and has at most 40 characters; `entity` when the name gives none. */
+export const entityKey = (name: string) => {
+  const key = trimSeparators(slug(name).replace(/^[^a-z]+/, '').slice(0, 40))
+  return new RegExp(words.entityKeyPattern).test(key) ? key : 'entity'
+}
+/**
  * The definition's entities as a graph gives them: those its `definition` lists (none without a list) whose key no node
  * declares, in their order, then the ones its nodes declare. Mirrors `VisualNodeCatalog.DerivedEntities`.
  */
@@ -1855,11 +1879,18 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   if (Object.hasOwn(spec.config, 'trackHistory')) config.trackHistory = trackHistoryDefault(kind, graphDocument(graph), catalog)
   const storage = spec.argumentStorage === 'arguments' ? (config.arguments ??= {}) as Record<string, unknown> : config
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
-  // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12).
-  // An Entity node names nothing: its key is its own.
-  const named = spec.documents?.includes('entity') && !spec.declares && graphDocument(graph) === 'entity' ? prefilled(graph, kind, spec, definitionCatalog(catalog, graph)) : {}
-  // A Custom C# node is titled by its method until someone names it.
-  return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...(spec.dynamicInputs === 'custom' ? {} : { label: spec.label }), config: { ...config, ...named } }] })
+  // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12). An
+  // Entity node names no other: it is named after its type, and keyed by that name past every key the definition has.
+  const named = spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
+    : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(graph, kind, spec, definitionCatalog(catalog, graph)) : {}
+  // A Custom C# node is titled by its method until someone names it; a node that declares an entity is named by it.
+  const label = spec.dynamicInputs === 'custom' || spec.declares ? {} : { label: spec.label }
+  return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...label, config: { ...config, ...named } }] })
+}
+/** A new Entity node's entity of the type `domain`: named by its type, keyed by that name past the definition's keys. */
+function ownEntity(graph: Graph, domain: string, catalog: VisualCatalogSnapshot): { name: string; key: string } {
+  const name = entityTypeLabel(catalog, domain)
+  return { name, key: freeKey(entityKey(name), definitionEntityKeys(graph, catalog)) }
 }
 /**
  * The definition's entity or setting a new step of the kind names: the only one it can name, else none. A When commanded

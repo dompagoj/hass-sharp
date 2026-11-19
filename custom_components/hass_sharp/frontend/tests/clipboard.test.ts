@@ -223,3 +223,18 @@ it('writes a Custom C# node\'s namespace as the compiler does', () => {
   expect(customNamespace('make')).toBe('Custom_make')
   expect(customNamespace('a-1_b')).toBe('Custom_a_002D1_005Fb')
 })
+
+it('a pasted Entity node keeps its key where it is free, else takes the next free one, past the keys given earlier in the paste', () => {
+  const definition = (entities: Record<string, unknown>[] = []): VisualGraph => ({ version: 5, name: 'Lights', nodes: [], edges: [], definition: { entities, settings: [] } as never })
+  const lamp = (id: string, key: string) => ({ id, kind: 'entity', position: { x: 0, y: 0 }, config: { key, domain: 'switch', name: 'Lamp' } })
+  const copy = { marker: clipboardMarker, version: 1 as const, copiedAt: 0, edges: [], nodes: [lamp('a', 'lamp'), lamp('b', 'lamp'), { id: 's', kind: 'set_entity_available', position: { x: 0, y: 0 }, config: { entity: 'lamp' } }] }
+  const into = (graph: VisualGraph) => {
+    const result = pasteSteps(graph, structuredClone(copy), nodeCatalog, { offset: { x: 0, y: 0 } })
+    if ('error' in result) throw new Error(result.error)
+    return result.graph.nodes.map(n => n.kind === 'entity' ? n.config.key : n.config.entity)
+  }
+  // Into another definition without the key: the first keeps it, the second is given the next, and the step follows the first.
+  expect(into(definition())).toEqual(['lamp', 'lamp_2', 'lamp'])
+  // Into one that lists it: both move on, and the step with the first.
+  expect(into(definition([{ key: 'lamp', domain: 'switch' }]))).toEqual(['lamp_2', 'lamp_3', 'lamp_2'])
+})

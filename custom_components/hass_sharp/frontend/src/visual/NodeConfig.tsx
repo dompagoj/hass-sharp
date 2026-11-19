@@ -105,6 +105,15 @@ export function NodeConfig(props: NodeConfigProps) {
     else delete config.name
     props.onGraphChange({ ...props.graph, nodes: props.graph.nodes.map(n => (n.id === node.id ? { ...node, config } : n)) }, { coalesce: `name:${props.node.id}` })
   }
+  /**
+   * An entity's name left (or Enter pressed) is kept trimmed, in the same undo step as its typing: spaces are typed as
+   * they come, and a name of only spaces is no name.
+   */
+  const commitTitle = () => {
+    if (!declares()) return
+    const name = typeof props.node.config.name === 'string' ? props.node.config.name : undefined
+    if (name !== undefined && name !== name.trim()) retitle(name.trim())
+  }
   const copy = (text: string, done: string) => {
     void Promise.resolve(navigator.clipboard?.writeText?.(text)).then(() => setStatus(done), () => setStatus('Copying is not allowed here'))
   }
@@ -249,7 +258,8 @@ export function NodeConfig(props: NodeConfigProps) {
           <input ref={title} class="hs-insp-title" aria-label={declares() ? 'Entity name' : 'Node label'} aria-describedby={descriptionId}
             data-input-id={declares() ? 'name' : undefined} aria-invalid={(declares() && errorsFor('name').length > 0) || undefined}
             value={declares() ? (typeof props.node.config.name === 'string' ? props.node.config.name : '') : props.node.label ?? ''}
-            placeholder={declares() ? 'Not set' : unnamed()} onInput={e => retitle(e.currentTarget.value)} />
+            placeholder={declares() ? 'Not set' : unnamed()} onInput={e => retitle(e.currentTarget.value)}
+            onBlur={commitTitle} onKeyDown={e => { if (e.key === 'Enter') commitTitle() }} />
           <small class="hs-insp-kind">{kindLabel() === view().identity.label ? kindLabel() : `${kindLabel()} · ${view().identity.label}`}</small>
         </div>
         <Menu label="Node actions" items={menu()} />

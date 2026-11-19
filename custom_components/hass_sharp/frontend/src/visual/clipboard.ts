@@ -1,4 +1,4 @@
-import { analyzeGraph, nodeCatalog, type DiagnosticCode, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { analyzeGraph, definitionEntityKeys, freeKey, nodeCatalog, type DiagnosticCode, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import type { VisualGraph } from './graph'
 import { createUuid } from './id'
 
@@ -153,10 +153,14 @@ export function pasteSteps(
   const move = 'at' in place ? { x: place.at.x - corner.x, y: place.at.y - corner.y } : place.offset
   const snap = (value: number) => (grid ? Math.round(value / grid) * grid : Math.round(value))
   const types = customTypeRenames(data.nodes, ids, catalog)
-  const nodes = data.nodes.map(node => ({
-    ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) },
-    ...(types ? { config: renameTypes(node.config, types) } : {}),
-  }))
+  const keys = entityKeys(graph, data.nodes, catalog)
+  const nodes = data.nodes.map(node => {
+    const config = types ? renameTypes(node.config, types) : structuredClone(node.config)
+    return {
+      ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) },
+      config: keys ? rekey(node, config, keys, catalog) : config,
+    }
+  })
   const edgeIds = new Set((Array.isArray(graph.edges) ? graph.edges : []).flatMap(edge => (record(edge) && typeof edge.id === 'string' ? [edge.id] : [])))
   const unique = (base: string) => {
     let id = base
@@ -187,6 +191,42 @@ export function pasteSteps(
 }
 
 const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+
+const spec = (node: GraphNode, catalog: VisualCatalogSnapshot) => (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind] : undefined)
+const declares = (node: GraphNode, catalog: VisualCatalogSnapshot) => spec(node, catalog)?.declares === 'entity'
+/** A step of an entity definition whose `entity` names one of its entities by key (not a Home Assistant entity id). */
+const namesEntity = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
+  const kind = spec(node, catalog)
+  return !!kind && !kind.declares && !!kind.documents?.includes('entity') && Object.hasOwn(kind.config, 'entity')
+}
+/**
+ * The key each pasted node that declares an entity (an Entity node) is given, by its id in the copy: its own while no
+ * entity of the graph and no node given one earlier in this paste has it, else the next free one (`lamp_2`), so a copy
+ * is a new entity. The steps pasted with it that named its key follow it: the key each copied key becomes, the first
+ * node's of a key two copied nodes had. Undefined when the copy has no such node.
+ */
+function entityKeys(graph: VisualGraph, copied: GraphNode[], catalog: VisualCatalogSnapshot) {
+  const nodes = copied.filter(node => declares(node, catalog) && typeof node.config.key === 'string' && node.config.key !== '')
+  if (!nodes.length) return
+  const taken = definitionEntityKeys(graph, catalog), byNode = new Map<string, string>(), byKey = new Map<string, string>()
+  for (const node of nodes) {
+    const key = node.config.key as string, given = freeKey(key, taken)
+    taken.push(given)
+    byNode.set(node.id, given)
+    if (!byKey.has(key)) byKey.set(key, given)
+  }
+  return { byNode, byKey }
+}
+/**
+ * A pasted node's config with the keys `entityKeys` gave: an Entity node's own key, and a step's entity when it named
+ * one of the copied Entity nodes' keys.
+ */
+function rekey(node: GraphNode, config: GraphNode['config'], keys: NonNullable<ReturnType<typeof entityKeys>>, catalog: VisualCatalogSnapshot): GraphNode['config'] {
+  const own = keys.byNode.get(node.id)
+  if (own !== undefined) return { ...config, key: own }
+  if (!namesEntity(node, catalog) || typeof config.entity !== 'string' || !keys.byKey.has(config.entity)) return config
+  return { ...config, entity: keys.byKey.get(config.entity)! }
+}
 
 /**
  * The namespace a Custom C# node's code is compiled in (`NodeLibraryCompiler.CustomNamespace`): letters and digits of

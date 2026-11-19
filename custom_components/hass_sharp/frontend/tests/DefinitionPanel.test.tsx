@@ -23,6 +23,12 @@ const plug = (): DefinitionBody => ({
   entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'power', domain: 'sensor', name: 'Power', options: { unit: 'W' } }],
   logic: { kind: 'graph', graph: { version: 5, name: 'Plug', nodes: [], edges: [] } },
 })
+/** A definition that lists one binary sensor named after it, as a new one did before Entity nodes. */
+const listedMotion = (): DefinitionBody => ({
+  name: 'Any motion', device: null, settings: [],
+  entities: [{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion' }],
+  logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } },
+})
 const definition = (graph: VisualGraph) => graph.definition as unknown as EditorDefinition
 
 /**
@@ -133,7 +139,7 @@ describe('the entities', () => {
   })
 
   it('renames the steps\' references with the key before the first save, and keeps a key that is not one', () => {
-    let graph = editorGraph(newGraphDefinition('Any motion'))
+    let graph = editorGraph(listedMotion())
     graph = updateNode(addGraphNode(graph, 'entity_state', 's', nodeCatalog), 's', { config: { entity: 'any_motion' } })
     const { el, graph: current, history } = mount(graph)
     const row = expand(entityRow(el, 'any_motion'))
@@ -252,7 +258,7 @@ describe('the entities', () => {
   })
 
   it('asks before removing the last entity, which the definition needs', () => {
-    const { el, graph } = mount(editorGraph(newGraphDefinition('Any motion')))
+    const { el, graph } = mount(editorGraph(listedMotion()))
     button(expand(entityRow(el, 'any_motion')), 'Remove entity Any motion').click()
     expect(dialog()!.textContent).toContain('It is the only entity')
     button(dialog()!, 'Remove').click()

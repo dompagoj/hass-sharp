@@ -1,4 +1,4 @@
-import { declaredEntities, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
+import { addGraphNode, declaredEntities, entityKey, slug, trimSeparators, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
 import type { HomeAutomation, SourceRange } from '../visual/api'
 
 /**
@@ -216,22 +216,19 @@ export function draftGraph(graph: Graph): Graph {
   return { ...graph, definition: { ...definition, settings } as unknown as GraphDefinition }
 }
 
-/** Lower case without accents (`Café` → `cafe`), each run of other characters one `_`, no `_` at either end. */
-const slug = (name: string) =>
-  name.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^[_-]+|[_-]+$/g, '')
-const trimEnd = (text: string) => text.replace(/[_-]+$/, '')
+export { entityKey }
 
-/** An entity key from a name: it starts with a letter and has at most 40 characters; `entity` when the name gives none. */
-export const entityKey = (name: string) => {
-  const key = trimEnd(slug(name).replace(/^[^a-z]+/, '').slice(0, 40))
-  return entityKeyPattern.test(key) ? key : 'entity'
-}
-
-/** A new graph definition: one binary sensor named after it, no device, no settings and a graph with no steps. */
+/**
+ * A new graph definition: no device, no settings, no listed entity, and a graph whose one step is an Entity node, a
+ * binary sensor named after the definition (no name when that is blank) and keyed by that name.
+ */
 export function newGraphDefinition(name: string): DefinitionBody {
-  // The shape `createGraph` starts an automation with, without its starter steps.
-  const graph: Graph = { version: 5, name, nodes: [], edges: [] }
-  return { name, device: null, settings: [], entities: [{ key: entityKey(name), domain: 'binary_sensor', name }], logic: { kind: 'graph', graph } }
+  // The shape `createGraph` starts an automation with; its one step a new Entity node.
+  const graph = addGraphNode({ version: 5, name, nodes: [], edges: [] }, 'entity', 'entity-1')
+  const [node] = graph.nodes
+  const { name: _typeLabel, ...config } = node.config
+  const starter = { ...node, config: { ...config, key: entityKey(name), domain: 'binary_sensor', ...(name.trim() ? { name } : {}) } }
+  return { name, device: null, settings: [], entities: [], logic: { kind: 'graph', graph: { ...graph, nodes: [starter] } } }
 }
 
 /**
@@ -240,12 +237,12 @@ export function newGraphDefinition(name: string): DefinitionBody {
  * saved yet (`/entities/new`, ruling R17): `New` → `new_2`.
  */
 export function definitionId(name: string, taken: string[]): string {
-  const base = trimEnd(slug(name).slice(0, 80)) || 'entity'
+  const base = trimSeparators(slug(name).slice(0, 80)) || 'entity'
   const used = new Set([...taken, 'new'])
   if (!used.has(base)) return base
   for (let n = 2; ; n++) {
     const suffix = `_${n}`
-    const id = trimEnd(base.slice(0, 80 - suffix.length)) + suffix
+    const id = trimSeparators(base.slice(0, 80 - suffix.length)) + suffix
     if (!used.has(id)) return id
   }
 }

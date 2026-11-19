@@ -13,9 +13,29 @@ import { dropStep, libraryItem } from './library'
 
 // The entity definition editor in the panel, against the in-memory entity API: a definition is built, saved, read
 // back, switched, deleted and recovered entirely through the page.
+
+/**
+ * A new definition starts with an Entity node. Most tests here build through the right panel's Entities list, so for
+ * them a new definition starts as one did before Entity nodes: its one binary sensor listed, named after it. A test
+ * of the starter itself sets `starter.listed` to false.
+ */
+const starter = vi.hoisted(() => ({ listed: true }))
+vi.mock('../src/entities/model', async importOriginal => {
+  const model = await importOriginal<typeof import('../src/entities/model')>()
+  return {
+    ...model,
+    newGraphDefinition: (name: string): DefinitionBody => {
+      const body = model.newGraphDefinition(name)
+      if (!starter.listed || body.logic.kind !== 'graph') return body
+      return { ...body, entities: [{ key: model.entityKey(name), domain: 'binary_sensor', name }], logic: { ...body.logic, graph: { ...body.logic.graph, nodes: [] } } }
+    },
+  }
+})
+
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
 afterEach(async () => {
+  starter.listed = true
   dispose?.(); dispose = undefined
   client?.clear()
   document.body.innerHTML = ''
@@ -546,17 +566,28 @@ it('hands a definition built from a class, saved or new, to its own page', async
   expect(fresh.root.querySelector('section[aria-label="Entity definition editor"]')).toBeNull()
 })
 
-it('starts a new definition named from the address, with one binary sensor named after it and the editor in its words', async () => {
+it('starts a new definition named from the address, with an Entity node, a binary sensor named after it, and the editor in its words', async () => {
+  starter.listed = false
   const { root, fixture } = setup('/entities/new?logic=graph&name=Hall motion')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   expect(nameInput(root).value).toBe('Hall motion')
-  expect(json(root).definition).toEqual({ entities: [{ key: 'hall_motion', domain: 'binary_sensor', name: 'Hall motion' }], settings: [], device: null })
+  const graph = json(root)
+  expect(graph.definition).toEqual({ entities: [], settings: [], device: null })
+  expect(graph.nodes.map((n: any) => [n.kind, n.config.key, n.config.domain, n.config.name])).toEqual([['entity', 'hall_motion', 'binary_sensor', 'Hall motion']])
   expect(root.querySelector('section[aria-label="Entity definition editor"]')).not.toBeNull()
   expect(button(root, 'Back to entities')).toBeDefined()
-  // Renamed after the first entity was edited, the entity keeps its own name.
-  type(control(expand(entityRow(root, 'hall_motion')), 'name'), 'Hall')
+  // Its node follows the definition's name until it is saved.
+  rename(root, 'Hall motions')
+  expect(json(root).nodes[0].config).toMatchObject({ key: 'hall_motions', name: 'Hall motions' })
+  rename(root, 'Hall motion')
+  // Renamed after the entity was named on its node, the entity keeps its own name.
+  root.querySelector<HTMLElement>(`.solid-flow__node[data-id="${graph.nodes[0].id}"]`)!.click()
+  await vi.waitFor(() => expect(inspector(root).querySelector('input[aria-label="Entity name"]')).not.toBeNull())
+  const name = inspector(root).querySelector<HTMLInputElement>('input[aria-label="Entity name"]')!
+  name.value = 'Hall'
+  name.dispatchEvent(new Event('input', { bubbles: true }))
   rename(root, 'Hallway motion')
-  expect(json(root).definition.entities[0]).toEqual({ key: 'hall_motion', domain: 'binary_sensor', name: 'Hall' })
+  expect(json(root).nodes[0].config).toMatchObject({ key: 'hall_motion', domain: 'binary_sensor', name: 'Hall' })
   // Taken ids are asked for at the first save.
   fixture.entities.seed('hallway_motion', newGraphDefinition('Hallway motion'))
   button(root, 'Save').click()

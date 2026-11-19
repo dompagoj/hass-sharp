@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { NodeConfig } from '../src/visual/NodeConfig'
 import { Inspector } from '../src/visual/Inspector'
 import { addGraphNode, nodeCatalog, validateGraph, type Graph } from '../src/visual/contract'
-import { createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
+import { connectNodes, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { nodeTitle } from '../src/visual/flow/flowModel'
 import type { VisualDiagnostic } from '../src/visual/api'
 import type { SavedEntities } from '../src/visual/adapter'
@@ -145,13 +146,114 @@ it('the fields write the node\'s config, and clearing one leaves its key out rat
   expect(changed().config.options).toEqual({ dimmable: true })
   control(root, 'Can be dimmed').click()
   expect(changed().config.options).toEqual({})
-  // Type sets the type, here and nowhere else (the steps follow it in a later change).
+  // Type sets the type.
   const domain = control<HTMLSelectElement>(root, 'Type')
   expect([...domain.options].map(o => o.textContent)).toEqual(expect.arrayContaining(['Light', 'Switch', 'Binary sensor', 'Camera']))
   domain.value = 'switch'
   domain.dispatchEvent(new Event('change', { bubbles: true }))
   expect(changed().config.domain).toBe('switch')
   expect(validateGraph(history.graph()).filter(d => d.severity === 3)).toEqual([])
+})
+
+it('choosing a type in the section shows the notice, and one undo brings everything back', () => {
+  let graph = lamp({ options: { dimmable: true }, arguments: { is_on: lit('boolean', true), brightness: lit('number', 128) } })
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true), brightness: lit('number', 10) })
+  graph = connectNodes(graph, 'l', 'set', 'command:turn_on')
+  const { root, changed, history, notices } = mount(graph, 'l')
+  const domain = control<HTMLSelectElement>(root, 'Type')
+  domain.value = 'binary_sensor'
+  domain.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(changed().config).toMatchObject({ domain: 'binary_sensor', options: {} })
+  expect(changed().config.arguments).toEqual({ is_on: lit('boolean', true) })
+  expect(history.graph().edges.some(e => e.source === 'l')).toBe(false)
+  expect(history.graph().nodes.find(n => n.id === 'set')!.config).not.toHaveProperty('brightness')
+  expect(notices).toEqual(['Removed 1 connection that no longer fits: Turn on. Cleared 2 values that no longer fit: Brightness.'])
+  // The section now has the new type's fields: no Can be dimmed.
+  expect(labels(root)).not.toContain('Can be dimmed')
+  expect(validateGraph(history.graph()).some(d => d.message.startsWith('Unknown input'))).toBe(false)
+  // One change, so one undo step.
+  history.undo()
+  expect(history.graph()).toBe(graph)
+  // A switch has Turn on too: its wire stays, and the notice names only the values that went.
+  domain.value = 'switch'
+  domain.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(changed().config.domain).toBe('switch')
+  expect(history.graph().edges.some(e => e.source === 'l' && e.kind !== 'data' && e.port === 'command:turn_on')).toBe(true)
+  expect(notices).toHaveLength(2)
+  expect(notices[1]).toBe('Cleared 2 values that no longer fit: Brightness.')
+  // A type that drops nothing says nothing.
+  domain.value = 'light'
+  domain.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(changed().config.domain).toBe('light')
+  expect(notices).toHaveLength(2)
+})
+
+it('the name is trimmed when the field is left, not while it is typed', () => {
+  const { root, changed, history } = mount(lamp(), 'l')
+  const name = root.querySelector<HTMLInputElement>('input[aria-label="Entity name"]')!
+  // A space typed between words stays while typing.
+  name.value = 'Hall '
+  name.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(changed().config.name).toBe('Hall ')
+  name.value = ' Hall lamp '
+  name.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(changed().config.name).toBe(' Hall lamp ')
+  name.dispatchEvent(new FocusEvent('blur'))
+  expect(changed().config.name).toBe('Hall lamp')
+  expect(name.value).toBe('Hall lamp')
+  // Enter commits it too.
+  name.value = 'Desk  '
+  name.dispatchEvent(new Event('input', { bubbles: true }))
+  name.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  expect(changed().config.name).toBe('Desk')
+  // Only spaces is no name: left out, never blank.
+  type(name, '   ')
+  expect(changed().config).not.toHaveProperty('name')
+  expect(name.value).toBe('')
+  expect(validateGraph(history.graph()).filter(d => d.severity === 3).map(d => d.code)).toEqual(['entity.name'])
+})
+
+it('before the first save the key can be edited, and the steps that use it follow', () => {
+  const graph = add(lamp(), 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) })
+  const { root, history, changed } = mount(graph, 'l')
+  const key = control(root, 'Key')
+  expect(key.readOnly).toBe(false)
+  type(key, 'hall')
+  expect(changed().config.key).toBe('hall')
+  expect(history.graph().nodes.find(n => n.id === 'set')!.config.entity).toBe('hall')
+})
+
+it('a duplicated saved Entity node is a new entity: its own key, which can still be edited', () => {
+  const root = document.createElement('div')
+  root.className = 'hs-app'
+  document.body.append(root)
+  const [graph, setGraph] = createSignal(add(lamp(), 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) }))
+  const [selected, setSelected] = createSignal('l')
+  client = new QueryClient()
+  dispose = render(() => (
+    <QueryClientProvider client={client!}>
+      <HassCtx.Provider value={{ callWS: async () => ({ entities: [], areas: [], devices: [], floors: [], labels: [] }) } as never}>
+        <Inspector graph={graph()} catalog={nodeCatalog} diagnostics={[]} commit={setGraph} docked onSelect={id => id && setSelected(id)}
+          selected={graph().nodes.find(n => n.id === selected())} selectedIds={[selected()]} savedEntities={{ keys: ['lamp'], entityIds: { lamp: 'light.lamp' } }} />
+      </HassCtx.Provider>
+    </QueryClientProvider>
+  ), root)
+  expect(control(root, 'Key').readOnly).toBe(true)
+  expect(root.querySelector('.hs-entity-node__id')!.textContent).toContain('light.lamp')
+  root.querySelector<HTMLButtonElement>('button[aria-label="Node actions"]')!.click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Duplicate')!.click()
+  const copy = graph().nodes.at(-1)!
+  expect(copy.kind).toBe('entity')
+  expect(selected()).toBe(copy.id)
+  expect(copy.config.key).toBe('lamp_2')
+  // The copy is not among the saved entities: its key is editable, and it has no entity id yet.
+  const key = control(root, 'Key')
+  expect(key.readOnly).toBe(false)
+  expect(key.value).toBe('lamp_2')
+  expect(root.querySelector('.hs-entity-node__id')).toBeNull()
+  // The step outside the copy still names the original.
+  expect(graph().nodes.find(n => n.id === 'set')!.config.entity).toBe('lamp')
+  expect(validateGraph(graph()).some(d => d.code === 'definition.duplicateEntity')).toBe(false)
 })
 
 it('a saved key cannot change, and an unsaved one renames the steps that use it', () => {
