@@ -15,7 +15,7 @@ import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
 import { entityStateContext } from './entityStateContext'
 import { customSignature, graphDocument, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
-import { updateNode, type VisualGraph } from './graph'
+import { stepDescription, updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
 import { DraftField } from './widgets/common'
@@ -220,7 +220,8 @@ export function NodeConfig(props: NodeConfigProps) {
     { label: 'Copy node ID', onSelect: () => copy(props.node.id, 'Node ID copied') },
     ...(props.onDelete ? [{ label: 'Delete', onSelect: () => props.onDelete?.(), danger: true }] : []),
   ]
-  const description = () => signature()?.description || (spec()?.description ?? 'This kind of step is not available. Its settings are kept.')
+  const description = () => signature()?.description
+    || (spec() ? stepDescription(kind(), spec()!.description, graphDocument(props.graph)) : 'This kind of step is not available. Its settings are kept.')
   const stored = () => JSON.stringify({ kind: props.node.kind, ...(props.node.label ? { label: props.node.label } : {}), config: props.node.config }, null, 2)
   const loop = () => !!spec()?.config.carry
 

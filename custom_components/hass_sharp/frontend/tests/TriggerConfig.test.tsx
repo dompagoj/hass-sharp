@@ -382,7 +382,8 @@ it.each([['automation', true], ['entity', false]] as const)('in an %s, a trigger
 
 it.each([
   ['automation', 'Record automatic runs and their traces. Run now is always recorded.'],
-  ['entity', 'Record automatic runs and their traces.'],
+  // A definition's Trigger step run with Run now is recorded whatever this says, as an automation's is.
+  ['entity', 'Record automatic runs and their traces. Run now is always recorded.'],
 ] as const)('in an %s, the run history hint says only what is true there', (document, hint) => {
   const host = window.document.createElement('div')
   host.className = 'hs-app'

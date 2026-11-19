@@ -1,8 +1,13 @@
-import { For, Show } from 'solid-js'
+import { createEffect, createSignal, createUniqueId, For, on, Show, useContext } from 'solid-js'
+import { QueryClientContext, useQuery } from '@tanstack/solid-query'
+import { HassCtx } from '../context'
+import { useLoadedRegistry } from '../registry'
 import type { VisualGraph } from '../visual/graph'
-import { definitionOf, setDevice, withDetail } from './definitionEdits'
-import { SwitchField, TextField } from './formFields'
-import type { DefinitionDevice } from './model'
+import { SearchSelect } from '../visual/widgets/SearchSelect'
+import { entityApi, entityTypesQueryKey } from './api'
+import { definitionOf, setDevice, withDetail, withVia } from './definitionEdits'
+import { SelectField, SwitchField, TextField } from './formFields'
+import type { DefinitionDevice, DefinitionSummary, EntityType } from './model'
 
 const fields: { member: keyof DefinitionDevice; label: string; hint?: string; type?: string }[] = [
   { member: 'manufacturer', label: 'Manufacturer' },
@@ -33,10 +38,10 @@ export function deviceMemory(): DeviceMemory {
 }
 
 /**
- * The Device section: whether the entities are grouped as one device, and what its page in Home Assistant shows. The
- * device is named after the entity definition. Its parent (`via`) has no field here and is kept as stored (ruling R2).
- * Turned on again, the device is the one turned off while this editor was open (`memory`), else the saved
- * definition's (`saved`), else a device with no details.
+ * The Device section: whether the entities are grouped as one device, what its page in Home Assistant shows, and what
+ * it is part of (`via`). The device is named after the entity definition. Turned on again, the device is the one
+ * turned off while this editor was open (`memory`), else the saved definition's (`saved`), else a device with no
+ * details.
  */
 export function DeviceForm(props: {
   graph: VisualGraph
@@ -45,10 +50,93 @@ export function DeviceForm(props: {
   /** The saved definition's id (undefined before its first save) and device. */
   savedId?: string
   savedDevice?: DefinitionDevice | null
+  /** The entity ids Home Assistant gave the saved definition's entities: their device is its own. */
+  ownEntityIds?: readonly string[]
 }) {
   return (
     <DeviceSection device={definitionOf(props.graph).device} onChange={device => props.commit(setDevice(props.graph, device))} memory={props.memory}
-      savedId={props.savedId} savedDevice={props.savedDevice} />
+      savedId={props.savedId} savedDevice={props.savedDevice} parent={{ ownEntityIds: props.ownEntityIds ?? [] }} />
+  )
+}
+
+const deviceChoice = 'device'
+const definitionChoice = (id: string) => `definition:${id}`
+const byName = (a: DefinitionSummary, b: DefinitionSummary) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
+
+/**
+ * The entity definitions and the classes, read for Part of: undefined until read, and always outside the app's
+ * providers (a bare form in a test has none).
+ */
+function parentSources() {
+  const hass = useContext(HassCtx)
+  if (!hass || !useContext(QueryClientContext)) return { definitions: () => undefined, types: () => undefined }
+  const api = entityApi(hass)
+  // Not under the lists' key: a save or a delete here does not change which others are devices.
+  const definitions = useQuery(() => ({ queryKey: ['entity-definition-parents'], queryFn: () => api.list(), staleTime: 30_000 }))
+  const classes = () => (definitions.data ?? []).some(d => d.logic.kind === 'class')
+  // Only for a definition built from a class: whether it is a device is its class's.
+  const types = useQuery(() => ({ queryKey: [...entityTypesQueryKey], queryFn: () => api.types(), staleTime: 0, enabled: classes() }))
+  return {
+    definitions: (): DefinitionSummary[] | undefined => (definitions.isSuccess && (!classes() || !types.isPending) ? definitions.data : undefined),
+    types: (): EntityType[] => types.data?.types ?? [],
+  }
+}
+
+/**
+ * Part of: the device this definition's device is connected through, such as a hub. Nothing; another entity
+ * definition that is a device, by name (never this one); or a Home Assistant device, chosen with the device picker,
+ * by name, without this definition's own device. A definition named that is gone, or no longer a device, is said so
+ * and can be cleared. The server takes any of them and leaves out a parent Home Assistant does not have.
+ */
+function DeviceParent(props: { device: DefinitionDevice | null; onChange(device: DefinitionDevice): void; ownId?: string; ownEntityIds: readonly string[] }) {
+  const sources = parentSources()
+  const registry = useLoadedRegistry()
+  const via = () => props.device?.via ?? null
+  const named = () => via()?.definition ?? undefined
+  const deviceId = () => (named() ? undefined : via()?.deviceId ?? undefined)
+  // "A Home Assistant device…" chosen, the picker open before a device is: the choice is not made until one is picked.
+  const [picking, setPicking] = createSignal(false)
+  createEffect(on(() => JSON.stringify(via()), () => setPicking(false), { defer: true }))
+  const isDevice = (d: DefinitionSummary) =>
+    d.device != null || (d.logic.kind === 'class' && sources.types()?.find(t => t.id === d.logic.type)?.kind === 'device')
+  const parents = () => (sources.definitions() ?? []).filter(d => d.id !== props.ownId && isDevice(d)).sort(byName)
+  /** A named definition not offered: as the list says it, or its id before the list is read. */
+  const unlisted = (id: string) => {
+    const all = sources.definitions()
+    if (!all) return id
+    const found = all.find(d => d.id === id)
+    return !found ? 'A definition that no longer exists' : id === props.ownId ? 'This entity definition' : `${found.name} (not a device)`
+  }
+  const choices = () => {
+    const id = named()
+    const listed = parents().map(d => ({ value: definitionChoice(d.id), label: d.name }))
+    if (id !== undefined && !parents().some(d => d.id === id)) listed.push({ value: definitionChoice(id), label: unlisted(id) })
+    return [{ value: '', label: 'Nothing' }, ...listed, { value: deviceChoice, label: 'A Home Assistant device…' }]
+  }
+  const value = () => (picking() || deviceId() !== undefined ? deviceChoice : named() !== undefined ? definitionChoice(named()!) : '')
+  const ownDevices = () => new Set((registry()?.entities ?? []).filter(e => props.ownEntityIds.includes(e.entity_id) && e.device_id).map(e => e.device_id))
+  const devices = () => (registry()?.devices ?? []).filter(d => !ownDevices().has(d.id)).map(d => ({ value: d.id, label: d.name ?? d.id }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.value.localeCompare(b.value))
+  const pickerId = createUniqueId()
+  let picker: HTMLDivElement | undefined
+  const choose = (choice: string) => {
+    if (choice === deviceChoice) {
+      setPicking(true)
+      queueMicrotask(() => picker?.querySelector<HTMLInputElement>('input')?.focus())
+    } else props.onChange(withVia(props.device, choice ? { definition: choice.slice(definitionChoice('').length) } : null))
+  }
+  return (
+    <>
+      <SelectField name="via" label="Part of" value={value()} choices={choices()} onChange={choose}
+        hint="The device it is connected through, such as a hub." />
+      <Show when={value() === deviceChoice}>
+        <div ref={picker} class="hs-insp-field hs-def-field" data-field="viaDevice">
+          <label class="hs-insp-field__label" for={pickerId}>Home Assistant device</label>
+          <SearchSelect id={pickerId} label="Home Assistant device" options={devices()} value={deviceId()} placeholder="Choose a device"
+            onSelect={id => props.onChange(withVia(props.device, { deviceId: id }))} />
+        </div>
+      </Show>
+    </>
   )
 }
 
@@ -66,6 +154,8 @@ export function DeviceSection(props: {
   savedDevice?: DefinitionDevice | null
   fixed?: { hint: string; placeholder: string }
   toggle?: { label: string; hint: string }
+  /** Offer Part of; `ownEntityIds` are the entity ids of the saved definition's entities, whose device is its own. */
+  parent?: { ownEntityIds: readonly string[] }
 }) {
   const device = () => props.device
   const detail = (member: keyof DefinitionDevice) => { const value = device()?.[member]; return typeof value === 'string' ? value : '' }
@@ -91,6 +181,9 @@ export function DeviceSection(props: {
                 text={detail(field.member)} commit={value => props.onChange(withDetail(device(), field.member, value.trim()))} />
             )}
           </For>
+          <Show when={props.parent}>
+            {parent => <DeviceParent device={device()} onChange={props.onChange} ownId={props.savedId} ownEntityIds={parent().ownEntityIds} />}
+          </Show>
         </div>
       </Show>
     </section>

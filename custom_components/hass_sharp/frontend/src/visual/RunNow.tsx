@@ -9,14 +9,15 @@ import { nodeTitle } from './flow/flowModel'
 import { triggerMethod, visualActionLabels, visualRunClasses } from './graph'
 import { nodeSummary, type SummaryNames } from './nodeSummary'
 
-/** A trigger of the saved automation that can be started by hand. */
-export interface ManualTrigger {
+/** A step Run now can start: its card title (with its id when two share one) and its one-line summary, as on the card. */
+export interface RunChoice {
   nodeId: string
-  action: RunAction
-  /** The trigger's card title (with its id when two share one). */
   label: string
-  /** Its one-line summary, as on the card. */
   summary: string
+}
+/** A trigger of the saved automation that can be started by hand. */
+export interface ManualTrigger extends RunChoice {
+  action: RunAction
 }
 
 /** The saved graph's triggers that allow manual runs, in the graph's order; summaries name entities as the cards do. */
@@ -61,12 +62,6 @@ export function RunNowButton(props: {
 }) {
   const hass = useHass()
   const queryClient = useQueryClient()
-  const menuId = createUniqueId()
-  let root!: HTMLDivElement
-  let trigger!: HTMLButtonElement
-  let menu: HTMLDivElement | undefined
-  const [open, setOpen] = createSignal(false)
-  const [running, setRunning] = createSignal(false)
   const triggers = () => manualTriggers(props.document, props.catalog, props.names)
   const reason = () => {
     if (!props.document) return 'Save the automation to run it'
@@ -74,20 +69,54 @@ export function RunNowButton(props: {
     if (!triggers().length) return 'No trigger allows manual runs'
   }
   const tip = () =>
-    reason() ??
-    (props.dirty
+    props.dirty
       ? 'Runs the last saved version; unsaved changes are not included'
       : triggers().length > 1
         ? 'Choose a trigger to run the saved automation'
-        : 'Run the saved automation now')
-  // The automation whose run this button started (captured then, not read at cleanup): forgotten when the page
-  // leaves it, for another automation or a new draft, or closes.
+        : 'Run the saved automation now'
+  return (
+    <RunNowControl automationId={props.document?.automationId} choices={triggers()} unavailable={reason()} tip={tip()} menuLabel="Run which trigger"
+      busy={props.busy} onNotice={props.onNotice} start={choice => dispatchRun(hass, props.document!.automationId, choice.action, queryClient)} />
+  )
+}
+
+/**
+ * Run now over any saved document's steps: one choice runs at a press; several open a menu of them (label and
+ * summary). Unavailable, it is disabled and its tooltip says why; while its request is in flight it takes no press
+ * but keeps the focus. `start` sends the request (and remembers the run for polling, as `acceptRun` does); its answer
+ * or its error in the server's words is said in a notice.
+ */
+export function RunNowControl<C extends RunChoice>(props: {
+  /** The run history key of the saved document; the run it started is forgotten when this changes or the page closes. */
+  automationId?: string
+  choices: C[]
+  /** Why nothing can be run now, if so (its tooltip then). */
+  unavailable?: string
+  /** The tooltip while it can run. */
+  tip: string
+  /** The menu's accessible name. */
+  menuLabel: string
+  busy?: boolean
+  start(choice: C): Promise<unknown>
+  onNotice(notice: RunNotice): void
+}) {
+  const menuId = createUniqueId()
+  let root!: HTMLDivElement
+  let trigger!: HTMLButtonElement
+  let menu: HTMLDivElement | undefined
+  const [open, setOpen] = createSignal(false)
+  const [running, setRunning] = createSignal(false)
+  const choices = () => props.choices
+  const reason = () => props.unavailable
+  const tip = () => reason() ?? props.tip
+  // The run history whose run this control started (captured then, not read at cleanup): forgotten when the page
+  // leaves it, for another document or a new draft, or closes.
   let started: string | undefined
   const forget = () => {
     if (started) forgetAcceptedRun(started)
     started = undefined
   }
-  createEffect(on(() => props.document?.automationId, id => id !== started && forget(), { defer: true }))
+  createEffect(on(() => props.automationId, id => id !== started && forget(), { defer: true }))
   onCleanup(forget)
 
   const items = () => [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
@@ -101,16 +130,15 @@ export function RunNowButton(props: {
   document.addEventListener('pointerdown', outside)
   onCleanup(() => document.removeEventListener('pointerdown', outside))
 
-  const run = async (choice: ManualTrigger) => {
-    const doc = props.document
-    if (!doc || running()) return
+  const run = async (choice: C) => {
+    const automationId = props.automationId
+    if (!automationId || running()) return
     setRunning(true)
-    const automationId = doc.automationId
     try {
       if (started !== automationId) forget()
       started = automationId
-      await dispatchRun(hass, automationId, choice.action, queryClient)
-      props.onNotice({ text: triggers().length > 1 ? `Run of ${choice.label} started. Its result is under Runs.` : 'Run started. Its result is under Runs.' })
+      await props.start(choice)
+      props.onNotice({ text: choices().length > 1 ? `Run of ${choice.label} started. Its result is under Runs.` : 'Run started. Its result is under Runs.' })
     } catch (error) {
       props.onNotice({ text: `Run request failed: ${runErrorMessage(error)}`, error: true })
     } finally {
@@ -118,8 +146,8 @@ export function RunNowButton(props: {
     }
   }
   const press = () => {
-    const list = triggers()
-    if (reason() || !list.length) return
+    const list = choices()
+    if (reason() || running() || !list.length) return
     if (list.length === 1) return void run(list[0])
     if (open()) return close()
     setOpen(true)
@@ -142,18 +170,20 @@ export function RunNowButton(props: {
 
   return (
     <div class="hs-run-now" ref={root}>
+      {/* In flight: marked, not disabled, so the focus stays on it; a press does nothing. */}
       <Button
         ref={trigger}
         class="hs-topbar__run"
-        busy={running()}
-        disabled={!!reason() || props.busy}
+        aria-busy={running() || undefined}
+        aria-disabled={running() ? 'true' : undefined}
+        disabled={!!reason() || !choices().length || props.busy}
         title={tip()}
-        aria-haspopup={triggers().length > 1 ? 'menu' : undefined}
-        aria-expanded={triggers().length > 1 ? open() : undefined}
+        aria-haspopup={choices().length > 1 ? 'menu' : undefined}
+        aria-expanded={choices().length > 1 ? open() : undefined}
         aria-controls={open() ? menuId : undefined}
         onClick={press}
         onKeyDown={event => {
-          if (triggers().length > 1 && (event.key === 'ArrowDown' || event.key === 'ArrowUp') && !reason()) {
+          if (choices().length > 1 && (event.key === 'ArrowDown' || event.key === 'ArrowUp') && !reason() && !running()) {
             event.preventDefault()
             setOpen(true)
             ;(event.key === 'ArrowUp' ? items().at(-1) : items()[0])?.focus()
@@ -163,8 +193,8 @@ export function RunNowButton(props: {
         Run now
       </Button>
       <Show when={open()}>
-        <div ref={menu} id={menuId} role="menu" aria-label="Run which trigger" class="hs-run-now__menu" on:keydown={keys}>
-          <For each={triggers()}>
+        <div ref={menu} id={menuId} role="menu" aria-label={props.menuLabel} class="hs-run-now__menu" on:keydown={keys}>
+          <For each={choices()}>
             {choice => (
               <button type="button" role="menuitem" tabindex="-1" class="hs-run-now__item" onClick={() => { close(); void run(choice) }}>
                 <strong>{choice.label}</strong>

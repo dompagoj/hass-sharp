@@ -4,6 +4,7 @@ import type { EditorAdapter, EditorTexts } from '../visual/adapter'
 import type { VisualGraph } from '../visual/graph'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
 import { DefinitionOverview } from './DefinitionPanel'
+import { DefinitionRunNow } from './DefinitionRunNow'
 import { icons } from '../visual/icons'
 import { copyNotice, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
 import { deviceMemory } from './DeviceForm'
@@ -61,8 +62,8 @@ const result = (saved: EntitySaveResult) => ({ ...saved, document: held(saved.do
 /**
  * The editor of an entity definition built from steps: the `hass_sharp/entities` API, ids from the name (fixed at the
  * first save), a starter with one binary sensor named after the definition, `/entities` and `/entities/<id>`, drafts
- * and downloads without secret values, and the definition form as the inspector's overview. It has no Run now: an
- * entity's commands are tried from Home Assistant (ruling R1).
+ * and downloads without secret values, Run now for its Trigger steps, and the definition form as the inspector's
+ * overview. Nothing else is run by hand: an entity's commands are tried from Home Assistant (ruling R1).
  *
  * The entity definition's page reads a definition before it chooses its editor; `handed` gives this editor that read
  * for its first read of the definition (once), so it is not read twice. A definition built from a class is refused
@@ -102,6 +103,7 @@ export function entityAdapter(
     runHref: (id, runId) => `/entities/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`,
     queryKeys: [definitionsQueryKey],
     texts: entityTexts,
+    runGroup: context => createComponent(DefinitionRunNow, { context }),
     overview: context => createComponent(DefinitionOverview, { context, memory }),
     overviewIcon: icons.entity,
     // A problem about no step and no row of the form is listed at the form's top.

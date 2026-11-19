@@ -67,6 +67,22 @@ it('quick-add in an entity definition lists its steps and every automation step'
   for (const kind of entityKinds) expect(offered, kind).toContain(`Create ${label(kind)}`)
 })
 
+it.each([
+  ['automation', 'Start the automation when something happens, at a set time, or when you run it.'],
+  ['entity', 'Run the steps after it when something happens, at a set time or on an interval.'],
+] as const)("describes the Trigger step in the words of an %s's graph, in the step library and quick-add", (document, description) => {
+  // The catalog's own text is an automation's: an entity definition's palette says it in its words.
+  expect(nodeCatalog.nodes.trigger.description).toBe('Start the automation when something happens, at a set time, or when you run it.')
+  expect(catalogPalette(nodeCatalog, document).find(item => item.kind === 'trigger')!.description).toBe(description)
+  const root = host()
+  dispose = render(() => <NodeLibraryPanel document={document} collapsed={false} onCollapsedChange={() => {}} onAdd={() => {}} onQuickAdd={() => {}} />, root)
+  expect(root.querySelector('.hs-lib__item[aria-label="Add Trigger"] small')!.textContent).toBe(description)
+  dispose()
+  dispose = render(() => <QuickAdd document={document} x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)
+  const option = root.querySelector('[role="option"][aria-label="Create Trigger"]')!
+  expect(root.querySelector(`[id="${option.getAttribute('aria-describedby')}"]`)!.textContent).toBe(description)
+})
+
 it('the canvas quick-add offers the steps of the document its graph is', async () => {
   const offered = async (graph: VisualGraph) => {
     const root = host()

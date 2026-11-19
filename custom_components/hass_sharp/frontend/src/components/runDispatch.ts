@@ -42,20 +42,30 @@ export function runHistoryInterval(automationId: string, runs: readonly Automati
 }
 
 /**
- * Asks Home Assistant to run one action of the saved automation now (`hass_sharp/run_now`). On acceptance the run is
- * remembered for polling and the automation's run history is refetched. Rejects with the request's error.
+ * Starts a run with `request` for the run history `automationId` (an automation's, or an entity definition's). On
+ * acceptance the run is remembered for polling and that run history is refetched. Rejects with the request's error.
  */
-export async function dispatchRun(
-  hass: Pick<HomeAssistant, 'callWS'>,
+export async function acceptRun(
   automationId: string,
-  action: RunAction,
+  request: () => Promise<RunAcceptedResponse>,
   queryClient?: QueryClient,
 ): Promise<RunAcceptedResponse> {
   forgetAcceptedRun(automationId)
-  const response = await hass.callWS<RunAcceptedResponse>({
-    type: 'hass_sharp/run_now', automationId, className: action.className, method: action.method,
-  })
+  const response = await request()
   setAccepted(current => new Map(current).set(automationId, { runId: response.runId, at: Date.now() }))
   void queryClient?.invalidateQueries({ queryKey: ['run-history', automationId] })
   return response
 }
+
+/**
+ * Asks Home Assistant to run one action of the saved automation now (`hass_sharp/run_now`), as {@link acceptRun} does.
+ */
+export const dispatchRun = (
+  hass: Pick<HomeAssistant, 'callWS'>,
+  automationId: string,
+  action: RunAction,
+  queryClient?: QueryClient,
+): Promise<RunAcceptedResponse> =>
+  acceptRun(automationId, () => hass.callWS<RunAcceptedResponse>({
+    type: 'hass_sharp/run_now', automationId, className: action.className, method: action.method,
+  }), queryClient)

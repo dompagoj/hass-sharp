@@ -45,6 +45,11 @@ describe('entity API client', () => {
     ])
     expect(Object.keys(messages[5].request)).not.toContain('enabled')
   })
+  it('runs a Trigger step of a definition by its id and answers the run id', async () => {
+    const { api, messages } = client(() => ok({ version: 1, runId: 'run-7' }))
+    await expect(api.run('motion', 'poll')).resolves.toEqual({ version: 1, runId: 'run-7' })
+    expect(messages).toEqual([{ type: 'hass_sharp/entities', request: { operation: 'run', id: 'motion', triggerId: 'poll' } }])
+  })
   it('answers the result of the envelope', async () => {
     const { api } = client(() => ok({ deleted: true }))
     await expect(api.remove('motion', 1)).resolves.toEqual({ deleted: true })
@@ -393,8 +398,55 @@ describe('the in-memory entities backend', () => {
     expect(await send({ operation: 'delete', id: 'plug', expectedRevision: 'one' })).toEqual(refused('expectedRevision must be a whole number'))
     expect(await send({ operation: 'list', view: 3 })).toEqual(refused('view must be a string'))
     expect(await send({ operation: 'list', view: 'all' })).toEqual(refused('Unknown list view; the entity definitions list has the view home'))
-    expect(await send({ operation: 'run' })).toEqual(refused('Unknown entity operation'))
+    expect(await send({ operation: 'run' })).toEqual(refused('id is required'))
+    expect(await send({ operation: 'run', id: 'plug', triggerId: 3 })).toEqual(refused('triggerId must be a string'))
+    expect(await send({ operation: 'start' })).toEqual(refused('Unknown entity operation'))
     expect(fixture.entities.documents.size).toBe(1)
+  })
+  it("answers a graph's Trigger steps as Python does, each runnable only while its saved revision runs", async () => {
+    const { fixture, api } = setup()
+    const trigger = (id: string, config: Record<string, unknown> = {}) => ({ id, kind: 'trigger', config: { type: 'time_pattern', ...config } })
+    const steps = (): DefinitionBody => ({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [],
+      nodes: [trigger('poll'), trigger('quiet', { manual: false }), { id: 'log', kind: 'log', config: {} }] } } })
+    const saved = await api.save('motion', steps(), 0)
+    const answer = (runnable: boolean) => [
+      { triggerId: 'poll', method: 'Run_706F6C6C', manual: true, runnable },
+      { triggerId: 'quiet', method: 'Run_7175696574', manual: false, runnable: false },
+    ]
+    expect(saved.document.triggers).toEqual(answer(true))
+    expect((await api.read('motion')).triggers).toEqual(answer(true))
+    expect((await api.list())[0].triggers).toEqual(answer(true))
+    await api.setEnabled('motion', false)
+    expect((await api.read('motion')).triggers).toEqual(answer(false))
+    fixture.entities.controls.activation = 'setup'
+    await api.setEnabled('motion', true)
+    expect((await api.read('motion')).triggers).toEqual(answer(false))
+    // A class has no steps.
+    fixture.entities.seed('plug', { name: 'Plug', settings: [], logic: { kind: 'class', type: tokenType.id } })
+    expect((await api.read('plug')).triggers).toEqual([])
+  })
+  it('runs a Trigger step of a running definition, and refuses the rest in the words EntityApi does', async () => {
+    const { fixture, api } = setup()
+    const steps = (): DefinitionBody => ({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [], nodes: [
+      { id: 'poll', kind: 'trigger', config: { type: 'time_pattern' } }, { id: 'quiet', kind: 'trigger', config: { manual: false } }, { id: 'log', kind: 'log', label: 'Write it down', config: {} }] } } })
+    await api.save('motion', steps(), 0)
+    await expect(api.run('motion', 'poll')).resolves.toEqual({ version: 1, runId: 'manual-entity-run' })
+    expect(fixture.entities.controls.runs).toEqual([{ id: 'motion', triggerId: 'poll' }])
+    const refused = async (id: string, triggerId: string, message: string) =>
+      expect(api.run(id, triggerId)).rejects.toMatchObject({ code: 'invalid_request', message })
+    await refused('motion', 'gone', 'Trigger not found')
+    await refused('motion', 'log', 'Only a Trigger step can be run by hand; Write it down is not one')
+    await refused('motion', 'quiet', 'Trigger does not permit manual execution')
+    await expect(api.run('other', 'poll')).rejects.toMatchObject({ code: 'not_found', message: 'Entity definition not found' })
+    fixture.entities.seed('plug', { name: 'Plug', settings: [], logic: { kind: 'class', type: tokenType.id } })
+    await refused('plug', 'poll', 'A class definition has no steps to run')
+    fixture.entities.controls.activation = 'failed'
+    fixture.entities.controls.activationError = 'Start threw: no network'
+    await api.save('motion', steps(), 1)
+    await refused('motion', 'poll', 'The saved revision of this entity definition is not running: Start threw: no network')
+    await api.setEnabled('motion', false)
+    await refused('motion', 'poll', 'The entity definition is off')
+    expect(fixture.entities.controls.runs).toHaveLength(1)
   })
   it('previews first only a graph Python reads as one: an object', async () => {
     const { fixture, api } = setup()

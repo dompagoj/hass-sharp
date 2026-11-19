@@ -158,6 +158,13 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  * within its rule's range, a pattern that is a regular expression, every option the domain needs, a min below the max); with any of them the
  * seeded diagnostics are not answered.
  *
+ * Every definition `list`, `read` and `save` answer carries `triggers`, as Python's `definition_triggers` gives them: a
+ * graph's Trigger steps `{triggerId, method, manual, runnable}`, `runnable` only while its saved revision runs and is
+ * `running` and the step can be started with Run now; none for a class. `run` (`id`, `triggerId`) answers
+ * `{version: 1, runId: 'manual-entity-run'}`, recorded in `runs` of `controls`, or refuses as `EntityApi.DispatchDefinition`
+ * does, each `invalid_request` in its words: a class definition, one that is off, one whose saved revision is not
+ * running, a step that is not there, one that is not a Trigger, one that cannot be started with Run now.
+ *
  * Refusals come in the real order, with the real `invalid_request` texts for a field missing (`id is required`) or of
  * the wrong type (`id must be a string`, `expectedRevision must be a whole number`, `enabled must be true or false`).
  * Every operation with an id refuses one outside `^[a-z0-9][a-z0-9_-]{0,79}$` ("Invalid definition ID") after reading
@@ -186,6 +193,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     classChecks: false,
     /** The node libraries do not compile: every definition is refused (`definition.library`), and a class's settings are all answered masked. */
     libraryErrors: false,
+    /** The Trigger steps `run` started, in order. */
+    runs: [] as { id: string; triggerId: string }[],
   }
   const ok = (result: unknown) => ({ version: 1, ok: true, result })
   const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
@@ -367,7 +376,17 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       ...running(id, body, enabled), registeredEntities: [],
     } as EntityDocument
   }
-  /** The document as an answer gives it: secrets masked, the registry's entries. */
+  /** A graph's Trigger steps as `definition_triggers` answers them; none for a class. */
+  const triggersOf = (document: EntityDocument) => {
+    if (document.logic.kind !== 'graph') return []
+    const running = document.currentRevisionActive && document.status === 'running'
+    return document.logic.graph.nodes.filter(node => node.kind === 'trigger').map(node => {
+      const manual = node.config?.manual !== false
+      const method = 'Run_' + [...new TextEncoder().encode(node.id)].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
+      return { triggerId: node.id, method, manual, runnable: running && manual }
+    })
+  }
+  /** The document as an answer gives it: secrets masked, the registry's entries, its Trigger steps. */
   const answered = (document: EntityDocument) => {
     const type = document.logic.kind === 'class' ? types.find(t => t.id === document.logic.type) : undefined
     // As EntityLifecycle.WithoutSecretValues: a graph's setting is answered only when no setting of its key is secret, a
@@ -376,7 +395,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       : controls.libraryErrors || !type || !type.settings.some(s => s.key === key && !s.secret)
     const settings = document.settings.map(s => (masked(s.key) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
     const entries = [...(registry.get(document.id) ?? published.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
-    return structuredClone({ ...document, settings, registeredEntities: entries })
+    return structuredClone({ ...document, settings, registeredEntities: entries, triggers: triggersOf(document) })
   }
   const summary = (document: EntityDocument) => { const { source: _source, sourceMap: _sourceMap, ...rest } = answered(document); return rest }
   const sorted = () => [...documents.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
@@ -441,6 +460,21 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
         const existing = found(id)
         const document = keep({ ...existing, enabled, ...running(id, existing, enabled) })
         return ok({ id, enabled: document.enabled, ...started(document) })
+      }
+      case 'run': {
+        // As EntityApi: the id, the stored definition and the step's id, then whether it runs and the step it names.
+        const id = text(request, 'id')
+        checkId(id)
+        const document = found(id), triggerId = text(request, 'triggerId')
+        if (document.logic.kind !== 'graph') refuse('A class definition has no steps to run')
+        if (!document.enabled) refuse('The entity definition is off')
+        if (!document.currentRevisionActive || document.status !== 'running')
+          refuse(`The saved revision of this entity definition is not running: ${document.activationError && document.activationError !== 'Not active' ? document.activationError : 'it has not started'}`)
+        const node = document.logic.graph!.nodes.find(n => n.id === triggerId) ?? refuse('Trigger not found')
+        if (node.kind !== 'trigger') refuse(`Only a Trigger step can be run by hand; ${node.label?.trim() || nodeCatalog.nodes[node.kind]?.label || node.kind} is not one`)
+        if (node.config?.manual === false) refuse('Trigger does not permit manual execution')
+        controls.runs.push({ id, triggerId })
+        return ok({ version: 1, runId: 'manual-entity-run' })
       }
       case 'delete': {
         const id = text(request, 'id'), expected = revision(request)

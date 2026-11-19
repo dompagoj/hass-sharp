@@ -33,10 +33,13 @@ export interface DefinitionSetting {
   hasValue?: boolean
   keep?: boolean
 }
-/** The device this definition's device is connected through: another definition's, or a Home Assistant device. */
+/**
+ * The device this definition's device is connected through: another definition's (`{definition}`), or a Home Assistant
+ * device (`{deviceId}`). An answer also carries the other member as null.
+ */
 export interface DefinitionVia {
-  definition: string | null
-  deviceId: string | null
+  definition?: string | null
+  deviceId?: string | null
 }
 /** What Home Assistant's device page shows; each null for none (or the class's own). */
 export interface DefinitionDevice {
@@ -46,7 +49,7 @@ export interface DefinitionDevice {
   hwVersion?: string | null
   configurationUrl?: string | null
   suggestedArea?: string | null
-  /** Has no form in this phase: carried untouched. */
+  /** Part of: the device it is connected through, if any. */
   via?: DefinitionVia | null
 }
 /** Where the behaviour comes from; an answer also carries the other kind's member as null. */
@@ -76,6 +79,15 @@ export interface RegisteredEntity {
   name: string | null
   disabled: boolean
 }
+/** A Trigger step of a saved graph definition, as an automation's are answered (`runnable_triggers`). */
+export interface DefinitionTrigger {
+  triggerId: string
+  method: string
+  /** Its "Can be started with Run now". */
+  manual: boolean
+  /** Whether `run` runs it now: it can be started with Run now, and the definition runs its saved revision and is running. */
+  runnable: boolean
+}
 /** A saved definition as `read` and `save` answer it (`list` without `source` and `sourceMap`). */
 export interface EntityDocument extends DefinitionBody {
   version: 1
@@ -98,6 +110,8 @@ export interface EntityDocument extends DefinitionBody {
   liveEntities: LiveEntity[]
   /** Sorted by unique id. */
   registeredEntities: RegisteredEntity[]
+  /** A graph's Trigger steps, in the graph's order; none for a class. Python adds it to every list, read and save answer. */
+  triggers?: DefinitionTrigger[]
 }
 /** A `list` entry: the document without its generated source. */
 export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap'>

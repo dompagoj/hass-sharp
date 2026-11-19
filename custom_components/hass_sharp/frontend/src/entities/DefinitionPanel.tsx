@@ -78,7 +78,7 @@ export function DefinitionPanel(props: DefinitionPanelProps) {
       <EntityRows graph={props.graph} catalog={props.catalog} problems={problems().entities} savedKeys={props.savedKeys} commit={commit}
         entityIds={entityIds()} onNotice={props.onNotice} located={props.located} />
       <DeviceForm graph={props.graph} commit={commit} memory={props.deviceMemory ?? ownMemory} savedId={props.savedId}
-        savedDevice={props.savedDevice} />
+        savedDevice={props.savedDevice} ownEntityIds={[...entityIds().values()]} />
       <SettingRows graph={props.graph} catalog={props.catalog} problems={problems().settings} commit={commit} onNotice={props.onNotice}
         located={props.located} />
     </div>

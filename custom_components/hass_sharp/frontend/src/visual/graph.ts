@@ -32,11 +32,21 @@ export const literal = (type: string, value: JsonValue): Operand => ({ kind: 'li
 export { effectiveTriggerMethod as triggerMethod } from './contract'
 import { effectiveTriggerMethod } from './contract'
 /**
+ * The description of a step of `kind` in a graph of the document: the catalog's, said for an entity definition where it
+ * speaks of an automation. The catalog itself is part of the generated sources and keeps an automation's words.
+ */
+const documentDescriptions: Partial<Record<GraphDocument, Record<string, string>>> = {
+  entity: { trigger: 'Run the steps after it when something happens, at a set time or on an interval.' },
+}
+export const stepDescription = (kind: string, description: string, document: GraphDocument = 'automation') =>
+  documentDescriptions[document]?.[kind] ?? description
+/**
  * The steps a graph of the document can take, for the step library and quick-add: every kind but those whose
- * `documents` leave that document out (an entity definition's own steps, in an automation).
+ * `documents` leave that document out (an entity definition's own steps, in an automation), each described for it.
  */
 export const catalogPalette = (catalog: VisualCatalogSnapshot = nodeCatalog, document: GraphDocument = 'automation') =>
-  Object.entries(catalog.nodes).filter(([, spec]) => !Array.isArray(spec.documents) || spec.documents.includes(document)).map(([kind, spec]) => ({ kind, ...spec }))
+  Object.entries(catalog.nodes).filter(([, spec]) => !Array.isArray(spec.documents) || spec.documents.includes(document))
+    .map(([kind, spec]) => ({ kind, ...spec, description: stepDescription(kind, spec.description, document) }))
 /**
  * Whether a palette item matches a search: every word of it appears in the item's label, kind, description, its
  * catalog keywords (other names people search by, "set value" for Constant) or the extra texts.

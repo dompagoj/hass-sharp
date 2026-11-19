@@ -1,7 +1,7 @@
 import { entityTypeLabel, words, type ConfigSpec, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
-import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type EditorDefinition, type EntityDocument } from './model'
+import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
 
 /**
  * The definition form's changes to an editor graph's `definition` (its entities, settings and device), each a new
@@ -277,6 +277,13 @@ export function withDetail(device: DefinitionDevice | null, member: keyof Defini
   const next: DefinitionDevice = { ...(device ?? {}) }
   if (value.trim()) (next as Record<string, unknown>)[member] = value
   else delete next[member]
+  return next
+}
+/** The device part of `via` (`{definition}` or `{deviceId}`), or of nothing (null); its details stay as they are. */
+export function withVia(device: DefinitionDevice | null, via: DefinitionVia | null): DefinitionDevice {
+  const next: DefinitionDevice = { ...(device ?? {}) }
+  if (via) next.via = via
+  else delete next.via
   return next
 }
 /** The device's details with `member` set, or left out when `value` is empty; the device's parent (`via`) stays as it is. */

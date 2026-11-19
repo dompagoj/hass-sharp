@@ -29,10 +29,13 @@ const registryEntity = (entity_id: string, name: string) => ({
 const registry = { entities: [registryEntity('binary_sensor.motion_a', 'Motion A'), registryEntity('binary_sensor.motion_b', 'Motion B')], areas: [], devices: [], floors: [], labels: [] }
 
 type Fixture = ReturnType<typeof visualFixture>
-/** The page at `path`, over a new in-memory backend (or `fixture`, to open the page again on what it saved). */
-function setup(path: string, prepare?: (fixture: Fixture) => void, fixture: Fixture = visualFixture()) {
+/**
+ * The page at `path`, over a new in-memory backend (or `fixture`, to open the page again on what it saved), with
+ * Home Assistant's registry `entities` (default: two motion sensors and no devices).
+ */
+function setup(path: string, prepare?: (fixture: Fixture) => void, fixture: Fixture = visualFixture(), entities: unknown = registry) {
   prepare?.(fixture)
-  const callWS = (message: any) => (message.type === 'hass_sharp/get_entities' ? Promise.resolve(structuredClone(registry)) : fixture.callWS(message))
+  const callWS = (message: any) => (message.type === 'hass_sharp/get_entities' ? Promise.resolve(structuredClone(entities)) : fixture.callWS(message))
   const hass = { ...fixture, callWS, user: { is_admin: true, id: 'u1' } }
   const root = document.createElement('div')
   root.className = 'hs-app'
@@ -334,8 +337,8 @@ const plugBody = (): DefinitionBody => ({
   entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'power', domain: 'sensor', name: 'Power', options: { unit: 'W' } }],
   logic: { kind: 'graph', graph: { version: 5, name: 'Plug', nodes: [{ id: 'on', kind: 'entity_command', config: { entity: 'relay', command: 'turn_on' }, position: { x: 60, y: 100 } }], edges: [] } },
 })
-const openPlug = async (prepare?: (fixture: Fixture) => void, fixture?: Fixture) => {
-  const page = setup('/entities/plug', f => { if (!f.entities.documents.has('plug')) f.entities.seed('plug', plugBody()); prepare?.(f) }, fixture)
+const openPlug = async (prepare?: (fixture: Fixture) => void, fixture?: Fixture, entities?: unknown) => {
+  const page = setup('/entities/plug', f => { if (!f.entities.documents.has('plug')) f.entities.seed('plug', plugBody()); prepare?.(f) }, fixture, entities)
   await vi.waitFor(() => expect(page.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   return page
 }
@@ -1379,4 +1382,211 @@ it('adds HTTP request and Download file to an entity definition, with forms that
   expect(fields()).toEqual(['name', 'url', 'sha256'])
   expect(field('sha256').textContent).toContain('SHA-256 checksum')
   expect([...inspector(root).querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Path'])
+})
+
+// ---- Run now: a Trigger step of the saved definition, started from the top bar as an automation's trigger is.
+/** The plug, polled by a Trigger step `poll` (and `others` more steps). */
+const pollingPlug = (...others: any[]): DefinitionBody => {
+  const body = plugBody()
+  if (body.logic.kind === 'graph')
+    body.logic.graph.nodes.push({ id: 'poll', kind: 'trigger', label: 'Poll', config: { type: 'ha', trigger: { trigger: 'time_pattern', seconds: '/10' } }, position: { x: 60, y: 300 } }, ...others)
+  return body
+}
+const runNow = (root: Element) => root.querySelector<HTMLButtonElement>('.hs-topbar__run')
+const topNotice = (root: Element) => root.querySelector('.hs-topbar__notice')
+
+it("runs a Trigger step of the saved, running definition from Run now, and its run shows under Runs as an automation's does", async () => {
+  const { root, fixture } = await openPlug(f => f.entities.seed('plug', pollingPlug()))
+  const run = runNow(root)!
+  expect(run.textContent?.trim()).toBe('Run now')
+  expect(run.disabled).toBe(false)
+  expect(run.title).toBe('Run the saved entity definition’s Trigger step now')
+  expect(run.getAttribute('aria-haspopup')).toBeNull()
+  const histories = () => fixture.calls.filter((c: any) => c.type === 'hass_sharp/run_history').length
+  await vi.waitFor(() => expect(histories()).toBeGreaterThan(0))
+  const before = histories()
+  // While its request is in flight it takes no second press and keeps the focus.
+  const inner = fixture.callWS
+  let release!: () => void
+  fixture.callWS = async (message: any) => {
+    if (message.request?.operation === 'run') await new Promise<void>(resolve => { release = resolve })
+    return inner(message)
+  }
+  run.focus()
+  run.click()
+  await vi.waitFor(() => expect(run.getAttribute('aria-disabled')).toBe('true'))
+  expect(run.disabled).toBe(false)
+  expect(document.activeElement).toBe(run)
+  run.click()
+  fixture.callWS = inner
+  release()
+  await vi.waitFor(() => expect(topNotice(root)?.textContent).toBe('Run started. Its result is under Runs.'))
+  expect(fixture.entities.requests.filter(r => r.operation === 'run')).toEqual([{ operation: 'run', id: 'plug', triggerId: 'poll' }])
+  expect(fixture.entities.controls.runs).toEqual([{ id: 'plug', triggerId: 'poll' }])
+  expect(fixture.calls.some((c: any) => c.type === 'hass_sharp/run_now' || c.type === 'hass_sharp/visual')).toBe(false)
+  expect(run.getAttribute('aria-disabled')).toBeNull()
+  // The run history is asked for again, so the new run shows.
+  await vi.waitFor(() => expect(histories()).toBeGreaterThan(before))
+  expectClean(root)
+  // Refused, it says why in the server's words.
+  fixture.entities.documents.get('plug')!.enabled = false
+  run.click()
+  await vi.waitFor(() => expect(topNotice(root)?.textContent).toBe('Run request failed: The entity definition is off'))
+  expect(topNotice(root)!.getAttribute('role')).toBe('alert')
+})
+
+it('offers a menu of the Trigger steps that can be started with Run now, named and summarised as on their cards', async () => {
+  const { root, fixture } = await openPlug(f => f.entities.seed('plug', pollingPlug(
+    { id: 'nightly', kind: 'trigger', label: 'Nightly', config: { type: 'daily', time: '03:00', timeZone: 'UTC' }, position: { x: 60, y: 500 } },
+    { id: 'quiet', kind: 'trigger', label: 'Quiet', config: { type: 'manual', manual: false }, position: { x: 60, y: 700 } })))
+  const run = runNow(root)!
+  expect(run.getAttribute('aria-haspopup')).toBe('menu')
+  expect(run.title).toBe('Choose a Trigger step to run')
+  run.click()
+  const items = () => [...root.querySelectorAll<HTMLButtonElement>('[role="menu"][aria-label="Run which Trigger step"] [role="menuitem"]')]
+  expect(items().map(item => item.querySelector('strong')!.textContent)).toEqual(['Poll', 'Nightly'])
+  expect(items()[1].querySelector('small')!.textContent).toContain('03:00')
+  expect(document.activeElement).toBe(items()[0])
+  items()[1].click()
+  await vi.waitFor(() => expect(topNotice(root)?.textContent).toBe('Run of Nightly started. Its result is under Runs.'))
+  expect(fixture.entities.controls.runs).toEqual([{ id: 'plug', triggerId: 'nightly' }])
+  expectClean(root)
+})
+
+it('offers Run now only while the saved definition runs, without unsaved changes, and says why not in its own words', async () => {
+  // No Trigger step: nothing to run, no Run now.
+  let page = await openPlug()
+  expect(runNow(page.root)).toBeNull()
+  dispose!(); document.body.innerHTML = ''
+  // Never saved.
+  page = setup('/entities/new?name=Poller')
+  await vi.waitFor(() => expect(button(page.root, 'Save').disabled).toBe(false))
+  button(page.root, 'Add Trigger').click()
+  await vi.waitFor(() => expect(runNow(page.root)).not.toBeNull())
+  expect(runNow(page.root)!.disabled).toBe(true)
+  expect(runNow(page.root)!.title).toBe('Save the entity definition to run this step')
+  dispose!(); document.body.innerHTML = ''
+  // Saved, running: unsaved changes take it away until they are undone.
+  page = await openPlug(f => f.entities.seed('plug', pollingPlug()))
+  const { root, fixture } = page
+  const run = runNow(root)!
+  rename(root, 'Socket')
+  await vi.waitFor(() => expect(run.disabled).toBe(true))
+  expect(run.title).toBe('Save the entity definition to run this step')
+  run.click()
+  undo(root)
+  await vi.waitFor(() => expect(run.disabled).toBe(false))
+  // Off: it does not run (unlike an automation that is off).
+  const toggle = root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!
+  toggle.click()
+  await vi.waitFor(() => expect(run.title).toBe('Turn the entity definition on to run this step'))
+  expect(run.disabled).toBe(true)
+  await vi.waitFor(() => expect(fixture.entities.documents.get('plug')!.enabled).toBe(false))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  // On again, it is read again to learn when it runs.
+  const reads = fixture.entities.requests.filter(r => r.operation === 'read').length
+  fixture.entities.controls.activation = 'setup'
+  toggle.click()
+  await vi.waitFor(() => expect(fixture.entities.requests.filter(r => r.operation === 'read').length).toBeGreaterThan(reads))
+  await vi.waitFor(() => expect(run.title).toBe('The entity definition is still starting'))
+  expect(run.disabled).toBe(true)
+  fixture.entities.documents.set('plug', { ...fixture.entities.documents.get('plug')!, status: 'running' })
+  await vi.waitFor(() => expect(run.disabled).toBe(false), { timeout: 4000 })
+  expect(fixture.entities.controls.runs).toEqual([])
+  expectClean(root)
+  dispose!(); document.body.innerHTML = ''
+  // Failed to start, and a Trigger step that cannot be started with Run now.
+  page = await openPlug(f => { f.entities.controls.activation = 'failed'; f.entities.seed('plug', pollingPlug()) })
+  expect(runNow(page.root)!.title).toBe('The entity definition is not running')
+  expect(runNow(page.root)!.disabled).toBe(true)
+  dispose!(); document.body.innerHTML = ''
+  const quiet = pollingPlug()
+  if (quiet.logic.kind === 'graph') quiet.logic.graph.nodes.at(-1)!.config.manual = false
+  page = await openPlug(f => f.entities.seed('plug', quiet))
+  expect(runNow(page.root)!.title).toBe('No Trigger step can be started with Run now')
+  expect(runNow(page.root)!.disabled).toBe(true)
+})
+
+it('describes the Trigger step for a definition in the step library and the inspector, and says Run now is recorded', async () => {
+  const { root } = await openPlug(f => f.entities.seed('plug', pollingPlug()))
+  const described = 'Run the steps after it when something happens, at a set time or on an interval.'
+  expect(root.querySelector('.hs-lib__item[aria-label="Add Trigger"] small')!.textContent).toBe(described)
+  press(card(root, 'poll'))
+  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-desc')?.textContent).toBe(described))
+  const history = [...inspector(root).querySelectorAll<HTMLLabelElement>('label')].find(l => l.querySelector('strong')?.textContent === 'Track in run history')!
+  expect(history.querySelector('.hs-field-hint')!.textContent).toBe('Record automatic runs and their traces. Run now is always recorded.')
+  more(root, 'Help')
+  const help = document.querySelector('dialog[open]')!.textContent!
+  expect(help).toContain('Run now in the top bar starts a Trigger step by hand while the saved definition is on and running')
+  expect(help).toContain('Part of')
+})
+
+// ---- Part of: the device a definition's device is connected through.
+const device = (id: string, name: string) => ({ id, name, area_id: null })
+/** The registry with a device for the plug's relay, and two Home Assistant devices. */
+const devicesRegistry = () => ({
+  ...registry,
+  entities: [...registry.entities, { ...registryEntity('switch.plug_relay', 'Relay'), device_id: 'plug-device' as string | null }],
+  devices: [device('zigbee', 'Zigbee coordinator'), device('plug-device', 'Plug'), device('attic', 'Attic router')],
+})
+const partOf = (root: Element) => control(root.querySelector('[aria-label="Device"]')!, 'via') as HTMLSelectElement
+const shownChoices = (select: HTMLSelectElement) => [...select.options].map(o => o.textContent)
+
+it('makes the device part of another definition that is a device, or of a Home Assistant device, and shows it again when opened', async () => {
+  const seeds = (f: Fixture) => {
+    f.entities.seed('hub', { ...newGraphDefinition('Hub'), device: { manufacturer: 'Acme' } })
+    f.entities.seed('lonely', newGraphDefinition('Lonely sensor'))
+    f.entities.seed('bridge', { ...newGraphDefinition('Bridge'), device: {} })
+  }
+  const { root, fixture } = await openPlug(seeds, undefined, devicesRegistry())
+  await vi.waitFor(() => expect(shownChoices(partOf(root))).toEqual(['Nothing', 'Bridge', 'Hub', 'A Home Assistant device…']))
+  expect(partOf(root).value).toBe('')
+  choose(partOf(root), 'definition:hub')
+  expect(json(root).definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub' } })
+  expect(json(root).definition.device.via).toEqual({ definition: 'hub' })
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub' } }))
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  dispose!(); document.body.innerHTML = ''
+  const again = await openPlug(undefined, fixture, devicesRegistry())
+  await vi.waitFor(() => expect(partOf(again.root).value).toBe('definition:hub'))
+  expect(partOf(again.root).selectedOptions[0].textContent).toBe('Hub')
+  // A Home Assistant device: the device picker, by name, without the plug's own device.
+  choose(partOf(again.root), 'device')
+  const picker = () => again.root.querySelector<HTMLInputElement>('[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
+  await vi.waitFor(() => expect(document.activeElement).toBe(picker()))
+  expect(json(again.root).definition.device.via).toEqual({ definition: 'hub' })
+  picker().click()
+  const options = () => [...again.root.querySelectorAll<HTMLElement>('[aria-label="Device"] [role="option"]')]
+  expect(options().map(o => o.textContent)).toEqual(['Attic router', 'Zigbee coordinator'])
+  options()[1].click()
+  expect(json(again.root).definition.device.via).toEqual({ deviceId: 'zigbee' })
+  expect(partOf(again.root).value).toBe('device')
+  button(again.root, 'Save').click()
+  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device.via).toEqual({ deviceId: 'zigbee' }))
+  await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  dispose!(); document.body.innerHTML = ''
+  const third = await openPlug(undefined, fixture, devicesRegistry())
+  await vi.waitFor(() => expect(partOf(third.root).value).toBe('device'))
+  await vi.waitFor(() => expect(third.root.querySelector<HTMLInputElement>('[aria-label="Device"] input[aria-label="Home Assistant device"]')!.value).toBe('Zigbee coordinator'))
+  // Nothing: the device is part of nothing, the other details as they were.
+  choose(partOf(third.root), '')
+  expect(json(third.root).definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1' })
+  expect(json(third.root).definition.device).not.toHaveProperty('via')
+  expect(third.root.querySelector('[aria-label="Device"] input[aria-label="Home Assistant device"]')).toBeNull()
+  expectClean(third.root)
+})
+
+it('shows a parent definition that no longer exists as such, which can be cleared', async () => {
+  const body = plugBody()
+  body.device = { manufacturer: 'Acme', via: { definition: 'gone', deviceId: null } }
+  const { root } = await openPlug(f => f.entities.seed('plug', body), undefined, devicesRegistry())
+  await vi.waitFor(() => expect(partOf(root).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
+  expect(partOf(root).value).toBe('definition:gone')
+  choose(partOf(root), '')
+  expect(json(root).definition.device).toMatchObject({ manufacturer: 'Acme' })
+  expect(json(root).definition.device).not.toHaveProperty('via')
+  expect(shownChoices(partOf(root))).toEqual(['Nothing', 'A Home Assistant device…'])
+  undo(root)
+  expect(json(root).definition.device.via).toEqual({ definition: 'gone', deviceId: null })
 })

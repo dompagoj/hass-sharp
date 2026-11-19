@@ -1,4 +1,4 @@
-import type { HomeAssistant } from '../types'
+import type { HomeAssistant, RunAcceptedResponse } from '../types'
 import { VisualApiError, visualError, type VisualDiagnostic, type VisualPreview } from '../visual/api'
 import type { DefinitionBody, DefinitionSummary, EntityDocument, EntityType, HomeDefinition } from './model'
 
@@ -91,5 +91,7 @@ export function entityApi(hass: Pick<HomeAssistant, 'callWS'>) {
       request<EntitySaveResult>('save', { id, expectedRevision, definition: body, ...(enabled === undefined ? {} : { enabled }) }),
     setEnabled: (id: string, enabled: boolean) => request<EntityEnabledResult>('set_enabled', { id, enabled }),
     remove: (id: string, expectedRevision: number) => request<{ deleted: true }>('delete', { id, expectedRevision }),
+    /** Runs a Trigger step of the saved definition now (refused unless it is on and runs its saved revision). */
+    run: (id: string, triggerId: string) => request<RunAcceptedResponse>('run', { id, triggerId }),
   }
 }

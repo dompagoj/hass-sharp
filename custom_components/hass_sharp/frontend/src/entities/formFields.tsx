@@ -1,4 +1,4 @@
-import { createUniqueId, For, Show, type JSX } from 'solid-js'
+import { createEffect, createUniqueId, For, Show, type JSX } from 'solid-js'
 import { focusControl } from '../visual/InputRow'
 import { DraftField, describedBy } from '../visual/widgets/common'
 
@@ -68,10 +68,13 @@ export interface Choice { value: string; label: string }
 export function SelectField(props: { name: string; label: string; value: string; choices: Choice[]; hint?: string; errors?: string[]; disabled?: boolean; onChange(value: string): void }) {
   const id = createUniqueId(), hintId = `${id}-hint`, errorsId = `${id}-errors`
   const errors = () => props.errors ?? []
+  let select!: HTMLSelectElement
+  // Choices that come later (a list read after the form) are new options: the one chosen stays chosen.
+  createEffect(() => { props.choices; if (select.value !== props.value) select.value = props.value })
   return (
     <div class="hs-insp-field hs-def-field" data-field={props.name} aria-invalid={errors().length > 0 || undefined}>
       <label class="hs-insp-field__label" for={id}>{props.label}</label>
-      <select id={id} class="hs-input" disabled={props.disabled} aria-invalid={errors().length > 0 || undefined}
+      <select ref={select} id={id} class="hs-input" disabled={props.disabled} aria-invalid={errors().length > 0 || undefined}
         aria-describedby={describedBy(!!props.hint && hintId, errors().length > 0 && errorsId)}
         onChange={event => { if (event.currentTarget.value !== props.value) props.onChange(event.currentTarget.value) }}>
         <For each={props.choices}>{choice => <option value={choice.value} selected={choice.value === props.value}>{choice.label}</option>}</For>
