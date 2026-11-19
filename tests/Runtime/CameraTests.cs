@@ -753,8 +753,13 @@ static class CameraTests
         var from = Lines().Length;
         host.FrameNeeded("lens", () => { host.SetFrame("lens", SharpImage.Blank(6000, 4000).DrawRect(1, 1, 10, 10)); return Task.CompletedTask; });
         await Task.Delay(20);
+        var begun = camera.Frames.Begun;
         var first = api.CameraImage("lens:lens");
-        await EntityTestHome.Until(() => !camera.Frames.Busy, "the large frame is made");
+        await EntityTestHome.Until(() => camera.Frames.Begun > begun, "the large frame is begun");
+        // Begun before the clock starts. A request within 0.8 of the interval of its start would share it, and on a fast
+        // machine it can end that soon.
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        await EntityTestHome.Until(() => !camera.Frames.Busy && clock.Elapsed > TimeSpan.FromMilliseconds(2), "the large frame is made, and the interval has passed since it began");
         host.FrameNeeded("lens", () => throw new InvalidOperationException("the rain came in"));
         var second = api.CameraImage("lens:lens");
         Check(Width(await first) == 6000 && Width(await second) == 6000, "both requests get the large frame");
