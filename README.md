@@ -80,9 +80,9 @@ revision-checked services as the panel. See [MCP authoring](docs/mcp-authoring.m
   administrator selects it for, not only the MCP Server, and only administrators
   can use it.
 - Saving an automation, an entity definition or a node library compiles C# and
-  runs it inside Home Assistant's process, with its privileges. Treat the tools that change things as
-  code execution. For an agent that must not change anything, use an MCP Server
-  entry with **Read only** enabled.
+  runs it inside Home Assistant's process, with its privileges. Treat the tools
+  that change things as code execution. For an agent that must not change
+  anything, use an MCP Server entry with **Read only** enabled.
 - What the tools return goes to the model's provider: discovered entities
   (whether or not they are exposed to assistants, with only a few attributes),
   service descriptions, graphs and their C#, entity definitions, and run errors
@@ -116,10 +116,10 @@ takes longer than later starts. If the download fails, the log says so; restart
 Home Assistant to try again.
 
 Automations, entity definitions and node libraries are stored in Home
-Assistant's `.storage/hass_sharp/` directory. Earlier versions also loaded hand-written `.cs`
-automations from the integration's `user_scripts/` folder. Those are no longer
-loaded: if the folder still holds `.cs` files, HassSharp logs one line saying so
-and leaves the files as they are.
+Assistant's `.storage/hass_sharp/` directory. Earlier versions also loaded
+hand-written `.cs` automations from the integration's `user_scripts/` folder.
+Those are no longer loaded: if the folder still holds `.cs` files, HassSharp logs
+one line saying so and leaves the files as they are.
 
 ## Building from source
 

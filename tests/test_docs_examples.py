@@ -11,9 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 INTEGRATION = ROOT / "custom_components/hass_sharp"
 GUIDE = ROOT / "docs/custom-entities.md"
 MCP = ROOT / "docs/mcp-authoring.md"
-DOCS = (ROOT / "README.md", GUIDE, ROOT / "docs/backend/entity-definitions.md", ROOT / "docs/node-libraries.md", MCP)
-# A tool named in the MCP doc: its full name, or an entity definition tool's name without the prefix.
-TOOL_NAME = re.compile(r"hass_sharp__([a-z][a-z_]*)|(?<![A-Za-z0-9_])(entities_[a-z_]+)")
+DOCS = (ROOT / "README.md", GUIDE, ROOT / "docs/backend/entity-definitions.md", ROOT / "docs/backend/run-history.md",
+        ROOT / "docs/node-libraries.md", MCP)
+# A tool named in the MCP doc: in backticks, alone or called (`list`, `read({id})`), or an entity definition tool's name
+# anywhere. A backticked word that is not called and not a tool's name is another identifier, such as `valid`.
+CALLED = re.compile(r"`([a-z][a-z_]*)\(")
+NAMED = re.compile(r"`([a-z][a-z_]*)[`(]|(?<![A-Za-z0-9_])(entities_[a-z_]+)")
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
 
 
@@ -51,15 +54,18 @@ class DocsExamplesTests(unittest.TestCase):
 
     def test_the_derived_sensor_is_the_example_definition(self):
         block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), "<!-- example: Motion in either room -->", "json")
-        self.assertEqual(json.loads(block), example_definition("Motion in either room")["definition"])
+        # Compared as canonical JSON text, so that true and 1 differ (as Python's True == 1 would not tell).
+        canonical = lambda value: json.dumps(value, sort_keys=True)
+        self.assertEqual(canonical(json.loads(block)), canonical(example_definition("Motion in either room")["definition"]))
 
-    def test_the_mcp_doc_names_only_real_tools_and_every_entity_tool(self):
+    def test_the_mcp_doc_names_only_real_tools_and_every_tool(self):
         known = tool_names()
         self.assertIn("entities_save", known)
-        written = {full or bare for full, bare in TOOL_NAME.findall(MCP.read_text(encoding="utf-8"))}
-        self.assertEqual(sorted(written - known), [], "tools the doc names that llm.py does not have")
-        self.assertEqual(sorted(name for name in known if name.startswith("entities_") and name not in written), [],
-                         "entity definition tools the doc leaves out")
+        text = MCP.read_text(encoding="utf-8")
+        called = set(CALLED.findall(text)) | {bare for _, bare in NAMED.findall(text) if bare}
+        written = ({quoted or bare for quoted, bare in NAMED.findall(text)} & known) | called
+        self.assertEqual(sorted(called - known), [], "tools the doc names that llm.py does not have")
+        self.assertEqual(sorted(known - written), [], "tools the doc leaves out")
 
     def test_every_relative_link_resolves_to_a_file(self):
         for doc in DOCS:

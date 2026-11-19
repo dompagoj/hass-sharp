@@ -559,9 +559,13 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             activationError='Setup failed: no address',logic={'kind':'class','type':'library:plug:NodeLib.SmartPlug','graph':None},
             registeredEntities=[{'uniqueId':'plug:relay','entityId':'switch.relay','domain':'switch','name':'Relay','disabled':False}])
         setup=self.entity_document(id='slow',status='setup',registeredEntities=[])
-        self.service.entities.return_value={'version':1,'ok':True,'result':[document,klass,setup]}
+        # A class's kind comes from the types answer: entities_list asks for it beside list when it lists a class.
+        types_answer={'version':1,'ok':True,'result':{'types':[{'id':'library:plug:NodeLib.SmartPlug','kind':'entity','domain':'switch'}],'generation':'g'}}
+        async def entities(request,is_admin):
+            return types_answer if request['operation']=='types' else {'version':1,'ok':True,'result':[document,klass,setup]}
+        self.service.entities=AsyncMock(side_effect=entities)
         result=(await self.call('entities_list',{})).data['result']
-        self.service.entities.assert_awaited_with({'operation':'list'},is_admin=True)
+        self.assertEqual([c.args[0] for c in self.service.entities.await_args_list],[{'operation':'list'},{'operation':'types'}])
         trigger={'triggerId':'poll','label':'Every minute','type':'ha','config':{'type':'ha','trigger':{'trigger':'time_pattern','minutes':'/1'}},'manual':True}
         self.assertEqual(result[0],{'id':'porch','name':'Porch plug','revision':4,'enabled':True,'status':'running','activationError':None,'logic':'graph','device':True,
             'entities':[{'key':'relay','domain':'switch','name':'Relay','entityId':'switch.porch_plug_relay'},{'key':'power','domain':'sensor','name':'Power','entityId':None}],
@@ -573,6 +577,39 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         text=json.dumps(result)
         for absent in ('xxxxx','http://plug','settings','nodes','source','registeredEntities'):
             self.assertNotIn(absent,text)
+
+    async def test_entities_list_says_whether_a_definition_makes_a_device(self):
+        # As the panel's device form has it: the document gives device details, or its class is a SharpDevice.
+        device_class={'kind':'class','type':'library:example_plug:NodeLib.SmartPlug','graph':None}
+        entity_class={'kind':'class','type':'library:example_plug:NodeLib.Lamp','graph':None}
+        gone_class={'kind':'class','type':'library:old:NodeLib.Gone','graph':None}
+        documents=[self.entity_document(id='plug',device=None,entities=[],logic=device_class),
+                   self.entity_document(id='lamp',device=None,entities=[],logic=entity_class),
+                   self.entity_document(id='grouped_lamp',device={'model':'Lamp'},entities=[],logic=entity_class),
+                   self.entity_document(id='porch'),
+                   self.entity_document(id='motion',device=None),
+                   self.entity_document(id='gone',device=None,entities=[],logic=gone_class),
+                   self.entity_document(id='gone_grouped',device={'model':'Old'},entities=[],logic=gone_class)]
+        types_answer={'version':1,'ok':True,'result':{'generation':'g','types':[
+            {'id':'library:example_plug:NodeLib.SmartPlug','kind':'device','domain':None},{'id':'library:example_plug:NodeLib.Lamp','kind':'entity','domain':'light'}]}}
+        async def entities(request,is_admin):
+            return types_answer if request['operation']=='types' else {'version':1,'ok':True,'result':documents}
+        self.service.entities=AsyncMock(side_effect=entities)
+        result=(await self.call('entities_list',{})).data['result']
+        self.assertEqual({d['id']:d['device'] for d in result},
+                         {'plug':True,'lamp':False,'grouped_lamp':True,'porch':True,'motion':False,'gone':False,'gone_grouped':True})
+        # Graph definitions alone need no types request; a types request that fails leaves each class to its details.
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(id='motion',device=None)]})
+        self.assertFalse((await self.call('entities_list',{})).data['result'][0]['device'])
+        self.service.entities.assert_awaited_once_with({'operation':'list'},is_admin=True)
+        async def broken(request,is_admin):
+            if request['operation']=='types': return {'version':1,'ok':False,'error':{'code':'storage','detail':'x'}}
+            return {'version':1,'ok':True,'result':documents[:1]}
+        self.service.entities=AsyncMock(side_effect=broken)
+        listed=(await self.call('entities_list',{})).data
+        self.assertTrue(listed['ok']); self.assertFalse(listed['result'][0]['device'])
+        description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
+        self.assertIn('SharpDevice',description)
 
     async def test_entities_read_and_save_answer_documents_without_node_sizes_or_secret_values(self):
         document=self.entity_document()

@@ -924,7 +924,7 @@
     },
     {
       "title": "Plug over HTTP",
-      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged, but when the Trigger step's run history is on, the run's trace shows why). Each When commanded step turns the plug on or off with an HTTP request, then sets the switch.",
+      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged; to see why in the run's trace, turn on the Trigger step's run history, which is off here, or run the Trigger with Run now). Each When commanded step turns the plug on or off with an HTTP request, then sets the switch.",
       "definition": {
         "name": "Plug over HTTP",
         "device": {

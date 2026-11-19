@@ -51,8 +51,9 @@ either sensor changes. Use two binary sensors of your own where these steps name
    gave it, `binary_sensor.any_motion`, with a **Show** button that opens it in Home
    Assistant. Its key can no longer change.
 
-As a document, the definition you built is this one, apart from the step ids and
-positions the panel chooses. It is the example "Motion in either room" in
+As a document, the definition you built is this one, apart from the ids, labels and
+positions the panel chooses, and the State's **Track in run history**, which the panel
+writes out as off. It is the example "Motion in either room" in
 [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json):
 
 <!-- example: Motion in either room -->
@@ -110,9 +111,9 @@ its class for [classes](#classes).
 | Button | nothing: a button has no state | Press | none | `SharpButton` |
 | Number | **Value**: a number within its range | Set value (**Value**) | **Minimum** (0), **Maximum** (100), **Step** (1, above 0), **Shown as**: auto, box or slider; **Unit** | `SharpNumber` |
 | Select | **Option**: one of its options | Select option (**Option**) | **Options**, one per line; required | `SharpSelect` |
-| Text | **Text** | Set text (**Text**) | **Shortest length** (0), **Longest length** (100, at most 255), **Pattern**: a regular expression; **Shown as**: text or password | `SharpText` |
-| Light | **On**; **Brightness**, 0 to 255, optional | Turn on (**Brightness**, optional), Turn off | **Can be dimmed** | `SharpLight` |
-| Cover | **Closed**, optional; **Position**, 0 (closed) to 100 (open), optional | Open, Close, Stop, Set position (**Position**) | **Has a position** | `SharpCover` |
+| Text | **Text** | Set text (**Text**) | **Shortest length** (0), **Longest length** (100, at most 255), **Pattern**: a regular expression matched from the start of the text (end it with `$` to match the whole text); **Shown as**: text or password | `SharpText` |
+| Light | **On**; **Brightness**, a whole number from 0 to 255, optional, only with **Can be dimmed** | Turn on (**Brightness**, optional), Turn off | **Can be dimmed** | `SharpLight` |
+| Cover | **Closed**, optional; **Position**, a whole number from 0 (closed) to 100 (open), optional, only with **Has a position** | Open, Close, Stop, Set position (**Position**) | **Has a position** | `SharpCover` |
 | Camera | nothing: its picture comes from Show frame | none | **Seconds between frames**: 0.5 to 60 (1) | `SharpCamera` |
 
 Every entity also has a **Name** (what Home Assistant shows), a **Key**, a **Device
@@ -132,17 +133,18 @@ its entities. A step names one of the definition's entities by choosing it in it
 **Entity** field.
 
 - **State** gives an entity its state: wire values into it, one input per value of
-  its type. It is worked out again whenever an entity chosen on a pin of the value
-  steps it reads changes, such as the entity of a Has state or an Entity field step.
-  A State that fails, or gives a value its entity does not take, makes the entity
-  unavailable and logs one warning per reason, naming the step; the entity is
-  available again once the State works.
+  its type. It is worked out again whenever an entity chosen on an entity input of
+  the value steps it reads changes: the entity of a Has state or a Current state
+  step, or a Constant of an entity id type. An entity read by another step, such as
+  Read entity, is not followed. A State that fails, or gives a value its entity does
+  not take, makes the entity unavailable and logs one warning per reason, naming the
+  entity; the entity is available again once the State works.
 - **When commanded** runs the steps after it when Home Assistant gives the entity a
   command, such as turning a switch on: choose the entity and the **Command**. Its
   outputs are the command's values, such as a light's brightness. Its steps must
   finish within 30 seconds; a failure, or the 30 seconds passing, fails the service
-  call that sent the command. A command that no step handles is a warning when you
-  save.
+  call that sent the command (a flow past its 30 seconds goes on in the background).
+  A command that no step handles is a warning when you save.
 - **Set state** sets an entity's state inside a flow (after a Trigger, When started
   or When commanded). It sets the values you give it and keeps the others as they
   are, such as a light's brightness when only On is given. **Set available** marks
@@ -163,7 +165,8 @@ started run that stops lets the definition start, and a Trigger's or a frame's r
 that stops is not an error. A State's run that stops does not make its entity
 unavailable, and does not clear an earlier failure either.
 
-**Run now**, in the editor's top bar, lists the Trigger steps and starts one by hand.
+**Run now**, in the editor's top bar, lists the Trigger steps and starts one by hand;
+a Trigger whose **Can be started with Run now** is off is not offered.
 It runs the saved definition only: it is unavailable, with the reason as its tooltip,
 while there are unsaved changes ("Save the entity definition to run this step"), and
 while the definition is off, starting or not running. Unlike an automation, a
@@ -254,25 +257,25 @@ before the entities run.
 Entities that no State works out come back, after Home Assistant restarts or the
 definition is saved, with the state they last had: switches, numbers, selects, texts,
 lights and covers set by commands, for example. A value the entity no longer takes,
-such as an option removed from a select, is left out. A light turned on without a
-brightness keeps its last one, or comes on at full brightness the first time. A
-class chooses this per entity with `RestoreState`.
+such as an option removed from a select, is left out. In a graph, a light turned on
+without a brightness keeps its last one, or comes on at full brightness the first
+time. A class chooses this per entity with `RestoreState`.
 
 ## Cameras
 
 A camera shows the picture its last **Show frame** step gave it. Five steps work with
 pictures, in definitions only:
 
-- **When a frame is needed** (`camera_frame`) runs the steps after it when Home
+- **When a frame is needed** runs the steps after it when Home
   Assistant needs a new picture from the camera, which it does only while someone
   watches it or asks for its picture: nothing runs otherwise.
-- **Take a picture** (`camera_snapshot`) takes the current picture of another Home
+- **Take a picture** takes the current picture of another Home
   Assistant camera.
 - **Draw rectangle** and **Draw text** are value steps that draw on a picture: a
   **Colour** (Red, Green, Blue, Yellow, Orange, White or Black), a rectangle's
   **Thickness** (1 to 50 pixels, 2 unless set), a text's **Size** (8 to 200 pixels,
   16 unless set) and **Background**, a translucent box behind it.
-- **Show frame** (`show_frame`) makes a picture the camera's current one, in a frame
+- **Show frame** makes a picture the camera's current one, in a frame
   flow or in any other flow, such as a Trigger's.
 
 So a camera either makes its frames when they are needed (a When a frame is needed
@@ -396,8 +399,8 @@ public class SmartPlug : SharpDevice
 
 To use it, open **Node library**, select **Add file**, enter the **File name**
 `SmartPlug.cs` and choose **Create file**; replace what the file holds with the code
-and select **Save**. Then choose **Entities → New entity definition**, enter a name, choose **Use a class from
-the node library** and select **Continue**. Under **Class**, choose **Smart plug**;
+and select **Save**. Then choose **Entities → New entity definition**, enter a name,
+choose **Use a class from the node library** and select **Continue**. Under **Class**, choose **Smart plug**;
 under **Settings**, enter the plug's address; select **Save**. The **Device** fields
 override what the class sets when you fill them in, and **Part of** is offered as for
 a graph. A class that is one entity has **Group this entity as a device** instead.
@@ -450,9 +453,11 @@ definition gives no value keeps the property's own.
   and tracks. It must return; the entities stay unavailable until every `Start()` of
   the definition has, so poll with `Every`, not in a loop.
 - **`Stop()`** runs when the definition stops or is replaced, after its timer and
-  track callbacks and commands have ended; it may still call services. It runs on
-  the device and every entity, also one whose `Start()` never ran, so it must not
-  count on what `Start()` set up. It does not run when Home Assistant shuts down:
+  track callbacks and commands have ended; it may still call services. It runs only
+  once the definition has started, so a definition whose `Setup()` threw gets no
+  `Stop()`: undo what a failing `Setup()` opened in `Setup()` itself. It runs on the
+  device and every entity, also one whose `Start()` never ran, so it must not count
+  on what `Start()` set up. It does not run when Home Assistant shuts down:
   then only `Stopping` is cancelled.
 - **`Stopping`** is a cancellation token that is cancelled when the definition stops
   or is replaced, and when Home Assistant shuts down. Pass it to what you wait for.
@@ -535,8 +540,8 @@ steps to trace.
 ### Keys and ids
 
 - An entity's key is permanent once saved: with the definition's id it is the
-  entity's identity in Home Assistant. Changing it (for example in the stored
-  document) makes a new entity, and Home Assistant may give the new one an id ending
+  entity's identity in Home Assistant. The server does not refuse a changed key:
+  changing it (through an assistant, or in the stored document) makes a new entity, and Home Assistant may give the new one an id ending
   in `_2` while the old registry entry still exists. Before the first save, changing
   a key changes it in every step that uses the entity.
 - A deleted entity whose unique id comes back, such as a definition deleted and made
@@ -553,8 +558,14 @@ steps to trace.
   entities as available, and a service call in that window does nothing.
 - While a save replaces a running definition, a command answers "The entity is not
   running".
-- Turned off, the definition's entities stay in Home Assistant as unavailable;
-  deleting it removes them and the device.
+- Each card on the **Entities** page, and the editor's top bar, has an on/off
+  switch. A definition that is on starts again whenever Home Assistant starts.
+- Turned off, the definition's entities stay in Home Assistant as unavailable.
+- **Delete** is in a card's menu and, as **Delete entity definition**, at the bottom
+  of the definition's form. Deleting removes the entities and the device, the run
+  history and the entities' stored states, and cannot be undone.
+- An entity removed from a saved definition, or given another Type, is removed from
+  Home Assistant when the saved definition next starts.
 - A node library save rebuilds every definition, as it rebuilds every automation,
   and is refused when it would break one that works.
 - A State updates only for entities chosen on its steps' pins. An entity that a
@@ -571,8 +582,8 @@ steps to trace.
 - A value the command did not send but its step gives, such as a brightness of 255
   the first time a dimmable light is turned on, appears in the trace as if it was
   sent.
-- A class's light turned on for the first time without a brightness gives the class
-  no brightness (null).
+- A class's light turned on without a brightness gets null, every time: keep its
+  `Brightness` yourself.
 - A class's number or text whose `Min` is above its `Max` refuses every value.
 - A command or a callback that stops its own definition (turning it off through a
   service, say) waits out 10 seconds before it is cut off.
@@ -589,12 +600,16 @@ steps to trace.
 
 ### Secrets
 
-- A secret setting's value never leaves the server: not to the panel, an assistant,
-  a log, a trace or a draft.
+- A secret setting's value is never sent to the panel or to an assistant as the
+  setting's value, and is never kept in a draft. Traces and logs hide it, except as
+  [Run history and traces](#run-history-and-traces) says (a true or false worked
+  out from it, or what a step it was given returns), and the next bullet says what
+  of a secret address is shown. A trace is what an assistant reads with `trace`.
 - The host and port of an address that comes from a secret setting are not secret:
   failures, traces and the download log line name them. Its path, query and user
-  information, and the headers and body, are never shown. A file whose address came
-  from a secret is saved as `file`.
+  information, and the headers and body, are never shown. A file a Download file
+  step fetches from a secret address, with no **File name**, is saved as `file`; a
+  class's `Files.Download` names it from the address unless it is given a name.
 - A text entity shown as a password is not a secret: Home Assistant keeps its state
   in clear. Messages still do not quote it.
 

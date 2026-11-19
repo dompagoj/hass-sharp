@@ -571,8 +571,9 @@ that takes nothing, deriving from `SharpDevice` (a device with several entities)
 from one typed entity such as `SharpSwitch` or `SharpCamera`. It needs no `[Node]`
 method, and a library may hold classes and node methods side by side. Each such
 class is offered under **Use a class from the node library** when a definition is
-created; its type id is `library:<source id>:NodeLib.<type>`, such as
-`library:example_plug:NodeLib.SmartPlug`. Its `[Setting]` properties are the values
+created; its type id is `library:<source id>:` and the class's full name, such as
+`library:example_plug:NodeLib.SmartPlug` (a class in a namespace of its own is
+`NodeLib.<namespace>.<type>`). Its `[Setting]` properties are the values
 each definition fills in.
 
 [Custom entities](custom-entities.md#classes) has a complete class, the base

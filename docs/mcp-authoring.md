@@ -49,13 +49,13 @@ tool invocation, including direct calls and cached tools.
   administrator selects the API for, not only the MCP Server. Each instance and
   each tool call checks that the conversation's user is an administrator.
 - **What a change can do.** `save`, `entities_save` and `library_save` compile C#
-  and load it into Home Assistant's own process, with its privileges: the configuration directory
-  with `secrets.yaml` and the `.storage` tokens, the network and every service.
-  Static constructors run when the code is activated. Treat these tools as code
-  execution. `entities_save` also creates entities and a device in Home Assistant.
-  Agents do not ask before a tool call; the API prompt tells the model
-  to change nothing unless the user asks for it in the conversation, and that is
-  advice to the model, not a control.
+  and load it into Home Assistant's own process, with its privileges: the
+  configuration directory with `secrets.yaml` and the `.storage` tokens, the network
+  and every service. Static constructors run when the code is activated. Treat these
+  tools as code execution. `entities_save` also creates entities and a device in
+  Home Assistant. Agents do not ask before a tool call; the API prompt tells the
+  model to change nothing unless the user asks for it in the conversation, and that
+  is advice to the model, not a control.
 - **Read only.** Give an agent that must not change anything an MCP Server entry
   with **Read only** enabled. That removes `save`, `set_enabled`, `delete`, `run`,
   `entities_save`, `entities_set_enabled`, `entities_delete`, `entities_run`,
@@ -63,17 +63,19 @@ tool invocation, including direct calls and cached tools.
   every tool, the changing ones included.
 - **What leaves the house.** Tool results go to the model's provider: entity ids,
   names and states (discovery lists entities whether or not they are exposed to
-  assistants), service descriptions, graphs and their C#, run errors and trace
-  values. Discovery returns only a few attributes of each entity (see step 3), so
-  a camera's `access_token` and an `entity_picture` URL with a token stay in Home
-  Assistant.
-- **Secret settings.** A definition's secret setting's value never leaves the
-  server: every answer has it as `value: null, secret: true, hasValue`, and the API
-  refuses to pass on an answer that carries one ("The answer held the value of a
-  secret setting, so it was not passed on…"). A secret typed into a conversation
-  reaches the assistant's provider all the same: enter secrets in the HassSharp
-  panel, and let the assistant send the setting back as it was answered. No tool
-  returns a camera's picture.
+  assistants), service descriptions, graphs and their C#, entity definitions, run
+  errors and trace values. Discovery returns only a few attributes of each entity
+  (see step 3), so a camera's `access_token` and an `entity_picture` URL with a
+  token stay in Home Assistant.
+- **Secret settings.** A definition's secret setting's value is never answered as
+  the setting's value: every answer has it as `value: null, secret: true, hasValue`,
+  and the API refuses to pass on an answer that carries one ("The answer held the
+  value of a secret setting, so it was not passed on…"). A secret typed into a
+  conversation reaches the assistant's provider all the same: enter secrets in the
+  HassSharp panel, and let the assistant send the setting back as it was answered.
+  No tool returns a camera's picture. A trace can still show a true or false worked out
+  from a secret, or what a step it was given returns; see
+  [custom entities](custom-entities.md#run-history-and-traces).
 - **Injected text.** Entity names and attributes, service descriptions, errors and
   trace values come from devices and integrations. The prompt tells the model they
   are data and never instructions, but a model can still be misled by them.
@@ -224,24 +226,28 @@ envelope; validation, conflicts and revisions work as above.
    commands and options), `semantics` gains `definitions` (the rules) and `examples`
    is `{definitions:[…]}`: complete definitions that validate, the five in
    [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json),
-   the class one with its library source. `get_node_schema({kind, document:"entity"})`
-   adds `entityDomains` for `entity_state`, `set_entity_state` and `entity_command`,
+   the class one with its library source. `get_node_schema({kind})` adds
+   `entityDomains` for `entity_state`, `set_entity_state` and `entity_command`,
    whose ports come from the domain of the entity they name.
 2. `entities_types({})` lists the classes the node libraries offer:
-   `{id, title, description, kind, domain, settings:[{key, label, description, type,
-   secret, options, minimum, maximum}]}`. A class is written with `library_save`.
+   `{types:[…], generation}`, each type `{id, sourceId, typeExpression, title,
+   description, kind, domain, settings:[{key, label, description, type, secret,
+   options, minimum?, maximum?}]}` (`minimum` and `maximum` only when the setting has
+   them). A class is written with `library_save`.
 3. `entities_list({})` summarises every definition without its graph: `{id, name,
    revision, enabled, status, activationError, logic, device, entities:[{key,
    domain, name, entityId}], triggers:[{triggerId, label?, type, config, manual,
    runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`;
-   `logic` is `"graph"` or the class's type id; `device` whether it makes a device.
+   `logic` is `"graph"` or the class's type id; `device` whether it makes a device:
+   it gives device details, or its class derives from `SharpDevice` (for a class no
+   node library offers any more, whether it gives device details).
    `entities_read({id})` returns one complete document, with its `revision`,
    `source`, `automationId` and `registeredEntities`. Read before every edit, and
    send back only `name`, `device`, `settings`, `entities` and `logic`.
 4. `entities_preview({definition})` validates and compiles a definition, `{name,
    device?, settings?, entities?, logic}` with `logic` `{kind:"graph", graph}` or
    `{kind:"class", type}`, without creating anything. It returns `valid`,
-   `diagnostics`, `source` and, for a graph, `graph` with each Custom C# step's pins
+   `diagnostics`, `source`, `sourceMap` and, for a graph, `graph` with each Custom C# step's pins
    worked out (no settings come back).
 5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
    creates or updates its entities, returning `saved`, `document`, `active` and
@@ -294,8 +300,8 @@ definitions `definitions:[{id,saved,document,active,activationError,enabled}]` a
 `invalidDefinitions:[{id,name,diagnostics,running,message}]` (those that already had
 errors and are left as they are). A save that would break a working definition is
 refused, with those definitions under `definitions` in its validation detail.
-Compilation/dependency
-errors and revision conflicts preserve their structured details. Persistence may
+Compilation/dependency errors and revision conflicts preserve their structured
+details. Persistence may
 succeed while activation fails for a graph; inspect each activation result.
 
 See [writing C# nodes](node-libraries.md) for Custom C# nodes, the complete library example and

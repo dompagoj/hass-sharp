@@ -38,8 +38,10 @@ view home".
 
 Error codes: `validation` (its `detail` is the preview `{valid,diagnostics,source,sourceMap}`),
 `conflict` (the expected revision is not the stored one), `not_found` ("Entity
-definition not found"), `invalid_request` (a malformed request, with the reason),
-`storage` (the file could not be read or written) and `internal`.
+definition not found"), `invalid_request` (a malformed request, with the reason, and
+a refused `run`; a stored file that is not a definition answers "Invalid entity
+definition envelope"), `storage` (the file could not be read or written) and
+`internal`.
 
 ## The definition
 
@@ -60,8 +62,9 @@ definition not found"), `invalid_request` (a malformed request, with the reason)
   catalog's `entityDomains`, which also gives each domain's state values, commands
   and `options`; `entityCategory` is `config` or `diagnostic`. A class definition
   sends `entities: []`; its entities come from its code.
-- `device` (null for none): `{manufacturer?, model?, swVersion?, hwVersion?,
-  configurationUrl?, suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` or
+- `device`: null for none, or, for a class, null for the class's own (a
+  `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
+  swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` or
   `{deviceId:"<Home Assistant device id>"}`. `via` is not checked on save; when the
   device is set up, a parent Home Assistant does not have is left out. For a class,
   each field given overrides the class's own.
@@ -75,8 +78,8 @@ with `version`, `id`, `revision`, `source`, `sourceMap`,
 `catalogGeneration`, `enabled` and `savedUtc` added.
 
 Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID:
-new is reserved"). An entity's unique id is `<definition id>:<key>`, so a key never
-changes once saved. Creation uses expectedRevision 0; updates and deletes need the
+new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a
+key makes a new entity. Creation uses expectedRevision 0; updates and deletes need the
 stored revision, and expectedRevision 0 deletes a corrupt file. `enabled` may be
 given only when saving a new definition; otherwise the answer is "enabled can only
 be given when saving a new definition; use set_enabled to turn a saved one on or
@@ -95,7 +98,9 @@ hasValue` (whether one is stored). On save, for a setting already stored:
 | `value: null` without `hasValue` | clears it |
 | a `value` and `keep: true` | refused: "Setting X has both a value and keep; give the value, or keep to leave the saved one as it is" |
 
-`keep` and `hasValue` are request markers; neither is stored.
+`keep` and `hasValue` are request markers; neither is stored. A value kept from a
+secret setting stays secret: making the setting open needs the value given again. A
+preview reads no stored definition, so it checks no value for a kept setting.
 
 ## The document
 
@@ -138,12 +143,13 @@ on, it is rebuilt against the libraries as saved now; off, it is unloaded and it
 entities stay in Home Assistant as unavailable.
 
 **delete** removes the file, the run history's identity, the entities' stored
-states and the entities in Home Assistant. Removing the entities has 30 seconds; a
+states, and the entities and the device in Home Assistant. Removing the entities has 30 seconds; a
 failure is logged ("Cannot remove the entities of deleted entity definition …") and
 the delete still succeeds.
 
 **run** starts one Trigger step of a graph definition by hand, as `run` does for an
-automation. It is refused, in this order: a class definition ("A class definition
+automation. An unknown definition is `not_found`; otherwise it is refused with
+`invalid_request`, in this order: a class definition ("A class definition
 has no steps to run"), one that is off ("The entity definition is off"), one whose
 saved revision is not running ("The saved revision of this entity definition is
 not running: …"), an unknown step ("Trigger not found"), a step that is not a
