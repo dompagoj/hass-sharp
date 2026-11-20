@@ -106,7 +106,8 @@ definition envelope"), `storage` (the file could not be read or written) and
   name, and a setting pin may instead take a data edge from a Setting step
   (`sourcePort: "value"`), the only way to give a secret one. A C# entity's key is
   among the entity keys, a C# device's among the device keys. A C# entity node has a
-  `device` input as an Entity node has; a C# device node has none, and `via` as a
+  `device` input as an Entity node has; a C# device node has no `device` input (its
+  only inputs are its setting pins, and no entity is wired to it), and `via` as a
   Device node's. Neither has outputs or execution ports.
 - The derived lists. `entities` holds each Entity node's entity, then each C# entity
   node's, `{key, domain, name: null, device, csharp: true}` (its class names it, so

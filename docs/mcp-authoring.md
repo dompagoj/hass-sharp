@@ -480,8 +480,9 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   user enter it in the panel.
 - **Device.** A C# entity node has the `device` input of an Entity node, which a
   Device node's `entities` output is wired to; without it the entity stands alone. A
-  C# device node has no inputs: no entity is put on it, its entities are the ones its
-  code adds. Its `via` is a Device node's. Neither has outputs or execution ports,
+  C# device node has no `device` input and no entity is wired to it, its entities
+  being the ones its code adds: its only inputs are its setting pins. Its `via` is a
+  Device node's. Neither has outputs or execution ports,
   nor is part of the run order: no step sets a C# entity's state or names it in
   `config.entity`, and no command pin starts a step; the class does both.
 - **Keys and ids.** A C# entity's key is among the entity keys and its unique id is

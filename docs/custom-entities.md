@@ -425,22 +425,28 @@ An entity or a device can be written in C# as one class, in a node on the canvas
   **Entities** to it to put it on that device, or leave it unconnected and it stands
   alone.
 - A **C# device** node is one device. Its class derives from `SharpDevice` and adds
-  its entities itself, so nothing is connected to it, and it has **Name** and **Part
-  of** as a Device node has.
+  its entities itself, so it has no **Entities** pin and no entity is wired to it; its
+  inputs are its settings. It has a **Name** and **Part of** as a Device node has.
 
-Both are in the **Entity** category of the step library. A C# entity dropped on the
-canvas gets the key `sensor` (then `sensor_2` and so on), and a C# device a key made
-from `device`; each starts with example code you replace. Neither is a step: they
+Both are in the **Entity** category of the step library, and each starts with
+example code you replace. A C# entity dropped on the canvas gets a key from the type
+of its code, `sensor` for the example (then `sensor_2` and so on); a C# device gets
+the key `device` (then `device_2`) and the name of its code's class, **Plug** for the
+example. Neither is a step: they
 have no step order, nothing runs them, and the class sets its entities' states and
 handles their commands itself. A step cannot set a C# entity's state or start from
 its commands.
 
-The node's card shows the class's title. A C# entity's card says its type and key,
-such as **Sensor · thermometer**; a C# device's says **C# device · plug** and lists
-its entities once it has started, until then **Its entities appear here after it has
-started once**. In the right panel are its **Key**, a C# device's **Name** and
-**Part of**, **Edit code**, and a field for each setting of its class (see
-[Settings as inputs](#settings-as-inputs)).
+A C# entity's card shows its class's title, and under it its type and key, such as
+**Sensor · thermometer**. A C# device's card shows its **Name**, and under it **C#
+device · plug**; on the editor's canvas it also lists the entities Home Assistant has
+of it, once it has started (until then **Its entities appear here after it has
+started once**). The cards a run's trace shows do not list them.
+
+In the right panel, a C# entity has its **Key** and its **Device** (None, or a Device
+node), and a C# device its **Device name** at the top, its **Key** and **Part of**.
+Both have **Edit code**, and under **Settings** a field for each setting of the class
+(see [Settings as inputs](#settings-as-inputs)). Once saved, the key cannot change.
 
 ### Write the code
 
@@ -645,9 +651,10 @@ property cannot be named `device`, the id of its Device pin.
 
 Each setting takes one of these:
 
-- **A value typed into the node**, in its field in the right panel: a text, a number,
-  a switch for a `bool`, a list for an enum. A value outside the bounds, or a fraction
-  for an `int`, is refused when you save.
+- **A value typed into the node**, in its field in the right panel: a text, a number
+  (a whole one for an `int` or a `long`), true or false for a `bool`, one of the
+  members for an enum. A value outside the bounds is a problem on the node, and the
+  definition cannot be saved with it.
 - **A wire from a Setting step**, which gives one of the definition's
   [settings](#settings-and-secrets); no other step can feed it. Use this for what
   changes from one home to another, such as an address, so it is changed under

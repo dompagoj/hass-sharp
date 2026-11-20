@@ -1190,8 +1190,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                        'The entities a C# device\'s code adds are in neither list: they are known once the definition has run',
                        "each C# entity node's as {key, domain, name: null, device, csharp: true}","each C# device node's as {key, name, via?, csharp: true}",
                        "entities_list gives each definition's entities as {key, domain, name, device, entityId}",
-                       'For now logic may instead be {kind: \"class\", type}','Write C# for a definition as C# entity and C# device nodes in its graph'):
+                       'For now logic may instead be {kind: \"class\", type}','Write C# for a definition as C# entity and C# device nodes in its graph',
+                       # A C# device's settings are its inputs: it has no device input, and no entity is wired to it.
+                       'a C# device node has no device input and no entity is wired to it (its entities are the ones its code adds): its only inputs are its setting pins'):
             self.assertIn(phrase,definitions)
+        self.assertNotIn('C# device node has no inputs',definitions)
         self.assertIn('in a C# entity node or a C# device node: see definitions',result['semantics']['csharp'])
         self.assertIn('kind csharp_entity',result['guidance']); self.assertIn('kind csharp_device',result['guidance'])
         self.assertEqual(result['guidance'],self.adapter.PROMPT)

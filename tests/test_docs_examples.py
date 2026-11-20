@@ -146,6 +146,25 @@ class DocsExamplesTests(unittest.TestCase):
                         self.assertEqual(members(config_after(text, at + len(marker))), expected, f"the list after {marker} at offset {at}")
                         start = at + len(marker)
 
+    def test_a_csharp_devices_settings_are_its_inputs(self):
+        # A C# device has no device input and no entity is wired to it, but its settings are input pins, which take wires
+        # (the plug example's Address does): no text says it has no inputs, and each says what it has instead.
+        definitions = llm_constants()["SEMANTICS"]["definitions"]
+        texts = {'SEMANTICS["definitions"]': definitions, **{doc.name: " ".join(doc.read_text(encoding="utf-8").split())
+                                                           for doc in (GUIDE, MCP, ROOT / "docs/backend/entity-definitions.md")}}
+        for name, text in texts.items():
+            with self.subTest(name):
+                self.assertIsNone(re.search(r"C# device node has no inputs|so nothing is connected to it", text))
+        said = {
+            'SEMANTICS["definitions"]': "a C# device node has no device input and no entity is wired to it (its entities are the ones its code adds): its only inputs are its setting pins",
+            GUIDE.name: "so it has no **Entities** pin and no entity is wired to it; its inputs are its settings.",
+            MCP.name: "C# device node has no `device` input and no entity is wired to it, its entities being the ones its code adds: its only inputs are its setting pins.",
+            "entity-definitions.md": "a C# device node has no `device` input (its only inputs are its setting pins, and no entity is wired to it)",
+        }
+        for name, sentence in said.items():
+            with self.subTest(name, said=True):
+                self.assertIn(sentence, texts[name])
+
     def test_the_config_check_reads_a_list(self):
         # The parts the check above stands on: a list read with its marks, and a list that leaves a member out differs.
         self.assertEqual(members("`{key, name, manufacturer?,\n  via?}`"), ["key", "name", "manufacturer", "via"])
