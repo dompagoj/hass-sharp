@@ -138,11 +138,11 @@ static class AuthoringAdapterTests
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration=previous; Directory.Delete(path,true); }
     }
 
-    /// <summary>The entities each graph example creates, as its preview derives them from its Entity nodes (each member given must be there and match; device null: on no Device node).</summary>
+    /// <summary>The entities each graph example creates, as its preview derives them from its Entity nodes (each member given must be there and match; device: the key of the Device node it is on, or null).</summary>
     static readonly Dictionary<string,string> DerivedEntities=new()
     {
         ["Motion in either room"]="""[{"key":"any_motion","domain":"binary_sensor","name":"Any motion","deviceClass":"motion","device":null}]""",
-        ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet","device":null},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"},"device":null}]""",
+        ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet","device":"plug"},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"},"device":"plug"}]""",
         ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","options":{"frame_interval":2},"device":null}]""",
         ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic","device":null}]""",
     };
@@ -182,6 +182,8 @@ static class AuthoringAdapterTests
             if(body.Logic.Graph is not { } graph) continue;
             // A graph example lists no entities: its Entity nodes declare them, and the preview derives each as it is listed here.
             VisualExecutionTests.Check(example["definition"]!["entities"]==null,$"example definition {title} lists no entities: its Entity nodes declare them");
+            // Nor does it send a device of its own: its devices are its Device nodes.
+            VisualExecutionTests.Check(!example["definition"]!.AsObject().ContainsKey("device"),$"example definition {title} sends no device: its Device nodes are its devices");
             var composed=new DefinitionGenerator(diagnostics).Preview(body,snapshot).Graph!;
             var derived=DefinitionGraph.Entities(composed,snapshot);
             var expected=JsonNode.Parse(DerivedEntities[title])!.AsArray();
@@ -193,7 +195,7 @@ static class AuthoringAdapterTests
                 kinds.Add(node["kind"]!.GetValue<string>());
             }
         }
-        string[] shown=["entity","camera_snapshot","image_draw_rect","image_draw_text","show_frame","http_request","download_file","entity_setup","set_entity_state","entity_is","setting","set_entity_available"];
+        string[] shown=["entity","device","camera_snapshot","image_draw_rect","image_draw_text","show_frame","http_request","download_file","entity_setup","set_entity_state","entity_is","setting","set_entity_available"];
         VisualExecutionTests.Check(shown.All(kinds.Contains),"the example definitions use every kind they show: missing "+string.Join(", ",shown.Where(k=>!kinds.Contains(k))));
         Console.WriteLine("PASS the example definitions preview with no diagnostics, lay out their steps, carry no secret and use every kind they show");
     }

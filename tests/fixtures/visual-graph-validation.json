@@ -37044,6 +37044,14 @@
       "name": "Never shown",
       "nodes": [
         {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
           "id": "annotated",
           "kind": "entity",
           "config": {
@@ -37078,11 +37086,18 @@
           "source": "annotated",
           "target": "say",
           "port": "frame"
+        },
+        {
+          "id": "plug.entities:yard.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "yard",
+          "sourcePort": "entities",
+          "targetPort": "device"
         }
       ],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": true,
@@ -37660,8 +37675,7 @@
       ],
       "edges": [],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": false,
@@ -37690,8 +37704,7 @@
       ],
       "edges": [],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": false,
@@ -37708,6 +37721,14 @@
       "name": "Door",
       "nodes": [
         {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
           "id": "door",
           "kind": "entity",
           "config": {
@@ -37717,10 +37738,18 @@
           }
         }
       ],
-      "edges": [],
+      "edges": [
+        {
+          "id": "plug.entities:door.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": false,
@@ -37749,8 +37778,7 @@
       ],
       "edges": [],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": false,
@@ -37779,8 +37807,7 @@
       ],
       "edges": [],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": false,
@@ -38696,6 +38723,15 @@
       "name": "Plug",
       "nodes": [
         {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "manufacturer": "Acme"
+          }
+        },
+        {
           "id": "p",
           "kind": "entity",
           "config": {
@@ -38705,12 +38741,18 @@
           }
         }
       ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {
-          "manufacturer": "Acme"
+      "edges": [
+        {
+          "id": "plug.entities:p.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "p",
+          "sourcePort": "entities",
+          "targetPort": "device"
         }
+      ],
+      "definition": {
+        "settings": []
       }
     },
     "valid": true,

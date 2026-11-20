@@ -1,7 +1,7 @@
 # Entity definitions API: envelope 1
 
-An entity definition creates Home Assistant entities, optionally grouped as a
-device, whose behaviour comes from a graph (version 5) or from a class in a node
+An entity definition creates Home Assistant entities, optionally grouped into
+devices, whose behaviour comes from a graph (version 5) or from a class in a node
 library. The guide is [custom entities](../custom-entities.md); the MCP tools that
 call this API are in [MCP authoring](../mcp-authoring.md). The graph contract,
 the library API and the authoring gate are those of
@@ -48,11 +48,12 @@ definition envelope"), `storage` (the file could not be read or written) and
 `definition` is the body a client sends:
 
 ```text
-{name, device?, settings?, logic}
+{name, settings?, logic: {kind:"graph", graph}}
+{name, device?, settings?, logic: {kind:"class", type}}
 ```
 
-- `name`: 1 to 120 characters. It names the device, and a class's entity without a
-  name of its own on a standalone definition.
+- `name`: 1 to 120 characters. It names a class definition's device, and a class's
+  entity without a name of its own on a standalone definition.
 - `logic`: `{kind:"graph", graph}` with a version 5 graph, or
   `{kind:"class", type}` with a type id from `types`, such as
   `library:example_plug:NodeLib.SmartPlug`. A class's entities come from its code.
@@ -63,13 +64,26 @@ definition envelope"), `storage` (the file could not be read or written) and
   catalog's `entityDomains`, which also gives each domain's state values (the
   node's inputs), commands (its execution outputs `command:<command>`, with their
   values as data outputs `command:<command>:<value>`; a camera has `frame`) and
-  `options`; `entityCategory` is `config` or `diagnostic`. An entity of a
-  definition without a device needs a `name`; a name that is blank once trimmed is
-  no name (the entity has none). A graph with no Entity node is
+  `options`; `entityCategory` is `config` or `diagnostic`. An entity on no device
+  needs a `name`; a name that is blank once trimmed is no name (the entity has
+  none). A graph with no Entity node is
   refused with `definition.entitiesRequired`, "Add an Entity node: an entity
   definition creates the entities on its canvas, and has none". The answered
   document lists them under `entities`, for reading only; a class's entities are in
   `registeredEntities`.
+- A graph's devices are its Device nodes (kind `device`, any number), each with
+  `config` `{key, name, manufacturer?, model?, swVersion?, hwVersion?,
+  configurationUrl?, suggestedArea?, via?}`. `key` follows the entity key rule and is
+  unique among the devices (device and entity keys are apart); `name` is required;
+  `configurationUrl` starts with `http://`, `https://` or `homeassistant://`; `via`
+  is `{deviceId:"<Home Assistant device id>"}` or `{device:"<key of another Device
+  node>"}`, and a key no Device node has or a circle is refused. An entity is on a
+  device when a data edge goes from the Device node's `entities` output to the
+  Entity node's `device` input (`targetPort: "device"`); without one it stands
+  alone. A Device node with no entity is a warning, `device.empty`. The answered
+  document lists the devices under `devices`, and each of its `entities` has
+  `device`, the key of its device or null, for reading only: a `devices` sent in a
+  request is ignored.
 - `entities` is not part of a request. A graph definition that has the key at all,
   even an empty list or null, is refused with that one problem,
   `definition.entitiesNotAllowed` on input `entities`: "Entities are Entity nodes in
@@ -78,13 +92,14 @@ definition envelope"), `storage` (the file could not be read or written) and
   Entity nodes and Home Assistant triggers are not checked. A class
   definition may send an empty list; one that lists an entity is refused with "A
   class definition's entities come from its code".
-- `device`: null for none, or, for a class, null for the class's own (a
-  `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
-  swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is
-  `{definition:"<id>"}` or `{deviceId:"<Home Assistant device id>"}`. `via` is not
-  checked on save, and a cycle is not refused either; when the device is set up, a
-  parent Home Assistant does not have is left out. For a class, each field given
-  overrides the class's own.
+- `device`, for a class definition: null for the class's own (a `SharpDevice`
+  class always makes its device, a class of one entity then has none), or
+  `{manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
+  suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` (that
+  definition's device) or `{deviceId:"<Home Assistant device id>"}`. Each field
+  given overrides the class's own. `via` is not checked on save, and a cycle is not
+  refused either; when the device is set up, a parent Home Assistant does not have
+  is left out.
 - `settings`: for a graph `{key, label?, type, value, secret?}` with `type`
   `string`, `boolean` or `number`; for a class `{key, value}`, one per `[Setting]`
   property the class declares (a value null leaves the property's own).
@@ -94,9 +109,11 @@ is stored without one), fills in missing node positions, and answers the documen
 with `version`, `id`, `revision`, `source`, `sourceMap`,
 `catalogGeneration`, `enabled` and `savedUtc` added.
 
-A save writes the document as `version: 2`, with the entities its Entity nodes
-declare under `entities`. A version 1 document whose logic is a class loads as it
-is. A version 1 graph document, from an earlier development build, does not load:
+A save writes the document as `version: 3`, with the devices its Device nodes
+declare under `devices` and the entities its Entity nodes declare under `entities`
+(a class document has no `devices`). A version 1 or 2 document whose logic is a
+class loads as it is. A version 1 or 2 graph document, from an earlier development
+build, does not load:
 `list` leaves it out of `result` and logs `Skipping entity definition <path>: saved
 by an earlier development build; delete it and build it again` once, `read` of its
 id answers `invalid_request` with that sentence, and `delete` with
@@ -105,8 +122,8 @@ id answers `invalid_request` with that sentence, and `delete` with
 Every `list` answer, with or without `view`, names each definition file it cannot
 read beside its `result`: `{version: 1, ok: true, result: [...], unreadable: [{id,
 reason, deletable}]}`, sorted by id, empty when every file reads. `reason` is "saved
-by an earlier development build; delete it and build it again" for a version 1 graph
-document, and otherwise what reading the file met (such as "Invalid entity
+by an earlier development build; delete it and build it again" for a version 1 or 2
+graph document, and otherwise what reading the file met (such as "Invalid entity
 definition envelope"). Such a definition can only be deleted, with
 `expectedRevision` 0, when it is `deletable`: its file name is a definition id and
 the file could be opened, only its content is wrong. One that is not (a file named
@@ -114,12 +131,16 @@ the file could be opened, only its content is wrong. One that is not (a file nam
 remove it from Home Assistant's `.storage/hass_sharp` folder by hand. Until it is, the entities it made stay in Home Assistant as
 unavailable (startup keeps its id, so they are not pruned), and a node library save,
 which checks every definition, is refused with `Cannot read entity definition
-<path>: <reason>`. The **Entities** page lists it apart, with its id, its reason and
-**Delete**.
+<path>: <reason>`. The **Entities** page lists it apart, with its id and its
+reason, and with **Delete** when it is `deletable`; one that is not has no
+**Delete**, and the page says to remove the file by hand instead.
 
 Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID:
 new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a
-key makes a new entity. Creation uses expectedRevision 0; updates and deletes need the
+key makes a new entity. A Device node's device is `<definition id>:<device key>`
+in Home Assistant (a class definition's device is `<definition id>:main`), so
+changing a device key makes a new device, and an entity moved to another device
+keeps its registry entry, entity id and history. Creation uses expectedRevision 0; updates and deletes need the
 stored revision, and expectedRevision 0 deletes a corrupt file. `enabled` may be
 given only when saving a new definition; otherwise the answer is "enabled can only
 be given when saving a new definition; use set_enabled to turn a saved one on or
@@ -184,7 +205,7 @@ entities it has created stay in Home Assistant as unavailable. A definition save
 off (`enabled: false`) creates its entities the first time it is turned on.
 
 **delete** removes the file, the run history's identity, the entities' stored
-states, and the entities and the device in Home Assistant. Removing the entities has
+states, and the entities and the devices in Home Assistant. Removing the entities has
 30 seconds; a failure is logged ("Cannot remove the entities of deleted entity
 definition …") and the delete still succeeds.
 

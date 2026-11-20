@@ -484,7 +484,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
     # An entity definition as an assistant writes it (the body of the panel's preview and save): its entity an Entity node.
     GRAPH={'version':5,'name':'Motion','nodes':[{'id':'hall','kind':'entity_is','config':{}},
                                               {'id':'any_motion','kind':'entity','config':{'key':'any_motion','domain':'binary_sensor','name':'Any motion'}}],'edges':[]}
-    DEFINITION={'name':'Motion','device':None,'settings':[],'logic':{'kind':'graph','graph':GRAPH}}
+    DEFINITION={'name':'Motion','settings':[],'logic':{'kind':'graph','graph':GRAPH}}
     # The entity of GRAPH as a list, where a document puts one in the wrong place (or a run's trace graph carries it).
     LISTED=[{'key':'any_motion','domain':'binary_sensor','name':'Any motion'}]
     ENTITY_MUTATIONS={'entities_save','entities_set_enabled','entities_delete','entities_run'}
@@ -780,8 +780,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('entities',self.adapter.STORED_DOCUMENT_KEYS)
         for name in ('entities_preview','entities_save'):
             self.assertNotIn('entities?',self.adapter.TOOLS[name][1])
-            self.assertIn('{name, device?, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
-        self.assertIn('The definition you send is {name, device?, settings?, logic}',self.adapter.SEMANTICS['definitions'])
+            self.assertIn('{name, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
+        self.assertIn('The definition you send is {name, settings?, logic}',self.adapter.SEMANTICS['definitions'])
 
     async def test_a_definition_sent_back_with_its_devices_reaches_the_server(self):
         # A read answer lists the devices its Device nodes declare, and each entity's device: a definition sent back with
@@ -821,7 +821,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         entities=self.LISTED
         def save(definition): return {'id':'x','expectedRevision':0,'definition':definition}
         def in_logic(graph): return {**self.DEFINITION,'logic':{'kind':'graph','graph':graph}}
-        use_save='entities_save takes a definition: {name, device?, settings?, logic: {kind: "graph", graph}}; for an automation use save'
+        use_save='entities_save takes a definition: {name, settings?, logic: {kind: "graph", graph}}; for an automation use save'
         to_entities='save takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_save'
         hints=('takes a definition','takes an automation graph','inside logic','Send as definition only','entities_read','at the top','logic.kind is','run trace')
         broken_node={**self.GRAPH,'nodes':[{**self.GRAPH['nodes'][0],'id':5}]}
@@ -832,7 +832,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         rows=(
             # 1. An automation graph as the definition (nodes and edges at the top, beside its own name and version).
             ('entities_save',save(automation),[use_save],['entities_read','inside logic']),
-            ('entities_preview',{'definition':automation},['entities_preview takes a definition: {name, device?, settings?, logic: {kind: "graph", graph}}; for an automation use preview'],['entities_read']),
+            ('entities_preview',{'definition':automation},['entities_preview takes a definition: {name, settings?, logic: {kind: "graph", graph}}; for an automation use preview'],['entities_read']),
             # 2. An automation's read document (its graph at the top, no name), or save's own argument.
             ('entities_save',save(read),[use_save],['Send as definition only','inside logic']),
             ('entities_save',{'id':'x','expectedRevision':0,'graph':automation},[use_save],['inside logic']),
@@ -844,7 +844,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_save',save({'version':5,'name':'Porch','settings':[],'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation','remove version']),
             # A list of entities is no part of a definition: beside one's own parts, it is a key an entities_read answer adds.
             ('entities_save',save({'name':'Porch','settings':[],'entities':entities,'nodes':[],'edges':[]}),
-             ['the nodes and edges go inside logic.graph','Send as definition only name, device, settings and logic: remove entities, which an entities_read answer adds'],['for an automation']),
+             ['the nodes and edges go inside logic.graph',"Send as definition only name, settings and logic (and a class definition's device): remove entities, which an entities_read answer adds"],['for an automation']),
             # The form an earlier build took, a list of entities beside the nodes: a definition still, whose entities are Entity nodes.
             ('entities_save',save({'name':'Porch','entities':entities,'nodes':[],'edges':[]}),
              ['the nodes and edges go inside logic.graph','remove entities, which an entities_read answer adds',"a graph definition's entities are its Entity nodes, one node of kind entity for each"],['for an automation']),
@@ -853,14 +853,14 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_save',{'id':'x','expectedRevision':0,'graph':self.DEFINITION},['send it as definition, not graph'],['for an automation']),
             # A definition and a separate graph argument: the graph goes inside the definition's logic.
             ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph'}},'graph':self.GRAPH},
-             ["entities_save takes a definition: {name, device?, settings?, logic: {kind: \"graph\", graph}}: the graph goes inside the definition's logic"],['for an automation','send it as definition']),
+             ["entities_save takes a definition: {name, settings?, logic: {kind: \"graph\", graph}}: the graph goes inside the definition's logic"],['for an automation','send it as definition']),
             # A graph, or its nodes and edges, beside a logic that has none.
             ('entities_save',save({**self.DEFINITION,'logic':{'kind':'graph'},'graph':self.GRAPH}),['the graph goes inside logic'],['for an automation']),
             ('entities_save',save({**self.DEFINITION,'logic':{'kind':'class','type':'library:p:NodeLib.P'},'nodes':[],'edges':[]}),
              ['the nodes and edges go inside logic.graph','a definition from a C# class has logic: {kind: "class", type} and no graph'],['for an automation']),
             # 4. A stored definition document sent back whole; enabled, like id and expectedRevision, is an argument of its own.
             ('entities_save',{'id':'porch','expectedRevision':4,'definition':stored},
-             ['Send as definition only name, device, settings and logic: remove activationError, active, automationId,','id and expectedRevision',
+             ["Send as definition only name, settings and logic (and a class definition's device): remove activationError, active, automationId,",'id and expectedRevision',
               'and so is enabled'],['for an automation']),
             ('entities_save',save({**self.DEFINITION,'enabled':False}),['remove enabled, which an entities_read answer adds',
              'id and expectedRevision (the revision read) are arguments of their own, and so is enabled: false saves a new definition off'],['for an automation']),
@@ -1098,12 +1098,17 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         definitions=result['semantics']['definitions']
         for phrase in ('Entity node (kind entity)','command:<command>','command:<command>:<value>','config.arguments.<name>','targetPort <name>',
                        'execution output frame','config.history {state, commands, frame}','rootPort','entity.name','entity.partialState',
-                       'scope.stateSource','scope.flow','command.unhandled','camera.no_frame','{name, device?, settings?, logic}',
+                       'scope.stateSource','scope.flow','command.unhandled','camera.no_frame','{name, settings?, logic}','Device node (kind device)',
+                       'sourcePort: entities','targetPort: device','definition.deviceKey','definition.duplicateDevice','device.name','device.via',
+                       'device.viaUnknown','device.viaCycle','device.configurationUrl','device.empty',
                        'set_entity_state','entityDomains[domain].commands','entityDomains[domain].state','30 s','Stop','setting',
                        'trackHistory','permanent','new','JPEG','8 s','own camera','hasValue','via'):
             self.assertIn(phrase,definitions)
         # A request lists no entities: entities_read's list is for reading only.
-        self.assertIn("for reading only (a class's entities are in registeredEntities): send back name, device, settings and logic",definitions)
+        self.assertIn("for reading only (a class's entities are in registeredEntities): send back name, settings and logic, and a class definition's device",definitions)
+        # A definition is no device: its devices are its Device nodes, and only a class definition sends a device.
+        self.assertIn('the definition itself is not a device',definitions)
+        self.assertIn("A class definition's device is null to leave the device to the class",definitions)
         self.assertNotIn('entities [{',definitions)
         # A Stop step's run is recorded as Stopped, and it is no failure: the command's service call succeeds.
         self.assertIn('records it as Stopped',definitions)
@@ -1148,8 +1153,15 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('false saves it off, and it creates its entities the first time it is turned on',descriptions['entities_save'])
         self.assertIn('and a frame\'s (When a frame is needed) only when history.frame is true',descriptions['entities_history'])
         # A definition is sent without entities: its graph's Entity nodes declare them.
-        self.assertIn('definition is {name, device?, settings?, logic} with logic',descriptions['entities_preview'])
-        self.assertIn('send back only name, device, settings and logic as the definition',descriptions['entities_read'])
+        self.assertIn('definition is {name, settings?, logic} with logic {kind: "graph", graph}',descriptions['entities_preview'])
+        self.assertIn('or {name, device?, settings?, logic} with logic {kind: "class", type}',descriptions['entities_preview'])
+        self.assertIn("send back only name, settings and logic, and a class definition's device, as the definition",descriptions['entities_read'])
+        # A graph's devices and each entity's device are answered, for reading only.
+        self.assertIn('the devices its Device nodes declare',descriptions['entities_read'])
+        self.assertIn('each with device, the key of the device it is on or null',descriptions['entities_read'])
+        # get_node_schema says how a Device node is wired, and what its Part of takes.
+        self.assertIn('wire it with {kind: data, sourcePort: entities, targetPort: device} to each Entity node on the device',descriptions['get_node_schema'])
+        self.assertIn('via is {deviceId: <Home Assistant device id>} or {device: <the key of another Device node>}',descriptions['get_node_schema'])
         # A class's read answer lists no entities (its stored list is the one it was sent): they are in registeredEntities.
         self.assertIn("a class's entities come from its code and are in registeredEntities",descriptions['entities_read'])
         self.assertNotIn("or a class's code",descriptions['entities_read'])
@@ -1158,7 +1170,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('A command is not run this way: call the entity\'s service in Home Assistant.',descriptions['entities_run'])
         self.assertIn('While off, the entities it has created stay in Home Assistant as unavailable; a definition saved off creates its entities the first time it is turned on. Ask the user first.',
                       descriptions['entities_set_enabled'])
-        self.assertIn('remove its entities and device from Home Assistant. Ask the user first.',descriptions['entities_delete'])
+        self.assertIn('remove its entities and devices from Home Assistant. Ask the user first.',descriptions['entities_delete'])
 
     def test_the_llm_tools_platform_adds_no_tools_to_any_api(self):
         # Home Assistant asks every integration's llm platform for tools on each build of an API; HassSharp's tools are

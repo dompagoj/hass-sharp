@@ -3,8 +3,8 @@
 An **entity definition** creates entities in Home Assistant and decides what they do.
 Each entity is one of ten types: a binary sensor, a sensor, a switch, a button, a
 number, a select, a text, a light, a cover or a camera. A definition can group its
-entities as one device, with a device page of its own. What the entities do comes
-from one of two places:
+entities into devices, each with a device page of its own (see [Devices](#devices)).
+What the entities do comes from one of two places:
 
 - **Steps.** A graph of the same kind as an automation's (graph version 5), with
   one **Entity** node for each entity and a few steps only a definition has: Set
@@ -19,15 +19,15 @@ from one of two places:
 Definitions live in the panel's **Entities** section, beside Automations and Node
 library. An assistant can build them too; see [Through MCP](#through-mcp).
 Definitions are stored in `.storage/hass_sharp/entities/`, one file each, as
-document version 2. A definition built with steps by an earlier development build
-(document version 1) does not load. The **Entities** page lists it apart from the
+document version 3. A definition built with steps by an earlier development build
+(document version 1 or 2) does not load. The **Entities** page lists it apart from the
 cards, under **Cannot be read**, by its id with "saved by an earlier development
 build; delete it and build it again" and a **Delete** button; it cannot be opened
 or turned on. A file that cannot be read for another reason is listed there the same
 way, with what was wrong. Until you delete it, the entities it made stay in Home
 Assistant as unavailable, and saving a node library is refused with `Cannot read
 entity definition …` and the same reason. Delete it on the **Entities** page, then
-build it again. A class definition of version 1 loads as it is. The programming interface is in
+build it again. A class definition of version 1 or 2 loads as it is. The programming interface is in
 [the entity definitions API](backend/entity-definitions.md).
 
 ## Build a derived sensor in the panel
@@ -74,7 +74,6 @@ as they are by default (`"enabledByDefault": true`, and empty `options` and
 ```json
 {
   "name": "Motion in either room",
-  "device": null,
   "settings": [],
   "logic": {
     "kind": "graph",
@@ -104,8 +103,9 @@ as they are by default (`"enabledByDefault": true`, and empty `options` and
 ```
 
 The other example definitions in that file are *Plug over HTTP* (a setting, a
-Trigger that polls a plug every 10 seconds, and steps on the relay's **Turn on** and
-**Turn off** that switch it), *Camera with a box* (the camera steps), *File at setup*
+Trigger that polls a plug every 10 seconds, steps on the relay's **Turn on** and
+**Turn off** that switch it, and a Device node that puts the relay and the power
+sensor on one device), *Camera with a box* (the camera steps), *File at setup*
 (a download when the definition starts; its address and checksum are placeholders)
 and *Plug from a class* (below).
 
@@ -176,8 +176,12 @@ new definition starts with one, a binary sensor named after the definition.
   warning: "Relay does nothing on Turn on: connect a step to Turn on".
 - **A camera** has **When a frame is needed** on its right instead; see
   [Cameras](#cameras).
-- **Its name.** An entity of a definition that is not a device needs a name: "Name
-  this entity: it has no device, so Home Assistant shows it by its own name".
+- **Its device.** The **Device** pin in its header takes a wire from a Device
+  node's **Entities** pin, which puts the entity on that device; the **Device** field
+  in its panel does the same. Without one it stands alone. See [Devices](#devices).
+- **Its name.** An entity on no device needs a name: "Name this entity: it has no
+  device, so Home Assistant shows it by its own name". One on a device may leave it
+  out.
 
 The runs of an Entity node are named after its entity and the pin they start at:
 "Any motion: State", "Relay: Turn on", "Front door with a box: When a frame is
@@ -241,25 +245,66 @@ A class's settings are the class's own `[Setting]` properties (see
 
 ## Devices
 
-Turn on **Group these entities as a device** under **Device** and Home Assistant
-shows the entities together on one device page, named after the definition. The
-device's **Manufacturer**, **Model**, **Software version**, **Hardware version**,
-**Configuration URL** and **Suggested area** (the area Home Assistant puts the device
-in when it first adds it) are shown there.
+A device groups entities on one device page in Home Assistant. Each device is a
+**Device** node, from the **Entity** category of the step library (a node of kind
+`device`); a definition can have several, or none, and is not a device itself.
 
-**Part of** says which device this one is connected through, such as a hub: Nothing,
-another entity definition that is a device, or **A Home Assistant device…**, which
-offers the devices Home Assistant has. HassSharp does not check it when you save, and
-a cycle (two devices each part of the other) is not refused either.
-When the device is set up, a parent Home Assistant does not have is left out, and
-clears an earlier link.
+- **Its key** names it inside the definition and is part of its identity in Home
+  Assistant: a lower-case letter, then up to 39 lower-case letters, digits or
+  underscores, such as `plug`, and one key per device. Once saved it cannot change.
+  Device keys and entity keys are apart: a device and an entity may have the same key.
+- **Its name**, at the top of its panel, is what Home Assistant shows. A Device node
+  needs one: "Name this device: Home Assistant shows it by this name".
+- **Its entities.** Connect its **Entities** pin (its `entities` output) to the
+  **Device** pin of each Entity node on it (the Entity node's `device` input), or
+  choose the device in the Entity node's **Device** field. An Entity node with no
+  wire stands alone, on no device, and needs a name of its own. A Device node with no
+  entities is a warning. The wire carries no value: it is not part of the entity's
+  state, and a Device node is never part of the run order.
+- **Manufacturer**, **Model**, **Software version**, **Hardware version**,
+  **Configuration URL** (it starts with `http://`, `https://` or
+  `homeassistant://`) and **Suggested area** (the area Home Assistant puts the device
+  in when it first adds it) are shown on the device's page. Each can be left out.
+- **Part of** says which device this one is connected through, such as a hub:
+  Nothing, **Another device of this definition** (another Device node, chosen by its
+  name) or **A Home Assistant device…**, which offers the devices Home Assistant has.
+  A device part of a key no Device node of the definition has, or a circle of devices
+  each part of the next, is a problem on the Device node. When the device is set up, a
+  Home Assistant device that is gone is left out, and clears an earlier link.
+
+As a document, a Device node's `config` is `{key, name}` with any of `manufacturer`,
+`model`, `swVersion`, `hwVersion`, `configurationUrl`, `suggestedArea` and `via`
+beside them; `via` is `{"deviceId": "<Home Assistant device id>"}` or
+`{"device": "<the key of another Device node>"}`. The wire is a data edge from the
+Device node's `entities` output to the Entity node's `device` input. In *Plug over
+HTTP* the relay and the power sensor are on the device `plug`:
+
+<!-- example: Plug over HTTP, its device -->
+```json
+{
+  "nodes": [
+    {"id": "plug", "kind": "device", "config": {"key": "plug", "name": "Plug over HTTP", "model": "Smart plug", "suggestedArea": "Living room"}, "position": {"x": 60, "y": 820}}
+  ],
+  "edges": [
+    {"id": "plug.entities:relay.device", "kind": "data", "source": "plug", "target": "relay", "sourcePort": "entities", "targetPort": "device"},
+    {"id": "plug.entities:power.device", "kind": "data", "source": "plug", "target": "power", "sourcePort": "entities", "targetPort": "device"}
+  ]
+}
+```
+
+A saved definition lists its devices under `devices` and gives each of its entities
+the key of the device it is on, or null, under `entities`; both are worked out from
+the graph, for reading only. Home Assistant knows a device by the definition's id
+and the device's key, and an entity by the definition's id and the entity's key, so
+an entity moved to another device, or off its device, keeps its entity id and its
+history.
 
 Home Assistant makes the entity ids. On a device, an entity's id comes from the
-device's name (the definition's) and the entity's name; an entity without a name
-takes the device's name alone. Without a device, the id comes from the entity's name
-alone, which is why such an Entity node needs one (a class's entity without one
-takes the definition's name); name it with clashes in mind: the derived sensor above
-is `binary_sensor.any_motion`.
+device's name and the entity's name; an entity without a name takes the device's
+name alone. Without a device, the id comes from the entity's name alone, which is
+why such an Entity node needs one (a class's entity without one takes the
+definition's name); name it with clashes in mind: the derived sensor above is
+`binary_sensor.any_motion`.
 
 ## HTTP, downloads and restored state
 
@@ -451,9 +496,10 @@ To use it, open **Node library**, select **Add file**, enter the **File name**
 and select **Save**. Then choose **Entities → New entity definition**, enter a name,
 choose **Use a class from the node library** and select **Continue**. Under
 **Class**, choose **Smart plug**; under **Settings**, enter the plug's address;
-select **Save**. The **Device** fields override what the class sets when you fill
-them in, and **Part of** is offered as for a graph. A class that is one entity has
-**Group this entity as a device** instead. Its **Entities** appear after it has
+select **Save**. A class definition's **Device** fields, which a graph definition
+does not have, override what the class sets when you fill them in, and its **Part
+of** offers Nothing, another entity definition's device or **A Home Assistant
+device…**. A class that is one entity has **Group this entity as a device** instead. Its **Entities** appear after it has
 started once.
 
 ### SharpDevice and SharpEntity
@@ -620,7 +666,7 @@ of a class are not recorded: a class has no steps to trace.
   definition saved off (a copy, or a new one saved with `enabled: false` through
   MCP) creates its entities the first time it is turned on.
 - **Delete** is in a card's menu and, as **Delete entity definition**, at the bottom
-  of the definition's form. Deleting removes the entities and the device, the run
+  of the definition's form. Deleting removes the entities and the devices, the run
   history and the entities' stored states, and cannot be undone.
 - An entity removed from a saved definition, or given another Type, is removed from
   Home Assistant when the saved definition next starts.
@@ -721,9 +767,11 @@ name the command pin under `port`:
 
 A command's values are the node's data outputs `command:<command>:<value>`, such as
 `command:turn_on:brightness` for a light, and a camera's frame flow starts at its
-`frame` output. A definition it sends carries no `entities` list: one that does,
-even an empty one, is refused with "Entities are Entity nodes in the graph now:
-leave entities out and add one Entity node for each". A definition it reads lists
-them under `entities`, for reading only. A secret typed into a
+`frame` output. Each device is a Device node, wired to its entities as in
+[Devices](#devices). A graph definition it sends is `{name, settings, logic}`: it
+carries no `entities` list (one that does, even an empty one, is refused with
+"Entities are Entity nodes in the graph now: leave entities out and add one Entity
+node for each"), and `devices` sent back with it are ignored. A definition it reads
+lists them under `entities` and `devices`, for reading only. A secret typed into a
 conversation reaches the assistant's provider: enter secrets in the panel instead.
 See [MCP authoring](mcp-authoring.md).

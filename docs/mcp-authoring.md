@@ -52,7 +52,7 @@ tool invocation, including direct calls and cached tools.
   and load it into Home Assistant's own process, with its privileges: the
   configuration directory with `secrets.yaml` and the `.storage` tokens, the network
   and every service. Static constructors run when the code is activated. Treat these
-  tools as code execution. `entities_save` also creates entities and a device in
+  tools as code execution. `entities_save` also creates entities and devices in
   Home Assistant. Agents do not ask before a tool call; the API prompt tells the
   model to change nothing unless the user asks for it in the conversation, and that
   is advice to the model, not a control.
@@ -231,7 +231,8 @@ envelope; validation, conflicts and revisions work as above.
    [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json),
    the class one with its library source. `get_node_schema({kind})` adds
    `entityDomains` for `entity` (the Entity node) and `set_entity_state`, whose
-   ports come from the entity's type.
+   ports come from the entity's type; for `device` (the Device node) it gives its
+   config and its `entities` output.
 2. `entities_types({})` lists the classes the node libraries offer:
    `{types:[…], generation}`, each type `{id, sourceId, typeExpression, title,
    description, kind, domain, settings:[{key, label, description, type, secret,
@@ -241,22 +242,28 @@ envelope; validation, conflicts and revisions work as above.
    revision, enabled, status, activationError, logic, device, entities:[{key,
    domain, name, entityId}], triggers:[{triggerId, label?, type, config, manual,
    runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`;
-   `logic` is `"graph"` or the class's type id; `device` whether it makes a device:
-   it gives device details, or its class derives from `SharpDevice` (for a class no
-   node library offers any more, whether it gives device details). Beside the
+   `logic` is `"graph"` or the class's type id; `device`, for a class definition,
+   whether it makes a device: it gives device details, or its class derives from
+   `SharpDevice` (for a class no node library offers any more, whether it gives
+   device details). A graph definition's devices are its Device nodes, which
+   `entities_read` lists under `devices`. Beside the
    result, `unreadable: [{id, reason, deletable}]` names each definition file that
    cannot be read; one that is `deletable` only `entities_delete` with
    `expectedRevision` 0 removes (see step 6), and one that is not (its file name is
    not a definition id, or it could not be opened) is removed by hand from Home
    Assistant's `.storage/hass_sharp` folder.
    `entities_read({id})` returns one complete document, with its `revision`,
-   `source`, `automationId` and `registeredEntities`, and, for a graph,
-   `entities`, the entities its Entity nodes declare, for reading only (a class's
-   entities come from its code and are in `registeredEntities`). Read before every
-   edit, and send back only `name`, `device`, `settings` and `logic`.
-4. `entities_preview({definition})` validates and compiles a definition, `{name,
-   device?, settings?, logic}` with `logic` `{kind:"graph", graph}` or
-   `{kind:"class", type}`, without creating anything. It returns `valid`,
+   `source`, `automationId` and `registeredEntities`, and, for a graph, `devices`,
+   the devices its Device nodes declare, and `entities`, the entities its Entity
+   nodes declare, each with `device`, the key of the device it is on or null; both
+   are for reading only (a class's entities come from its code and are in
+   `registeredEntities`). Read before every edit, and send back only `name`,
+   `settings` and `logic`, and a class definition's `device`.
+4. `entities_preview({definition})` validates and compiles a definition without
+   creating anything: a graph definition is `{name, settings?, logic}` with `logic`
+   `{kind:"graph", graph}`, its devices Device nodes in the graph; a class
+   definition is `{name, device?, settings?, logic}` with `logic`
+   `{kind:"class", type}`. It returns `valid`,
    `diagnostics` and, for a graph, `graph` with each Custom C# step's pins worked
    out (no settings come back). Unlike the panel's API, it leaves out the generated
    `source` and `sourceMap`, and so does a refusal for errors (`validation`) from it
@@ -280,8 +287,8 @@ envelope; validation, conflicts and revisions work as above.
    entities it has created stay as unavailable; a definition saved off creates its
    entities the first time it is turned on) and returns `enabled`, `active` and
    `activationError`. `entities_delete({id, expectedRevision})` deletes it and
-   removes its entities and device. A graph definition stored by an earlier
-   development build (document `version` 1) is left out of `entities_list`'s
+   removes its entities and devices. A graph definition stored by an earlier
+   development build (document `version` 1 or 2) is left out of `entities_list`'s
    result and named in its `unreadable` with the reason "saved by an earlier
    development build; delete it and build it again", which `entities_read` of it
    answers too; another file that cannot be read is named there with what was
@@ -316,9 +323,10 @@ Each entity of a graph definition is a node of kind `entity`. Its `config` is
 options?, history?, arguments?}`: `key` matches `^[a-z][a-z0-9_]{0,39}$` and is
 unique, `domain` is one of the ten in the catalog's `entityDomains` and `options`
 are that domain's. Leave out a field the entity does not need: `name`, `icon`,
-`deviceClass` and `entityCategory` take no `null`. An entity of a definition
-without a device needs a `name` (`entity.name`). Other steps, such as Set state,
-Set available and Show frame, name it by its key in `config.entity`.
+`deviceClass` and `entityCategory` take no `null`. An entity on no device needs a
+`name` (`entity.name`); one on a device may leave it out. Its `device` input puts
+it on a device (see [The Device node](#the-device-node)). Other steps, such as Set
+state, Set available and Show frame, name it by its key in `config.entity`.
 
 - **State.** The node has one input per value of `entityDomains[domain].state`,
   by that value's name (`is_on`, `value`, `brightness`). Give a value under
@@ -358,6 +366,56 @@ The relay of the example *Plug over HTTP* and the edges of its two commands:
 
 A run that reaches a Stop step is Stopped, not failed: a command it handled
 succeeds and a When started flow that stops lets the definition start.
+
+### The Device node
+
+Each device of a graph definition is a node of kind `device`; a definition may have
+several, or none, and is not a device itself. Its `config` is `{key, name,
+manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?, suggestedArea?,
+via?}`. It has no inputs and no execution ports, and is never part of the run order:
+an execution edge into or out of it is an error. Its one output, `entities`, connects
+only to an Entity node's `device` input, with the data edge `{kind: "data", source:
+<the Device node>, sourcePort: "entities", target: <the Entity node>, targetPort:
+"device"}`; that wire puts the entity on the device and carries no value. The rules
+a definition can trip:
+
+- **A key and a name.** `key` follows the entity key rule (`^[a-z][a-z0-9_]{0,39}$`)
+  and is unique among the definition's devices (`definition.deviceKey`,
+  `definition.duplicateDevice`); device keys and entity keys are apart. A changed key
+  makes a new device in Home Assistant. `name` is what Home Assistant shows: a Device
+  node without one is an error (`device.name`).
+- **An entity with no device needs a name.** An Entity node whose `device` input is
+  not wired stands alone and needs its own `name` (`entity.name`).
+- **Part of.** `via` is left out (or null), `{"deviceId": "<Home Assistant device
+  id>"}` (an id from `discover` with `kind: "devices"`) or `{"device": "<the key of
+  another Device node>"}` (`device.via`); a key no Device node has, and a circle of
+  devices each part of the next, are errors (`device.viaUnknown`,
+  `device.viaCycle`).
+- `configurationUrl` starts with `http://`, `https://` or `homeassistant://`
+  (`device.configurationUrl`). A Device node no entity is wired to is a warning
+  (`device.empty`).
+
+The device of the example *Plug over HTTP*, and the wires that put its relay and
+its power sensor on it:
+
+<!-- example: Plug over HTTP, its device -->
+```json
+{
+  "nodes": [
+    {"id": "plug", "kind": "device", "config": {"key": "plug", "name": "Plug over HTTP", "model": "Smart plug", "suggestedArea": "Living room"}, "position": {"x": 60, "y": 820}}
+  ],
+  "edges": [
+    {"id": "plug.entities:relay.device", "kind": "data", "source": "plug", "target": "relay", "sourcePort": "entities", "targetPort": "device"},
+    {"id": "plug.entities:power.device", "kind": "data", "source": "plug", "target": "power", "sourcePort": "entities", "targetPort": "device"}
+  ]
+}
+```
+
+A saved graph definition's `entities_read` answer lists `devices` (the config of each Device
+node with a key, without its blank texts) and gives each of its `entities` its
+`device`. Nobody sends them: `devices` sent back with a definition are ignored.
+Home Assistant knows a device by the definition's id and the device's key, and an
+entity keeps its entity id when it moves to another device or off one.
 
 ## Libraries
 

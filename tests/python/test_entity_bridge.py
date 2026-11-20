@@ -724,11 +724,16 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('remove', [c[0] for c in self.entities.calls])
 
     async def test_sync_moves_a_disabled_entity_too(self):
+        # The user disabled it before it was ever added, so it is never live: Home Assistant registers it with its device
+        # and skips it, and no sync takes the live entity's path for it.
+        entry = self.entities.add('switch', 'plug1:relay', disabled_by='user')
         await self.sync(self.two_devices())
         plug, hub = identified(self.devices, 'plug1:plug'), identified(self.devices, 'plug1:hub')
-        entry = self.entities.async_get('switch.plug1_relay')
-        self.entities.async_update_entity('switch.plug1_relay', disabled_by='user')  # The user disabled it.
+        self.assertIs(self.entities.async_get('switch.plug1_relay'), entry)
+        self.assertEqual((entry.device_id, entry.disabled_by), (plug.id, 'user'))
+        self.assertNotIn('plug1:relay', self.bridge._live)
         await self.sync(self.two_devices(relay='hub'))
+        self.assertNotIn('plug1:relay', self.bridge._live)
         self.assertIs(self.entities.async_get('switch.plug1_relay'), entry)
         self.assertEqual((entry.device_id, entry.disabled_by), (hub.id, 'user'))
         # Moved from a device that goes, it is not removed with it.

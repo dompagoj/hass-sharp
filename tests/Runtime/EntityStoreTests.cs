@@ -582,8 +582,8 @@ static class EntityStoreTests
     }
 
     /// <summary>
-    /// A definition with a device whose one Entity node <c>e</c>, of no name, is of the type <paramref name="domain"/> with
-    /// <paramref name="options"/> (none when null).
+    /// A definition whose one Entity node <c>e</c>, of no name, is on the Device node <c>plug</c> and of the type
+    /// <paramref name="domain"/> with <paramref name="options"/> (none when null).
     /// </summary>
     static DefinitionBody One(string domain, object? options)
     {
@@ -592,7 +592,8 @@ static class EntityStoreTests
         config.Remove("name");
         if (options == null) config.Remove("options");
         else config["options"] = JsonSerializer.SerializeToNode(options);
-        return GraphBody(Graph("One", [hub]), null) with { Device = new DefinitionDevice(null, null, null, null, null, null, null) };
+        var plug = N("plug", "device", new JsonObject { ["key"] = "plug", ["name"] = "Hall plug" });
+        return GraphBody(Graph("One", [plug, hub], D("plug", "e", "device", "entities")), null);
     }
 
     /// <summary>

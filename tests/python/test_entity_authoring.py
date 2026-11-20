@@ -347,6 +347,46 @@ class GuidanceTests(unittest.TestCase):
                 self.assertIn('entity', kinds)
                 self.assertFalse({'entity_state', 'entity_command', 'camera_frame'} & set(kinds))
 
+    def test_no_graph_example_sends_a_device(self):
+        # A graph definition's devices are its Device nodes: no graph example sends the definition's own device, and the
+        # plug is a Device node whose Entities pin is wired to the Device pin of each of its two entities.
+        examples = json.loads((ROOT / 'custom_components/hass_sharp/authoring_examples.json').read_text())
+        graphs = {example['title']: example['definition'] for example in examples['definitions'] if example['definition']['logic']['kind'] == 'graph'}
+        self.assertEqual(len(graphs), 4)
+        for title, definition in graphs.items():
+            with self.subTest(title):
+                self.assertNotIn('device', definition)
+        graph = graphs['Plug over HTTP']['logic']['graph']
+        devices = [node for node in graph['nodes'] if node['kind'] == 'device']
+        self.assertEqual(len(devices), 1)
+        plug = devices[0]
+        self.assertEqual(plug['config'], {'key': 'plug', 'name': 'Plug over HTTP', 'model': 'Smart plug', 'suggestedArea': 'Living room'})
+        wired = sorted(edge['target'] for edge in graph['edges'] if edge['source'] == plug['id'])
+        self.assertEqual(wired, ['power', 'relay'])
+        for edge in (edge for edge in graph['edges'] if edge['source'] == plug['id']):
+            self.assertEqual((edge.get('kind'), edge.get('sourcePort'), edge.get('targetPort')), ('data', 'entities', 'device'), edge['id'])
+        # Neither entity is on a device any other way, and the class example still leaves its device to the class.
+        classes = [example['definition'] for example in examples['definitions'] if example['definition']['logic']['kind'] == 'class']
+        self.assertEqual([definition['device'] for definition in classes], [None])
+
+    def test_the_guidance_describes_a_device_as_a_node(self):
+        # SEMANTICS["definitions"] (read from llm.py's source: importing it needs Home Assistant) and the custom entities
+        # guide describe a device as a Device node wired from its Entities output, not as the definition's own.
+        tree = ast.parse((ROOT / 'custom_components/hass_sharp/llm.py').read_text())
+        semantics = next(ast.literal_eval(node.value) for node in tree.body
+                         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'SEMANTICS' for t in node.targets))
+        definitions = semantics['definitions']
+        guide = (ROOT / 'docs/custom-entities.md').read_text()
+        for name, text in (('SEMANTICS["definitions"]', definitions), ('docs/custom-entities.md', guide)):
+            with self.subTest(name):
+                self.assertRegex(text, r'kind\s+`?device`?')
+                self.assertRegex(text, r'`?entities`?\s+output')
+                self.assertRegex(text, r'`?device`?\s+input')
+                self.assertNotIn('Group these entities as a device', text)
+        self.assertIn('{kind: data, source: <the Device node>, sourcePort: entities, target: <the Entity node>, targetPort: device}', definitions)
+        self.assertIn('The definition you send is {name, settings?, logic}', definitions)
+        self.assertNotIn('{name, device?, settings?, logic}', definitions)
+
     def test_the_guidance_does_not_name_the_removed_steps(self):
         text = ''.join((ROOT / path).read_text() for path in ('custom_components/hass_sharp/llm.py', 'docs/custom-entities.md', 'docs/mcp-authoring.md'))
         # A whole name: Set state's kind, set_entity_state, stays.

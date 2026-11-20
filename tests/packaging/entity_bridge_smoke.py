@@ -7,7 +7,8 @@ sync is answered from Python as the bridge answers it, or the definition never b
 temporary configuration directory. For each definition, checks that the sync, the pushed states and a command's effect
 arrive in Python as str on .NET's threads, and that delete removes the entities. For the class, that a command it
 rejects fails with its message, and that its number is described with its range, takes a value a command sets and refuses
-one beyond it with a message naming it. For the graph, that a dimmable light's turn on flow reads the brightness its
+one beyond it with a message naming it. For the graph, that its Device node reaches the sync as a device with the two entities wired to it, the others
+standalone, that a dimmable light's turn on flow reads the brightness its
 command gives and its turn off flow keeps it, and that its binary sensor follows a source entity Python answers for (through
 PyInterop.Entity, asked with a str on .NET's threads, and changed through the manager as the bridge reports a change),
 that it subscribes to that source with a str and unsubscribes from it on delete, that a switch's turn on and turn off
@@ -97,7 +98,8 @@ BEYOND = 'Target (target) takes a number from 5 to 30, not 45'
 
 # The graph definition, each entity an Entity node: a binary sensor on while SOURCE is, a switch whose turn on and turn
 # off pins start flows that set its state, a switch with only a turn off flow, so that turning it on has no flow, and a
-# dimmable light turned on at the brightness its turn on pin gives.
+# dimmable light turned on at the brightness its turn on pin gives. The binary sensor and the first switch are on the
+# Device node hall (Smoke hall); the second switch and the light stand alone.
 GRAPH_DEFINITION = 'smoke_graph'
 SOURCE = 'binary_sensor.smoke_source'
 NO_FLOW = 'Bare has no flow for Turn on'
@@ -131,8 +133,11 @@ def entity_node(key, domain, name, options):
     return node(key, 'entity', {'key': key, 'domain': domain, 'name': name, **({'options': options} if options else {}), **arguments})
 
 
+HALL = {'key': 'hall', 'name': 'Smoke hall', 'model': 'S1'}
+ON_HALL = ('motion', 'relay')
 GRAPH = {'version': 5, 'name': 'Smoke graph', 'nodes': [
     *(entity_node(key, domain, name, options) for key, domain, name, _, options in GRAPH_ENTITIES),
+    node('hall', 'device', HALL),
     node('source', 'entity_is', {'entity': literal('entity_id', SOURCE), 'state': literal('string', 'on')}),
     node('set_on', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', True)}),
     node('set_off', 'set_entity_state', {'entity': 'relay', 'is_on': literal('boolean', False)}),
@@ -141,7 +146,8 @@ GRAPH = {'version': 5, 'name': 'Smoke graph', 'nodes': [
     node('lamp_dark', 'set_entity_state', {'entity': 'lamp', 'is_on': literal('boolean', False)}),
 ], 'edges': [data('source', 'motion', 'is_on'), step('relay', 'set_on', 'command:turn_on'), step('relay', 'set_off', 'command:turn_off'),
              step('bare', 'bare_set_off', 'command:turn_off'), step('lamp', 'lamp_bright', 'command:turn_on'), step('lamp', 'lamp_dark', 'command:turn_off'),
-             data('lamp', 'lamp_bright', 'brightness', 'command:turn_on:brightness')]}
+             data('lamp', 'lamp_bright', 'brightness', 'command:turn_on:brightness'),
+             *(data('hall', key, 'device', 'entities') for key in ON_HALL)]}
 
 lock = threading.Lock()
 # Every thread Python started: a delegate called on one of these is a mismatch. Kept as thread objects, not idents: a
@@ -444,7 +450,7 @@ try:
 
         # ---- A definition whose logic is a graph of nodes ----
         saved = request(manager.EntityRequest, {'operation': 'save', 'id': GRAPH_DEFINITION, 'expectedRevision': 0, 'definition': {
-            'name': 'Smoke graph', 'device': None, 'settings': [], 'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
+            'name': 'Smoke graph', 'settings': [], 'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
         # The saved libraries' compiler warnings come along (the class above has some); of the graph, only the one command.
         own = [d for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
@@ -458,8 +464,15 @@ try:
         synced = arguments('sync')
         check(len(synced) == 2, f'the graph save synced {len(synced) - 1} times')
         definition = json.loads(synced[1])
-        check(definition['definitionId'] == GRAPH_DEFINITION and definition['name'] == 'Smoke graph' and definition['devices'] == []
-              and 'device' not in definition and all(e['device'] is None for e in definition['entities']), f'the graph sync: {definition}')
+        check(definition['definitionId'] == GRAPH_DEFINITION and definition['name'] == 'Smoke graph' and 'device' not in definition, f'the graph sync: {definition}')
+        # Its one device is the Device node's, every member given (null where it has none); each entity is on it or on none.
+        check(definition['devices'] == [{'key': 'hall', 'name': 'Smoke hall', 'manufacturer': None, 'model': 'S1', 'swVersion': None, 'hwVersion': None,
+                                         'configurationUrl': None, 'suggestedArea': None, 'via': None}], f"the graph sync's devices: {definition['devices']}")
+        on = {e['key']: e['device'] for e in definition['entities']}
+        check(on == {key: 'hall' if key in ON_HALL else None for key, _, _, _, _ in GRAPH_ENTITIES}, f"the device each graph entity is on: {on}")
+        stored = saved['document']
+        check(stored['devices'] == [HALL] and {e['key']: e['device'] for e in stored['entities']} == on,
+              f"the saved document's devices and entities: {stored['devices']} {stored['entities']}")
         described = [(e['uniqueId'], e['key'], e['domain'], e['name'], e['commands']) for e in definition['entities']]
         check(described == [(f'{GRAPH_DEFINITION}:{key}', key, domain, name, commands) for key, domain, name, commands, _ in GRAPH_ENTITIES],
               f'the graph sync describes {described}')

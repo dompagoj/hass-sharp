@@ -147,15 +147,15 @@ static class EntityGraphTests
     /// </summary>
     static JsonObject Entity(string id, string key, string domain, object? more = null, JsonObject? values = null) =>
         Hub(id, key, domain, more == null ? null : JsonSerializer.SerializeToNode(more)!.AsObject(), values);
-    /// <summary>The Entity node without a name, as an entity of a device may be.</summary>
+    /// <summary>The Entity node without a name, as an entity on a Device node may be.</summary>
     static JsonObject Unnamed(JsonObject hub) { hub["config"]!.AsObject().Remove("name"); return hub; }
     /// <summary>The node of the definition's graph with the id.</summary>
     static JsonObject NodeOf(JsonObject definition, string id) =>
         definition["logic"]!["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == id)!.AsObject();
-    /// <summary>The definition as the editor sends it: its entities are the Entity nodes of its graph.</summary>
-    static JsonObject Definition(string name, JsonObject graph, JsonNode[]? settings = null, object? device = null) => new()
+    /// <summary>The definition as a client sends it: its entities are the Entity nodes of its graph, and its devices its Device nodes.</summary>
+    static JsonObject Definition(string name, JsonObject graph, JsonNode[]? settings = null) => new()
     {
-        ["name"] = name, ["device"] = device == null ? null : JsonSerializer.SerializeToNode(device),
+        ["name"] = name,
         ["settings"] = new JsonArray((settings ?? []).Select(s => s.DeepClone()).ToArray()),
         ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph.DeepClone() },
     };
@@ -450,10 +450,9 @@ static class EntityGraphTests
             && d["nodeId"]?.GetValue<string>() == "relay" && d["portId"]?.GetValue<string>() == "command:turn_on" && d["message"]!.GetValue<string>() == "Relay does nothing on Turn on: connect a step to Turn on") == true;
         var preview = await rig.Ok(new { operation = "preview", definition = Relay(turnOn: false) });
         Check(preview["valid"]!.GetValue<bool>() && Unhandled(preview["diagnostics"]), "the preview warns of the command no flow handles: " + preview["diagnostics"]?.ToJsonString());
-        // An entity of a device needs no name: one without is named by its key.
-        var unnamed = Relay(turnOn: false);
+        // An entity on a Device node needs no name: one without is named by its key.
+        var unnamed = OnADevice(Relay(turnOn: false), "relay");
         Unnamed(NodeOf(unnamed, "relay"));
-        unnamed["device"] = new JsonObject();
         var byKey = (await rig.Ok(new { operation = "preview", definition = unnamed }))["diagnostics"]!.AsArray().Select(d => d!["message"]!.GetValue<string>()).ToArray();
         Check(byKey.Contains("relay does nothing on Turn on: connect a step to Turn on"), "an entity without a name is named by its key: " + string.Join(" | ", byKey));
         var saved = await rig.Save("relay", Relay(turnOn: false));
@@ -641,8 +640,8 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A definition with a device (the request's, until requests no longer send one) registers its three entities under it,
-    /// each described as the document says: the device <c>main</c>, named after the definition.
+    /// A definition whose Device node <c>plug</c> has its three entities wired to it registers them under it, each
+    /// described as the document says, one of them without a name of its own: the device is the Device node's.
     /// </summary>
     static async Task ADeviceDefinitionGroupsItsEntities()
     {
@@ -651,17 +650,19 @@ static class EntityGraphTests
             [Entity("p", "power", "sensor", new { name = "Power", deviceClass = "power", options = new { unit = "W", stateClass = "measurement" } }, new JsonObject { ["value"] = Lit("number", 42) }),
              Unnamed(Entity("o", "online", "binary_sensor", new { deviceClass = "connectivity", entityCategory = "diagnostic" }, On(true))),
              Entity("relay", "relay", "switch", new { name = "Relay", icon = "mdi:power-socket", enabledByDefault = false }),
-             SetState("set_on", "relay", On(true)), SetState("set_off", "relay", On(false))],
+             SetState("set_on", "relay", On(true)), SetState("set_off", "relay", On(false)),
+             DeviceNode("plug", "Plug", new { manufacturer = "Acme", model = "P1", suggestedArea = "Kitchen" })],
             Pin("relay", "command:turn_on", "set_on"), Pin("relay", "command:turn_off", "set_off"));
-        var definition = Definition("Plug", graph, device: new { manufacturer = "Acme", model = "P1", suggestedArea = "Kitchen" });
+        foreach (var hub in new[] { "p", "o", "relay" }) Wire(graph, "plug", hub);
+        var definition = Definition("Plug", graph);
         var saved = await rig.Save("plug", definition);
-        Check(saved["active"]!.GetValue<bool>(), "the device definition runs: " + saved.ToJsonString());
+        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "the definition with a device saves without a problem and runs: " + saved.ToJsonString());
         var sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!;
-        Check(sync["devices"]!.ToJsonString() == """[{"key":"main","name":"Plug","manufacturer":"Acme","model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Kitchen","via":null}]"""
-            && !sync.AsObject().ContainsKey("device"), "the device is the document's, keyed main and named after the definition: " + sync.ToJsonString());
-        Check(sync["entities"]!.ToJsonString() == """[{"uniqueId":"plug:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null},"device":"main"},"""
-            + """{"uniqueId":"plug:online","key":"online","domain":"binary_sensor","name":null,"icon":null,"deviceClass":"connectivity","entityCategory":"diagnostic","enabledByDefault":true,"commands":[],"options":{},"device":"main"},"""
-            + """{"uniqueId":"plug:relay","key":"relay","domain":"switch","name":"Relay","icon":"mdi:power-socket","deviceClass":null,"entityCategory":null,"enabledByDefault":false,"commands":["turn_on","turn_off"],"options":{},"device":"main"}]""",
+        Check(sync["devices"]!.ToJsonString() == """[{"key":"plug","name":"Plug","manufacturer":"Acme","model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Kitchen","via":null}]"""
+            && !sync.AsObject().ContainsKey("device"), "the device is the Device node's: " + sync.ToJsonString());
+        Check(sync["entities"]!.ToJsonString() == """[{"uniqueId":"plug:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null},"device":"plug"},"""
+            + """{"uniqueId":"plug:online","key":"online","domain":"binary_sensor","name":null,"icon":null,"deviceClass":"connectivity","entityCategory":"diagnostic","enabledByDefault":true,"commands":[],"options":{},"device":"plug"},"""
+            + """{"uniqueId":"plug:relay","key":"relay","domain":"switch","name":"Relay","icon":"mdi:power-socket","deviceClass":null,"entityCategory":null,"enabledByDefault":false,"commands":["turn_on","turn_off"],"options":{},"device":"plug"}]""",
             "the three entities as the document describes them: " + sync["entities"]!.ToJsonString());
         await rig.Until("plug:power", s => Is(s, "value", 42.0), "the power State");
         await rig.Until("plug:online", s => Is(s, "is_on", true), "the online State");
@@ -1380,7 +1381,7 @@ static class EntityGraphTests
         Check(classPreview["valid"]!.GetValue<bool>() && classPreview["sourceMap"]!.AsArray().Count == 1 && JsonNode.DeepEquals(classPreview["sourceMap"], classRead["sourceMap"]),
             "the class's preview maps its source as read does: " + classPreview["sourceMap"]!.ToJsonString() + " / " + classRead["sourceMap"]!.ToJsonString());
 
-        // Its Entity node without a name, and the definition without a device: not valid.
+        // Its Entity node without a name, and on no device: not valid.
         var unnamed = Motion(); unnamed["logic"]!["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "s")!["config"]!.AsObject().Remove("name");
         var invalid = await rig.Ok(new { operation = "preview", definition = unnamed });
         Check(!invalid["valid"]!.GetValue<bool>() && invalid["sourceMap"] is JsonArray { Count: 0 } && invalid["source"]!.GetValue<string>() == "", "an invalid preview maps nothing: " + invalid.ToJsonString());

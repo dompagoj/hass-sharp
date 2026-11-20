@@ -132,7 +132,7 @@ static class EntityDomainTests
                 foreach (var key in given) arguments[key] = Value(state[key]);
                 var graph = new JsonObject
                 {
-                    ["version"] = 5, ["name"] = "Values", ["edges"] = new JsonArray(), ["definition"] = new JsonObject { ["settings"] = new JsonArray(), ["device"] = new JsonObject() },
+                    ["version"] = 5, ["name"] = "Values", ["edges"] = new JsonArray(), ["definition"] = new JsonObject { ["settings"] = new JsonArray() },
                     ["nodes"] = new JsonArray(VisualExecutionTests.Hub("e", "e", domain, new() { ["arguments"] = arguments })),
                 };
                 return VisualGraphValidator.Validate(graph).Where(d => d.Code == "entity.partialState").Select(d => d.InputId!).ToList();

@@ -808,7 +808,6 @@
       "description": "A binary sensor that is on while there is motion in the hallway or in the kitchen. Two Has state steps feed an Or step, whose result is connected to On of the Any motion Entity node; its state is worked out again whenever either motion sensor changes.",
       "definition": {
         "name": "Motion in either room",
-        "device": null,
         "settings": [],
         "logic": {
           "kind": "graph",
@@ -924,18 +923,9 @@
     },
     {
       "title": "Plug over HTTP",
-      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged; to see why in the run's trace, turn on the Trigger step's run history, which is off here, or run the Trigger with Run now). Turn on and Turn off of the Relay Entity node each turn the plug on or off with an HTTP request, then set the switch.",
+      "description": "A smart plug that answers JSON-RPC requests at the address in its Address setting: a Trigger every 10 seconds sends an HTTP request for its status, sets the relay switch and the power sensor from it with Get field and Set state and marks both available with Set available, or, when the request fails, marks both unavailable (the failure is not logged; to see why in the run's trace, turn on the Trigger step's run history, which is off here, or run the Trigger with Run now). Turn on and Turn off of the Relay Entity node each turn the plug on or off with an HTTP request, then set the switch. The Plug over HTTP Device node is the plug's device in Home Assistant, with its model and suggested area: its Entities pin is connected to the Device pin of both Entity nodes, so the relay and the power sensor are listed on that device.",
       "definition": {
         "name": "Plug over HTTP",
-        "device": {
-          "manufacturer": null,
-          "model": "Smart plug",
-          "swVersion": null,
-          "hwVersion": null,
-          "configurationUrl": null,
-          "suggestedArea": "Living room",
-          "via": null
-        },
         "settings": [
           {
             "key": "address",
@@ -1120,6 +1110,20 @@
                 "position": {
                   "x": 960,
                   "y": 460
+                }
+              },
+              {
+                "id": "plug",
+                "kind": "device",
+                "config": {
+                  "key": "plug",
+                  "name": "Plug over HTTP",
+                  "model": "Smart plug",
+                  "suggestedArea": "Living room"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 820
                 }
               },
               {
@@ -1365,6 +1369,22 @@
                 "target": "switch_off",
                 "sourcePort": "value",
                 "targetPort": "url"
+              },
+              {
+                "id": "plug.entities:relay.device",
+                "kind": "data",
+                "source": "plug",
+                "target": "relay",
+                "sourcePort": "entities",
+                "targetPort": "device"
+              },
+              {
+                "id": "plug.entities:power.device",
+                "kind": "data",
+                "source": "plug",
+                "target": "power",
+                "sourcePort": "entities",
+                "targetPort": "device"
               }
             ]
           }
@@ -1376,7 +1396,6 @@
       "description": "A camera that shows the front door's picture with a box and a caption drawn on it. When a frame is needed, on the camera's Entity node, runs Take a picture, and Show frame shows that picture after Draw rectangle and Draw text; nothing runs while nobody is watching.",
       "definition": {
         "name": "Camera with a box",
-        "device": null,
         "settings": [],
         "logic": {
           "kind": "graph",
@@ -1543,7 +1562,6 @@
       "description": "Downloads a file once when the definition starts, keeps it by its checksum, logs where it is and shows that path as a sensor's state. The address and the checksum are placeholders: replace both with your file's own before you save it, or the definition will not start.",
       "definition": {
         "name": "File at setup",
-        "device": null,
         "settings": [],
         "logic": {
           "kind": "graph",
