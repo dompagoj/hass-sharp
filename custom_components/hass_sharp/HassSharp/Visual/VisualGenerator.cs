@@ -151,10 +151,13 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         return libraries.Valid?Preview(graph,libraries.Snapshot):new(false,"",[],libraries.Diagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
     }
     static bool IsCustom(JsonObject node,VisualCatalogSnapshot snapshot)=>Text(VisualNodeCatalog.Spec(node,snapshot),"dynamicInputs")=="custom";
-    /// <summary>The code of each Custom C# node that has some (a statement-style node is the validator's to report).</summary>
+    /// <summary>
+    /// The code of each node that has some, with its kind: a Custom C# step's (a statement-style one is the validator's to
+    /// report), a C# entity's or a C# device's.
+    /// </summary>
     static CustomNodeSource[] CustomSources(JsonObject graph,VisualCatalogSnapshot snapshot)=>(graph["nodes"] as JsonArray??[]).OfType<JsonObject>()
-        .Where(n=>IsCustom(n,snapshot)&&Text(n,"id")!=""&&n["config"] is JsonObject cfg&&!cfg.ContainsKey("code")&&cfg["source"] is JsonValue v&&v.TryGetValue<string>(out _))
-        .Select(n=>new CustomNodeSource(Text(n,"id"),Text(n["config"],"source"))).ToArray();
+        .Where(n=>VisualNodeCatalog.HasCode(VisualNodeCatalog.Spec(n,snapshot))&&Text(n,"id")!=""&&n["config"] is JsonObject cfg&&!cfg.ContainsKey("code")&&cfg["source"] is JsonValue v&&v.TryGetValue<string>(out _))
+        .Select(n=>new CustomNodeSource(Text(n,"id"),Text(n["config"],"source"),IsCustom(n,snapshot)?CustomNodeSource.Step:Text(n,"kind"))).ToArray();
     /// <summary>
     /// The type two numbers are compared in, by C#'s binary numeric promotion: <c>decimal</c> if either side is, else
     /// <c>double</c> if either is floating point (<c>float</c> only when both are), else the wider integer type; a signed
@@ -190,10 +193,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         if(sources.Length==0)return snapshot;
         // The editor previews after each edit, and deriving pins compiles once more; most edits leave the code alone.
         // The last compile is kept (one, so at most one compilation stays in memory), keyed by all that goes into it:
-        // the accepted service calls, the libraries and the code. Each text is length-prefixed, so no two inputs share a key.
+        // the accepted service calls, the libraries and each node's code with its kind (the same code is a step's method in
+        // one kind and a class in another). Each text is length-prefixed, so no two inputs share a key.
         static string Part(string text)=>text.Length.ToString(CultureInfo.InvariantCulture)+":"+text;
         var key=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            string.Concat(snapshot.Sources.Select(s=>Part(s.Id)+Part(s.Revision.ToString(CultureInfo.InvariantCulture))+Part(s.Source)))+"|"+string.Concat(sources.Select(c=>Part(c.NodeId)+Part(c.Source))))));
+            string.Concat(snapshot.Sources.Select(s=>Part(s.Id)+Part(s.Revision.ToString(CultureInfo.InvariantCulture))+Part(s.Source)))+"|"+string.Concat(sources.Select(c=>Part(c.NodeId)+Part(c.Kind)+Part(c.Source))))));
         lock(CustomGate)if(LastCustom is {} last&&ReferenceEquals(last.Services,services)&&last.Key==key)return last.Compiled.WithServices(snapshot.Services);
         var compiled=new NodeLibraryCompiler(diagnostics,services).Preview(snapshot.Sources,sources).Snapshot;
         lock(CustomGate)LastCustom=(services,key,compiled);
@@ -260,7 +264,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         var compiled=WithCustom(next,snapshot,ServiceCalls());
         var edges=next["edges"] as JsonArray;
         foreach(var node in (next["nodes"] as JsonArray??[]).OfType<JsonObject>()) {
-            if(!compiled.Custom.TryGetValue(Text(node,"id"),out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)continue;
+            // A C# entity's or C# device's signature is its class's settings, not a step's pins: it is not written here.
+            if(!IsCustom(node,compiled)||!compiled.Custom.TryGetValue(Text(node,"id"),out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)continue;
             var id=Text(node,"id");var old=cfg["signature"] as JsonObject;var signature=(JsonObject)custom.Signature.DeepClone();cfg["signature"]=signature;
             var inputs=signature["inputs"]!.AsObject();var outputs=signature["outputs"]!.AsObject();var pure=signature["pure"]!.GetValue<bool>();
             // A pin that is gone is named as the node showed it before.
@@ -307,7 +312,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         foreach(var (id,custom) in snapshot.Custom.OrderBy(c=>c.Key,StringComparer.Ordinal)) {
             errors.AddRange(custom.Diagnostics.Select(d=>new VisualDiagnostic(id,d.Message,d.Severity,d.StartLine,d.StartColumn,"source")));
             var node=(graph["nodes"] as JsonArray??[]).OfType<JsonObject>().First(n=>Text(n,"id")==id);
-            if(custom.Signature==null||node["config"]?["signature"] is not JsonObject stored||!VisualNodeCatalog.WellFormedSignature(stored))continue;
+            if(!IsCustom(node,snapshot)||custom.Signature==null||node["config"]?["signature"] is not JsonObject stored||!VisualNodeCatalog.WellFormedSignature(stored))continue;
             if(!SamePins(stored,custom.Signature)||!SameSelected(graph,snapshot.Root,stored,custom.Signature))errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
             else if(!SameJson(stored,custom.Signature)) {
                 refreshed??=(JsonObject)graph.DeepClone();

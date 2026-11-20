@@ -137,10 +137,16 @@ libraries; the escaped id keeps ASCII letters and digits and writes every other
 character as `_` and its UTF-16 code in four uppercase hex digits (`kitchen-light`
 becomes `kitchen_002Dlight`). Its diagnostics map to the node's `source` input and
 to lines of its code. `NodeLibraryRequest` offers `custom_preview`
-(`{nodeId,source,sources?}` returns `{valid,diagnostics,signature}`; `nodeId` is
+(`{nodeId,source,sources?,kind?}` returns `{valid,diagnostics,signature}`; `nodeId` is
 required, since the type ids depend on it, and a library among `sources` with errors
 is one diagnostic saying to fix the node library first), and the language
-operations take `custom: true` and `nodeId` for a node's unsaved code.
+operations take `custom: true` and `nodeId` for a node's unsaved code. `kind` is
+`custom` (the default, one `[Node]` method), `csharp_entity` or `csharp_device`: the
+code of a C# entity or C# device node is one class, and its `signature` is the class
+signature `{title, description, domain, settings}` read from it (its `[Node]` title
+else its name in words, its summary, an entity's domain or null, and each `[Setting]`
+property with its type, `secret`, an enum's `options` and its range). The class is
+never created to read it.
 
 The actual catalog comes from `NodeLibraryRequest({operation:"catalog"})`, merged
 by Roslyn from the packaged built-ins and saved library sources. MCP

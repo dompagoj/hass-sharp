@@ -28,7 +28,6 @@ static class EntityNodeTests
             (nameof(ADeviceNodeIsADeclaration), ADeviceNodeIsADeclaration),
             (nameof(DevicesAreDerivedFromTheirNodes), DevicesAreDerivedFromTheirNodes),
             (nameof(ADevicesProblemsAreOnItsNode), ADevicesProblemsAreOnItsNode),
-            (nameof(TheTemplatesCompileAndTheirSignaturesSayWhatTheCodeGives), TheTemplatesCompileAndTheirSignaturesSayWhatTheCodeGives),
             (nameof(ACSharpNodeIsNoHub), ACSharpNodeIsNoHub),
             (nameof(NothingDerivedCarriesCode), NothingDerivedCarriesCode),
             (nameof(EveryDeclaringKindIsDerivedOnPurpose), EveryDeclaringKindIsDerivedOnPurpose),
@@ -291,31 +290,6 @@ static class EntityNodeTests
         var config = new JsonObject { ["key"] = key, ["name"] = name };
         foreach (var (name2, value) in more ?? []) config[name2] = value?.DeepClone();
         return Templated(id, "csharp_device", config);
-    }
-
-    /// <summary>
-    /// Each kind's template is code today's library compiles, as a node library would hold it, and its signature says
-    /// what the compiler derives from that code: the class's title and summary, its entity's type, and each setting's
-    /// key, label, summary, type and secret flag.
-    /// </summary>
-    static void TheTemplatesCompileAndTheirSignaturesSayWhatTheCodeGives()
-    {
-        var compiler = new NodeLibraryCompiler(new DiagnosticsProvider());
-        foreach (var (kind, type, what) in new[] { ("csharp_entity", "Thermometer", "entity"), ("csharp_device", "Plug", "device") })
-        {
-            var config = VisualNodeCatalog.GetNode(kind)!["config"]!;
-            var preview = compiler.Preview([new NodeLibrarySource("template", config["source"]!["default"]!.GetValue<string>(), 1)]);
-            Check(preview.Valid, $"the {kind} template compiles: " + string.Join(" | ", preview.Diagnostics.Select(d => $"{d.StartLine}:{d.StartColumn} {d.Message}")));
-            var derived = preview.Snapshot.EntityTypes.Values.Single();
-            var signature = config["signature"]!["default"]!;
-            Check(derived.Kind == what && derived.Title == VisualNodeCatalog.Text(signature, "title") && derived.Description == VisualNodeCatalog.Text(signature, "description")
-                && derived.Domain == (signature["domain"]?.GetValue<string>()) && derived.TypeExpression == "global::NodeLib." + type,
-                $"the {kind} template's class is the signature's: " + derived);
-            var settings = signature["settings"]!.AsArray();
-            Check(derived.Settings.Length == settings.Count && derived.Settings.Zip(settings).All(p => p.First.Key == VisualNodeCatalog.Text(p.Second, "key") && p.First.Label == VisualNodeCatalog.Text(p.Second, "label")
-                && p.First.Description == VisualNodeCatalog.Text(p.Second, "description") && p.First.Type == VisualNodeCatalog.Text(p.Second, "type") && p.First.Secret == p.Second!["secret"]!.GetValue<bool>()),
-                $"the {kind} template's settings are the signature's: " + string.Join(", ", derived.Settings));
-        }
     }
 
     /// <summary>

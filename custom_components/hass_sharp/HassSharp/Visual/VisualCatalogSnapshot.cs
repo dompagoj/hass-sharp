@@ -30,16 +30,32 @@ public sealed record NodeMethodDescriptor(string Kind, string SourceId, string I
     public bool Pure { get; init; }
 }
 public sealed record NodeTypeDescriptor(string Id, string TypeExpression, ITypeSymbol Symbol);
-/// <summary>The code of one Custom C# node, compiled together with the libraries in a namespace of its own.</summary>
-public sealed record CustomNodeSource(string NodeId, string Source);
 /// <summary>
-/// What the compiler made of one Custom C# node: its method and the signature it gives (null when the code does
-/// not compile or does not have exactly one <c>[Node]</c> method), the types only it uses, and diagnostics whose
-/// lines and columns are in the node's own code.
+/// The code of one node that holds C#, compiled together with the libraries in a namespace of its own: a Custom C#
+/// step's (<paramref name="Kind"/> <c>custom</c>, one <c>[Node]</c> method), a C# entity's (<c>csharp_entity</c>, one
+/// class deriving an entity class) or a C# device's (<c>csharp_device</c>, one class deriving <see cref="SharpDevice"/>).
+/// </summary>
+public sealed record CustomNodeSource(string NodeId, string Source, string Kind = CustomNodeSource.Step)
+{
+    /// <summary>A Custom C# step's kind.</summary>
+    public const string Step = "custom";
+    /// <summary>The kinds whose code is one class: a C# entity and a C# device.</summary>
+    public static readonly ImmutableArray<string> ClassKinds = ["csharp_entity", "csharp_device"];
+    /// <summary>Whether the code is one class (a C# entity's or a C# device's), not a step's method.</summary>
+    public bool IsClass => ClassKinds.Contains(Kind);
+}
+/// <summary>
+/// What the compiler made of one node's C# code. For a Custom C# step: its method and the signature it gives (null when
+/// the code does not compile or does not have exactly one <c>[Node]</c> method) and the types only it uses. For a C#
+/// entity or C# device: no method and no types, and the class signature (<c>{title, description, domain, settings}</c>)
+/// of its one class, null unless the code compiles without an error. Diagnostics have lines and columns in the node's
+/// own code.
 /// </summary>
 public sealed record CustomNodeDescriptor(string NodeId, NodeMethodDescriptor? Method, JsonObject? Signature, ImmutableArray<NodeTypeDescriptor> Types, ImmutableArray<NodeLibraryDiagnostic> Diagnostics)
 {
     public bool Valid => Signature != null && !Diagnostics.Any(d => d.Severity == 3);
+    /// <summary>The class of a valid C# entity or C# device as generated code names it, such as <c>global::NodeLib.Custom_plug.Plug</c>; null otherwise.</summary>
+    public string? TypeExpression { get; init; }
 }
 /// <summary>One setting of a custom device or entity type: a <c>[Setting]</c> property the user fills in for each definition.</summary>
 /// <param name="Key">The property's name, as written.</param>

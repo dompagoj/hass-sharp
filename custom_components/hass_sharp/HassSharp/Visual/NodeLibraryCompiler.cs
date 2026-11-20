@@ -90,7 +90,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// <summary>
     /// Compiles the libraries, and with them each Custom C# node's code in its own namespace. Library nodes go into the
     /// catalog; a custom node's method, signature and types go into <see cref="VisualCatalogSnapshot.Custom"/> only, so
-    /// the catalog (and its type entries) is the same with or without custom code.
+    /// the catalog (and its type entries) is the same with or without custom code. A C# entity's or C# device's code
+    /// (<see cref="CustomNodeSource.IsClass"/>) goes there too, with its class's signature and type: nothing of it is
+    /// emitted, loaded or created.
     /// </summary>
     public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources, IEnumerable<CustomNodeSource>? customSources, CancellationToken cancellationToken = default)
     {
@@ -466,12 +468,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             foreach (var (_, input) in root["nodes"]![method.Kind]!["inputs"]!.AsObject())
                 if (input is JsonObject rule && rule["default"] is JsonObject operand && !VisualNodeCatalog.ValidLiteral(VisualNodeCatalog.Text(operand, "type"), operand["value"], operand.ContainsKey("value"), root)) rule.Remove("default");
         // A type declared in one Custom C# node's code is that node's own: another node's pins may not use it.
-        bool OwnTypesArePrivate(MethodDeclarationSyntax declaration, SyntaxTree tree, IEnumerable<ITypeSymbol> used)
+        bool OwnTypesArePrivate(Location at, SyntaxTree tree, IEnumerable<ITypeSymbol> used)
         {
             foreach (var type in used)
                 if (type.OriginalDefinition.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).FirstOrDefault(t => t != tree && customTrees.ContainsKey(t)) is { } other)
                 {
-                    Report(declaration.Identifier.GetLocation(), $"{type.ToDisplayString()} belongs to the Custom C# node {customTrees[other].NodeId}; declare the type in this code or in a node library to use it here");
+                    Report(at, $"{type.ToDisplayString()} belongs to the Custom C# node {customTrees[other].NodeId}; declare the type in this code or in a node library to use it here");
                     return false;
                 }
             return true;
@@ -480,6 +482,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         foreach (var (tree, custom) in customTrees)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // A C# entity's or C# device's code is one class, described after the libraries' classes, whose settings it may inherit.
+            if (custom.IsClass) continue;
             var own = new Dictionary<string, ITypeSymbol>(StringComparer.Ordinal);
             var ownProperties = new Dictionary<string, ImmutableArray<(string Name, ITypeSymbol Type, ISymbol Member)>>(StringComparer.Ordinal);
             // The types of the pins' properties are the node's as well (built-in ones aside), so another node's are refused too.
@@ -493,7 +497,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     Report(found.Length == 0 ? tree.GetRoot(cancellationToken).DescendantNodes().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault()?.Identifier.GetLocation() ?? tree.GetRoot(cancellationToken).GetLocation() : found[1].Declaration.Identifier.GetLocation(),
                         found.Length == 0 ? "Mark one method with [Node]: it becomes this node" : $"Mark only one method with [Node]; this code has {found.Length}");
                 else if (Describe(found[0].Method, found[0].Declaration, found[0].Attribute, "custom", custom.NodeId, type => Register(own, type, builtIn)) is { } described
-                    && WithProperties() && OwnTypesArePrivate(found[0].Declaration, tree, own.Values))
+                    && WithProperties() && OwnTypesArePrivate(found[0].Declaration.Identifier.GetLocation(), tree, own.Values))
                 {
                     // Each type the pins use beyond the built-in ones, with what it converts to and from: every type of this
                     // generation, its own other types, and every base type and interface it has (by id, so a pin of such a
@@ -525,7 +529,18 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
             customs.Add(new(custom.NodeId, signature == null ? null : descriptor, signature, own.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)).ToImmutableArray(), customErrors[custom.NodeId].ToImmutableArray()));
         }
-        var entityTypes = EntityTypes(compilation, frameworkAssembly, trees, (location, message) => Report(location, message), cancellationToken);
+        var classes = new EntityClasses(frameworkAssembly, (location, message) => Report(location, message), cancellationToken);
+        var entityTypes = EntityTypes(classes, compilation, trees);
+        foreach (var (tree, custom) in customTrees.Where(pair => pair.Value.IsClass))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var problems = customErrors[custom.NodeId];
+            bool Clean() => !problems.Any(d => d.Severity == 3);
+            // Code that does not compile has no signature; its errors are the node's.
+            var described = Clean() ? DescribeClassNode(custom, tree, compilation, classes, (location, message) => Report(location, message),
+                (used, at) => OwnTypesArePrivate(at, tree, used), Clean, cancellationToken) : null;
+            customs.Add(new(custom.NodeId, null, described?.Signature, [], problems.ToImmutableArray()) { TypeExpression = described?.TypeExpression });
+        }
         foreach (var (id, symbol) in unlistedBuiltIn) typeSymbols.TryAdd(id, symbol);
         var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs, entityTypes);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
@@ -704,50 +719,103 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// parameterless constructor. The <c>[Setting]</c> properties of every library class deriving
     /// <see cref="SharpComponent"/> are checked once, listed or not: one a setting cannot be is reported and left out.
     /// </summary>
-    static List<EntityTypeDescriptor> EntityTypes(CSharpCompilation compilation, IAssemblySymbol hassSharp, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees,
-        Action<Location, string> report, CancellationToken cancellationToken)
+    static List<EntityTypeDescriptor> EntityTypes(EntityClasses read, CSharpCompilation compilation, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees)
     {
-        var component = hassSharp.GetTypeByMetadataName("HassSharp.SharpComponent");
-        var device = hassSharp.GetTypeByMetadataName("HassSharp.SharpDevice");
-        var entity = hassSharp.GetTypeByMetadataName("HassSharp.SharpEntity");
-        var setting = hassSharp.GetTypeByMetadataName("HassSharp.SettingAttribute");
-        var node = hassSharp.GetTypeByMetadataName("HassSharp.NodeAttribute");
-        bool Derives(ITypeSymbol type, INamedTypeSymbol? from) => BaseTypes(type).Any(b => SymbolEqualityComparer.Default.Equals(b, from));
         NodeLibrarySource? Source(INamedTypeSymbol type) => type.DeclaringSyntaxReferences.Select(r => trees.GetValueOrDefault(r.SyntaxTree)).FirstOrDefault(s => s != null);
         static IEnumerable<INamedTypeSymbol> All(INamespaceOrTypeSymbol space) => space.GetTypeMembers().SelectMany(t => All(t).Prepend(t))
             .Concat(space is INamespaceSymbol ns ? ns.GetNamespaceMembers().SelectMany(All) : Enumerable.Empty<INamedTypeSymbol>());
-        var classes = All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && Derives(t, component) && Source(t) != null).ToArray();
-        // The settings each class declares itself, in declaration order.
-        var own = new Dictionary<ITypeSymbol, List<EntitySettingDescriptor>>(SymbolEqualityComparer.Default);
+        var classes = All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && read.Derives(t, read.Component) && Source(t) != null).ToArray();
+        read.CheckSettings(classes);
+        var listed = new List<EntityTypeDescriptor>();
         foreach (var type in classes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var settings = own[type] = [];
-            foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
+            if (DescribeEntityType(type, "library:" + Source(type)!.Id + ":" + type.ToDisplayString(), Source(type)!.Id, read) is { } described) listed.Add(described);
+        return listed;
+    }
+
+    /// <summary>
+    /// A custom device or entity class as the class kind and the C# entity and C# device nodes describe it: its kind,
+    /// domain, title (a <c>[Node]</c> on the class, which makes no step, else its name in words), summary, and settings (a
+    /// base class's first; one declared again in a derived class keeps its place), as <paramref name="read"/> has read
+    /// them. Null for a class a definition cannot create (<see cref="EntityClasses.Creatable"/>) or that is neither a
+    /// device nor an entity of a domain.
+    /// </summary>
+    static EntityTypeDescriptor? DescribeEntityType(INamedTypeSymbol type, string id, string sourceId, EntityClasses read)
+    {
+        if (!EntityClasses.Creatable(type) || read.Kind(type) is not { } kind) return null;
+        var settings = new List<EntitySettingDescriptor>();
+        foreach (var owner in BaseTypes(type).Reverse().Append(type))
+            foreach (var found in read.OwnSettings(owner.OriginalDefinition))
             {
-                if (property.IsIndexer || property.Type.TypeKind == TypeKind.Error) continue;
-                if (property.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, setting)) is not { } attribute) continue;
-                var location = property.Locations.FirstOrDefault() ?? Location.None;
-                // The settings form fills public instance properties only: another one would be left out without a word.
-                if (property.IsStatic || property.DeclaredAccessibility != Accessibility.Public)
+                var index = settings.FindIndex(s => s.Key == found.Key);
+                if (index >= 0) settings[index] = found; else settings.Add(found);
+            }
+        var summary = DocText(Documentation(type, read.CancellationToken)?.Element("summary"));
+        var title = type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, read.Node))?.ConstructorArguments.FirstOrDefault().Value as string;
+        return new(id, sourceId, TypeIdentity(type), kind.Kind, kind.Domain, string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]);
+    }
+
+    /// <summary>
+    /// What one compile reads of the classes deriving <see cref="SharpComponent"/>, for the class kind's library scan and
+    /// for each C# entity and C# device node: the settings each class declares itself (checked once, each problem reported
+    /// where the property is written), whether a definition can create a class, and its kind and domain.
+    /// </summary>
+    sealed class EntityClasses(IAssemblySymbol hassSharp, Action<Location, string> report, CancellationToken cancellationToken)
+    {
+        internal readonly INamedTypeSymbol? Component = hassSharp.GetTypeByMetadataName("HassSharp.SharpComponent");
+        internal readonly INamedTypeSymbol? Device = hassSharp.GetTypeByMetadataName("HassSharp.SharpDevice");
+        internal readonly INamedTypeSymbol? Entity = hassSharp.GetTypeByMetadataName("HassSharp.SharpEntity");
+        internal readonly INamedTypeSymbol? Setting = hassSharp.GetTypeByMetadataName("HassSharp.SettingAttribute");
+        internal readonly INamedTypeSymbol? Node = hassSharp.GetTypeByMetadataName("HassSharp.NodeAttribute");
+        internal CancellationToken CancellationToken => cancellationToken;
+        // The settings each class declares itself, in declaration order.
+        readonly Dictionary<ITypeSymbol, List<EntitySettingDescriptor>> own = new(SymbolEqualityComparer.Default);
+        internal bool Derives(ITypeSymbol type, INamedTypeSymbol? from) => BaseTypes(type).Any(b => SymbolEqualityComparer.Default.Equals(b, from));
+        /// <summary>A public, concrete, non-generic top-level class with a public parameterless constructor: one a definition can create.</summary>
+        internal static bool Creatable(INamedTypeSymbol type) => type.ContainingType == null && type.DeclaredAccessibility == Accessibility.Public && !type.IsAbstract && !type.IsGenericType
+            && type.InstanceConstructors.Any(c => c.Parameters.IsEmpty && c.DeclaredAccessibility == Accessibility.Public);
+        /// <summary>An entity's domain: its nearest typed base's; one deriving SharpEntity itself has none and cannot be created.</summary>
+        internal string? Domain(INamedTypeSymbol type) =>
+            BaseTypes(type).Where(b => SymbolEqualityComparer.Default.Equals(b.ContainingAssembly, hassSharp)).Select(b => SharpDomains.OfName(b.ToDisplayString())).FirstOrDefault(d => d != null);
+        /// <summary><c>device</c> for a class deriving SharpDevice, <c>entity</c> with its domain for one deriving a typed entity base; null for any other.</summary>
+        internal (string Kind, string? Domain)? Kind(INamedTypeSymbol type) =>
+            Derives(type, Device) ? ("device", null) : Derives(type, Entity) && Domain(type) is { } domain ? ("entity", domain) : null;
+        internal IReadOnlyList<EntitySettingDescriptor> OwnSettings(ITypeSymbol type) => own.GetValueOrDefault(type) ?? [];
+
+        /// <summary>Reads the <c>[Setting]</c> properties of each class not read yet: one a setting cannot be is reported and left out.</summary>
+        internal void CheckSettings(IEnumerable<INamedTypeSymbol> classes)
+        {
+            foreach (var type in classes)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (own.ContainsKey(type)) continue;
+                var settings = own[type] = [];
+                foreach (var property in type.GetMembers().OfType<IPropertySymbol>())
                 {
-                    report(location, SettingAccessMessage(property.Name));
-                    continue;
+                    if (property.IsIndexer || property.Type.TypeKind == TypeKind.Error) continue;
+                    if (property.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, Setting)) is not { } attribute) continue;
+                    var location = property.Locations.FirstOrDefault() ?? Location.None;
+                    // The settings form fills public instance properties only: another one would be left out without a word.
+                    if (property.IsStatic || property.DeclaredAccessibility != Accessibility.Public)
+                    {
+                        report(location, SettingAccessMessage(property.Name));
+                        continue;
+                    }
+                    var settable = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
+                    var form = SettingType(property.Type);
+                    if (!settable) report(location, SettingSetterMessage);
+                    if (form == null) report(location, SettingTypeMessage(property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
+                    if (!settable || form is not { } shape) continue;
+                    if (Range(attribute, property.Type, shape, location) is not { } range) continue;
+                    var label = attribute.ConstructorArguments.FirstOrDefault().Value as string;
+                    var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
+                    if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
+                    settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
+                        shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options)
+                        { Minimum = range.Minimum, Maximum = range.Maximum });
                 }
-                var settable = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
-                var form = SettingType(property.Type);
-                if (!settable) report(location, SettingSetterMessage);
-                if (form == null) report(location, SettingTypeMessage(property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
-                if (!settable || form is not { } shape) continue;
-                if (Range(attribute, property.Type, shape, location) is not { } range) continue;
-                var label = attribute.ConstructorArguments.FirstOrDefault().Value as string;
-                var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
-                if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
-                settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
-                    shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options)
-                    { Minimum = range.Minimum, Maximum = range.Maximum });
             }
         }
+
         // The range a setting takes: its attribute's Minimum and Maximum (NaN for none, as a named argument must be a
         // constant), else the type's own (an int's). Null, with the problem reported, for a range on a property that is not
         // a number, upside down, or with a fraction on a whole number.
@@ -775,30 +843,71 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
             return (minimum, maximum);
         }
-        var listed = new List<EntityTypeDescriptor>();
-        foreach (var type in classes)
+    }
+
+    internal const string NoEntityClassMessage = "Write one public class that derives from an entity class, such as SharpSwitch: it becomes this entity";
+    internal const string NoDeviceClassMessage = "Write one public class that derives from SharpDevice: it becomes this device";
+    internal static string SeveralClassesMessage(string what, int count) => $"Only one class can be this {what}; this code has {count}";
+    internal static string DeviceInEntityMessage(string type) => $"{type} is a device: write it in a C# device node";
+    internal static string UncreatableMessage(string type) => $"{type} must be public, not abstract or generic, and have a public constructor without parameters";
+    internal const string DeviceSettingMessage = "A setting cannot be called device: that is the pin the entity's device connects to";
+
+    /// <summary>
+    /// The class of a C# entity or C# device node, and its class signature (<c>{title, description, domain, settings}</c>),
+    /// read from the node's own code; nothing of it is created. A C# entity's code has exactly one class a definition can
+    /// create that derives an entity class, and no device class; a C# device's has exactly one that derives
+    /// <see cref="SharpDevice"/> (entity classes beside it are its helpers). Each problem is reported in the node's code;
+    /// with any error there is no signature.
+    /// </summary>
+    static (JsonObject Signature, string TypeExpression)? DescribeClassNode(CustomNodeSource custom, SyntaxTree tree, CSharpCompilation compilation, EntityClasses read,
+        Action<Location, string> report, Func<IEnumerable<ITypeSymbol>, Location, bool> ownTypesArePrivate, Func<bool> clean, CancellationToken cancellationToken)
+    {
+        var model = compilation.GetSemanticModel(tree);
+        var root = tree.GetRoot(cancellationToken);
+        var classes = root.DescendantNodes().OfType<TypeDeclarationSyntax>().Select(d => model.GetDeclaredSymbol(d, cancellationToken)).OfType<INamedTypeSymbol>()
+            .Where(t => t.TypeKind == TypeKind.Class).Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default).ToArray();
+        read.CheckSettings(classes.Where(t => read.Derives(t, read.Component)));
+        Location At(INamedTypeSymbol type) => type.Locations.FirstOrDefault(l => l.SourceTree == tree) ?? root.GetLocation();
+        var entity = custom.Kind == "csharp_entity";
+        var devices = classes.Where(t => read.Derives(t, read.Device)).ToArray();
+        if (entity) foreach (var device in devices) report(At(device), DeviceInEntityMessage(device.Name));
+        var candidates = entity ? classes.Where(t => read.Kind(t)?.Kind == "entity").ToArray() : devices;
+        var creatable = candidates.Where(EntityClasses.Creatable).ToArray();
+        if (creatable.Length > 1) report(At(creatable[1]), SeveralClassesMessage(entity ? "entity" : "device", creatable.Length));
+        else if (creatable.Length == 0 && candidates.Length > 0)
+            // The class meant to be the one is a concrete one; abstract ones are its bases, unless they are all there is.
+            foreach (var meant in candidates.Any(t => !t.IsAbstract) ? candidates.Where(t => !t.IsAbstract) : candidates) report(At(meant), UncreatableMessage(meant.Name));
+        else if (creatable.Length == 0 && !(entity && devices.Length > 0))
+            report(root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault()?.Identifier.GetLocation() ?? root.GetLocation(), entity ? NoEntityClassMessage : NoDeviceClassMessage);
+        if (creatable.Length != 1 || DescribeEntityType(creatable[0], custom.NodeId, custom.NodeId, read) is not { } described) return null;
+        var type = creatable[0];
+        // A setting is written where its property is; one a base class in a library declares, at the class.
+        Location SettingAt(string key) => BaseTypes(type).Prepend(type).SelectMany(t => t.GetMembers(key).OfType<IPropertySymbol>())
+            .SelectMany(p => p.Locations).FirstOrDefault(l => l.SourceTree == tree) ?? At(type);
+        foreach (var setting in described.Settings)
         {
-            if (type.ContainingType != null || type.DeclaredAccessibility != Accessibility.Public || type.IsAbstract || type.IsGenericType
-                || !type.InstanceConstructors.Any(c => c.Parameters.IsEmpty && c.DeclaredAccessibility == Accessibility.Public)) continue;
-            // An entity's domain is its nearest typed base's; one deriving SharpEntity itself has none and cannot be created.
-            var domain = BaseTypes(type).Where(b => SymbolEqualityComparer.Default.Equals(b.ContainingAssembly, hassSharp)).Select(b => SharpDomains.OfName(b.ToDisplayString())).FirstOrDefault(d => d != null);
-            var kind = Derives(type, device) ? "device" : Derives(type, entity) && domain != null ? "entity" : null;
-            if (kind == null) continue;
-            // A base class's settings come first; one declared again in a derived class keeps its place.
-            var settings = new List<EntitySettingDescriptor>();
-            foreach (var owner in BaseTypes(type).Reverse().Append(type))
-                foreach (var found in own.GetValueOrDefault(owner.OriginalDefinition) ?? [])
-                {
-                    var index = settings.FindIndex(s => s.Key == found.Key);
-                    if (index >= 0) settings[index] = found; else settings.Add(found);
-                }
-            var summary = DocText(Documentation(type, cancellationToken)?.Element("summary"));
-            // Its title: a [Node] on the class itself (which makes no step: only methods are nodes), else its name in words.
-            var title = type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, node))?.ConstructorArguments.FirstOrDefault().Value as string;
-            listed.Add(new("library:" + Source(type)!.Id + ":" + type.ToDisplayString(), Source(type)!.Id, TypeIdentity(type), kind, kind == "device" ? null : domain,
-                string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]));
+            // A setting's key is its pin's id: English letters, digits and _ only, as both validators read pin ids.
+            if (!PinId(setting.Key)) report(SettingAt(setting.Key), PinNameMessage("setting", setting.Key));
+            else if (entity && setting.Key == "device") report(SettingAt(setting.Key), DeviceSettingMessage);
         }
-        return listed;
+        // The class, what it derives from and its settings' types are this code's or a library's, not another node's.
+        var settingTypes = BaseTypes(type).Prepend(type).SelectMany(t => t.GetMembers().OfType<IPropertySymbol>()).Where(p => described.Settings.Any(s => s.Key == p.Name)).Select(p => Scalar(p.Type));
+        if (!ownTypesArePrivate(BaseTypes(type).Concat(settingTypes), At(type)) || !clean()) return null;
+        var signature = new JsonObject
+        {
+            ["title"] = described.Title, ["description"] = described.Description ?? "", ["domain"] = described.Domain,
+            ["settings"] = new JsonArray([.. described.Settings.Select(s =>
+            {
+                var entry = new JsonObject { ["key"] = s.Key, ["label"] = s.Label, ["description"] = s.Description ?? "", ["type"] = s.Type, ["secret"] = s.Secret };
+                // An enum's members, and only an enum's: the validators do not tie options to the type.
+                if (s.Type == "enum") entry["options"] = new JsonArray([.. s.Options.Select(o => (JsonNode?)JsonValue.Create(o))]);
+                // An infinite bound is no bound, and JSON has no number for it.
+                if (s.Minimum is { } minimum && double.IsFinite(minimum)) entry["minimum"] = minimum;
+                if (s.Maximum is { } maximum && double.IsFinite(maximum)) entry["maximum"] = maximum;
+                return (JsonNode?)entry;
+            })]),
+        };
+        return (signature, TypeIdentity(type));
     }
 
     /// <summary>

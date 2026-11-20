@@ -24,6 +24,9 @@ static class CustomNodeTests
     static NodeLibraryPreview Library(string source, string id = "contract") => new NodeLibraryCompiler(Diagnostics).Preview([new(id, source, 1)]);
     static CustomNodeDescriptor Compiled(string source, string id = "c", NodeLibrarySource[]? libraries = null) =>
         new NodeLibraryCompiler(Diagnostics).Preview(libraries ?? [], [new CustomNodeSource(id, source)]).Snapshot.Custom[id];
+    /// <summary>The code of a C# entity (<paramref name="kind"/> <c>csharp_entity</c>) or C# device (<c>csharp_device</c>) node, compiled as its node.</summary>
+    static CustomNodeDescriptor ClassCompiled(string kind, string source, string id = "c", NodeLibrarySource[]? libraries = null) =>
+        new NodeLibraryCompiler(Diagnostics).Preview(libraries ?? [], [new CustomNodeSource(id, source, kind)]).Snapshot.Custom[id];
     static string Messages(IEnumerable<NodeLibraryDiagnostic> diagnostics) => string.Join(" | ", diagnostics.Select(d => $"{d.StartLine}:{d.StartColumn} {d.Message}"));
     static string Messages(IEnumerable<VisualDiagnostic> diagnostics) => JsonSerializer.Serialize(diagnostics);
     static async Task<List<string>> Logged(JsonObject graph, VisualCatalogSnapshot? snapshot = null)
@@ -44,6 +47,12 @@ static class CustomNodeTests
         {
             Template();
             Contract();
+            ClassTemplates();
+            ClassSignatures();
+            ClassProblems();
+            TwoNodesOneClassName();
+            NothingRuns();
+            ClassNodesInAGraph();
             await Numbers();
             await Context();
             await CustomNodes();
@@ -155,6 +164,179 @@ static class CustomNodeTests
             && signature["description"]!.GetValue<string>() == "Halves it." && signature["pure"]!.GetValue<bool>() && signature["outputs"]!.AsObject().Select(p => p.Key).SequenceEqual(["result"]),
             "the signature is {title, description, pure, inputs, outputs, types}: " + signature.ToJsonString());
         Console.WriteLine("PASS node contract: kinds, pure value nodes, labels in words, tuple outputs, injected parameters, enum labels, one method per name, custom code rules");
+    }
+
+    // The template of a C# entity and of a C# device, compiled as its node, gives exactly the catalog's default signature,
+    // with no diagnostic, so a new node of either kind is valid at once.
+    static void ClassTemplates()
+    {
+        foreach (var (kind, type) in new[] { ("csharp_entity", "Thermometer"), ("csharp_device", "Plug") })
+        {
+            var config = VisualNodeCatalog.Root["nodes"]![kind]!["config"]!;
+            var derived = ClassCompiled(kind, config["source"]!["default"]!.GetValue<string>());
+            var stored = config["signature"]!["default"]!;
+            Check(derived.Valid && derived.Diagnostics.IsEmpty && derived.Signature != null, $"the {kind} template compiles without a diagnostic: " + Messages(derived.Diagnostics));
+            Check(VisualGenerator.SameJson(stored, derived.Signature), $"the catalog's default {kind} signature is the template's; derived: " + derived.Signature!.ToJsonString());
+            Check(VisualNodeCatalog.WellFormedClassSignature(derived.Signature), $"the {kind} template's signature is well formed: " + derived.Signature.ToJsonString());
+            Check(derived.TypeExpression == "global::NodeLib.Custom_c." + type && derived.Method == null && derived.Types.IsEmpty,
+                $"the {kind} template's class is named in its node's namespace, and it has no method or types of a step: " + derived.TypeExpression);
+        }
+        Console.WriteLine("PASS class templates: each template compiles as its node to the catalog's default signature, which is well formed");
+    }
+
+    // A class node's signature: its title, summary, domain, and each [Setting] property (base classes first) with its type,
+    // whether it is secret, an enum's options and a number's range. A secret's value is in nothing the compiler gives.
+    static void ClassSignatures()
+    {
+        const string fan = """
+            public enum Speed { Low, High }
+            public abstract class Room : SharpSwitch
+            {
+                [Setting] public string Area { get; set; } = "";
+            }
+            /// <summary>A fan with a speed.</summary>
+            [Node("Ceiling fan")]
+            public class Fan : Room
+            {
+                /// <summary>Where it answers.</summary>
+                [Setting("Host")] public string Host { get; set; } = "";
+                [Setting(Secret = true)] public string Token { get; set; } = "hunter2-not-shown";
+                [Setting("Poll interval", Minimum = 1, Maximum = 3600)] public int Interval { get; set; } = 30;
+                [Setting(Description = "How strong it is.", Minimum = 0.5)] public double Gain { get; set; } = 1;
+                [Setting] public long Count { get; set; }
+                [Setting] public bool Loud { get; set; }
+                [Setting] public Speed Speed { get; set; } = Speed.High;
+                public string NotASetting { get; set; } = "";
+            }
+            """;
+        var compiled = ClassCompiled("csharp_entity", fan);
+        Check(compiled.Valid, "the fan compiles: " + Messages(compiled.Diagnostics));
+        var expected = JsonNode.Parse("""
+            {"title": "Ceiling fan", "description": "A fan with a speed.", "domain": "switch", "settings": [
+              {"key": "Area", "label": "Area", "description": "", "type": "string", "secret": false},
+              {"key": "Host", "label": "Host", "description": "Where it answers.", "type": "string", "secret": false},
+              {"key": "Token", "label": "Token", "description": "", "type": "string", "secret": true},
+              {"key": "Interval", "label": "Poll interval", "description": "", "type": "integer", "secret": false, "minimum": 1, "maximum": 3600},
+              {"key": "Gain", "label": "Gain", "description": "How strong it is.", "type": "number", "secret": false, "minimum": 0.5},
+              {"key": "Count", "label": "Count", "description": "", "type": "integer", "secret": false},
+              {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false},
+              {"key": "Speed", "label": "Speed", "description": "", "type": "enum", "secret": false, "options": ["Low", "High"]}]}
+            """);
+        Check(VisualGenerator.SameJson(expected, compiled.Signature), "an entity's settings, base classes first, with their types, secret flag, options and ranges: " + compiled.Signature?.ToJsonString());
+        Check(VisualNodeCatalog.WellFormedClassSignature(compiled.Signature), "the signature is well formed: " + compiled.Signature?.ToJsonString());
+        Check(!compiled.Signature!.ToJsonString().Contains("hunter2") && !Messages(compiled.Diagnostics).Contains("hunter2"), "a secret's initial value is in neither the signature nor a diagnostic");
+        // An int setting without a range keeps an int's, as the class kind's settings form has it.
+        var plain = ClassCompiled("csharp_device", "public class Box : SharpDevice\n{\n    [Setting] public int Channel { get; set; }\n}");
+        Check(plain.Valid && VisualGenerator.SameJson(plain.Signature!["settings"]![0], JsonNode.Parse("""{"key": "Channel", "label": "Channel", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647}""")),
+            "an int setting without a range has an int's: " + plain.Signature?.ToJsonString());
+        // A camera is an entity of the camera domain; a device has none, and the entity classes beside it are its own helpers.
+        var camera = ClassCompiled("csharp_entity", "public class Doorbell : SharpCamera { }");
+        Check(camera.Valid && VisualGenerator.SameJson(camera.Signature, JsonNode.Parse("""{"title": "Doorbell", "description": "", "domain": "camera", "settings": []}""")),
+            "a camera class gives domain camera: " + Messages(camera.Diagnostics) + " " + camera.Signature?.ToJsonString());
+        var device = ClassCompiled("csharp_device", "public class Relay : SharpSwitch { }\n/// <summary>Two relays.</summary>\npublic class DoublePlug : SharpDevice\n{\n    public DoublePlug() { Add(new Relay()); }\n}");
+        Check(device.Valid && device.TypeExpression == "global::NodeLib.Custom_c.DoublePlug"
+            && VisualGenerator.SameJson(device.Signature, JsonNode.Parse("""{"title": "Double plug", "description": "Two relays.", "domain": null, "settings": []}""")),
+            "a device gives domain null, its entity classes being its helpers: " + Messages(device.Diagnostics) + " " + device.Signature?.ToJsonString());
+        Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range; a secret's value is never shown");
+    }
+
+    // Each problem a class node's code can have, said in the node's own lines.
+    static void ClassProblems()
+    {
+        void Refused(string kind, string source, string message, int line)
+        {
+            var compiled = ClassCompiled(kind, source);
+            Check(!compiled.Valid && compiled.Signature == null && compiled.TypeExpression == null
+                && compiled.Diagnostics.Any(d => d.Message == message && d.StartLine == line && d.SourceId == "c" && d.Severity == 3),
+                $"{kind}: expected \"{message}\" on line {line}: " + Messages(compiled.Diagnostics));
+        }
+        const string NoEntity = "Write one public class that derives from an entity class, such as SharpSwitch: it becomes this entity";
+        const string NoDevice = "Write one public class that derives from SharpDevice: it becomes this device";
+        const string Uncreatable = " must be public, not abstract or generic, and have a public constructor without parameters";
+        Refused("csharp_entity", "public static class Helper { }", NoEntity, 1);
+        Refused("csharp_entity", "// Nothing here yet.\n", NoEntity, 1);
+        // SharpEntity itself is no entity class: a class deriving it has no domain (and only an abstract one compiles).
+        Refused("csharp_entity", "\npublic abstract class Odd : SharpEntity { }", NoEntity, 2);
+        Refused("csharp_device", "public static class Helper { }", NoDevice, 1);
+        Refused("csharp_device", "public class Lamp : SharpLight { }", NoDevice, 1);
+        Refused("csharp_entity", "public class A : SharpSwitch { }\npublic class B : SharpLight { }", "Only one class can be this entity; this code has 2", 2);
+        Refused("csharp_device", "public class A : SharpDevice { }\npublic class B : SharpDevice { }\npublic class C : SharpDevice { }", "Only one class can be this device; this code has 3", 2);
+        Refused("csharp_entity", "public class Lamp : SharpLight { }\npublic class Plug : SharpDevice { }", "Plug is a device: write it in a C# device node", 2);
+        Refused("csharp_entity", "public class Plug : SharpDevice { }", "Plug is a device: write it in a C# device node", 1);
+        Refused("csharp_entity", "class Lamp : SharpLight { }", "Lamp" + Uncreatable, 1);
+        Refused("csharp_entity", "public class Lamp<T> : SharpLight { }", "Lamp" + Uncreatable, 1);
+        Refused("csharp_entity", "public static class Outer\n{\n    public class Lamp : SharpLight { }\n}", "Lamp" + Uncreatable, 3);
+        Refused("csharp_device", "public abstract class Plug : SharpDevice { }", "Plug" + Uncreatable, 1);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    public Plug(string host) { }\n}", "Plug" + Uncreatable, 1);
+        Refused("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public string device { get; set; } = \"\";\n}", "A setting cannot be called device: that is the pin the entity's device connects to", 3);
+        // The class kind's setting sentences, word for word, on the property's line.
+        Refused("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", NodeLibraryCompiler.SettingTypeMessage("DateTime"), 3);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n\n    [Setting] public string X { get; } = \"\";\n}", NodeLibraryCompiler.SettingSetterMessage, 4);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public static string Shared { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Shared"), 3);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Minimum = 1)] public string Host { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingRangeTypeMessage("string"), 3);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Minimum = 5, Maximum = 1)] public int Upside { get; set; }\n}", NodeLibraryCompiler.SettingRangeOrderMessage, 3);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Maximum = 2.5)] public long Fraction { get; set; }\n}", NodeLibraryCompiler.SettingRangeWholeMessage, 3);
+        // A setting's key is its pin's id, which takes English letters only, as a Custom C# step's parameter's does.
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public string Širina { get; set; } = \"\";\n}", NodeLibraryCompiler.PinNameMessage("setting", "Širina"), 3);
+        // Code that does not compile has its compiler's errors, on its own lines, and no signature.
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    public Plug() { Missing(); }\n}", "The name 'Missing' does not exist in the current context", 3);
+        // A class of the right kind beside an abstract helper base, or a nested helper of another kind, is the one.
+        Check(ClassCompiled("csharp_entity", "public abstract class Base : SharpSwitch { }\npublic class Mine : Base { }").Valid, "an abstract base of an entity class is a helper");
+        Check(ClassCompiled("csharp_device", "public class Plug : SharpDevice\n{\n    public class Relay : SharpSwitch { }\n}").Valid, "an entity class inside a device class is its helper");
+        Console.WriteLine("PASS class problems: no class, several, a device in a C# entity, a class that cannot be created, a setting called device, the class kind's setting sentences, all on the node's own lines");
+    }
+
+    // The types a node's code declares are its own: two nodes with a class of one name compile side by side, and another
+    // node's type is not one of this node's settings.
+    static void TwoNodesOneClassName()
+    {
+        const string plug = "public enum Speed { Low, High }\npublic class Plug : SharpDevice\n{\n    [Setting] public Speed Speed { get; set; }\n}";
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("a", plug, "csharp_device"), new CustomNodeSource("b", plug, "csharp_device")]);
+        var (a, b) = (preview.Snapshot.Custom["a"], preview.Snapshot.Custom["b"]);
+        Check(preview.Valid && a.Valid && b.Valid && a.TypeExpression == "global::NodeLib.Custom_a.Plug" && b.TypeExpression == "global::NodeLib.Custom_b.Plug",
+            "two device nodes each with a class Plug are both valid, as two classes: " + Messages(a.Diagnostics) + Messages(b.Diagnostics) + $" {a.TypeExpression} {b.TypeExpression}");
+        var borrowing = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("a", plug, "csharp_device"),
+            new CustomNodeSource("b", "public class Fan : SharpSwitch\n{\n    [Setting] public NodeLib.Custom_a.Speed Speed { get; set; }\n}", "csharp_entity")]).Snapshot.Custom["b"];
+        Check(!borrowing.Valid && borrowing.Diagnostics.Any(d => d.Message == "NodeLib.Custom_a.Speed belongs to the Custom C# node a; declare the type in this code or in a node library to use it here"),
+            "a setting of a type another node declares is refused: " + Messages(borrowing.Diagnostics));
+        Console.WriteLine("PASS two class nodes with one class name: both valid, each its own class; another node's type is refused");
+    }
+
+    // Compiling a class node's code never creates its class: a constructor and a static constructor that throw (and say
+    // they ran) leave a valid node with its signature.
+    static void NothingRuns()
+    {
+        const string Variable = "HASS_SHARP_CLASS_NODE_RAN";
+        Environment.SetEnvironmentVariable(Variable, null);
+        foreach (var (kind, type) in new[] { ("csharp_entity", "SharpSwitch"), ("csharp_device", "SharpDevice") })
+        {
+            var source = "public class Bomb : " + type + "\n{\n"
+                + "    static Bomb() { Environment.SetEnvironmentVariable(\"" + Variable + "\", \"static\"); throw new InvalidOperationException(\"the static constructor ran\"); }\n"
+                + "    public Bomb() { Environment.SetEnvironmentVariable(\"" + Variable + "\", \"instance\"); throw new InvalidOperationException(\"the constructor ran\"); }\n"
+                + "    [Setting] public string Host { get; set; } = \"\";\n}";
+            var compiled = ClassCompiled(kind, source);
+            Check(compiled.Valid && compiled.Signature!["settings"]!.AsArray().Single()!["key"]!.GetValue<string>() == "Host", $"{kind}: a class that throws when created is valid, with its signature: " + Messages(compiled.Diagnostics));
+            Check(Environment.GetEnvironmentVariable(Variable) == null, $"{kind}: nothing of the class ran: " + Environment.GetEnvironmentVariable(Variable));
+        }
+        Console.WriteLine("PASS class nodes: compiling one never creates its class");
+    }
+
+    // A graph's C# device is compiled as a class when the graph is previewed, its problems on its node; the same code in a
+    // Custom C# step and in a C# device of the same id are two compiles, not one kept for both.
+    static void ClassNodesInAGraph()
+    {
+        const string plug = "public class Plug : SharpDevice\n{\n    [Setting] public string Address { get; set; } = \"\";\n}";
+        static JsonObject Definition(JsonObject node) => new() { ["version"] = 5, ["name"] = "Nodes", ["nodes"] = new JsonArray(node), ["edges"] = new JsonArray(), ["definition"] = new JsonObject { ["settings"] = new JsonArray() } };
+        var generator = new VisualGenerator(Diagnostics);
+        var asStep = generator.Preview(G(Custom("c", plug)), Empty);
+        Check(asStep.Diagnostics.Any(d => d.NodeId == "c" && d.Message == "Mark one method with [Node]: it becomes this node"), "as a step's code the class is refused: " + Messages(asStep.Diagnostics));
+        var asDevice = generator.Preview(Definition(EntityNodeTests.CSharpDevice("c", "plug", "Plug", new() { ["source"] = plug })), Empty);
+        Check(!asDevice.Diagnostics.Any(d => d.Message.Contains("[Node]")) && asDevice.Diagnostics.Any(d => d.NodeId == "c" && d.Message == "C# entity and C# device nodes cannot run yet"),
+            "the same code in a C# device of the same id is compiled again, as a class: " + Messages(asDevice.Diagnostics));
+        var broken = generator.Preview(Definition(EntityNodeTests.CSharpDevice("c", "plug", "Plug", new() { ["source"] = plug.Replace("SharpDevice", "SharpLight") })), Empty);
+        Check(broken.Diagnostics.Any(d => d.NodeId == "c" && d.InputId == "source" && d.Message == NodeLibraryCompiler.NoDeviceClassMessage && d.StartLine == 1),
+            "a C# device's problems are on its node's code: " + Messages(broken.Diagnostics));
+        Console.WriteLine("PASS class nodes in a graph: compiled as classes on preview, apart from a step's code of the same id");
     }
 
     // The built-in number reaches CLR numeric pins and back; a value the pin cannot hold fails the step, naming it and the pin.
@@ -532,6 +714,26 @@ static class CustomNodeTests
             var first = unsaved["result"]?["diagnostics"]?.AsArray().FirstOrDefault();
             Check(unsaved["ok"]!.GetValue<bool>() && !unsaved["result"]!["valid"]!.GetValue<bool>() && first?["message"]?.GetValue<string>() == "The node library helpers has errors; fix the node library first, then this code can be checked"
                 && first["severity"]!.GetValue<int>() == 3, "custom_preview says a library has errors: " + unsaved.ToJsonString());
+            // A C# device's code (kind): its class signature, compiled beside the saved libraries; its class is never created,
+            // and a secret's value is not in the answer. Without kind the same code is a step's, as before.
+            const string plug = "public class Plug : SharpDevice\n{\n    [Setting(\"Host\")] public string Host { get; set; } = \"\";\n    [Setting(Secret = true)] public string Token { get; set; } = \"hunter2-not-shown\";\n"
+                + "    public Plug() { Helper.Twice(1); throw new InvalidOperationException(\"constructed\"); }\n}";
+            var classPreview = await Library(new { operation = "custom_preview", nodeId = "p", source = plug, kind = "csharp_device" });
+            Check(classPreview["ok"]!.GetValue<bool>() && classPreview["result"]!["valid"]!.GetValue<bool>() && classPreview["result"]!["diagnostics"]!.AsArray().Count == 0
+                && VisualGenerator.SameJson(classPreview["result"]!["signature"], JsonNode.Parse("""{"title": "Plug", "description": "", "domain": null, "settings": [{"key": "Host", "label": "Host", "description": "", "type": "string", "secret": false}, {"key": "Token", "label": "Token", "description": "", "type": "string", "secret": true}]}"""))
+                && !classPreview.ToJsonString().Contains("hunter2"), "custom_preview with kind csharp_device gives the class signature: " + classPreview.ToJsonString());
+            var asStep = await Library(new { operation = "custom_preview", nodeId = "p", source = plug });
+            Check(asStep["ok"]!.GetValue<bool>() && !asStep["result"]!["valid"]!.GetValue<bool>() && asStep["result"]!["signature"] == null
+                && asStep["result"]!["diagnostics"]!.AsArray().Any(d => d!["message"]!.GetValue<string>() == "Mark one method with [Node]: it becomes this node"), "without kind the code is a step's: " + asStep.ToJsonString());
+            var entityProblem = await Library(new { operation = "custom_preview", nodeId = "p", source = plug, kind = "csharp_entity" });
+            Check(entityProblem["ok"]!.GetValue<bool>() && !entityProblem["result"]!["valid"]!.GetValue<bool>()
+                && entityProblem["result"]!["diagnostics"]!.AsArray().Any(d => d!["message"]!.GetValue<string>() == "Plug is a device: write it in a C# device node" && d["startLine"]!.GetValue<int>() == 1),
+                "with kind csharp_entity a device class is refused: " + entityProblem.ToJsonString());
+            var unknownKind = await Library(new { operation = "custom_preview", nodeId = "p", source = plug, kind = "device" });
+            Check(!unknownKind["ok"]!.GetValue<bool>() && unknownKind["error"]!["detail"]!.GetValue<string>() == "kind must be custom, csharp_entity or csharp_device", "an unknown kind is refused: " + unknownKind.ToJsonString());
+            var inClass = plug.IndexOf("Helper.") + "Helper.".Length;
+            var classCompletion = await Library(new { operation = "completion", custom = true, nodeId = "p", kind = "csharp_device", source = plug, position = inClass, workspaceVersion = "1" });
+            Check(classCompletion["ok"]!.GetValue<bool>() && classCompletion["result"]!["data"]!["items"]!.AsArray().Any(i => i!["displayText"]!.GetValue<string>() == "Twice"), "completion works in a class node's code: " + classCompletion.ToJsonString()[..Math.Min(600, classCompletion.ToJsonString().Length)]);
             var position = source.IndexOf("Helper.") + "Helper.".Length;
             var completion = await Library(new { operation = "completion", custom = true, nodeId = "c", source, position, workspaceVersion = "1" });
             Check(completion["ok"]!.GetValue<bool>() && completion["result"]!["data"]!["items"]!.AsArray().Any(i => i!["displayText"]!.GetValue<string>() == "Twice"), "completion works on a custom node's code: " + completion.ToJsonString()[..Math.Min(600, completion.ToJsonString().Length)]);

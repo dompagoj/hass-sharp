@@ -158,7 +158,10 @@ public partial class HassSharpManager
                 // The node's id decides the namespace its code compiles in, and so the ids of the types it declares.
                 var nodeId = ApiRequest.String(request, "nodeId", "the id of the Custom C# node whose code this is");
                 if (nodeId.Length == 0) throw new ArgumentException("nodeId must not be empty");
-                var code = new CustomNodeSource(nodeId, RequiredString(request, "source"));
+                // What the code is: a Custom C# step's method (the default), or the class of a C# entity or C# device.
+                var kind = ApiRequest.OptionalString(request, "kind") ?? CustomNodeSource.Step;
+                if (kind != CustomNodeSource.Step && !CustomNodeSource.ClassKinds.Contains(kind)) throw new ArgumentException("kind must be custom, csharp_entity or csharp_device");
+                var code = new CustomNodeSource(nodeId, RequiredString(request, "source"), kind);
                 var libraries = saved.Documents.ToDictionary(d => d.Id, d => d.AsSource(), StringComparer.Ordinal);
                 foreach (var change in ApiRequest.OptionalObjects(request, "sources") ?? [])
                 {

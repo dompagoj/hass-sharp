@@ -84,6 +84,25 @@ public class NodeLibraryLanguageServicesTests
         Assert.DoesNotContain("namespace",formatted); Assert.StartsWith("public static class CustomNode",formatted);
     }
     [Fact]
+    public async Task A_class_nodes_code_gets_completion_hover_and_definition_inside_its_class()
+    {
+        // A C# device's code is one class, in the namespace its node's code is placed in: what it derives from, the
+        // libraries and its own members are in reach.
+        const string helper="public static class Rooms { public static int Count(string area) => 1; }";
+        const string source="public class Plug : SharpDevice\n{\n    [Setting(\"Host\")] public string Host { get; set; } = \"\";\n    public Plug() { Ad; Rooms.Count(Host); }\n}";
+        NodeLibrarySource[] sources=[new("rooms",helper,1)];
+        var service=new NodeLibraryLanguageServices(new DiagnosticsProvider());
+        async Task<JsonNode> Class(string operation,int position)=>JsonSerializer.SerializeToNode(await service.RequestAsync(operation,sources,new CustomNodeSource("plug",source,"csharp_device"),position,TestContext.Current.CancellationToken),VisualStore.Json)!.Items();
+        var position=source.IndexOf("{ Ad")+"{ Ad".Length;
+        Assert.Contains((await Class("completion",position)).AsArray(),i=>i!["displayText"]!.GetValue<string>()=="Add");
+        Assert.Contains("SharpDevice",(await Class("hover",source.IndexOf("SharpDevice")+1)).ToJsonString());
+        var definition=await Class("definition",source.IndexOf("Count(Host)")+1);
+        Assert.Equal("rooms",definition[0]!["id"]!.GetValue<string>());
+        var own=await Class("definition",source.IndexOf("Host)")+1);
+        Assert.Equal(NodeLibraryLanguageServices.CustomDocumentId,own[0]!["id"]!.GetValue<string>());
+        Assert.Equal(source.IndexOf("Host {"),own[0]!["range"]!["start"]!.GetValue<int>());
+    }
+    [Fact]
     public async Task CompletionOffersSharpDeviceInLibraryCode()
     {
         // A library declares its custom devices and entities by deriving from the base classes, which completion offers there.
