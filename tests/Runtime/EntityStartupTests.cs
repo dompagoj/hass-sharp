@@ -13,7 +13,7 @@ using static VisualExecutionTests;
 /// </summary>
 static class EntityStartupTests
 {
-    const string Spare = "library:extra:NodeLib.SparePlug";
+    const string Spare = "SparePlug";
     const string Extra = """
         public class SparePlug : SharpDevice
         {
@@ -25,7 +25,7 @@ static class EntityStartupTests
     // The library without FakePlug.
     const string Without = "public class OtherPlug : SharpDevice { public OtherPlug() { Add(new SharpSwitch(\"relay\")); } }";
     // A class whose library compiles only once Home Assistant's entity classes are known.
-    const string Lamp = "library:lamps:NodeLib.LampPlug";
+    const string Lamp = "LampPlug";
     const string Lamps = """
         public class LampPlug : SharpDevice
         {
@@ -52,10 +52,14 @@ static class EntityStartupTests
     static string Storage(EntityTestHome home, params string[] parts) => Path.Combine([home.Root, ".storage", "hass_sharp", .. parts]);
     static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, name));
 
+    // What a C# node whose class derives from a library class says when the libraries no longer declare that class.
+    static string NoClass(string type) => $"The type or namespace name '{type}' does not exist in the namespace 'NodeLib' (are you missing an assembly reference?)";
+
     static Task<JsonObject> SaveLibrary(HassSharpManager api, string id, long revision, string source) =>
         Ok(api.NodeLibraryRequest, new { operation = "save", id, name = id, expectedRevision = revision, source });
-    static Task<JsonObject> SaveDefinition(HassSharpManager api, string id, string name, string? host, string type = EntityApiTests.Plug, bool? enabled = null) =>
-        Ok(api.EntityRequest, new { operation = "save", id, expectedRevision = 0, enabled, definition = EntityApiTests.Definition(name, host, type) });
+    // A definition of one C# device node whose class derives from the library class type, which library declares (EntityApiTests.Definition).
+    static Task<JsonObject> SaveDefinition(HassSharpManager api, string id, string name, string? host, string type = EntityApiTests.Plug, bool? enabled = null, string library = EntityApiTests.Library) =>
+        Ok(api.EntityRequest, new { operation = "save", id, expectedRevision = 0, enabled, definition = EntityApiTests.Definition(name, host, type, library) });
 
     [RuntimeSuite("--entity-startup", Order = 15)]
     public static async Task Run()
@@ -74,6 +78,7 @@ static class EntityStartupTests
         await DoesNotCompileWarnsWithoutAPath();
         LocatesAStepWithoutALibrary();
         await ManyCompilerErrorsAreCapped();
+        await ACompilerErrorAtLoadIsWordedAndCapped();
         await ManyGraphProblemsAreCapped();
     }
 
@@ -104,25 +109,42 @@ static class EntityStartupTests
         Check(reason == expected, $"{what}: not the first 3, each cut at {HassSharpManager.LoggedProblemLength} characters, and {more} more: {reason}");
     }
 
+    // The library's class with 12 required members, each with a long name, that no one who creates it sets.
+    static readonly string[] Members = [.. Enumerable.Range(1, 12).Select(i => $"Part{i:00}_" + new string('x', 200))];
+    static readonly string Needy = "public class NeedyPlug : SharpDevice { public NeedyPlug() { Add(new SharpSwitch(\"relay\")); } "
+        + string.Concat(Members.Select(m => $"public required string {m} {{ get; set; }} ")) + "}";
+
+    /// <summary>The node library <paramref name="id"/> edited on disk to <paramref name="source"/>: same revision, other code.</summary>
+    static void EditLibrary(EntityTestHome home, string id, string source)
+    {
+        var path = Storage(home, "libraries", id + ".json");
+        var library = JsonNode.Parse(File.ReadAllText(path))!;
+        library["source"] = source;
+        File.WriteAllText(path, library.ToJsonString());
+    }
+
     /// <summary>
-    /// A class definition whose code has 12 compiler errors (a library class with 12 required members, each with a long
-    /// name, which the definition's code creates without setting them), loaded at startup: one warning with the first 3
-    /// errors, each cut at 200 characters, and "; and 9 more"; its <c>activationError</c> is the same.
+    /// A definition whose code has 12 compiler errors at startup (its C# device's class derives from a library class that,
+    /// edited on disk after the definition was saved, has 12 required members, each with a long name, which the node's
+    /// class is created without): one warning with the first 3 errors, each after its node and cut at 200 characters, and
+    /// "; and 9 more"; its <c>activationError</c> is the same. A load works the graph out again against the libraries as
+    /// saved, which compiles it whole, so these are its node's problems; a compile that fails past that is
+    /// <see cref="ACompilerErrorAtLoadIsWordedAndCapped"/>'s.
     /// </summary>
     static async Task ManyCompilerErrorsAreCapped()
     {
         await using var home = new EntityTestHome("entity-startup-many-errors");
-        var members = Enumerable.Range(1, 12).Select(i => $"Part{i:00}_" + new string('x', 200)).ToArray();
-        var library = "public class NeedyPlug : SharpDevice { public NeedyPlug() { Add(new SharpSwitch(\"relay\")); } "
-            + string.Concat(members.Select(m => $"public required string {m} {{ get; set; }} ")) + "}";
+        const string plain = "public class NeedyPlug : SharpDevice { public NeedyPlug() { Add(new SharpSwitch(\"relay\")); } }";
         var first = new HassSharpManager(home.Root);
         try
         {
             await first.Init();
-            await SaveLibrary(first, "needy", 0, library);
-            await SaveDefinition(first, "needy", "Needy plug", null, "library:needy:NodeLib.NeedyPlug");
+            await SaveLibrary(first, "needy", 0, plain);
+            var saved = await SaveDefinition(first, "needy", "Needy plug", null, "NeedyPlug", library: plain);
+            Check(saved["active"]!.GetValue<bool>(), "the definition does not run: " + saved.ToJsonString());
         }
         finally { await first.UnloadAsync(); }
+        EditLibrary(home, "needy", Needy);
 
         var mark = home.Logs(PyLogLevel.Warn).Length;
         var api = new HassSharpManager(home.Root);
@@ -132,7 +154,7 @@ static class EntityStartupTests
             var read = await Read(api, "needy");
             var reason = read["activationError"]?.GetValue<string>();
             Check(Status(read) == "failed", "the definition answers: " + read.ToJsonString());
-            CheckCapped(reason, [.. members.Take(3).Select(m => $"Required member 'NeedyPlug.{m}")], 9, "its activationError");
+            CheckCapped(reason, [.. Members.Take(3).Select(m => $"plug: Required member 'NeedyPlug.{m}")], 9, "its activationError");
             var warned = home.Logs(PyLogLevel.Warn).Skip(mark).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).ToArray();
             Check(warned.SequenceEqual([$"Entity definition \"Needy plug\" (needy) cannot start: {reason}"]), "one warning: " + string.Join(" | ", warned));
         }
@@ -186,8 +208,9 @@ static class EntityStartupTests
         Console.WriteLine("PASS entity startup: a graph definition with 12 problems warns once at startup with the first 3, each cut at 200 characters, and how many more; its activationError is the same");
     }
 
-    // A library that compiles, whose class cannot be created: its constructor is obsolete as an error, so the definition's
-    // generated source, which creates it, does not compile (CS0619), at its save and at every startup.
+    // A library whose class can be created, and the same library whose class cannot: its constructor is obsolete as an
+    // error, so a C# node whose class derives from it does not compile (CS0619).
+    const string Current = "public class OldPlug : SharpDevice { public OldPlug() { Add(new SharpSwitch(\"relay\")); } }";
     const string Obsolete = """
         public class OldPlug : SharpDevice
         {
@@ -196,9 +219,11 @@ static class EntityStartupTests
         """;
 
     /// <summary>
-    /// A definition whose code does not compile says why as the startup line always worded it (the compiler's message, its
-    /// code and the library, never the generated file's path), in its <c>activationError</c> and in the one warning a save,
-    /// a startup or a reload logs; a retry for the same reason says nothing, and nothing is logged at error.
+    /// A definition whose code no longer compiles (its library edited on disk after it was saved: its C# device's base
+    /// class can no longer be created) says why as the startup line words a graph's problems (the compiler's message after
+    /// its node, never the generated file's path), in its <c>activationError</c> and in the one warning a startup or a
+    /// reload logs; a retry for the same reason says nothing, and nothing is logged at error. A save of it is refused, so
+    /// only a load meets it; a compile that fails past the preview is <see cref="ACompilerErrorAtLoadIsWordedAndCapped"/>'s.
     /// </summary>
     static async Task DoesNotCompileWarnsWithoutAPath()
     {
@@ -213,21 +238,18 @@ static class EntityStartupTests
             Check(!shown.Any(l => l.Contains(".cs", StringComparison.Ordinal) || l.Contains(home.Root, StringComparison.Ordinal) || l.Contains(".storage", StringComparison.Ordinal) || l.Contains("   at ", StringComparison.Ordinal)),
                 $"{when}: a path or a stack above Debug: " + string.Join(" | ", shown));
         }
-        static bool Worded(string? reason) => reason != null && reason.Contains("Use the new plug", StringComparison.Ordinal) && reason.Contains("(CS0619", StringComparison.Ordinal)
+        static bool Worded(string? reason) => reason != null && reason.StartsWith("plug: ", StringComparison.Ordinal) && reason.Contains("Use the new plug", StringComparison.Ordinal)
             && !reason.Contains(".cs", StringComparison.Ordinal) && !reason.Contains(".storage", StringComparison.Ordinal) && !reason.Contains('/');
         var first = new HassSharpManager(home.Root);
         try
         {
             await first.Init();
-            await SaveLibrary(first, "old", 0, Obsolete);
-            var mark = Mark();
-            var saved = await SaveDefinition(first, "old", "Old plug", null, "library:old:NodeLib.OldPlug");
-            var reason = saved["document"]?["activationError"]?.GetValue<string>() ?? saved["activationError"]?.GetValue<string>();
-            Check(Worded(reason), "the save's answer: " + saved.ToJsonString());
-            Check(Warned(mark).SequenceEqual([$"Entity definition \"Old plug\" (old) cannot start: {reason}"]), "the save warns once, without a path: " + string.Join(" | ", Warned(mark)));
-            Plain("the save");
+            await SaveLibrary(first, "old", 0, Current);
+            var saved = await SaveDefinition(first, "old", "Old plug", null, "OldPlug", library: Current);
+            Check(saved["active"]!.GetValue<bool>(), "the definition does not run: " + saved.ToJsonString());
         }
         finally { await first.UnloadAsync(); }
+        EditLibrary(home, "old", Obsolete);
 
         foreach (var when in new[] { "at startup", "after a reload" })
         {
@@ -247,7 +269,53 @@ static class EntityStartupTests
             }
             finally { await api.UnloadAsync(); }
         }
-        Console.WriteLine("PASS entity startup: a definition whose code does not compile warns once, at its save, at startup and after a reload, without the generated file's path; a retry for the same reason says nothing");
+        Console.WriteLine("PASS entity startup: a definition whose code no longer compiles warns once, at startup and after a reload, after its node and without the generated file's path; a retry for the same reason says nothing");
+    }
+
+    /// <summary>
+    /// A definition's code that the compile refuses when it loads (a <see cref="CompilationErrorException"/>, which the
+    /// preview before it did not meet) reads as the startup line always worded it: each compiler error's message and code
+    /// (and its node library when the source map gives its line to one), never the generated file's path; of many, the
+    /// first 3, each cut at 200 characters, and how many more. It warns once in those words, and nothing at error. No graph
+    /// reaches this at load (a load previews the graph again, compiling it whole, see <see cref="ManyCompilerErrorsAreCapped"/>),
+    /// so the load errors are worked out here from the compiler's own errors of code that creates the libraries' classes.
+    /// </summary>
+    static async Task ACompilerErrorAtLoadIsWordedAndCapped()
+    {
+        await using var home = new EntityTestHome("entity-startup-compiler-errors");
+        var api = new HassSharpManager(home.Root);
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var record = typeof(HassSharpManager).GetMethod("RecordDefinitionLoadError", flags)!;
+        var warn = typeof(HassSharpManager).GetMethod("WarnCannotStart", flags)!;
+        var loadErrors = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)typeof(HassSharpManager).GetField("_loadErrors", flags)!.GetValue(api)!;
+        // The load error of a graph definition whose source is the library and then a line of its node's that creates the
+        // library's class; and the one warning two loads of it log.
+        string LoadError(string id, string name, string library, string type)
+        {
+            var source = library + "\npublic static class Make { public static object Create() => new " + type + "(); }";
+            var lines = library.Split('\n').Length;
+            CompilationErrorException? thrown = null;
+            try { new CodeCompiler(Diagnostics).CompileSingleFile(Storage(home, "entities", $"entity_{id}.cs"), source); }
+            catch (CompilationErrorException error) { thrown = error; }
+            Check(thrown != null && thrown.Errors.All(e => e.Contains(".storage", StringComparison.Ordinal)), $"{id}: the compile does not fail with errors at the file's path");
+            var document = new EntityDefinitionDocument(1, id, 1, name, null, [], null, null, new DefinitionLogic("graph", null, null), source,
+                [new VisualSourceMap("$library:" + id, 1, lines), new VisualSourceMap("plug", lines + 1, lines + 1)]);
+            record.Invoke(api, [document, thrown]);
+            var reason = loadErrors.Single(e => e.Key.EndsWith($"entity_{id}.cs", StringComparison.Ordinal)).Value;
+            var mark = home.Logs(PyLogLevel.Warn).Length;
+            warn.Invoke(api, [document, reason]);
+            warn.Invoke(api, [document, reason]);
+            var warned = home.Logs(PyLogLevel.Warn).Skip(mark).ToArray();
+            Check(warned.SequenceEqual([$"Entity definition \"{name}\" ({id}) cannot start: {reason}"]), $"{id}: one warning: " + string.Join(" | ", warned));
+            return reason;
+        }
+
+        var old = LoadError("old", "Old plug", Obsolete, "OldPlug");
+        Check(old == "'OldPlug.OldPlug()' is obsolete: 'Use the new plug' (CS0619)", "one compiler error, worded: " + old);
+        CheckCapped(LoadError("needy", "Needy plug", Needy, "NeedyPlug"), [.. Members.Take(3).Select(m => $"Required member 'NeedyPlug.{m}")], 9, "12 compiler errors");
+        var errors = home.Logs(PyLogLevel.Error);
+        Check(errors.Length == 0, "logged at error: " + string.Join(" | ", errors));
+        Console.WriteLine("PASS entity startup: a compiler error at load reads as the compiler's message and code without the file's path, the first 3 of many each cut at 200 characters and how many more, and warns once");
     }
 
     // Definitions that cannot start: one whose Setup() throws a sentence of its own over a .NET failure, one whose Setup()
@@ -300,10 +368,11 @@ static class EntityStartupTests
         const string refused = "The file from 127.0.0.1 could not be downloaded: Connection refused";
         var reasons = new Dictionary<string, (string Name, string Reason)>
         {
-            ["failing"] = ("Failing plug", "The plug at 10.0.9.1 does not answer (Connection refused)"),
-            ["fetch"] = ("Fetching plug", refused),
+            // A C# node's failure names the definition and the node.
+            ["failing"] = ("Failing plug", "Failing plug: Plug: The plug at 10.0.9.1 does not answer (Connection refused)"),
+            ["fetch"] = ("Fetching plug", "Fetching plug: Plug: " + refused),
             ["graphdl"] = ("Graph download", refused),
-            ["flaky"] = ("Flaky plug", "The plug is not ready"),
+            ["flaky"] = ("Flaky plug", "Flaky plug: Plug: The plug is not ready"),
         };
         (int Warn, int Error, int Info) Mark() => (home.Logs(PyLogLevel.Warn).Length, home.Logs(PyLogLevel.Error).Length, home.Logs(PyLogLevel.Info).Length);
         string[] CannotStart((int Warn, int, int) from) => [.. home.Logs(PyLogLevel.Warn).Skip(from.Warn).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).Order(StringComparer.Ordinal)];
@@ -331,10 +400,10 @@ static class EntityStartupTests
             await first.Init();
             await SaveLibrary(first, "plugs", 0, Failing);
             var mark = Mark();
-            await SaveDefinition(first, "failing", "Failing plug", null, "library:plugs:NodeLib.FailingPlug");
-            await SaveDefinition(first, "fetch", "Fetching plug", closed, "library:plugs:NodeLib.FetchingPlug");
+            await SaveDefinition(first, "failing", "Failing plug", null, "FailingPlug", library: Failing);
+            await SaveDefinition(first, "fetch", "Fetching plug", closed, "FetchingPlug", library: Failing);
             await Ok(first.EntityRequest, new { operation = "save", id = "graphdl", expectedRevision = 0, definition = download });
-            await SaveDefinition(first, "flaky", "Flaky plug", marker, "library:plugs:NodeLib.FlakyPlug");
+            await SaveDefinition(first, "flaky", "Flaky plug", marker, "FlakyPlug", library: Failing);
             Check(CannotStart(mark).SequenceEqual(Expected("failing", "fetch", "graphdl", "flaky")), "a save warns once of each: " + string.Join(" | ", home.Logs()));
             Quiet(mark, "the saves");
             await Failed(first, "saved");
@@ -363,10 +432,10 @@ static class EntityStartupTests
                     File.WriteAllText(marker, "");
                     var batches = home.Pushes().Length;
                     await api.RetryFailedLoads();
-                    await Published(home, batches, "flaky:relay");
+                    await Published(home, batches, "flaky:plug:relay");
                     Check(Status(await Read(api, "flaky")) == "running", "the flaky plug does not run after the retry");
                     File.Delete(marker);
-                    await Ok(api.EntityRequest, new { operation = "save", id = "flaky", expectedRevision = 1, definition = EntityApiTests.Definition("Flaky plug", marker, "library:plugs:NodeLib.FlakyPlug") });
+                    await Ok(api.EntityRequest, new { operation = "save", id = "flaky", expectedRevision = 1, definition = EntityApiTests.Definition("Flaky plug", marker, "FlakyPlug", Failing) });
                     var again = CannotStart(mark);
                     Check(again.Length == 1 && again[0].StartsWith("Entity definition \"Flaky plug\" (flaky) cannot start", StringComparison.Ordinal) && again[0].EndsWith(": The plug is not ready", StringComparison.Ordinal),
                         "a failure after a retry that worked does not warn again: " + string.Join(" | ", again));
@@ -381,7 +450,7 @@ static class EntityStartupTests
 
     /// <summary>
     /// At startup the last states of entities no definition has are dropped, with the prune; those of a definition that
-    /// exists, on or off, are kept, and a class's switch comes back with its own.
+    /// exists, on or off, are kept, and a C# device's switch comes back with its own.
     /// </summary>
     static async Task ForgetsTheStatesOfDefinitionsGone()
     {
@@ -395,11 +464,11 @@ static class EntityStartupTests
             await SaveLibrary(first, "shelly", 0, EntityApiTests.Library);
             await SaveDefinition(first, "plug1", "Plug one", "10.0.2.1");
             await SaveDefinition(first, "plug2", "Plug two", "10.0.2.2", enabled: false);
-            await first.EntityCommand("plug1:relay", "turn_on", null);
-            await EntityTestHome.Until(() => States(first).Ids().Contains("plug1:relay"), "the switch remembered");
+            await first.EntityCommand("plug1:plug:relay", "turn_on", null);
+            await EntityTestHome.Until(() => States(first).Ids().Contains("plug1:plug:relay"), "the switch remembered");
             // A definition deleted while Home Assistant was not running, as a restored backup may leave it, and one that is off.
             States(first).Remember("gone:relay", new JsonObject { ["is_on"] = true });
-            States(first).Remember("plug2:relay", new JsonObject { ["is_on"] = true });
+            States(first).Remember("plug2:plug:relay", new JsonObject { ["is_on"] = true });
         }
         finally { await first.UnloadAsync(); }
 
@@ -409,13 +478,13 @@ static class EntityStartupTests
         {
             await api.Init();
             var ids = States(api).Ids().Order(StringComparer.Ordinal).ToArray();
-            Check(ids.SequenceEqual(["plug1:relay", "plug2:relay"]), "the states kept at startup: " + string.Join(", ", ids));
-            await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>() == "plug1:relay"), "plug1 starts");
-            var relay = home.Snapshots(batches).First(s => s["uniqueId"]!.GetValue<string>() == "plug1:relay");
-            Check(relay["values"]!["is_on"]?.GetValue<bool>() == true, "the class's switch comes back on: " + relay.ToJsonString());
+            Check(ids.SequenceEqual(["plug1:plug:relay", "plug2:plug:relay"]), "the states kept at startup: " + string.Join(", ", ids));
+            await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>() == "plug1:plug:relay"), "plug1 starts");
+            var relay = home.Snapshots(batches).First(s => s["uniqueId"]!.GetValue<string>() == "plug1:plug:relay");
+            Check(relay["values"]!["is_on"]?.GetValue<bool>() == true, "the C# device's switch comes back on: " + relay.ToJsonString());
             await States(api).FlushAsync();
             Check(!File.ReadAllText(Storage(home, "entity_states.json")).Contains("gone:"), "the file keeps the states of a definition gone");
-            Console.WriteLine("PASS entity startup: the last states of definitions gone are dropped at startup, and a class's switch comes back with its own");
+            Console.WriteLine("PASS entity startup: the last states of definitions gone are dropped at startup, and a C# device's switch comes back with its own");
         }
         finally { await api.UnloadAsync(); }
     }
@@ -443,12 +512,12 @@ static class EntityStartupTests
         try
         {
             await api.Init();
-            await Published(home, batches, "plug1:relay");
+            await Published(home, batches, "plug1:plug:relay");
             var plug1 = await Read(api, "plug1");
             Check(Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && plug1["activationError"] == null && Revision(plug1) == 1,
                 "plug1 runs after the restart: " + plug1.ToJsonString());
             Check(home.Syncs("plug1").Length == syncs + 1, "plug1 is not synced again");
-            await api.EntityCommand("plug1:relay", "turn_on", null);
+            await api.EntityCommand("plug1:plug:relay", "turn_on", null);
             Check(EntityTestHome.Commands().Count(c => c == "turn_on 10.0.1.1") == 1, "the command after the restart: " + string.Join(", ", EntityTestHome.Commands()));
             Console.WriteLine("PASS entity startup: a restart runs the saved definition again, syncs it and takes its commands");
 
@@ -511,13 +580,13 @@ static class EntityStartupTests
             """;
         await using var home = new EntityTestHome("entity-startup-slow-setup");
         DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
-        const string message = "Hanging plug: Setup() did not finish within 0.2 s";
+        const string message = "Hanging plug: Plug: Setup() did not finish within 0.2 s";
         var first = new HassSharpManager(home.Root);
         try
         {
             await first.Init();
             await SaveLibrary(first, "shelly", 0, EntityApiTests.Library + Hanging);
-            var saved = await SaveDefinition(first, "hang", "Hanging plug", null, "library:shelly:NodeLib.HangingPlug");
+            var saved = await SaveDefinition(first, "hang", "Hanging plug", null, "HangingPlug", library: EntityApiTests.Library + Hanging);
             Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == message, "saving the hanging definition: " + saved.ToJsonString());
             await SaveDefinition(first, "plug1", "Plug one", "10.0.4.1");
         }
@@ -532,7 +601,7 @@ static class EntityStartupTests
             Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that never ends held startup {clock.Elapsed.TotalSeconds:F1} s");
             var hang = await Read(api, "hang");
             Check(Status(hang) == "failed" && hang["activationError"]?.GetValue<string>() == message, "the hanging definition after the restart: " + hang.ToJsonString());
-            await Published(home, batches, "plug1:relay");
+            await Published(home, batches, "plug1:plug:relay");
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the hanging one does not run");
             Console.WriteLine("PASS entity startup: a definition whose Setup() never ends fails within the setup bound and the definitions after it load at Init");
         }
@@ -558,7 +627,7 @@ static class EntityStartupTests
             """;
         await using var home = new EntityTestHome("entity-startup-blocking-setup");
         DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(200);
-        const string message = "Blocking plug: Setup() did not finish within 0.2 s";
+        const string message = "Blocking plug: Plug: Setup() did not finish within 0.2 s";
         // Wakes each blocked Setup() once (its Sleep throws), before an unload: a Setup() still blocking the caller would
         // otherwise hold that unload, and a thread blocked for good would keep the library's load context. A Setup() not
         // started yet when the bound passed is waited for, up to five seconds, until this many have been woken in all;
@@ -580,7 +649,7 @@ static class EntityStartupTests
             await first.Init();
             await SaveLibrary(first, "shelly", 0, EntityApiTests.Library + Blocking);
             // Called from the pool: a Setup() run on the caller's thread would block this test, not fail it.
-            var saved = await Task.Run(() => SaveDefinition(first, "block", "Blocking plug", null, "library:shelly:NodeLib.BlockingPlug")).WaitAsync(TimeSpan.FromSeconds(30));
+            var saved = await Task.Run(() => SaveDefinition(first, "block", "Blocking plug", null, "BlockingPlug", library: EntityApiTests.Library + Blocking)).WaitAsync(TimeSpan.FromSeconds(30));
             Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == message, "saving the blocking definition: " + saved.ToJsonString());
             Check(await Wake(1) == 1, "the saved definition's Setup() never blocked its thread");
             await SaveDefinition(first, "plug1", "Plug one", "10.0.5.1");
@@ -596,7 +665,7 @@ static class EntityStartupTests
             Check(clock.Elapsed < TimeSpan.FromSeconds(15), $"a Setup() that blocks its thread held startup {clock.Elapsed.TotalSeconds:F1} s");
             var block = await Read(api, "block");
             Check(Status(block) == "failed" && block["activationError"]?.GetValue<string>() == message, "the blocking definition after the restart: " + block.ToJsonString());
-            await Published(home, batches, "plug1:relay");
+            await Published(home, batches, "plug1:plug:relay");
             Check(Status(await Read(api, "plug1")) == "running", "the definition after the blocking one does not run");
             Check(await Wake(2) == 2, "the Setup() at Init never blocked its thread");
             Console.WriteLine("PASS entity startup: a definition whose Setup() blocks its thread fails within the setup bound when saved and at Init, and the definitions after it load");
@@ -624,7 +693,7 @@ static class EntityStartupTests
         {
             await failing.Init().WaitAsync(TimeSpan.FromSeconds(30));
             Check(home.Logs().Any(line => line.Contains("Cannot prune") && line.Contains("the registry is locked")), "the failing prune is not logged: " + string.Join(" | ", home.Logs()));
-            await Published(home, batches, "plug1:relay");
+            await Published(home, batches, "plug1:plug:relay");
             Check(Status(await Read(failing, "plug1")) == "running", "plug1 does not run after a failing prune");
         }
         finally { await failing.UnloadAsync(); }
@@ -637,14 +706,14 @@ static class EntityStartupTests
         {
             await quiet.Init().WaitAsync(TimeSpan.FromSeconds(5));
             Check(home.Logs().Any(line => line.Contains("Cannot prune") && line.Contains("did not answer")), "the unanswered prune is not logged: " + string.Join(" | ", home.Logs()));
-            await Published(home, batches, "plug1:relay");
+            await Published(home, batches, "plug1:plug:relay");
             Check(Status(await Read(quiet, "plug1").WaitAsync(TimeSpan.FromSeconds(5))) == "running", "plug1 does not run after an unanswered prune");
         }
         finally { await quiet.UnloadAsync(); }
         Console.WriteLine("PASS entity startup: a prune that fails or never answers is logged and does not fail or hold up startup");
     }
 
-    // A definition whose class is gone records why it does not load; the other definitions and the automations load. A
+    // A definition whose C# device's base class is gone records why it does not load; the other definitions and the automations load. A
     // library save then leaves it as it is and lists it, running or not.
     static async Task UnknownClass()
     {
@@ -656,7 +725,7 @@ static class EntityStartupTests
             await SaveLibrary(first, "shelly", 0, EntityApiTests.Library);
             await SaveLibrary(first, "extra", 0, Extra);
             await SaveDefinition(first, "plug1", "Plug one", "10.0.1.21");
-            await SaveDefinition(first, "spare", "Spare plug", null, Spare);
+            await SaveDefinition(first, "spare", "Spare plug", null, Spare, library: Extra);
             var automation = await Ok(first.VisualRequest, new { operation = "save", id = "auto", graph = G(N("l", "log", new { value = Lit("string", "hello") })), expectedRevision = 0 });
             Check(automation["active"]!.GetValue<bool>(), "the automation does not run: " + automation.ToJsonString());
 
@@ -677,7 +746,8 @@ static class EntityStartupTests
         {
             await api.Init();
             var plug1 = await Read(api, "plug1");
-            var unknown = $"No entity class {EntityApiTests.Plug} in the node libraries";
+            // Its node's class derives from the library's FakePlug, which is gone: the node's code does not compile.
+            var unknown = "plug: " + NoClass(EntityApiTests.Plug);
             Check(Status(plug1) == "failed" && !plug1["active"]!.GetValue<bool>() && plug1["activationError"]?.GetValue<string>() == unknown,
                 "plug1's load error: " + plug1.ToJsonString());
             // One warning, as for any definition that cannot start; nothing at error. A retry for the same reason says nothing.
@@ -688,7 +758,7 @@ static class EntityStartupTests
             await api.RetryFailedLoads();
             Check(home.Logs(PyLogLevel.Warn).Length == before && !home.Logs(PyLogLevel.Error).Any(l => l.Contains("entity definition", StringComparison.OrdinalIgnoreCase)),
                 "a retry for the same reason logged: " + string.Join(" | ", home.Logs().TakeLast(4)));
-            await Published(home, batches, "spare:relay");
+            await Published(home, batches, "spare:plug:relay");
             Check(Status(await Read(api, "spare")) == "running" && VisualTests.Loaded(api, "auto") != null, "the other definition or the automation does not run");
             Check(home.Prunes()[^1] == """["plug1","spare"]""", "the prune: " + home.Prunes()[^1]);
             Console.WriteLine("PASS entity startup: a definition whose class is gone records why and the other definitions and automations load");
@@ -705,7 +775,7 @@ static class EntityStartupTests
             var listed = saved["invalidDefinitions"]!.AsArray().Single()!;
             Check(listed["id"]!.GetValue<string>() == "plug1" && !listed["running"]!.GetValue<bool>()
                 && listed["message"]!.GetValue<string>() == "Not rebuilt, because the definition has errors; it is not running"
-                && listed["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownType")
+                && listed["diagnostics"]!.AsArray().Any(d => d!["nodeId"]?.GetValue<string>() == "plug" && d["message"]!.GetValue<string>() == NoClass(EntityApiTests.Plug))
                 && Ids(saved["definitions"]).SequenceEqual(["spare"]) && saved["definitions"]![0]!["active"]!.GetValue<bool>(),
                 "a library save with an invalid definition: " + saved.ToJsonString());
             Check(Revision(await Read(api, "plug1")) == 1 && Revision(await Read(api, "spare")) == 3, "the revisions after the save");
@@ -741,7 +811,7 @@ static class EntityStartupTests
             var plug1 = await Read(api, "plug1");
             Check(Revision(plug1) == 2 && Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && plug1["source"]!.GetValue<string>().Contains("v2 turn_on"),
                 "plug1 after the rebuild: " + plug1.ToJsonString());
-            await api.EntityCommand("plug1:relay", "turn_on", null);
+            await api.EntityCommand("plug1:plug:relay", "turn_on", null);
             Check(EntityTestHome.Commands().Contains("v2 turn_on 10.0.2.1"), "the command does not run the new code: " + string.Join(", ", EntityTestHome.Commands()));
             var plug3 = await Read(api, "plug3");
             Check(Revision(plug3) == 2 && Status(plug3) == "off" && plug3["source"]!.GetValue<string>().Contains("v2 turn_on") && home.Syncs("plug3").Length == 0,
@@ -754,7 +824,7 @@ static class EntityStartupTests
             var definitions = refused["error"]?["detail"]?["definitions"];
             Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && Ids(definitions).SequenceEqual(["plug1", "plug3"])
                 && definitions![0]!["name"]!.GetValue<string>() == "Plug one"
-                && definitions[0]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownType"), "the refusal: " + refused.ToJsonString());
+                && definitions[0]!["diagnostics"]!.AsArray().Any(d => d!["nodeId"]?.GetValue<string>() == "plug" && d["message"]!.GetValue<string>() == NoClass(EntityApiTests.Plug)), "the refusal: " + refused.ToJsonString());
             Check(Files().SequenceEqual(before), "a refused save changed the files on disk");
             var libraries = await Ok(api.NodeLibraryRequest, new { operation = "list" });
             Check(libraries["documents"]![0]!["revision"]!.GetValue<long>() == 2 && Revision(await Read(api, "plug1")) == 2 && Status(await Read(api, "plug1")) == "running",
@@ -794,11 +864,11 @@ static class EntityStartupTests
         try
         {
             await api.Init();
-            await Published(home, batches, "plug1:relay");
+            await Published(home, batches, "plug1:plug:relay");
             var plug1 = await Read(api, "plug1");
             Check(Status(plug1) == "running" && plug1["currentRevisionActive"]!.GetValue<bool>() && Revision(plug1) == 1 && plug1["source"]!.GetValue<string>().Contains("disk turn_on"),
                 "plug1 after the restart: " + plug1.ToJsonString());
-            await api.EntityCommand("plug1:relay", "turn_on", null);
+            await api.EntityCommand("plug1:plug:relay", "turn_on", null);
             Check(Ran("disk turn_on 10.0.3.1") == 1 && Ran("turn_on 10.0.3.1") == 0, "plug1 after the restart: " + string.Join(", ", EntityTestHome.Commands()));
             Console.WriteLine("PASS entity startup: a restart after a library edited on disk runs and stores the new code at the same revision");
 
@@ -806,12 +876,12 @@ static class EntityStartupTests
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
             // The assembly turned off took the first call with it if it was collected: count from here.
             EntityTestHome.ClearCommands();
-            await api.EntityCommand("plug1:relay", "turn_on", null);
+            await api.EntityCommand("plug1:plug:relay", "turn_on", null);
             Check(Ran("disk turn_on 10.0.3.1") == 1 && Ran("turn_on 10.0.3.1") == 0, "plug1 turned off and on: " + string.Join(", ", EntityTestHome.Commands()));
             var plug4 = await Read(api, "plug4");
             Check(Revision(plug4) == 1 && plug4["source"]!.GetValue<string>().Contains("disk turn_on"), "the disabled plug4's stored source: " + plug4.ToJsonString());
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug4", enabled = true });
-            await api.EntityCommand("plug4:relay", "turn_on", null);
+            await api.EntityCommand("plug4:plug:relay", "turn_on", null);
             Check(Ran("disk turn_on 10.0.3.4") == 1 && Ran("turn_on 10.0.3.4") == 0 && (await Read(api, "plug4"))["currentRevisionActive"]!.GetValue<bool>(),
                 "plug4 turned on after the restart: " + string.Join(", ", EntityTestHome.Commands()));
             Console.WriteLine("PASS entity startup: after that restart, a definition turned off and on, or on for the first time, runs the new code");
@@ -820,7 +890,7 @@ static class EntityStartupTests
             Edit("again");
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = false });
             await Ok(api.EntityRequest, new { operation = "set_enabled", id = "plug1", enabled = true });
-            await api.EntityCommand("plug1:relay", "turn_on", null);
+            await api.EntityCommand("plug1:plug:relay", "turn_on", null);
             plug1 = await Read(api, "plug1");
             Check(Ran("again turn_on 10.0.3.1") == 1 && plug1["currentRevisionActive"]!.GetValue<bool>() && Revision(plug1) == 1, "plug1 turned on after another edit: " + plug1.ToJsonString());
             Console.WriteLine("PASS entity startup: turning a definition on runs the libraries as saved at that moment");
@@ -839,7 +909,7 @@ static class EntityStartupTests
             await first.Init();
             first.SetEntityDescriptions(Fixture("ha-entity-components.json"), started: true);
             await SaveLibrary(first, "lamps", 0, Lamps);
-            Check(Status((await SaveDefinition(first, "lamp1", "Lamp one", null, Lamp))["document"]!.AsObject()) == "running", "lamp1 does not run");
+            Check(Status((await SaveDefinition(first, "lamp1", "Lamp one", null, Lamp, library: Lamps))["document"]!.AsObject()) == "running", "lamp1 does not run");
         }
         finally { await first.UnloadAsync(); }
 
@@ -856,7 +926,7 @@ static class EntityStartupTests
             api.SetEntityDescriptions(Fixture("ha-entity-components.json"), started: true);
             Check(api.RetriesQueued == 1, "the push did not retry: " + api.RetriesQueued);
             await api.RetriesDone();
-            await Published(home, batches, "lamp1:relay");
+            await Published(home, batches, "lamp1:plug:relay");
             var lamp1 = await Read(api, "lamp1");
             Check(Status(lamp1) == "running" && lamp1["activationError"] == null && home.Syncs("lamp1").Length == syncs + 1, "lamp1 after the retry: " + lamp1.ToJsonString());
             Console.WriteLine("PASS entity startup: a definition that failed to load for want of the entity classes loads when they are pushed");

@@ -3,16 +3,17 @@ using System.Text.Json.Nodes;
 using HassSharp;
 
 /// <summary>
-/// The entity definition API over a whole manager, with definitions compiled from a saved node library and recording
-/// fakes for the entity bridge: the types the libraries declare; save, read, list and preview; each definition running
-/// its own instance with its own settings; commands reaching the instance; a failing setup reported, not running and
+/// The entity definition API over a whole manager, with definitions whose C# device node derives from a class of a saved
+/// node library and recording fakes for the entity bridge: save, read, list and preview; each definition running its own
+/// instance with its own settings; commands reaching the instance; a failing setup reported, not running and
 /// syncing nothing; turning a definition off showing its entities unavailable; and delete removing its entities from
 /// Home Assistant, loaded or not.
 /// </summary>
 static class EntityApiTests
 {
-    internal const string Plug = "library:shelly:NodeLib.FakePlug";
-    const string Broken = "library:shelly:NodeLib.BrokenPlug";
+    /// <summary>The library's class a plug definition's C# device node derives from (<see cref="Definition"/>).</summary>
+    internal const string Plug = "FakePlug";
+    internal const string Broken = "BrokenPlug";
     // Each definition compiles its own assembly, so each has its own Calls; EntityTestHome.Commands() reads them all.
     internal const string Library = """
         public class FakePlug : SharpDevice
@@ -41,7 +42,7 @@ static class EntityApiTests
             protected override Task Start() => throw new InvalidOperationException("the plug refused to start");
         }
         """;
-    const string Stubborn = "library:shelly:NodeLib.StubbornPlug";
+    const string Stubborn = "StubbornPlug";
 
     static void Check(bool value, string message) { if (!value) throw new Exception(message); }
 
@@ -57,12 +58,27 @@ static class EntityApiTests
         throw new Exception($"{what}: did not throw {typeof(T).Name}");
     }
 
-    internal static object Definition(string name, string? host, string type = Plug) => new
+    /// <summary>The signature the compiler derives from a C# device node's code against the library, as the editor stores it.</summary>
+    internal static JsonObject Signature(string source, string library = Library)
     {
-        name,
-        settings = host == null ? Array.Empty<object>() : [new { key = "Host", value = host }],
-        logic = new { kind = "class", type },
-    };
+        var descriptor = new NodeLibraryCompiler(VisualExecutionTests.Diagnostics).Preview([new NodeLibrarySource("library", library, 1)], [new CustomNodeSource("plug", source, "csharp_device")]).Snapshot.Custom["plug"];
+        Check(descriptor.Valid, "the C# device's code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+        return (JsonObject)descriptor.Signature!.DeepClone();
+    }
+
+    /// <summary>
+    /// A definition of one C# device node, <c>plug</c> named Plug, whose class derives from the library's class
+    /// <paramref name="type"/> (<paramref name="library"/> declares it). Given a host, the definition has a setting
+    /// <c>host</c> of it, which a Setting step gives the node's Host pin.
+    /// </summary>
+    internal static JsonObject Definition(string name, string? host, string type = Plug, string library = Library)
+    {
+        var source = $"public class Plug : NodeLib.{type} {{ }}";
+        var plug = EntityNodeTests.CSharpDevice("plug", "plug", "Plug", new JsonObject { ["source"] = source, ["signature"] = Signature(source, library), ["arguments"] = new JsonObject() });
+        var graph = host == null ? Graph(name, [plug]) : Graph(name, [N("host", "setting", new { key = "host" }), plug], Data("host", "plug", "Host"));
+        var settings = host == null ? new JsonArray() : new JsonArray(new JsonObject { ["key"] = "host", ["label"] = "Host", ["type"] = "string", ["value"] = host });
+        return new() { ["name"] = name, ["settings"] = settings, ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph } };
+    }
 
     [RuntimeSuite("--entity-api", Order = 14)]
     public static async Task Run()
@@ -187,7 +203,7 @@ static class EntityApiTests
     /// <c>run</c> runs a graph definition's Trigger step by hand, as Run now runs an automation's: answered with a run id
     /// once the run is recorded (also when the step records no runs of its own), which sets the step's state and has a
     /// trace. Refused, in words, for an unknown definition, a step that is no Trigger, a Trigger closed to manual runs, a
-    /// definition that is off, one whose saved revision does not run, and a class definition. An automation of the same
+    /// definition that is off, and one whose saved revision does not run. An automation of the same
     /// id is another document: each run lands in its own history.
     /// </summary>
     static async Task RunsATriggerStep(HassSharpManager api, EntityTestHome home)
@@ -253,9 +269,7 @@ static class EntityApiTests
         Check(History(automationId).Count(r => r["cause"]!.GetValue<string>() == "Manual") == 1, "a refused run is recorded: " + string.Join(" | ", History(automationId).Select(r => r.ToJsonString())));
         await Ok(new { operation = "save", id = "button", expectedRevision = 2, definition = Button() });
 
-        await Ok(new { operation = "save", id = "plain", expectedRevision = 0, definition = Definition("Plain plug", "10.0.0.5") });
-        await Refused(new { operation = "run", id = "plain", triggerId = "press" }, "invalid_request", "A class definition has no steps to run", "a class definition");
-        Console.WriteLine("PASS entity api: run runs a Trigger step by hand and records it with its trace; an unknown definition, a step that is no Trigger, a closed Trigger, a definition off or not running its saved revision, and a class are refused");
+        Console.WriteLine("PASS entity api: run runs a Trigger step by hand and records it with its trace; an unknown definition, a step that is no Trigger, a closed Trigger, and a definition off or not running its saved revision are refused");
 
         // An automation and a definition of one id: each run is in its own history only.
         var automation = Graph("Porch", [N("t", "trigger", new { type = "manual" }), N("say", "log", new { value = Lit("string", "automation") })], Next("t", "say"));
@@ -337,14 +351,6 @@ static class EntityApiTests
 
         var library = JsonNode.Parse(await api.NodeLibraryRequest(JsonSerializer.Serialize(new { operation = "save", id = "shelly", name = "Shelly", expectedRevision = 0, source = Library })))!;
         Check(library["ok"]!.GetValue<bool>() && library["result"]!["saved"]!.GetValue<bool>(), "the library saves: " + library.ToJsonString());
-        var libraries = JsonNode.Parse(await api.NodeLibraryRequest("""{"operation":"list"}"""))!["result"]!;
-
-        var types = await Ok(new { operation = "types" });
-        var plugType = types["types"]!.AsArray().Single(t => t!["id"]!.GetValue<string>() == Plug)!;
-        Check(plugType["kind"]!.GetValue<string>() == "device" && plugType["settings"]!.AsArray().Single()!["key"]!.GetValue<string>() == "Host"
-            && plugType["settings"]![0]!["type"]!.GetValue<string>() == "string", "types lists FakePlug with its Host setting: " + plugType.ToJsonString());
-        Check(types["generation"]!.GetValue<string>() == libraries["generation"]!.GetValue<string>(), "types answers the libraries' generation");
-        Console.WriteLine("PASS entity api: types lists the library's classes with their settings and the library generation");
 
         // A new definition is stored and runs, and Home Assistant hears of its device and entities.
         var saved = await Ok(new { operation = "save", id = "plug1", expectedRevision = 0, definition = Definition("Plug one", "10.0.0.1") });
@@ -354,36 +360,36 @@ static class EntityApiTests
         Check(document["revision"]!.GetValue<long>() == 1 && Status(document) == "running" && document["currentRevisionActive"]!.GetValue<bool>()
             && document["activationError"] == null && document["automationId"]!.GetValue<string>().Length > 0, "the saved document runs: " + document.ToJsonString());
         var live = document["liveEntities"]!.AsArray();
-        Check(live.Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["plug1:relay", "plug1:power"])
-            && live[0]!.ToJsonString() == """{"uniqueId":"plug1:relay","key":"relay","domain":"switch","name":null,"entityId":"switch.plug1_relay"}""",
+        Check(live.Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["plug1:plug:relay", "plug1:plug:power"])
+            && live[0]!.ToJsonString() == """{"uniqueId":"plug1:plug:relay","key":"relay","domain":"switch","name":null,"entityId":"switch.plug1_relay"}""",
             "the live entities: " + live.ToJsonString());
         var synced = JsonNode.Parse(home.Syncs("plug1").Single())!;
-        Check(synced["name"]!.GetValue<string>() == "Plug one" && synced["devices"]!.AsArray().Single()!["name"]!.GetValue<string>() == "Plug one"
-            && synced["devices"]![0]!["key"]!.GetValue<string>() == "main" && synced["entities"]!.AsArray().All(e => e!["device"]!.GetValue<string>() == "main")
-            && synced["entities"]!.AsArray().Count == 2, "the sync names the device as the definition: " + synced.ToJsonString());
+        Check(synced["name"]!.GetValue<string>() == "Plug one" && synced["devices"]!.AsArray().Single()!["name"]!.GetValue<string>() == "Plug"
+            && synced["devices"]![0]!["key"]!.GetValue<string>() == "plug" && synced["entities"]!.AsArray().All(e => e!["device"]!.GetValue<string>() == "plug")
+            && synced["entities"]!.AsArray().Count == 2, "the sync names the definition, and its device as the node, with both entities on it: " + synced.ToJsonString());
         Console.WriteLine("PASS entity api: save at revision 0 compiles and runs the definition, syncs its device and answers its live entities");
 
         // A command reaches the instance with its saved setting, and the new state is pushed.
-        await api.EntityCommand("plug1:relay", "turn_on", null);
+        await api.EntityCommand("plug1:plug:relay", "turn_on", null);
         Check(EntityTestHome.Commands().Contains("turn_on 10.0.0.1"), "the command ran with the saved Host: " + string.Join(", ", EntityTestHome.Commands()));
-        await EntityTestHome.Until(() => home.Pushes().Any(batch => batch.Contains("\"uniqueId\":\"plug1:relay\"") && batch.Contains("\"is_on\":true")), "plug1:relay pushed on");
-        await api.EntityCommand("plug1:relay", "turn_off", "");
-        await api.EntityCommand("plug1:relay", "turn_off", """{"transition":2}""");
+        await EntityTestHome.Until(() => home.Pushes().Any(batch => batch.Contains("\"uniqueId\":\"plug1:plug:relay\"") && batch.Contains("\"is_on\":true")), "plug1:plug:relay pushed on");
+        await api.EntityCommand("plug1:plug:relay", "turn_off", "");
+        await api.EntityCommand("plug1:plug:relay", "turn_off", """{"transition":2}""");
         Check(EntityTestHome.Commands().Count(c => c == "turn_off 10.0.0.1") == 2, "empty and given data reach the handler");
-        var unknown = await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:nope", "turn_on", null), "an unknown entity");
+        var unknown = await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:plug:nope", "turn_on", null), "an unknown entity");
         Check(unknown.Message == "The entity is not running", "an unknown entity: " + unknown.Message);
         await Throws<InvalidOperationException>(() => api.EntityCommand("nothing", "turn_on", null), "a unique id without a definition");
-        await Throws<NotSupportedException>(() => api.EntityCommand("plug1:relay", "toggle", null), "a command the switch has not");
+        await Throws<NotSupportedException>(() => api.EntityCommand("plug1:plug:relay", "toggle", null), "a command the switch has not");
         Console.WriteLine("PASS entity api: a command reaches the instance with its settings and pushes its state; an unknown entity or command faults");
 
         // A second definition of the same class runs beside the first with its own setting.
         var second = await Ok(new { operation = "save", id = "plug2", expectedRevision = 0, definition = Definition("Plug two", "10.0.0.2") });
         Check(Status(second["document"]!.AsObject()) == "running" && home.Syncs("plug2").Length == 1, "plug2 runs: " + second.ToJsonString());
-        await api.EntityCommand("plug2:relay", "turn_on", null);
-        await api.EntityCommand("plug1:relay", "turn_on", null);
+        await api.EntityCommand("plug2:plug:relay", "turn_on", null);
+        await api.EntityCommand("plug1:plug:relay", "turn_on", null);
         Check(EntityTestHome.Commands().Count(c => c == "turn_on 10.0.0.2") == 1 && EntityTestHome.Commands().Count(c => c == "turn_on 10.0.0.1") == 2, "each definition has its own Host: " + string.Join(", ", EntityTestHome.Commands()));
         Check(Status((await Ok(new { operation = "read", id = "plug1" }))) == "running", "plug1 still runs beside plug2");
-        Console.WriteLine("PASS entity api: two definitions of one class run side by side, each with its own settings");
+        Console.WriteLine("PASS entity api: two definitions of one C# device run side by side, each with its own settings");
 
         // A resave whose Setup() now fails leaves the running revision as it is, and says why the new one does not run.
         var batches = home.Pushes().Length;
@@ -394,7 +400,7 @@ static class EntityApiTests
             && failedDocument["revision"]!.GetValue<long>() == 2 && !failedDocument["currentRevisionActive"]!.GetValue<bool>()
             && failedDocument["active"]!.GetValue<bool>() && Status(failedDocument) == "running" && failedDocument["liveEntities"]!.AsArray().Count == 2,
             "a failed resave: " + failedResave.ToJsonString());
-        await api.EntityCommand("plug2:relay", "turn_off", null);
+        await api.EntityCommand("plug2:plug:relay", "turn_off", null);
         Check(EntityTestHome.Commands().Contains("turn_off 10.0.0.2") && home.Syncs("plug2").Length == 1, "the old revision of plug2 still takes commands: " + string.Join(", ", EntityTestHome.Commands()));
         await Task.Delay(60);
         Check(!home.Snapshots(batches).Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("plug2:", StringComparison.Ordinal) && !s["available"]!.GetValue<bool>()),
@@ -409,33 +415,35 @@ static class EntityApiTests
         Check(resaved["active"]!.GetValue<bool>() && resaved["document"]!["revision"]!.GetValue<long>() == 2 && Status(resaved["document"]!.AsObject()) == "running"
             && home.Syncs("plug1").Length == 2, "the resave runs and syncs again: " + resaved.ToJsonString());
         // The old instance was on; the new one comes back on, as the switch last showed, until the command turns it off.
-        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", true)), "the new instance pushes its first state, on");
-        Check(!home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", null)), "the new instance pushed unknown");
+        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:plug:relay", true)), "the new instance pushes its first state, on");
+        Check(!home.Snapshots(batches).Any(s => IsOn(s, "plug1:plug:relay", null)), "the new instance pushed unknown");
         batches = home.Pushes().Length;
-        await api.EntityCommand("plug1:relay", "turn_off", null);
+        await api.EntityCommand("plug1:plug:relay", "turn_off", null);
         Check(EntityTestHome.Commands().Contains("turn_off 10.0.0.11"), "the new instance has the new Host");
-        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:relay", false)), "the new instance pushes off");
+        await EntityTestHome.Until(() => home.Snapshots(batches).Any(s => IsOn(s, "plug1:plug:relay", false)), "the new instance pushes off");
         var automationId = resaved["document"]!["automationId"]!.GetValue<string>();
         var runNow = Thrown(() => api.RunNow(automationId, "VisualAutomation", "Startup"));
         Check(runNow is InvalidOperationException { Message: "Automation is not active" }, "RunNow refuses a definition: " + runNow);
         Console.WriteLine("PASS entity api: a stale save conflicts; the current revision replaces the instance, which still takes commands");
 
-        // A definition with problems is previewed as invalid and never stored.
-        var badDefinition = new { name = "Plug three", settings = new[] { new { key = "Port", value = "80" } }, logic = new { kind = "class", type = Plug } };
+        // A definition with problems is previewed as invalid and never stored: its Setting step reads a setting it has not.
+        var badDefinition = Definition("Plug three", "10.0.0.3");
+        badDefinition["logic"]!["graph"]!["nodes"]![0]!["config"]!["key"] = "port";
         var preview = await Ok(new { operation = "preview", definition = badDefinition });
-        Check(!preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownSetting")
+        Check(!preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "setting.unknown")
             && preview.Select(p => p.Key).Order(StringComparer.Ordinal).SequenceEqual(["diagnostics", "source", "sourceMap", "valid"])
             && preview["sourceMap"]!.AsArray().Count == 0, "the preview: " + preview.ToJsonString());
         Check((await Ok(new { operation = "preview", definition = Definition("Plug three", "10.0.0.3") }))["valid"]!.GetValue<bool>(), "a good definition previews valid");
-        // A valid preview maps its source as the saved definition's read does: one range per library.
-        var previewedPlug = await Ok(new { operation = "preview", definition = Definition("Plug one", "10.0.0.11") });
+        // A valid preview of the definition a read answers maps its source as that read does: its node's ranges and its library's.
         var readPlug = await Ok(new { operation = "read", id = "plug1" });
-        Check(previewedPlug["sourceMap"]!.AsArray().Count == 1 && JsonNode.DeepEquals(previewedPlug["sourceMap"], readPlug["sourceMap"])
+        var previewedPlug = await Ok(new { operation = "preview", definition = new { name = readPlug["name"], settings = readPlug["settings"], logic = readPlug["logic"] } });
+        var mapped = previewedPlug["sourceMap"]!.AsArray().Select(m => m!["nodeId"]!.GetValue<string>()).ToHashSet(StringComparer.Ordinal);
+        Check(mapped.Contains("plug") && mapped.Contains("$library:shelly") && JsonNode.DeepEquals(previewedPlug["sourceMap"], readPlug["sourceMap"])
             && previewedPlug["source"]!.GetValue<string>() == readPlug["source"]!.GetValue<string>(),
             "the preview's source map is the saved one's: " + previewedPlug["sourceMap"]!.ToJsonString() + " / " + readPlug["sourceMap"]!.ToJsonString());
         var refused = await Entity(new { operation = "save", id = "plug3", expectedRevision = 0, definition = badDefinition });
         Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && !refused["error"]!["detail"]!["valid"]!.GetValue<bool>()
-            && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.unknownSetting"), "the save is refused: " + refused.ToJsonString());
+            && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "setting.unknown"), "the save is refused: " + refused.ToJsonString());
         Check(await Fails(new { operation = "read", id = "plug3" }) == "not_found" && home.Syncs("plug3").Length == 0, "the refused definition was stored");
         Console.WriteLine("PASS entity api: preview reports an unknown setting and maps a valid source as read does; save refuses it with validation and stores nothing");
 
@@ -460,7 +468,7 @@ static class EntityApiTests
         var readStubborn = await Ok(new { operation = "read", id = "stubborn" });
         Check(Status(readStubborn) == "failed" && readStubborn["active"]!.GetValue<bool>()
             && readStubborn["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true, "a failed start reads with its reason: " + readStubborn.ToJsonString());
-        await EntityTestHome.Until(() => home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "stubborn:relay" && !s["available"]!.GetValue<bool>()), "a failed start pushes its entities unavailable");
+        await EntityTestHome.Until(() => home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "stubborn:plug:relay" && !s["available"]!.GetValue<bool>()), "a failed start pushes its entities unavailable");
         Console.WriteLine("PASS entity api: a failing Start() answers status failed with its reason, from save and from read");
 
         // list leaves the source out, read has it.
@@ -469,11 +477,11 @@ static class EntityApiTests
             && listed.Single(d => d["id"]!.GetValue<string>() == "stubborn")["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true
             && listed.All(d => !d.ContainsKey("source") && !d.ContainsKey("sourceMap") && d.ContainsKey("status") && d.ContainsKey("liveEntities")),
             "list: " + string.Join(", ", listed.Select(d => d.ToJsonString())));
-        // Each makes one device, its class being a SharpDevice: the list counts it instead of answering a device.
+        // Each makes one device, its C# device: the list counts it instead of answering a device.
         Check(listed.All(d => d["devices"]?.GetValueKind() == JsonValueKind.Number && d["devices"]!.GetValue<int>() == 1 && !d.ContainsKey("device")),
-            "a class definition's device is counted: " + string.Join(", ", listed.Select(d => d.ToJsonString())));
+            "a C# device is counted: " + string.Join(", ", listed.Select(d => d.ToJsonString())));
         var read = await Ok(new { operation = "read", id = "plug1" });
-        Check(read["source"]!.GetValue<string>().Contains("new global::NodeLib.FakePlug()") && read.ContainsKey("sourceMap") && read["settings"]![0]!["value"]!.GetValue<string>() == "10.0.0.11",
+        Check(read["source"]!.GetValue<string>().Contains("public class Plug : NodeLib.FakePlug") && read.ContainsKey("sourceMap") && read["settings"]![0]!["value"]!.GetValue<string>() == "10.0.0.11",
             "read has the source: " + read.ToJsonString());
         Console.WriteLine("PASS entity api: list omits the source and its map; read includes them");
 
@@ -481,19 +489,19 @@ static class EntityApiTests
         batches = home.Pushes().Length;
         var off = await Ok(new { operation = "set_enabled", id = "plug1", enabled = false });
         Check(off.ToJsonString() == """{"id":"plug1","enabled":false,"active":false,"activationError":null}""", "set_enabled answers: " + off.ToJsonString());
-        Check((await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:relay", "turn_on", null), "a command while off")).Message == "The entity is not running", "a command while off");
-        await EntityTestHome.Until(() => home.Pushes().Skip(batches).Any(batch => batch.Contains("plug1:relay") && batch.Contains("plug1:power")), "both entities pushed unavailable in one batch");
-        var unavailable = home.Pushes().Skip(batches).Single(batch => batch.Contains("plug1:relay"));
-        Check(unavailable == """[{"uniqueId":"plug1:relay","available":false,"values":{},"attributes":{}},{"uniqueId":"plug1:power","available":false,"values":{},"attributes":{}}]""",
+        Check((await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:plug:relay", "turn_on", null), "a command while off")).Message == "The entity is not running", "a command while off");
+        await EntityTestHome.Until(() => home.Pushes().Skip(batches).Any(batch => batch.Contains("plug1:plug:relay") && batch.Contains("plug1:plug:power")), "both entities pushed unavailable in one batch");
+        var unavailable = home.Pushes().Skip(batches).Single(batch => batch.Contains("plug1:plug:relay"));
+        Check(unavailable == """[{"uniqueId":"plug1:plug:relay","available":false,"values":{},"attributes":{}},{"uniqueId":"plug1:plug:power","available":false,"values":{},"attributes":{}}]""",
             "the unavailable batch: " + unavailable);
         var readOff = await Ok(new { operation = "read", id = "plug1" });
         Check(Status(readOff) == "off" && !readOff["enabled"]!.GetValue<bool>() && !readOff["active"]!.GetValue<bool>() && readOff["liveEntities"]!.AsArray().Count == 0
             && readOff["revision"]!.GetValue<long>() == 2, "plug1 reads off: " + readOff.ToJsonString());
-        await api.EntityCommand("plug2:relay", "turn_off", null);
+        await api.EntityCommand("plug2:plug:relay", "turn_off", null);
         var on = await Ok(new { operation = "set_enabled", id = "plug1", enabled = true });
         Check(on.ToJsonString() == """{"id":"plug1","enabled":true,"active":true,"activationError":null}""" && home.Syncs("plug1").Length == 3, "turning on syncs again: " + on.ToJsonString());
         Check(Status(await Ok(new { operation = "read", id = "plug1" })) == "running", "plug1 runs again");
-        await api.EntityCommand("plug1:relay", "turn_on", null);
+        await api.EntityCommand("plug1:plug:relay", "turn_on", null);
         var again = await Ok(new { operation = "set_enabled", id = "plug1", enabled = true });
         Check(home.Syncs("plug1").Length == 3, "turning on a running definition replaced it");
         Check(again.ToJsonString() == """{"id":"plug1","enabled":true,"active":true,"activationError":null}""", "turning on a running definition answers: " + again.ToJsonString());
@@ -518,7 +526,7 @@ static class EntityApiTests
         var offAnswer = JsonSerializer.SerializeToNode(await api.ActivateDefinition(stored with { Enabled = false }), VisualStore.Json)!;
         Check(!offAnswer["active"]!.GetValue<bool>() && offAnswer["activationError"] == null && offAnswer["document"]!["status"]!.GetValue<string>() == "off",
             "activating a revision that is off: " + offAnswer.ToJsonString());
-        Check((await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:relay", "turn_on", null), "a command once off")).Message == "The entity is not running", "a command once off");
+        Check((await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:plug:relay", "turn_on", null), "a command once off")).Message == "The entity is not running", "a command once off");
         await EntityTestHome.Until(() => home.Snapshots(batches).Count(s => s["uniqueId"]!.GetValue<string>().StartsWith("plug1:", StringComparison.Ordinal) && !s["available"]!.GetValue<bool>()) == 2,
             "both entities pushed unavailable");
         Check(Status(await Ok(new { operation = "read", id = "plug1" })) == "off", "plug1 reads off");
@@ -537,10 +545,10 @@ static class EntityApiTests
 
         // Delete checks the revision, unloads and removes the entities; a failing removal is logged.
         Check(await Fails(new { operation = "delete", id = "plug1", expectedRevision = 1 }) == "conflict" && !home.Removals().Contains("plug1"), "a stale delete");
-        await api.EntityCommand("plug1:relay", "turn_off", null);
+        await api.EntityCommand("plug1:plug:relay", "turn_off", null);
         Check((await Ok(new { operation = "delete", id = "plug1", expectedRevision = 2 })).ToJsonString() == """{"deleted":true}""", "delete answers deleted");
         Check(home.Removals().Contains("plug1") && await Fails(new { operation = "read", id = "plug1" }) == "not_found", "plug1 is gone from the store and Home Assistant");
-        await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:relay", "turn_on", null), "a command after delete");
+        await Throws<InvalidOperationException>(() => api.EntityCommand("plug1:plug:relay", "turn_on", null), "a command after delete");
         home.FailRemoval = true;
         Check((await Ok(new { operation = "delete", id = "plug2", expectedRevision = 2 }))["deleted"]!.GetValue<bool>(), "a failing removal still deletes");
         Check(home.Logs().Any(line => line.Contains("plug2") && line.Contains("the registry is busy")), "the failing removal is logged: " + string.Join(" | ", home.Logs()));
