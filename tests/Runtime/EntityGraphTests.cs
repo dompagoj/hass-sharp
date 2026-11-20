@@ -133,113 +133,61 @@ static class EntityGraphTests
     static JsonObject Next(string source, string target) { var wire = E(source, target); wire["id"] = $"{source}:next:{target}"; return wire; }
     static JsonObject Graph(string name, JsonObject[] nodes, params JsonObject[] edges) =>
         new() { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) };
-    static JsonObject Entity(string key, string domain, object? more = null)
-    {
-        var entity = new JsonObject { ["key"] = key, ["domain"] = domain };
-        if (more != null) foreach (var (name, value) in JsonSerializer.SerializeToNode(more)!.AsObject()) entity[name] = value?.DeepClone();
-        return entity;
-    }
-    static JsonObject Definition(string name, JsonObject graph, JsonNode[] entities, JsonNode[]? settings = null, object? device = null) => new()
+    /// <summary>
+    /// An Entity node of the key and type (<see cref="Hub"/>): named by its key unless <paramref name="more"/> names it,
+    /// with the rest of <paramref name="more"/> (such as its options or <c>history</c>) in place of its own settings and
+    /// <paramref name="values"/> as its state values.
+    /// </summary>
+    static JsonObject Entity(string id, string key, string domain, object? more = null, JsonObject? values = null) =>
+        Hub(id, key, domain, more == null ? null : JsonSerializer.SerializeToNode(more)!.AsObject(), values);
+    /// <summary>The Entity node without a name, as an entity of a device may be.</summary>
+    static JsonObject Unnamed(JsonObject hub) { hub["config"]!.AsObject().Remove("name"); return hub; }
+    /// <summary>The node of the definition's graph with the id.</summary>
+    static JsonObject NodeOf(JsonObject definition, string id) =>
+        definition["logic"]!["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == id)!.AsObject();
+    /// <summary>The definition as the editor sends it: its entities are the Entity nodes of its graph.</summary>
+    static JsonObject Definition(string name, JsonObject graph, JsonNode[]? settings = null, object? device = null) => new()
     {
         ["name"] = name, ["device"] = device == null ? null : JsonSerializer.SerializeToNode(device),
         ["settings"] = new JsonArray((settings ?? []).Select(s => s.DeepClone()).ToArray()),
-        ["entities"] = new JsonArray(entities.Select(e => e.DeepClone()).ToArray()),
         ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = graph.DeepClone() },
     };
     static readonly object Unset = new { kind = "unset" };
-    /// <summary>
-    /// The Entity node of the listed entity <paramref name="entity"/>, with <paramref name="values"/> as its state values:
-    /// its type, name and settings are the listed entity's, which the request puts on it (<see cref="Placed"/>).
-    /// </summary>
-    static JsonObject State(string id, string entity, JsonObject? values = null) =>
-        N(id, "entity", new JsonObject { ["key"] = entity, ["arguments"] = values ?? new JsonObject() });
     static JsonObject SetState(string id, string entity, JsonObject values)
     {
         values["entity"] = entity;
         return N(id, "set_entity_state", values);
     }
     static JsonObject On(bool on) => new() { ["is_on"] = Lit("boolean", on) };
-    /// <summary>
-    /// A stand-in for the listed entity's <paramref name="command"/> pin, which never reaches the product: the request puts
-    /// the wires out of it on that pin of the entity's Entity node, and drops it (<see cref="Placed"/>).
-    /// </summary>
-    static JsonObject Command(string id, string entity, string command) => N(id, "pin", new { entity, port = "command:" + command });
-    /// <summary>
-    /// The definition as the editor sends it: each entity it lists is on an Entity node, and it has no <c>entities</c> key
-    /// (not even an empty list). The node is the
-    /// <see cref="State"/> of its key, else a new one of the key's id, placed first in the listed order (the order the
-    /// entities are registered in); it takes the listed entity's type, name and settings, named by its key when it has no
-    /// name and the definition no device. Each <see cref="Command"/> or <see cref="FrameNeeded"/> stand-in of its key is
-    /// that node's pin: the wires out of it start at the pin, a data wire at the pin's value. A stand-in's
-    /// <c>trackHistory</c>, and a State's, are the node's <c>history</c> switches. A definition of no graph is sent as it is.
-    /// </summary>
-    static JsonObject Placed(JsonObject definition)
-    {
-        if (definition["logic"]?["graph"] is not JsonObject graph || definition["entities"] is not JsonArray listed) return definition;
-        definition.Remove("entities");
-        static string? Text(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
-        var nodes = graph["nodes"] as JsonArray ?? [];
-        var edges = (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
-        var hubs = new List<JsonObject>();
-        foreach (var entity in listed.OfType<JsonObject>())
-        {
-            var key = Text(entity, "key")!;
-            var state = nodes.OfType<JsonObject>().FirstOrDefault(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] == null);
-            var id = Text(state, "id") ?? key;
-            var config = new JsonObject();
-            foreach (var (name, value) in entity) if (value != null) config[name] = value.DeepClone();
-            if (definition["device"] is not JsonObject && config["name"] == null) config["name"] = key;
-            var history = new JsonObject();
-            var arguments = new JsonObject();
-            if (state != null)
-            {
-                foreach (var (name, value) in state["config"]!.AsObject())
-                    if (name == "trackHistory") history["state"] = value?.DeepClone();
-                    else if (name is "arguments") foreach (var (input, argument) in value!.AsObject()) arguments[input] = argument?.DeepClone();
-                nodes.Remove(state);
-            }
-            foreach (var pin in nodes.OfType<JsonObject>().Where(n => Text(n, "kind") == "pin" && Text(n["config"], "entity") == key).ToArray())
-            {
-                var port = Text(pin["config"], "port")!;
-                if (pin["config"]!["trackHistory"] is { } track) history[port == "frame" ? "frame" : "commands"] = track.DeepClone();
-                foreach (var edge in edges.Where(e => Text(e, "source") == Text(pin, "id")))
-                {
-                    edge["source"] = id;
-                    if (Text(edge, "kind") == "data") edge["sourcePort"] = port + ":" + Text(edge, "sourcePort");
-                    else edge["port"] = port;
-                }
-                nodes.Remove(pin);
-            }
-            config["history"] = history;
-            config["arguments"] = arguments;
-            hubs.Add(new JsonObject { ["id"] = id, ["kind"] = "entity", ["label"] = "", ["config"] = config });
-        }
-        for (var i = 0; i < hubs.Count; i++) nodes.Insert(i, hubs[i]);
-        return definition;
-    }
+    /// <summary>A step order wire from an Entity node's execution pin (<see cref="Flow"/>), with an id of its own words.</summary>
+    static JsonObject Pin(string hub, string port, string target) { var wire = Flow(hub, port, target); wire["id"] = $"{hub}:{port}:{target}"; return wire; }
+    static string Id(JsonObject node) => node["id"]!.GetValue<string>();
     static JsonObject Read(string id, string entity) => N(id, "read_entity", new JsonObject { ["entity"] = Lit("entity_id", entity) });
 
     /// <summary>The acceptance definition: a binary sensor on while motion A or motion B is (the shared fixture's graph).</summary>
-    static JsonObject Motion() => Definition("Any motion", EntityStoreTests.MotionGraph(), []);
+    static JsonObject Motion() => Definition("Any motion", EntityStoreTests.MotionGraph());
     /// <summary>Waits, no longer than 5 s, for a Custom C# node's <c>Entered</c> to be released once: its run has reached it.</summary>
     static async Task Reached(SemaphoreSlim entered, string what) => Check(await entered.WaitAsync(TimeSpan.FromSeconds(5)), "timed out waiting: " + what);
     /// <summary>A sensor whose value is <c>sensor.outside</c>'s state, as a number.</summary>
     static JsonObject Copy() => Definition("Outside", Graph("Outside",
-        [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.outside") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), State("s", "outside")],
-        Data("cur", "f", "entity"), Data("f", "s", "value")), [Entity("outside", "sensor", new { name = "Outside" })]);
-    /// <summary>A switch whose turn on and turn off flows set its state; either flow left out when asked.</summary>
+        [Entity("s", "outside", "sensor", new { name = "Outside" }), N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.outside") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" })],
+        Data("cur", "f", "entity"), Data("f", "s", "value")));
+    /// <summary>
+    /// A switch whose Turn on and Turn off pins lead to Set state steps that set its state, Turn on through the steps
+    /// <paramref name="before"/> first; either pin left without steps when asked.
+    /// </summary>
     static JsonObject Relay(bool turnOn = true, bool turnOff = true, JsonObject[]? before = null)
     {
-        var nodes = new List<JsonObject>(); var edges = new List<JsonObject>();
+        var nodes = new List<JsonObject> { Entity("relay", "relay", "switch", new { name = "Relay" }) }; var edges = new List<JsonObject>();
         if (turnOn)
         {
-            nodes.Add(Command("on", "relay", "turn_on")); nodes.Add(SetState("set_on", "relay", On(true)));
-            var previous = "on";
-            foreach (var step in before ?? []) { nodes.Add(step); edges.Add(Next(previous, step["id"]!.GetValue<string>())); previous = step["id"]!.GetValue<string>(); }
-            edges.Add(Next(previous, "set_on"));
+            List<JsonObject> chain = [.. before ?? [], SetState("set_on", "relay", On(true))];
+            nodes.AddRange(chain);
+            edges.Add(Pin("relay", "command:turn_on", Id(chain[0])));
+            for (var i = 1; i < chain.Count; i++) edges.Add(Next(Id(chain[i - 1]), Id(chain[i])));
         }
-        if (turnOff) { nodes.Add(Command("off", "relay", "turn_off")); nodes.Add(SetState("set_off", "relay", On(false))); edges.Add(Next("off", "set_off")); }
-        return Definition("Relay", Graph("Relay", [.. nodes], [.. edges]), [Entity("relay", "switch", new { name = "Relay" })]);
+        if (turnOff) { nodes.Add(SetState("set_off", "relay", On(false))); edges.Add(Pin("relay", "command:turn_off", "set_off")); }
+        return Definition("Relay", Graph("Relay", [.. nodes], [.. edges]));
     }
     /// <summary>A Custom C# node whose code is <paramref name="source"/>, its pins written from the code as the editor writes them.</summary>
     static JsonObject Custom(string id, string source) => N(id, "custom", new JsonObject { ["source"] = source, ["arguments"] = new JsonObject() });
@@ -279,13 +227,7 @@ static class EntityGraphTests
             Api = new(Home.Root);
             await Api.Init();
         }
-        /// <summary>The request, with the definition it carries as the editor sends it (<see cref="Placed"/>).</summary>
-        public async Task<JsonNode> Request(object request)
-        {
-            var json = JsonSerializer.SerializeToNode(request)!.AsObject();
-            if (json["definition"] is JsonObject definition) json["definition"] = Placed((JsonObject)definition.DeepClone());
-            return JsonNode.Parse(await Api.EntityRequest(json.ToJsonString()))!;
-        }
+        public async Task<JsonNode> Request(object request) => JsonNode.Parse(await Api.EntityRequest(JsonSerializer.Serialize(request)))!;
         public async Task<JsonObject> Ok(object request)
         {
             var answer = await Request(request);
@@ -425,9 +367,9 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("quick", ("sensor.level", "0"));
         var graph = Derived(Graph("Quick",
-            [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.level") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("slow", SlowValue), State("s", "quick")],
+            [Entity("s", "quick", "sensor"), N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.level") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("slow", SlowValue)],
             Data("cur", "f", "entity"), Data("f", "slow", "value"), Data("slow", "s", "value", "result")));
-        await rig.Save("quick", Definition("Quick", graph, [Entity("quick", "sensor")]));
+        await rig.Save("quick", Definition("Quick", graph));
         var (gate, entered) = (rig.Static<SemaphoreSlim>("quick", "Gate"), rig.Static<SemaphoreSlim>("quick", "Entered"));
         await rig.Started("quick");
         Check(rig.Pushed("quick:quick").Length == 0, "the entity was pushed before its State was worked out: " + Lines(rig.Home.Pushes()));
@@ -503,7 +445,7 @@ static class EntityGraphTests
         Check(preview["valid"]!.GetValue<bool>() && Unhandled(preview["diagnostics"]), "the preview warns of the command no flow handles: " + preview["diagnostics"]?.ToJsonString());
         // An entity of a device needs no name: one without is named by its key.
         var unnamed = Relay(turnOn: false);
-        unnamed["entities"]![0]!.AsObject().Remove("name");
+        Unnamed(NodeOf(unnamed, "relay"));
         unnamed["device"] = new JsonObject();
         var byKey = (await rig.Ok(new { operation = "preview", definition = unnamed }))["diagnostics"]!.AsArray().Select(d => d!["message"]!.GetValue<string>()).ToArray();
         Check(byKey.Contains("relay does nothing on Turn on: connect a step to Turn on"), "an entity without a name is named by its key: " + string.Join(" | ", byKey));
@@ -515,25 +457,14 @@ static class EntityGraphTests
         await rig.Api.EntityCommand("relay:relay", "turn_off", null);
     }
 
-    /// <summary>A switch an Entity node declares, with Set state steps on its Turn on pin and, unless left out, its Turn off pin.</summary>
-    static JsonObject RelayNode(bool turnOn = true)
-    {
-        var nodes = new List<JsonObject> { Hub("relay", "relay", "switch", new JsonObject { ["name"] = "Relay" }), SetState("set_off", "relay", On(false)) };
-        var edges = new List<JsonObject> { Pin("relay", "command:turn_off", "set_off") };
-        if (turnOn) { nodes.Add(SetState("set_on", "relay", On(true))); edges.Add(Pin("relay", "command:turn_on", "set_on")); }
-        return Definition("Relay", Graph("Relay", [.. nodes], [.. edges]), []);
-    }
-    /// <summary>A step order wire from an Entity node's execution pin, with an id of its own words.</summary>
-    static JsonObject Pin(string hub, string port, string target) { var wire = E(hub, target, port); wire["id"] = $"{hub}:{port}:{target}"; return wire; }
-
     /// <summary>
-    /// The hub form of <see cref="ASwitchRunsItsCommandFlows"/>: the steps on a switch node's command pins run on its
-    /// commands, the state they set is pushed, and each run is recorded under the entity's name and the command's.
+    /// As in <see cref="ASwitchRunsItsCommandFlows"/>, the steps on a switch node's command pins run on its commands and
+    /// the state they set is pushed; each run is recorded under the node, the entity's name and the command's.
     /// </summary>
     static async Task ASwitchNodeRunsItsCommandFlows()
     {
         await using var rig = await Rig.Start("switch-node");
-        var automationId = AutomationId(await rig.Save("relay", RelayNode()));
+        var automationId = AutomationId(await rig.Save("relay", Relay()));
         var sync = JsonNode.Parse(rig.Home.Syncs("relay").Single())!;
         Check(sync["entities"]![0]!["commands"]!.ToJsonString() == """["turn_on","turn_off"]""", "the switch takes its commands: " + sync.ToJsonString());
         await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", null), "a switch whose state is not worked out is pushed unknown as it starts");
@@ -556,11 +487,11 @@ static class EntityGraphTests
         }
     }
 
-    /// <summary>The hub form of <see cref="ACommandWithoutAFlowFails"/>: a command whose pin has no step fails, naming the entity and the command.</summary>
+    /// <summary>A command whose pin has no step fails, naming the entity and the command, and the definition runs (without the previews of <see cref="ACommandWithoutAFlowFails"/>).</summary>
     static async Task ACommandPinWithoutStepsFails()
     {
         await using var rig = await Rig.Start("no-pin-flow");
-        var saved = await rig.Save("relay", RelayNode(turnOn: false));
+        var saved = await rig.Save("relay", Relay(turnOn: false));
         Check(saved["active"]!.GetValue<bool>(), "the definition runs: " + saved.ToJsonString());
         await rig.Until("relay:relay", _ => true, "the switch starts");
         var failed = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("relay:relay", "turn_on", null), "a command without a flow");
@@ -575,9 +506,9 @@ static class EntityGraphTests
     static async Task ALightNodeTurnedOnWithoutABrightnessIsAtFull()
     {
         await using var rig = await Rig.Start("light-node");
-        var graph = Graph("Lamp", [Hub("lamp", "lamp", "light", new JsonObject { ["name"] = "Lamp", ["options"] = new JsonObject { ["dimmable"] = true } }), SetState("bright", "lamp", On(true))],
+        var graph = Graph("Lamp", [Entity("lamp", "lamp", "light", new { name = "Lamp", options = new { dimmable = true } }), SetState("bright", "lamp", On(true))],
             Pin("lamp", "command:turn_on", "bright"), Data("lamp", "bright", "brightness", "command:turn_on:brightness"));
-        await rig.Save("lamp", Definition("Lamp", graph, []));
+        await rig.Save("lamp", Definition("Lamp", graph));
         await rig.Until("lamp:lamp", _ => true, "the light starts");
         await rig.Api.EntityCommand("lamp:lamp", "turn_on", null);
         await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 255), "turned on at full, having no brightness yet");
@@ -655,9 +586,9 @@ static class EntityGraphTests
         {
             JsonObject Level(params JsonObject[] steps)
             {
-                var nodes = new List<JsonObject> { N("start", "entity_setup") }; var edges = new List<JsonObject>(); var previous = "start";
+                var nodes = new List<JsonObject> { Entity("level", "level", "sensor"), N("start", "entity_setup") }; var edges = new List<JsonObject>(); var previous = "start";
                 foreach (var step in steps) { nodes.Add(step); edges.Add(Next(previous, step["id"]!.GetValue<string>())); previous = step["id"]!.GetValue<string>(); }
-                return Definition("Level", Graph("Level", [.. nodes], [.. edges]), [Entity("level", "sensor")]);
+                return Definition("Level", Graph("Level", [.. nodes], [.. edges]));
             }
             var good = Level(N("say", "log", new { value = Lit("string", "setting up") }), SetState("first", "level", new JsonObject { ["value"] = Lit("number", 5) }));
             var saved = await rig.Save("level", good);
@@ -696,8 +627,8 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("setup-timeout");
         DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
-        var graph = Derived(Graph("Level", [N("start", "entity_setup"), Custom("hold", HoldStep)], Next("start", "hold")));
-        var saved = await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")]));
+        var graph = Derived(Graph("Level", [Entity("level", "level", "sensor"), N("start", "entity_setup"), Custom("hold", HoldStep)], Next("start", "hold")));
+        var saved = await rig.Save("level", Definition("Level", graph));
         Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Level does not start: its When started flow did not finish within 0.3 s" && rig.Home.Syncs("level").Length == 0,
             "a setup that does not finish fails the save: " + saved.ToJsonString());
     }
@@ -706,14 +637,13 @@ static class EntityGraphTests
     static async Task ADeviceDefinitionGroupsItsEntities()
     {
         await using var rig = await Rig.Start("device");
-        var graph = Graph("Plug", [State("p", "power", new JsonObject { ["value"] = Lit("number", 42) }), State("o", "online", On(true)),
-            Command("on", "relay", "turn_on"), SetState("set_on", "relay", On(true)), Command("off", "relay", "turn_off"), SetState("set_off", "relay", On(false))],
-            Next("on", "set_on"), Next("off", "set_off"));
-        var definition = Definition("Plug", graph,
-            [Entity("power", "sensor", new { name = "Power", deviceClass = "power", options = new { unit = "W", stateClass = "measurement" } }),
-             Entity("online", "binary_sensor", new { deviceClass = "connectivity", entityCategory = "diagnostic" }),
-             Entity("relay", "switch", new { name = "Relay", icon = "mdi:power-socket", enabledByDefault = false })],
-            device: new { manufacturer = "Acme", model = "P1", suggestedArea = "Kitchen" });
+        var graph = Graph("Plug",
+            [Entity("p", "power", "sensor", new { name = "Power", deviceClass = "power", options = new { unit = "W", stateClass = "measurement" } }, new JsonObject { ["value"] = Lit("number", 42) }),
+             Unnamed(Entity("o", "online", "binary_sensor", new { deviceClass = "connectivity", entityCategory = "diagnostic" }, On(true))),
+             Entity("relay", "relay", "switch", new { name = "Relay", icon = "mdi:power-socket", enabledByDefault = false }),
+             SetState("set_on", "relay", On(true)), SetState("set_off", "relay", On(false))],
+            Pin("relay", "command:turn_on", "set_on"), Pin("relay", "command:turn_off", "set_off"));
+        var definition = Definition("Plug", graph, device: new { manufacturer = "Acme", model = "P1", suggestedArea = "Kitchen" });
         var saved = await rig.Save("plug", definition);
         Check(saved["active"]!.GetValue<bool>(), "the device definition runs: " + saved.ToJsonString());
         var sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!;
@@ -732,8 +662,8 @@ static class EntityGraphTests
     static async Task SettingsReachTheGraph()
     {
         await using var rig = await Rig.Start("settings");
-        var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), State("s", "level")], Data("k", "s", "value"));
-        JsonObject Level(double offset) => Definition("Level", graph, [Entity("level", "sensor")], [new JsonObject { ["key"] = "offset", ["type"] = "number", ["label"] = "Offset", ["value"] = offset }]);
+        var graph = Graph("Level", [Entity("s", "level", "sensor"), N("k", "setting", new { key = "offset" })], Data("k", "s", "value"));
+        JsonObject Level(double offset) => Definition("Level", graph, [new JsonObject { ["key"] = "offset", ["type"] = "number", ["label"] = "Offset", ["value"] = offset }]);
         var first = await rig.Save("level", Level(4));
         await rig.Until("level:level", s => Is(s, "value", 4.0), "the State has the setting's value");
         var batches = rig.Batches;
@@ -755,8 +685,8 @@ static class EntityGraphTests
     static async Task ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds()
     {
         await using var rig = await Rig.Start("replace");
-        JsonObject Pair(string second) => Definition("Pair", Graph("Pair", [State("s1", "a", new JsonObject { ["value"] = Lit("number", 1) }), State("s2", second, new JsonObject { ["value"] = Lit("number", 2) })]),
-            [Entity("a", "sensor", new { name = "A" }), Entity(second, "sensor")]);
+        JsonObject Pair(string second) => Definition("Pair", Graph("Pair",
+            [Entity("s1", "a", "sensor", new { name = "A" }, new JsonObject { ["value"] = Lit("number", 1) }), Entity("s2", second, "sensor", values: new JsonObject { ["value"] = Lit("number", 2) })]));
         await rig.Save("pair", Pair("b"));
         await rig.Until("pair:b", _ => true, "b is pushed");
         var batches = rig.Batches;
@@ -811,8 +741,8 @@ static class EntityGraphTests
         Check((await rig.Library("shelly", 0, EntityApiTests.Library))["ok"]!.GetValue<bool>(), "the class library saves");
         await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0, definition = EntityApiTests.Definition("Plug", "10.0.9.1") });
         var half = await rig.LibraryNode("Half");
-        var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } }), State("s", "level")], Data("k", "h", "value"), Data("h", "s", "value", "result"));
-        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")], [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
+        var graph = Graph("Level", [Entity("s", "level", "sensor"), N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } })], Data("k", "h", "value"), Data("h", "s", "value", "result"));
+        await rig.Save("level", Definition("Level", graph, [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
         await rig.Until("level:level", s => Is(s, "value", 2.0), "half the setting");
         var batches = rig.Batches;
         var rebuilt = await rig.Library("maths", 1, EntityStoreTests.Maths.Replace("value / 2", "value / 4"));
@@ -830,8 +760,8 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("library-break");
         await rig.Library("maths", 0, EntityStoreTests.Maths);
         var half = await rig.LibraryNode("Half");
-        var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } }), State("s", "level")], Data("k", "h", "value"), Data("h", "s", "value", "result"));
-        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")], [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
+        var graph = Graph("Level", [Entity("s", "level", "sensor"), N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } })], Data("k", "h", "value"), Data("h", "s", "value", "result"));
+        await rig.Save("level", Definition("Level", graph, [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
         await rig.Until("level:level", s => Is(s, "value", 2.0), "half the setting");
         var refused = await rig.Library("maths", 1, "public static class Maths { [Node(\"Double\", Pure = true)] public static double Twice(double value) => value * 2; }");
         Check(!refused["ok"]!.GetValue<bool>() && refused["error"]!["code"]!.GetValue<string>() == "validation"
@@ -865,8 +795,8 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// The run history records the When started and When commanded flows, with the definition's id and a trace, and never
-    /// a State; a trigger's flow only when its node turns it on.
+    /// The run history records the When started flow and a command's flow, with the definition's id and a trace, and
+    /// never a state flow; a trigger's flow only when its node turns it on.
     /// </summary>
     static async Task ReactiveRunsAreNotRecordedAndCommandRunsAre()
     {
@@ -885,7 +815,7 @@ static class EntityGraphTests
         motion["nodes"]!.AsArray().Add(N("tracked", "trigger", new { type = "entity", entity = "binary_sensor.motion_a", trackHistory = true }));
         motion["nodes"]!.AsArray().Add(N("say_tracked", "log", new { value = Lit("string", "tracked") }));
         motion["edges"]!.AsArray().Add(Next("tracked", "say_tracked"));
-        var saved = await rig.Save("both", Definition("Both", motion, [Entity("relay", "switch")]));
+        var saved = await rig.Save("both", Definition("Both", motion));
         var automationId = saved["document"]!["automationId"]!.GetValue<string>();
         await rig.Until("both:any_motion", _ => true, "the State");
         await rig.Change("binary_sensor.motion_a", "on");
@@ -965,9 +895,9 @@ static class EntityGraphTests
     static async Task AFailingNodeInAStateIsNamed()
     {
         await using var rig = await Rig.Start("bug", ("sensor.outside", "12"));
-        var graph = Derived(Graph("Outside", [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.outside") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }),
-            Custom("broken", BrokenValue), State("s", "outside")], Data("cur", "f", "entity"), Data("f", "broken", "value"), Data("broken", "s", "value", "result")));
-        await rig.Save("bug", Definition("Outside", graph, [Entity("outside", "sensor", new { name = "Outside" })]));
+        var graph = Derived(Graph("Outside", [Entity("s", "outside", "sensor", new { name = "Outside" }), N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.outside") }),
+            N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("broken", BrokenValue)], Data("cur", "f", "entity"), Data("f", "broken", "value"), Data("broken", "s", "value", "result")));
+        await rig.Save("bug", Definition("Outside", graph));
         await rig.Until("bug:outside", s => !Available(s), "the entity is unavailable");
         string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Outside: ", StringComparison.Ordinal)).ToArray();
         await EntityTestHome.Until(() => Warnings().Length == 1, "the warning: " + Lines(rig.Home.Logs()));
@@ -984,9 +914,10 @@ static class EntityGraphTests
     static async Task AValueTheEntityRefusesMakesItUnavailable()
     {
         await using var rig = await Rig.Start("refused", ("sensor.mode", "low"));
-        var graph = Graph("Mode", [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.mode") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" }), State("s", "mode")],
+        var graph = Graph("Mode", [Entity("s", "mode", "sensor", new { name = "Mode", deviceClass = "enum", options = new { options = new[] { "low", "high" } } }),
+            N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.mode") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" })],
             Data("cur", "f", "entity"), Data("f", "s", "value"));
-        await rig.Save("mode", Definition("Mode", graph, [Entity("mode", "sensor", new { name = "Mode", deviceClass = "enum", options = new { options = new[] { "low", "high" } } })]));
+        await rig.Save("mode", Definition("Mode", graph));
         await rig.Until("mode:mode", s => Available(s) && Is(s, "value", "low"), "the first push");
         string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Mode: ", StringComparison.Ordinal)).ToArray();
         var batches = rig.Batches;
@@ -1010,9 +941,10 @@ static class EntityGraphTests
     static async Task ASensorWithAUnitTakesNumericText()
     {
         await using var rig = await Rig.Start("numeric", ("sensor.raw", "21.5"));
-        var graph = Graph("Temp", [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.raw") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" }), State("s", "temp")],
+        var graph = Graph("Temp", [Entity("s", "temp", "sensor", new { name = "Temp", deviceClass = "temperature", options = new { unit = "°C" } }),
+            N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.raw") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "string" })],
             Data("cur", "f", "entity"), Data("f", "s", "value"));
-        await rig.Save("temp", Definition("Temp", graph, [Entity("temp", "sensor", new { name = "Temp", deviceClass = "temperature", options = new { unit = "°C" } })]));
+        await rig.Save("temp", Definition("Temp", graph));
         await rig.Until("temp:temp", s => Available(s) && Is(s, "value", "21.5"), "numeric text is published as given");
         string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Temp: ", StringComparison.Ordinal)).ToArray();
         var batches = rig.Batches;
@@ -1070,8 +1002,8 @@ static class EntityGraphTests
     static async Task ATriggerFlowInADefinitionCanSetState()
     {
         await using var rig = await Rig.Start("trigger", ("sensor.button", "idle"));
-        var graph = Graph("Button", [N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("t", "set"));
-        await rig.Save("button", Definition("Button", graph, [Entity("last", "sensor")]));
+        var graph = Graph("Button", [Entity("last", "last", "sensor"), N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("t", "set"));
+        await rig.Save("button", Definition("Button", graph));
         await rig.Until("button:last", s => Is(s, "value", null), "the sensor starts unknown");
         var batches = rig.Batches;
         await rig.Change("sensor.button", "pressed");
@@ -1088,8 +1020,7 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("entity-node", ("sensor.button", "idle"));
         var graph = Graph("Door", [Hub("door", "door", "binary_sensor"), N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "door", On(true))], Next("t", "set"));
-        var definition = Definition("Door", graph, []);
-        definition.Remove("entities");
+        var definition = Definition("Door", graph);
         var preview = await rig.Ok(new { operation = "preview", definition });
         Check(preview["valid"]!.GetValue<bool>() && !preview["diagnostics"]!.AsArray().Any(d => d!["code"]?.GetValue<string>() == "definition.entitiesRequired"),
             "the preview is valid and asks for no entity: " + preview["diagnostics"]!.ToJsonString());
@@ -1105,14 +1036,14 @@ static class EntityGraphTests
         await rig.Change("sensor.button", "pressed");
         await rig.Flush();
         Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
-        // The read answer's entities are for reading: saved back with them, it is refused in words (sent as it is, not as
-        // the editor sends it); without them, as the editor sends it, it answers the same entities.
+        // The read answer's entities are for reading: saved back with them, it is refused in words; without them, as the
+        // editor sends it, it answers the same entities.
         var back = new JsonObject
         {
             ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
             ["entities"] = read["entities"]!.DeepClone(), ["logic"] = read["logic"]!.DeepClone(),
         };
-        var refused = JsonNode.Parse(await rig.Api.EntityRequest(JsonSerializer.Serialize(new { operation = "save", id = "door", expectedRevision = read["revision"]!.GetValue<long>(), definition = back })))!;
+        var refused = await rig.Request(new { operation = "save", id = "door", expectedRevision = read["revision"]!.GetValue<long>(), definition = back });
         Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Single() is { } problem
             && problem["code"]!.GetValue<string>() == "definition.entitiesNotAllowed" && problem["inputId"]!.GetValue<string>() == "entities"
             && problem["message"]!.GetValue<string>() == EntityStoreTests.ListedEntities, "the read answer saved back with its entities is refused: " + refused.ToJsonString());
@@ -1125,8 +1056,7 @@ static class EntityGraphTests
     static async Task APreviewWithoutAnyEntityAsksForOne()
     {
         await using var rig = await Rig.Start("no-entity");
-        var definition = Definition("Nothing", Graph("Nothing", []), []);
-        definition.Remove("entities");
+        var definition = Definition("Nothing", Graph("Nothing", []));
         var preview = await rig.Ok(new { operation = "preview", definition });
         var errors = preview["diagnostics"]!.AsArray().Where(d => d!["severity"]!.GetValue<int>() == 3).ToArray();
         Check(!preview["valid"]!.GetValue<bool>() && errors.Length == 1 && errors[0]!["code"]!.GetValue<string>() == "definition.entitiesRequired",
@@ -1155,8 +1085,8 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("invalid");
         await rig.Library("maths", 0, EntityStoreTests.Maths);
         var half = await rig.LibraryNode("Half");
-        var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } }), State("s", "level")], Data("k", "h", "value"), Data("h", "s", "value", "result"));
-        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")], [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
+        var graph = Graph("Level", [Entity("s", "level", "sensor"), N("k", "setting", new { key = "offset" }), N("h", half, new { arguments = new { } })], Data("k", "h", "value"), Data("h", "s", "value", "result"));
+        await rig.Save("level", Definition("Level", graph, [new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 }]));
         var path = Path.Combine(rig.Home.Root, ".storage", "hass_sharp", "libraries", "maths.json");
         var library = JsonNode.Parse(File.ReadAllText(path))!;
         library["source"] = "public static class Maths { [Node(\"Double\", Pure = true)] public static double Twice(double value) => value * 2; }";
@@ -1183,7 +1113,7 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("automation-definition");
         async Task<JsonNode> Visual(object request) => JsonNode.Parse(await rig.Api.VisualRequest(JsonSerializer.Serialize(request)))!;
-        var stray = new JsonObject { ["entities"] = new JsonArray(Entity("door", "binary_sensor")), ["settings"] = new JsonArray() };
+        var stray = new JsonObject { ["entities"] = new JsonArray(new JsonObject { ["key"] = "door", ["domain"] = "binary_sensor" }), ["settings"] = new JsonArray() };
         JsonObject With(JsonObject graph) { var sent = graph.DeepClone().AsObject(); sent["definition"] = stray.DeepClone(); return sent; }
         var plain = Graph("Plain", [N("t", "trigger", new { type = "manual" }), N("say", "log", new { value = Lit("string", "hi") })], Next("t", "say"));
 
@@ -1203,10 +1133,10 @@ static class EntityGraphTests
             "the save generates the source of the graph without the definition, with the same diagnostics");
 
         static string[] Codes(JsonNode answer) => answer["error"]?["detail"]?["diagnostics"]?.AsArray().Select(d => d!["code"]?.GetValue<string>() ?? "").ToArray() ?? [];
-        var state = Graph("State", [N("t", "trigger", new { type = "manual" }), State("s", "door", On(true))]);
+        var state = Graph("State", [N("t", "trigger", new { type = "manual" }), Entity("s", "door", "binary_sensor", values: On(true))]);
         var refused = await Visual(new { operation = "save", id = "state", expectedRevision = 0, graph = With(state) });
         Check(!refused["ok"]!.GetValue<bool>() && refused["error"]!["code"]!.GetValue<string>() == "validation" && Codes(refused).Contains("node.document"),
-            "a State in an automation is refused: " + refused.ToJsonString());
+            "an Entity node in an automation is refused: " + refused.ToJsonString());
         var preview = (await Visual(new { operation = "preview", graph = With(state) }))["result"]!;
         Check(!preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "node.document"), "the preview refuses it too: " + preview["diagnostics"]!.ToJsonString());
         var untriggered = await Visual(new { operation = "save", id = "untriggered", expectedRevision = 0, graph = With(Graph("Untriggered", [N("say", "log", new { value = Lit("string", "hi") })])) });
@@ -1234,8 +1164,8 @@ static class EntityGraphTests
             name = "Plug", settings = new object[] { new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" } },
             logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" },
         } });
-        var graph = Graph("Level", [N("k", "setting", new { key = "offset" }), State("s", "level")], Data("k", "s", "value"));
-        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")], [
+        var graph = Graph("Level", [Entity("s", "level", "sensor"), N("k", "setting", new { key = "offset" })], Data("k", "s", "value"));
+        await rig.Save("level", Definition("Level", graph, [
             new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 },
             new JsonObject { ["key"] = "token", ["type"] = "string", ["label"] = "Token", ["value"] = "graph-hunter2", ["secret"] = true }]));
         var rebuilt = await rig.Library("secret", 1, library.Replace("\"\";\n    [Setting(Secret", "\"\"; // rebuilt\n    [Setting(Secret"));
@@ -1297,7 +1227,7 @@ static class EntityGraphTests
 
     /// <summary>A sensor whose value is the setting <c>offset</c>, with the settings given.</summary>
     static JsonObject Level(params JsonObject[] settings) =>
-        Definition("Level", Graph("Level", [N("k", "setting", new { key = "offset" }), State("s", "level")], Data("k", "s", "value")), [Entity("level", "sensor")], settings);
+        Definition("Level", Graph("Level", [Entity("s", "level", "sensor"), N("k", "setting", new { key = "offset" })], Data("k", "s", "value")), settings);
     static JsonObject Offset(double value) => new() { ["key"] = "offset", ["type"] = "number", ["value"] = value };
     static JsonObject Token(JsonNode? value, string type = "string") => new() { ["key"] = "token", ["type"] = type, ["label"] = "Token", ["value"] = value, ["secret"] = true };
     static JsonObject KeptToken(string type = "string") => new() { ["key"] = "token", ["type"] = type, ["label"] = "Token", ["secret"] = true, ["keep"] = true };
@@ -1614,11 +1544,11 @@ static class EntityGraphTests
 
     // ---- A new revision carries the states its flows set over ----
 
-    /// <summary>The definition with a field of its first entity changed, which makes a new revision of it.</summary>
+    /// <summary>The definition with a field of its first Entity node changed, which makes a new revision of it.</summary>
     static JsonObject Touched(JsonObject definition, string icon = "mdi:power")
     {
         var touched = definition.DeepClone().AsObject();
-        touched["entities"]![0]!["icon"] = icon;
+        touched["logic"]!["graph"]!["nodes"]!.AsArray().First(n => n!["kind"]!.GetValue<string>() == "entity")!["config"]!["icon"] = icon;
         return touched;
     }
 
@@ -1653,10 +1583,9 @@ static class EntityGraphTests
         var graph = definition["logic"]!["graph"]!.AsObject();
         graph["nodes"]!.AsArray().Add(N("k", "setting", new { key = "offset" }));
         graph["nodes"]!.AsArray().Add(N("h", half, new { arguments = new { } }));
-        graph["nodes"]!.AsArray().Add(State("s", "level"));
+        graph["nodes"]!.AsArray().Add(Entity("s", "level", "sensor"));
         graph["edges"]!.AsArray().Add(Data("k", "h", "value"));
         graph["edges"]!.AsArray().Add(Data("h", "s", "value", "result"));
-        definition["entities"]!.AsArray().Add(Entity("level", "sensor"));
         definition["settings"] = new JsonArray(new JsonObject { ["key"] = "offset", ["type"] = "number", ["value"] = 4 });
         await rig.Save("relay", definition);
         await rig.Until("relay:level", s => Is(s, "value", 2.0), "half the setting");
@@ -1699,7 +1628,7 @@ static class EntityGraphTests
         await rig.Api.EntityCommand("relay:relay", "turn_on", null);
         await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
         var batches = rig.Batches;
-        var saved = await rig.Save("relay", Definition("Relay", Graph("Relay", []), [Entity("relay", "binary_sensor", new { name = "Relay" })]), 1);
+        var saved = await rig.Save("relay", Definition("Relay", Graph("Relay", [Entity("relay", "relay", "binary_sensor", new { name = "Relay" })])), 1);
         Check(saved["active"]!.GetValue<bool>(), "the new revision runs: " + saved.ToJsonString());
         await rig.Started("relay");
         var after = rig.Pushed("relay:relay", batches);
@@ -1713,8 +1642,9 @@ static class EntityGraphTests
     static async Task AValueTheNewRevisionRefusesIsNotCarriedOver()
     {
         await using var rig = await Rig.Start("carry-refused", ("sensor.button", "idle"));
-        var graph = Graph("Button", [N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("t", "set"));
-        JsonObject Button(object? options = null) => Definition("Button", graph, [Entity("last", "sensor", options == null ? new { name = "Last" } : new { name = "Last", options })]);
+        JsonObject Button(object? options = null) => Definition("Button", Graph("Button",
+            [Entity("last", "last", "sensor", options == null ? new { name = "Last" } : new { name = "Last", options }),
+             N("t", "trigger", new { type = "entity", entity = "sensor.button" }), SetState("set", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("t", "set")));
         await rig.Save("button", Button());
         await rig.Change("sensor.button", "pressed");
         await rig.Until("button:last", s => Is(s, "value", "pressed"), "the trigger flow set the value");
@@ -1736,9 +1666,8 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("carry-unavailable");
         var definition = Relay(turnOff: false);
         var graph = definition["logic"]!["graph"]!.AsObject();
-        graph["nodes"]!.AsArray().Add(Command("off", "relay", "turn_off"));
         graph["nodes"]!.AsArray().Add(N("gone", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", false) }));
-        graph["edges"]!.AsArray().Add(Next("off", "gone"));
+        graph["edges"]!.AsArray().Add(Pin("relay", "command:turn_off", "gone"));
         await rig.Save("relay", definition);
         await rig.Api.EntityCommand("relay:relay", "turn_on", null);
         await rig.Api.EntityCommand("relay:relay", "turn_off", null);
@@ -1830,7 +1759,7 @@ static class EntityGraphTests
         await rig.Change("sensor.outside", "warm");
         await rig.Until("outside:outside", s => !Available(s), "a source that is not a number leaves it unavailable");
         var batches = rig.Batches;
-        await rig.Save("outside", Definition("Outside", Graph("Outside", []), [Entity("outside", "sensor", new { name = "Outside" })]), 1);
+        await rig.Save("outside", Definition("Outside", Graph("Outside", [Entity("outside", "outside", "sensor", new { name = "Outside" })])), 1);
         await rig.Started("outside");
         var after = rig.Pushed("outside:outside", batches);
         Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "value", 20.0)), "the new revision keeps the value, available: " + Lines(after.Select(s => s.ToJsonString())));
@@ -1847,8 +1776,8 @@ static class EntityGraphTests
         await rig.Api.EntityCommand("lamp:lamp", "turn_on", """{"brightness":120}""");
         await rig.Until("lamp:lamp", s => Is(s, "is_on", true) && Is(s, "brightness", 120), "on at 120");
         var batches = rig.Batches;
-        var plain = Definition("Lamp", Graph("Lamp", [Command("on", "lamp", "turn_on"), SetState("bright", "lamp", On(true)), Command("off", "lamp", "turn_off"), SetState("dark", "lamp", On(false))],
-            Next("on", "bright"), Next("off", "dark")), [Entity("lamp", "light", new { name = "Lamp" })]);
+        var plain = Definition("Lamp", Graph("Lamp", [Entity("lamp", "lamp", "light", new { name = "Lamp" }), SetState("bright", "lamp", On(true)), SetState("dark", "lamp", On(false))],
+            Pin("lamp", "command:turn_on", "bright"), Pin("lamp", "command:turn_off", "dark")));
         var automationId = AutomationId(await rig.Save("lamp", plain, 1));
         await rig.Started("lamp");
         var after = rig.Pushed("lamp:lamp", batches);
@@ -1876,12 +1805,12 @@ static class EntityGraphTests
     }
 
     /// <summary>A fan's speed: a select whose option is the one chosen.</summary>
-    static JsonObject Fan(params string[] options) => Definition("Fan", Graph("Fan", [Command("pick", "speed", "select_option"), SetState("show", "speed", new JsonObject())],
-        Next("pick", "show"), Data("pick", "show", "option", "option")), [Entity("speed", "select", new { name = "Speed", options = new { options } })]);
+    static JsonObject Fan(params string[] options) => Definition("Fan", Graph("Fan", [Entity("speed", "speed", "select", new { name = "Speed", options = new { options } }), SetState("show", "speed", new JsonObject())],
+        Pin("speed", "command:select_option", "show"), Data("speed", "show", "option", "command:select_option:option")));
 
     /// <summary>A number its set_value flow sets to the value given, from 0 to 100.</summary>
-    static JsonObject Dial() => Definition("Dial", Graph("Dial", [Command("set", "dial", "set_value"), SetState("show", "dial", new JsonObject())],
-        Next("set", "show"), Data("set", "show", "value", "value")), [Entity("dial", "number", new { name = "Dial", options = new { min = 0, max = 100 } })]);
+    static JsonObject Dial() => Definition("Dial", Graph("Dial", [Entity("dial", "dial", "number", new { name = "Dial", options = new { min = 0, max = 100 } }), SetState("show", "dial", new JsonObject())],
+        Pin("dial", "command:set_value", "show"), Data("dial", "show", "value", "command:set_value:value")));
 
     // ---- An entity comes back with the state it last showed ----
 
@@ -2032,10 +1961,9 @@ static class EntityGraphTests
             if (spare)
             {
                 var graph = definition["logic"]!["graph"]!.AsObject();
-                graph["nodes"]!.AsArray().Add(Command("spare_on", "spare", "turn_on"));
+                graph["nodes"]!.AsArray().Add(Entity("spare", "spare", "switch", new { name = "Spare" }));
                 graph["nodes"]!.AsArray().Add(SetState("spare_set", "spare", On(true)));
-                graph["edges"]!.AsArray().Add(Next("spare_on", "spare_set"));
-                definition["entities"]!.AsArray().Add(Entity("spare", "switch", new { name = "Spare" }));
+                graph["edges"]!.AsArray().Add(Pin("spare", "command:turn_on", "spare_set"));
             }
             return definition;
         }
@@ -2062,10 +1990,9 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("restore-unavailable");
         var definition = Relay(turnOff: false);
         var graph = definition["logic"]!["graph"]!.AsObject();
-        graph["nodes"]!.AsArray().Add(Command("off", "relay", "turn_off"));
         graph["nodes"]!.AsArray().Add(N("gone", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", false) }));
         graph["nodes"]!.AsArray().Add(SetState("set_off", "relay", On(false)));
-        graph["edges"]!.AsArray().Add(Next("off", "gone"));
+        graph["edges"]!.AsArray().Add(Pin("relay", "command:turn_off", "gone"));
         graph["edges"]!.AsArray().Add(Next("gone", "set_off"));
         await rig.Save("relay", definition);
         await rig.Api.EntityCommand("relay:relay", "turn_on", null);
@@ -2092,7 +2019,7 @@ static class EntityGraphTests
         await rig.Api.EntityCommand("relay:relay", "turn_on", null);
         await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
         await rig.Ok(new { operation = "set_enabled", id = "relay", enabled = false });
-        await rig.Save("relay", Definition("Relay", Graph("Relay", []), [Entity("relay", "binary_sensor", new { name = "Relay" })]), 1);
+        await rig.Save("relay", Definition("Relay", Graph("Relay", [Entity("relay", "relay", "binary_sensor", new { name = "Relay" })])), 1);
         Check(!rig.Scripts.States!.Ids().Contains("relay:relay"), "the switch's state is kept for the binary sensor");
         await rig.Flush();
         var batches = rig.Batches;
@@ -2108,8 +2035,8 @@ static class EntityGraphTests
     static async Task ACommandFlowThatEndsAtAStopStepSucceeds()
     {
         await using var rig = await Rig.Start("stop-command");
-        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), SetState("set_on", "relay", On(true)), N("halt", "stop")], Next("on", "set_on"), Next("set_on", "halt"));
-        var saved = await rig.Save("relay", Definition("Relay", graph, [Entity("relay", "switch", new { name = "Relay" })]));
+        var graph = Graph("Relay", [Entity("relay", "relay", "switch", new { name = "Relay" }), SetState("set_on", "relay", On(true)), N("halt", "stop")], Pin("relay", "command:turn_on", "set_on"), Next("set_on", "halt"));
+        var saved = await rig.Save("relay", Definition("Relay", graph));
         await rig.Until("relay:relay", _ => true, "the switch starts");
         await rig.Api.EntityCommand("relay:relay", "turn_on", null);
         await rig.Until("relay:relay", s => Is(s, "is_on", true), "the state set before the Stop step");
@@ -2127,8 +2054,8 @@ static class EntityGraphTests
     static async Task FailingSetupAndTriggerFlowsAreLoggedByName()
     {
         await using var rig = await Rig.Start("flow-failures", ("sensor.button", "idle"));
-        var setup = Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read"));
-        var failing = await rig.Save("level", Definition("Level", setup, [Entity("level", "sensor")]));
+        var setup = Graph("Level", [Entity("level", "level", "sensor"), N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read"));
+        var failing = await rig.Save("level", Definition("Level", setup));
         Check(failing["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable.", "the save answers the flow's error: " + failing.ToJsonString());
         // The cannot-start warning says it, once: the failing When started flow is not logged at error too.
         Check(rig.Home.Logs(PyLogLevel.Error).Length == 0, "a failing When started flow is logged at error: " + Lines(rig.Home.Logs(PyLogLevel.Error)));
@@ -2137,10 +2064,10 @@ static class EntityGraphTests
         Check(rig.Home.Logs(PyLogLevel.Debug).Any(l => l.StartsWith("Level: When started failed: ", StringComparison.Ordinal) && l.Contains("   at ", StringComparison.Ordinal)), "the whole failure at Debug: " + Lines(rig.Home.Logs(PyLogLevel.Debug)));
 
         // A step that fails over a cause of its own: the reason names the step, then the cause, in the answer and the warning alike.
-        var converting = Graph("Count", [N("start", "entity_setup"), N("conv", "convert", new { type = "number", value = Lit("string", "warm") }), SetState("set", "count", new JsonObject())],
+        var converting = Graph("Count", [Entity("count", "count", "sensor"), N("start", "entity_setup"), N("conv", "convert", new { type = "number", value = Lit("string", "warm") }), SetState("set", "count", new JsonObject())],
             Next("start", "set"), Data("conv", "set", "value"));
         var warnings = rig.Home.Logs(PyLogLevel.Warn).Length;
-        var named = await rig.Save("count", Definition("Count", converting, [Entity("count", "sensor")]));
+        var named = await rig.Save("count", Definition("Count", converting));
         var reason = named["activationError"]?.GetValue<string>() ?? "";
         Check(reason == "Convert (used by Set state): Cannot convert conv.value to System.Double. (The input string 'warm' was not in a correct format.)",
             "the save answers the step that failed and why: " + named.ToJsonString());
@@ -2150,8 +2077,8 @@ static class EntityGraphTests
         var trigger = N("t", "trigger", new { type = "entity", entity = "sensor.button" });
         trigger["label"] = "Button pressed";
         var unlabelled = N("u", "trigger", new { type = "entity", entity = "sensor.button" });
-        var triggers = Graph("Button", [trigger, Read("read", "sensor.gone"), unlabelled, Read("again", "sensor.gone")], Next("t", "read"), Next("u", "again"));
-        await rig.Save("button", Definition("Button", triggers, [Entity("last", "sensor")]));
+        var triggers = Graph("Button", [Entity("last", "last", "sensor"), trigger, Read("read", "sensor.gone"), unlabelled, Read("again", "sensor.gone")], Next("t", "read"), Next("u", "again"));
+        await rig.Save("button", Definition("Button", triggers));
         await rig.Change("sensor.button", "pressed");
         var triggerErrors = rig.Home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Button: ", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
         Check(triggerErrors.Length == 2 && triggerErrors[0].StartsWith("Button: Button pressed failed: ", StringComparison.Ordinal) && triggerErrors[1].StartsWith("Button: Trigger (u) failed: ", StringComparison.Ordinal)
@@ -2182,10 +2109,10 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("poll", ("sensor.tick", "0"), ("sensor.reading", "unavailable"));
         var trigger = N("t", "trigger", new { type = "entity", entity = "sensor.tick" });
         trigger["label"] = "Poll";
-        var graph = Graph("Level", [trigger, N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.reading") }),
+        var graph = Graph("Level", [Entity("level", "level", "sensor"), trigger, N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.reading") }),
             N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), SetState("set", "level", new JsonObject())],
             Next("t", "set"), Data("cur", "f", "entity"), Data("f", "set", "value"));
-        await rig.Save("level", Definition("Level", graph, [Entity("level", "sensor")]));
+        await rig.Save("level", Definition("Level", graph));
         string[] Errors() => rig.Home.Logs(PyLogLevel.Error).Where(l => l.StartsWith("Level: ", StringComparison.Ordinal)).ToArray();
         var tick = 0;
         Task Poll() => rig.Change("sensor.tick", (++tick).ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -2221,9 +2148,9 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("slow", ("sensor.level", "0"));
         DefinitionHost.SlowStateWarning = TimeSpan.FromMilliseconds(100);
         var graph = Derived(Graph("Slow",
-            [N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.level") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("slow", SlowValue), State("s", "quick")],
+            [Entity("s", "quick", "sensor", new { name = "Quick" }), N("cur", "entity_current", new JsonObject { ["entity"] = Lit("entity_id", "sensor.level") }), N("f", "entity_field", new { entity = Unset, field = "state", type = "number" }), Custom("slow", SlowValue)],
             Data("cur", "f", "entity"), Data("f", "slow", "value"), Data("slow", "s", "value", "result")));
-        await rig.Save("slow", Definition("Slow", graph, [Entity("quick", "sensor", new { name = "Quick" })]));
+        await rig.Save("slow", Definition("Slow", graph));
         var (gate, entered) = (rig.Static<SemaphoreSlim>("slow", "Gate"), rig.Static<SemaphoreSlim>("slow", "Entered"));
         await Reached(entered, "the startup run reaches the value node");
         string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Slow: ", StringComparison.Ordinal)).ToArray();
@@ -2253,7 +2180,7 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("cannot-start");
         string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).ToArray();
-        var setup = Definition("Level", Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read")), [Entity("level", "sensor")]);
+        var setup = Definition("Level", Graph("Level", [Entity("level", "level", "sensor"), N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read")));
         var saved = await rig.Save("level", setup);
         Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable."
             && Status(saved["document"]!.AsObject()) == "failed" && saved["document"]!["activationError"]?.GetValue<string>() == "Entity 'sensor.gone' is unavailable.",
@@ -2285,7 +2212,7 @@ static class EntityGraphTests
     static async Task ADefinitionThatCannotStartIsOffWhenTurnedOff()
     {
         await using var rig = await Rig.Start("cannot-start-off");
-        await rig.Save("level", Definition("Level", Graph("Level", [N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read")), [Entity("level", "sensor")]));
+        await rig.Save("level", Definition("Level", Graph("Level", [Entity("level", "level", "sensor"), N("start", "entity_setup"), Read("read", "sensor.gone")], Next("start", "read"))));
         await rig.Ok(new { operation = "set_enabled", id = "level", enabled = false });
         var off = await rig.Read("level");
         Check(Status(off) == "off" && !off["enabled"]!.GetValue<bool>() && off["activationError"]?.GetValue<string>() == "Not active", "turned off, it is off: " + off.ToJsonString());
@@ -2354,10 +2281,10 @@ static class EntityGraphTests
     {
         var (rig, kinds) = await TextRig("secret-flow");
         await using var _ = rig;
-        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("len1", kinds["Text length"], new { arguments = new { } }),
+        var graph = Graph("Relay", [Entity("relay", "relay", "switch", new { name = "Relay" }), N("tok1", "setting", new { key = "token" }), N("len1", kinds["Text length"], new { arguments = new { } }),
             N("cmp", "compare", new { left = UnsetValue(), right = Lit("number", 5), @operator = "gt" }), SetState("set_on", "relay", new JsonObject())],
-            Next("on", "set_on"), Data("tok1", "len1", "text"), Data("len1", "cmp", "left", "result"), Data("cmp", "set_on", "is_on"));
-        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch", new { name = "Relay" })], [Token(FakeSecret)]), "relay", "turn_on");
+            Pin("relay", "command:turn_on", "set_on"), Data("tok1", "len1", "text"), Data("len1", "cmp", "left", "result"), Data("cmp", "set_on", "is_on"));
+        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Token(FakeSecret)]), "relay", "turn_on");
         await rig.Until("relay:relay", s => Is(s, "is_on", true), "the comparison of the real value sets the switch");
         Unquoted(answer.ToJsonString(), "the run's trace answer");
         Check(Hidden(Step(answer, "tok1")["outputs"]?["value"]), "the setting's own output: " + Shape(Step(answer, "tok1")["outputs"]?["value"]));
@@ -2384,11 +2311,11 @@ static class EntityGraphTests
         try
         {
             var service = N("svc", "service", new JsonObject { ["service"] = "notify.send_message", ["fields"] = new JsonObject { ["message"] = UnsetValue() }, ["returnResponse"] = false });
-            var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("bear", kinds["Bearer"], new { arguments = new { } }),
+            var graph = Graph("Relay", [Entity("relay", "relay", "switch"), Entity("label", "label", "sensor"), N("tok1", "setting", new { key = "token" }), N("bear", kinds["Bearer"], new { arguments = new { } }),
                 service, SetState("set_label", "label", new JsonObject()), N("say", "log", new { value = UnsetValue() })],
-                Next("on", "svc"), Next("svc", "set_label"), Next("set_label", "say"),
+                Pin("relay", "command:turn_on", "svc"), Next("svc", "set_label"), Next("set_label", "say"),
                 Data("tok1", "bear", "token"), Data("bear", "svc", "field:message", "result"), Data("bear", "set_label", "value", "result"), Data("bear", "say", "value", "result"));
-            var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch"), Entity("label", "sensor")], [Token(FakeSecret)]), "relay", "turn_on");
+            var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Token(FakeSecret)]), "relay", "turn_on");
             Check(calls.Count == 1 && calls.Single().Contains("Bearer " + FakeSecret, StringComparison.Ordinal), $"the service gets the real text ({calls.Count} calls)");
             await rig.Until("relay:label", s => s["values"]?["value"]?.GetValue<string>() == "Bearer " + FakeSecret, "the entity gets the real text");
             Unquoted(answer.ToJsonString(), "the run's trace answer");
@@ -2412,12 +2339,13 @@ static class EntityGraphTests
     {
         var (rig, kinds) = await TextRig("secret-mixed");
         await using var _ = rig;
-        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("nm", "setting", new { key = "name" }),
+        var graph = Graph("Relay", [Entity("relay", "relay", "switch"), Entity("label", "label", "sensor"), Entity("count", "count", "sensor"),
+            N("tok1", "setting", new { key = "token" }), N("nm", "setting", new { key = "name" }),
             N("nlen", kinds["Text length"], new { arguments = new { } }), N("join", kinds["Join"], new { arguments = new { } }),
             SetState("set_label", "label", new JsonObject()), SetState("set_count", "count", new JsonObject())],
-            Next("on", "set_label"), Next("set_label", "set_count"),
+            Pin("relay", "command:turn_on", "set_label"), Next("set_label", "set_count"),
             Data("nm", "nlen", "text"), Data("tok1", "join", "first"), Data("nm", "join", "second"), Data("join", "set_label", "value", "result"), Data("nlen", "set_count", "value", "result"));
-        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch"), Entity("label", "sensor"), Entity("count", "sensor")], [Token(FakeSecret), Plain("name", "kitchen")]), "relay", "turn_on");
+        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Token(FakeSecret), Plain("name", "kitchen")]), "relay", "turn_on");
         Unquoted(answer.ToJsonString(), "the run's trace answer");
         Check(Clear(Step(answer, "nm")["outputs"]?["value"], "kitchen"), "the plain setting: " + Shape(Step(answer, "nm")["outputs"]?["value"]));
         Check(Clear(Step(answer, "nlen")["inputs"]?["text"], "kitchen") && Clear(Step(answer, "nlen")["outputs"]?["result"], 7), "the plain setting's length: " + Shape(Step(answer, "nlen")["outputs"]?["result"]));
@@ -2433,10 +2361,10 @@ static class EntityGraphTests
     {
         var (rig, kinds) = await TextRig("secret-step");
         await using var _ = rig;
-        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("meas", kinds["Measure"], new { arguments = new { } }),
+        var graph = Graph("Relay", [Entity("relay", "relay", "switch"), Entity("count", "count", "sensor"), N("tok1", "setting", new { key = "token" }), N("meas", kinds["Measure"], new { arguments = new { } }),
             SetState("set_count", "count", new JsonObject())],
-            Next("on", "meas"), Next("meas", "set_count"), Data("tok1", "meas", "text"), Data("meas", "set_count", "value", "result"));
-        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Entity("relay", "switch"), Entity("count", "sensor")], [Token(FakeSecret)]), "relay", "turn_on");
+            Pin("relay", "command:turn_on", "meas"), Next("meas", "set_count"), Data("tok1", "meas", "text"), Data("meas", "set_count", "value", "result"));
+        var answer = await Commanded(rig, "relay", Definition("Relay", graph, [Token(FakeSecret)]), "relay", "turn_on");
         Unquoted(answer.ToJsonString(), "the run's trace answer");
         Check(Hidden(Step(answer, "meas")["inputs"]?["text"], "tok1", "value"), "the step's secret input: " + Shape(Step(answer, "meas")["inputs"]?["text"]));
         Check(Clear(Step(answer, "meas")["outputs"]?["result"], FakeSecret.Length), "the step's output: " + Shape(Step(answer, "meas")["outputs"]?["result"]));
@@ -2451,14 +2379,15 @@ static class EntityGraphTests
     {
         var (rig, kinds) = await TextRig("secret-failure");
         await using var _ = rig;
-        var graph = Graph("Relay", [Command("on", "relay", "turn_on"), N("tok1", "setting", new { key = "token" }), N("conv", "convert", new { type = "number", value = UnsetValue() }),
-            SetState("set_count", "count", new JsonObject()),
-            Command("off", "relay", "turn_off"), SetState("set_mode", "mode", new JsonObject()),
-            Command("on2", "relay2", "turn_on"), N("len1", kinds["Text length"], new { arguments = new { } }), N("loop", "repeat", new { count = UnsetValue(), maxIterations = 5 }),
+        var graph = Graph("Relay", [Entity("relay", "relay", "switch"), Entity("relay2", "relay2", "switch"), Entity("count", "count", "sensor"),
+            Entity("mode", "mode", "sensor", new { options = new { options = new[] { "a", "b" } } }),
+            N("tok1", "setting", new { key = "token" }), N("conv", "convert", new { type = "number", value = UnsetValue() }), SetState("set_count", "count", new JsonObject()),
+            SetState("set_mode", "mode", new JsonObject()),
+            N("len1", kinds["Text length"], new { arguments = new { } }), N("loop", "repeat", new { count = UnsetValue(), maxIterations = 5 }),
              N("tick", "log", new { value = Lit("string", "tick") })],
-            Next("on", "set_count"), Next("off", "set_mode"), Next("on2", "loop"), E("loop", "tick", "body"),
+            Pin("relay", "command:turn_on", "set_count"), Pin("relay", "command:turn_off", "set_mode"), Pin("relay2", "command:turn_on", "loop"), E("loop", "tick", "body"),
             Data("tok1", "conv", "value"), Data("conv", "set_count", "value"), Data("tok1", "set_mode", "value"), Data("tok1", "len1", "text"), Data("len1", "loop", "count", "result"));
-        var definition = Definition("Relay", graph, [Entity("relay", "switch"), Entity("relay2", "switch"), Entity("count", "sensor"), Entity("mode", "sensor", new { options = new { options = new[] { "a", "b" } } })], [Token(FakeSecret)]);
+        var definition = Definition("Relay", graph, [Token(FakeSecret)]);
         var automationId = (await rig.Save("relay", definition))["document"]!["automationId"]!.GetValue<string>();
         await rig.Until("relay:relay", _ => true, "the definition starts");
         var errors = new List<string>();
@@ -2490,9 +2419,8 @@ static class EntityGraphTests
     static JsonObject[] CommandRuns(Rig rig, string automationId) => rig.History(automationId).Where(r => r["cause"]!.GetValue<string>() == "Command").ToArray();
     /// <summary>A light that can be dimmed, turned on at the brightness its command gives and turned off; both flows set its state.</summary>
     static JsonObject Lamp() => Definition("Lamp", Graph("Lamp",
-        [Command("on", "lamp", "turn_on"), SetState("bright", "lamp", On(true)), Command("off", "lamp", "turn_off"), SetState("dark", "lamp", On(false))],
-        Next("on", "bright"), Next("off", "dark"), Data("on", "bright", "brightness", "brightness")),
-        [Entity("lamp", "light", new { name = "Lamp", options = new { dimmable = true } })]);
+        [Entity("lamp", "lamp", "light", new { name = "Lamp", options = new { dimmable = true } }), SetState("bright", "lamp", On(true)), SetState("dark", "lamp", On(false))],
+        Pin("lamp", "command:turn_on", "bright"), Pin("lamp", "command:turn_off", "dark"), Data("lamp", "bright", "brightness", "command:turn_on:brightness")));
 
     /// <summary>A Set state step sets what it is given and the entity keeps the rest: a light turned off keeps its brightness.</summary>
     static async Task SetStateKeepsWhatItIsNotGiven()
@@ -2507,17 +2435,18 @@ static class EntityGraphTests
         await rig.Until("lamp:lamp", s => Is(s, "is_on", false) && Is(s, "brightness", 100), "turned off, keeping its brightness", batches);
     }
 
-    /// <summary>When commanded gives its command's data to the steps after it: a number's value, a select's option, a text and a cover's position.</summary>
+    /// <summary>A command's pin gives its data to the steps after it: a number's value, a select's option, a text and a cover's position.</summary>
     static async Task ACommandHandsItsDataToTheFlow()
     {
         await using var rig = await Rig.Start("command-data");
         var graph = Graph("Panel",
-            [Command("set", "target", "set_value"), SetState("show_target", "target", new JsonObject()), Command("pick", "mode", "select_option"), SetState("show_mode", "mode", new JsonObject()),
-             Command("write", "message", "set_value"), SetState("show_message", "message", new JsonObject()), Command("move", "blind", "set_position"), SetState("show_blind", "blind", new JsonObject())],
-            Next("set", "show_target"), Next("pick", "show_mode"), Next("write", "show_message"), Next("move", "show_blind"),
-            Data("set", "show_target", "value", "value"), Data("pick", "show_mode", "option", "option"), Data("write", "show_message", "value", "value"), Data("move", "show_blind", "position", "position"));
-        await rig.Save("panel", Definition("Panel", graph, [Entity("target", "number", new { options = new { min = 5, max = 30, step = 0.5 } }),
-            Entity("mode", "select", new { options = new { options = new[] { "low", "high" } } }), Entity("message", "text"), Entity("blind", "cover", new { options = new { positionable = true } })]));
+            [Entity("target", "target", "number", new { options = new { min = 5, max = 30, step = 0.5 } }), Entity("mode", "mode", "select", new { options = new { options = new[] { "low", "high" } } }),
+             Entity("message", "message", "text"), Entity("blind", "blind", "cover", new { options = new { positionable = true } }),
+             SetState("show_target", "target", new JsonObject()), SetState("show_mode", "mode", new JsonObject()), SetState("show_message", "message", new JsonObject()), SetState("show_blind", "blind", new JsonObject())],
+            Pin("target", "command:set_value", "show_target"), Pin("mode", "command:select_option", "show_mode"), Pin("message", "command:set_value", "show_message"), Pin("blind", "command:set_position", "show_blind"),
+            Data("target", "show_target", "value", "command:set_value:value"), Data("mode", "show_mode", "option", "command:select_option:option"),
+            Data("message", "show_message", "value", "command:set_value:value"), Data("blind", "show_blind", "position", "command:set_position:position"));
+        await rig.Save("panel", Definition("Panel", graph));
         await rig.Until("panel:target", _ => true, "the panel starts");
         foreach (var (key, command, data) in new[] { ("target", "set_value", """{"value":21.5}"""), ("mode", "select_option", """{"option":"high"}"""), ("message", "set_value", """{"value":"Hello"}"""), ("blind", "set_position", """{"position":40}""") })
             await rig.Api.EntityCommand("panel:" + key, command, data);
@@ -2566,10 +2495,11 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("no-brightness");
         var graph = Graph("Lamps",
-            [Command("on", "plain", "turn_on"), SetState("lit", "plain", On(true)), Command("off", "plain", "turn_off"), SetState("dark", "plain", On(false)),
-             Command("on2", "wired", "turn_on"), SetState("bright", "wired", On(true)), Command("off2", "wired", "turn_off"), SetState("dark2", "wired", On(false))],
-            Next("on", "lit"), Next("off", "dark"), Next("on2", "bright"), Next("off2", "dark2"), Data("on2", "bright", "brightness", "brightness"));
-        var automationId = AutomationId(await rig.Save("lamps", Definition("Lamps", graph, [Entity("plain", "light", new { name = "Plain" }), Entity("wired", "light", new { name = "Wired" })])));
+            [Entity("plain", "plain", "light", new { name = "Plain" }), Entity("wired", "wired", "light", new { name = "Wired" }),
+             SetState("lit", "plain", On(true)), SetState("dark", "plain", On(false)), SetState("bright", "wired", On(true)), SetState("dark2", "wired", On(false))],
+            Pin("plain", "command:turn_on", "lit"), Pin("plain", "command:turn_off", "dark"), Pin("wired", "command:turn_on", "bright"), Pin("wired", "command:turn_off", "dark2"),
+            Data("wired", "bright", "brightness", "command:turn_on:brightness"));
+        var automationId = AutomationId(await rig.Save("lamps", Definition("Lamps", graph)));
         await rig.Until("lamps:plain", _ => true, "the lights start");
         await rig.Api.EntityCommand("lamps:plain", "turn_on", null);
         await rig.Until("lamps:plain", s => Is(s, "is_on", true) && Is(s, "brightness", null), "the light that cannot be dimmed is turned on, with no brightness");
@@ -2587,8 +2517,9 @@ static class EntityGraphTests
     static async Task AButtonRunsItsFlow()
     {
         await using var rig = await Rig.Start("button");
-        var graph = Graph("Bell", [Command("press", "bell", "press"), SetState("rang", "last", new JsonObject { ["value"] = Lit("string", "pressed") })], Next("press", "rang"));
-        var saved = await rig.Save("bell", Definition("Bell", graph, [Entity("bell", "button", new { name = "Bell" }), Entity("last", "sensor")]));
+        var graph = Graph("Bell", [Entity("bell", "bell", "button", new { name = "Bell" }), Entity("last", "last", "sensor"), SetState("rang", "last", new JsonObject { ["value"] = Lit("string", "pressed") })],
+            Pin("bell", "command:press", "rang"));
+        var saved = await rig.Save("bell", Definition("Bell", graph));
         Check(!saved.ContainsKey("diagnostics"), "a button whose press is handled has no warnings: " + saved.ToJsonString());
         var sync = JsonNode.Parse(rig.Home.Syncs("bell").Single())!;
         Check(sync["entities"]![0]!["commands"]!.ToJsonString() == """["press"]""", "the button takes its command: " + sync.ToJsonString());
@@ -2606,11 +2537,12 @@ static class EntityGraphTests
     {
         await using var rig = await Rig.Start("command-check");
         var graph = Graph("Panel",
-            [Command("set", "target", "set_value"), SetState("show_target", "target", new JsonObject()), Command("on", "lamp", "turn_on"), SetState("lit", "lamp", On(true)),
-             Command("off", "lamp", "turn_off"), SetState("dark", "lamp", On(false)), Command("pick", "mode", "select_option"), SetState("show_mode", "mode", new JsonObject())],
-            Next("set", "show_target"), Next("on", "lit"), Next("off", "dark"), Next("pick", "show_mode"), Data("set", "show_target", "value", "value"), Data("pick", "show_mode", "option", "option"));
-        var automationId = AutomationId(await rig.Save("panel", Definition("Panel", graph, [Entity("target", "number", new { name = "Target", options = new { min = 5, max = 30 } }),
-            Entity("lamp", "light", new { name = "Lamp" }), Entity("mode", "select", new { name = "Mode", options = new { options = new[] { "low", "high" } } })])));
+            [Entity("target", "target", "number", new { name = "Target", options = new { min = 5, max = 30 } }), Entity("lamp", "lamp", "light", new { name = "Lamp" }),
+             Entity("mode", "mode", "select", new { name = "Mode", options = new { options = new[] { "low", "high" } } }),
+             SetState("show_target", "target", new JsonObject()), SetState("lit", "lamp", On(true)), SetState("dark", "lamp", On(false)), SetState("show_mode", "mode", new JsonObject())],
+            Pin("target", "command:set_value", "show_target"), Pin("lamp", "command:turn_on", "lit"), Pin("lamp", "command:turn_off", "dark"), Pin("mode", "command:select_option", "show_mode"),
+            Data("target", "show_target", "value", "command:set_value:value"), Data("mode", "show_mode", "option", "command:select_option:option"));
+        var automationId = AutomationId(await rig.Save("panel", Definition("Panel", graph)));
         await rig.Until("panel:target", _ => true, "the panel starts");
         await rig.Flush();
         var batches = rig.Batches;
@@ -2633,8 +2565,9 @@ static class EntityGraphTests
     static async Task APasswordTextsRefusedValueIsNotQuoted()
     {
         await using var rig = await Rig.Start("password-text");
-        var graph = Graph("Code", [Command("set", "code", "set_value"), SetState("show", "code", new JsonObject { ["value"] = Lit("string", "abcd") })], Next("set", "show"));
-        await rig.Save("code", Definition("Code", graph, [Entity("code", "text", new { name = "Code", options = new { pattern = "^[0-9]+$", mode = "password" } })]));
+        var graph = Graph("Code", [Entity("code", "code", "text", new { name = "Code", options = new { pattern = "^[0-9]+$", mode = "password" } }), SetState("show", "code", new JsonObject { ["value"] = Lit("string", "abcd") })],
+            Pin("code", "command:set_value", "show"));
+        await rig.Save("code", Definition("Code", graph));
         await rig.Until("code:code", _ => true, "the text starts");
         var refused = await Throws<InvalidOperationException>(() => rig.Api.EntityCommand("code:code", "set_value", """{"value":"1234"}"""), "a password text given a text it refuses");
         Check(refused.Message == "The hidden value given for Code (code) is not a text that matches ^[0-9]+$", "the refusal does not quote the password: " + refused.Message);
@@ -2656,8 +2589,8 @@ static class EntityGraphTests
             N("label", "image_draw_text", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = Lit("string", "Porch"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1) }),
             N("say", "log", new { value = Unset })];
         JsonObject[] Wires() => [Next("snap", "say"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "say", "value", "image")];
-        var graph = Graph("Porch", [N("setup", "entity_setup"), .. Steps(), SetState("set", "seen", new JsonObject { ["value"] = Lit("string", "taken") })], [Next("setup", "snap"), .. Wires(), Next("say", "set")]);
-        await rig.Save("porch", Definition("Porch", graph, [Entity("seen", "sensor")]));
+        var graph = Graph("Porch", [Entity("seen", "seen", "sensor"), N("setup", "entity_setup"), .. Steps(), SetState("set", "seen", new JsonObject { ["value"] = Lit("string", "taken") })], [Next("setup", "snap"), .. Wires(), Next("say", "set")]);
+        await rig.Save("porch", Definition("Porch", graph));
         await rig.Until("porch:seen", s => Is(s, "value", "taken"), "the When started flow takes the picture");
         Check(rig.Home.Pictures().SequenceEqual([("porch", "camera.porch")]), "the picture is asked for under the definition's id: " + string.Join(", ", rig.Home.Pictures()));
         Check(rig.Home.Logs().Contains("Image · 1 KB · 2 drawings"), "the drawings are on the picture: " + Lines(rig.Home.Logs()));
@@ -2726,23 +2659,22 @@ static class EntityGraphTests
     static JsonObject Rect(string id) => N(id, "image_draw_rect", new JsonObject
         { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 2), ["y"] = Lit("number", 2), ["width"] = Lit("number", 20), ["height"] = Lit("number", 10) });
     static JsonObject ShowFrame(string id, string entity = "annotated") => N(id, "show_frame", new JsonObject { ["entity"] = entity, ["image"] = JsonSerializer.SerializeToNode(Unset) });
-    /// <summary>A stand-in for the camera's frame pin, as <see cref="Command"/> is for a command's (<see cref="Placed"/>).</summary>
-    static JsonObject FrameNeeded(string id, bool? trackHistory = null)
+    /// <summary>The camera <c>annotated</c>'s Entity node; its frame flow's history as the catalog has it unless <paramref name="trackHistory"/> is given.</summary>
+    static JsonObject Camera(bool? trackHistory = null)
     {
-        var config = new JsonObject { ["entity"] = "annotated", ["port"] = "frame" };
-        if (trackHistory is { } track) config["trackHistory"] = track;
-        return N(id, "pin", config);
+        var camera = Entity("annotated", "annotated", "camera", new { name = "Annotated" });
+        if (trackHistory is { } track) camera["config"]!["history"]!["frame"] = track;
+        return camera;
     }
-    static JsonNode Camera() => Entity("annotated", "camera", new { name = "Annotated" });
     /// <summary>
-    /// The phase's acceptance graph: When a frame is needed ▸ Annotated → Take a picture (camera.front) → Draw rectangle →
+    /// The phase's acceptance graph: Annotated's When a frame is needed → Take a picture (camera.front) → Draw rectangle →
     /// Draw text → Show frame ▸ Annotated; its history as the catalog has it unless <paramref name="trackHistory"/> is given.
     /// </summary>
     static JsonObject Annotated(bool? trackHistory = null) => Definition("Annotated", Graph("Annotated",
-        [FrameNeeded("frame", trackHistory), Snap("snap"), Rect("rect"),
+        [Camera(trackHistory), Snap("snap"), Rect("rect"),
          N("label", "image_draw_text", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = Lit("string", "Front door"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1) }),
          ShowFrame("show")],
-        Next("frame", "snap"), Next("snap", "show"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "show", "image", "image")), [Camera()]);
+        Pin("annotated", "frame", "snap"), Next("snap", "show"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "show", "image", "image")));
     static Task<byte[]> Frame(Rig rig, string uniqueId = "annotated:annotated") => rig.Api.CameraImage(uniqueId);
     static bool Same(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
     static (DefinitionHost Host, SharpCamera Camera) Annotating(Rig rig, string uniqueId = "annotated:annotated") =>
@@ -2827,9 +2759,9 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("frame-kept", ("camera.front", "idle"));
         var front = Front();
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
-        var graph = Graph("Kept", [N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), FrameNeeded("frame"), N("say", "log", new { value = Lit("string", "asked") })],
-            Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"), Next("frame", "say"));
-        var saved = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]));
+        var graph = Graph("Kept", [Camera(), N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), N("say", "log", new { value = Lit("string", "asked") })],
+            Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"), Pin("annotated", "frame", "say"));
+        var saved = await rig.Save("annotated", Definition("Annotated", graph));
         Check(saved["diagnostics"] == null, "a Show frame in another flow is enough: " + saved.ToJsonString());
         await rig.Started("annotated");
         Check(Same(await Frame(rig), front), "the frame When started showed is the answer");
@@ -2837,7 +2769,7 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// Without a When a frame is needed, a request is answered with the frame shown last, by any flow, and runs nothing:
+    /// With nothing on the camera's frame pin, a request is answered with the frame shown last, by any flow, and runs nothing:
     /// When started shows the first, a trigger's flow a later one.
     /// </summary>
     static async Task APushedFrameIsAnsweredWithoutRunningAnything()
@@ -2846,10 +2778,10 @@ static class EntityGraphTests
         var front = Front();
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
         var graph = Graph("Pushed",
-            [N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("again"), Rect("mark"), ShowFrame("marked")],
+            [Camera(), N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("again"), Rect("mark"), ShowFrame("marked")],
             Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"),
             Next("seen", "again"), Next("again", "marked"), Data("again", "mark", "image", "image"), Data("mark", "marked", "image", "image"));
-        var saved = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]));
+        var saved = await rig.Save("annotated", Definition("Annotated", graph));
         Check(saved["active"]!.GetValue<bool>() && saved["diagnostics"] == null, "the camera runs: " + saved.ToJsonString());
         await rig.Started("annotated");
         for (var i = 0; i < 3; i++) Check(Same(await Frame(rig), front), $"request {i + 1} gets the frame When started showed");
@@ -2935,14 +2867,14 @@ static class EntityGraphTests
         await using var rig = await Rig.Start("frame-pushed-saved", ("binary_sensor.motion", "off"), ("camera.front", "idle"));
         var front = Front();
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
-        var graph = Graph("Pushed", [N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("snap"), Rect("mark"), ShowFrame("show")],
+        var graph = Graph("Pushed", [Camera(), N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("snap"), Rect("mark"), ShowFrame("show")],
             Next("seen", "snap"), Next("snap", "show"), Data("snap", "mark", "image", "image"), Data("mark", "show", "image", "image"));
-        var saved = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]));
+        var saved = await rig.Save("annotated", Definition("Annotated", graph));
         await rig.Started("annotated");
         await rig.Change("binary_sensor.motion", "on");
         await EntityTestHome.Until(() => rig.Home.Pictures().Length == 1, "the trigger's flow takes its picture");
         var shown = await Frame(rig);
-        var replaced = await rig.Save("annotated", Definition("Annotated", graph, [Camera()]), saved["document"]!["revision"]!.GetValue<long>());
+        var replaced = await rig.Save("annotated", Definition("Annotated", graph), saved["document"]!["revision"]!.GetValue<long>());
         Check(replaced["active"]!.GetValue<bool>(), "the new revision runs: " + replaced.ToJsonString());
         await rig.Started("annotated");
         Check(Same(await Frame(rig), shown) && rig.Home.Pictures().Length == 1, "the request right after the save gets the frame the replaced revision showed, and nothing runs");
