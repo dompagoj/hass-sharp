@@ -322,7 +322,7 @@ const settingTypeWords = (setting: ClassSetting) =>
     : setting.type === 'entity' ? (setting.domain === undefined ? 'Entity' : `Entity (${setting.domain})`)
     : ({ string: 'Text', integer: 'Whole number', number: 'Number', boolean: 'True or false' } as Partial<Record<ClassSetting['type'], string>>)[setting.type]
 
-/** The settings a class's code gives, as the node's inputs will be: each [Setting] property's label, type and whether it is secret. */
+/** The settings a class's code gives, as the node's inputs will be: each [Setting] property's label, type and whether it is secret or required. */
 function Settings(props: { signature?: ClassSignature; catalog: VisualCatalogSnapshot; outdated: boolean }) {
   const chip = (type: string) => <TypeChip text={typeLabel(type, props.catalog)} color={typeColor(type, props.catalog)} list={typeIsList(type, props.catalog)} />
   return (
@@ -339,7 +339,7 @@ function Settings(props: { signature?: ClassSignature; catalog: VisualCatalogSna
                     <li class="hs-code-pin" data-pin-id={setting.key}>
                       <span class="hs-code-pin__name">{setting.label || setting.key}</span>
                       <span class="hs-code-pin__types">{chip(settingPinType(setting)!)}</span>
-                      <span class="hs-code-pin__meta">{settingTypeWords(setting)}{setting.secret ? ' · Secret' : ''}</span>
+                      <span class="hs-code-pin__meta">{settingTypeWords(setting)}{setting.secret ? ' · Secret' : ''}{setting.required ? ' · Required' : ''}</span>
                     </li>
                   )}
                 </For>
@@ -427,7 +427,7 @@ export function ClassCodeHelp(props: { open: boolean; onClose(): void; kind: str
         <p>Add each entity in the constructor, or in <code>Setup()</code>, with <code>Add(entity)</code>, which returns it so it can be kept in a field: <code>relay = Add(new SharpSwitch("relay", "Relay"))</code>. The first argument is its key within this device. A command of an entity is handled by setting its <code>On…</code> property, such as <code>OnTurnOn</code>.</p>
       </Show>
       <h3>Settings</h3>
-      <p><code>[Setting("Label")]</code> on a public property with a public setter makes it a setting: an input of this node, which takes a typed value or a Setting of the definition, and is set before <code>Setup()</code> runs. It may be a <code>string</code>, <code>bool</code>, <code>int</code>, <code>long</code>, <code>double</code> or an enum. <code>Description</code> is a line of help; <code>Secret = true</code> makes it a secret, which only a Setting can give; <code>Minimum</code> and <code>Maximum</code> bound a number. A setting given nothing keeps the property's own value.</p>
+      <p><code>[Setting("Label")]</code> on a public property with a public setter makes it a setting: an input of this node, which takes a typed value or a Setting of the definition, and is set before <code>Setup()</code> runs. It may be a <code>string</code>, <code>bool</code>, <code>int</code>, <code>long</code>, <code>double</code>, an enum, or an entity class such as <code>LightEntity</code>, whose input picks one of that domain's entities (<code>Entity</code> for any) and takes no Setting. <code>Description</code> is a line of help; <code>Secret = true</code> makes it a secret, which only a Setting can give; <code>Minimum</code> and <code>Maximum</code> bound a number. A <code>string</code> or entity setting with no <code>?</code> and no initializer is required; any other given nothing keeps the property's own value.</p>
       <h3>Setup, Start and Stop</h3>
       <ul>
         <li><code>Setup()</code> runs once before {device() ? 'the entities are' : 'the entity is'} registered, with the settings applied: the place to check them or fetch what is needed. One that throws keeps the definition from starting.</li>
@@ -435,7 +435,7 @@ export function ClassCodeHelp(props: { open: boolean; onClose(): void; kind: str
         <li><code>Stop()</code> runs when the definition stops or is replaced. <code>Stopping</code> is cancelled then, and when Home Assistant shuts down: pass it to what you wait for.</li>
       </ul>
       <h3>Home Assistant</h3>
-      <p><code>State(entityId)</code> reads an entity's state, <code>CallService(service, target, data, returnResponse)</code> calls a service, <code>Log(message, level)</code> writes to the Home Assistant log, and <code>Http</code> is the definition's own <code>HttpClient</code>.</p>
+      <p><code>State(entityId)</code> reads an entity's state, <code>Track(entity, ...)</code> runs each time it changes, <code>Services.&lt;Domain&gt;.&lt;Service&gt;(...)</code> calls a service with typed fields, such as <code>Services.Light.TurnOn(Light)</code>, and <code>CallService(service, target, data, returnResponse)</code> by its id, <code>Log(message, level)</code> writes to the Home Assistant log, and <code>Http</code> is the definition's own <code>HttpClient</code>.</p>
       <h3>Descriptions</h3>
       <p>The XML <code>&lt;summary&gt;</code> of the class describes it, and that of a setting's property is its line of help.</p>
     </Dialog>

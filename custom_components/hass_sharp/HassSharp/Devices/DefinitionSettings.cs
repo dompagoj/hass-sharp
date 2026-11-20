@@ -17,12 +17,14 @@ internal static class DefinitionSettings
     {
         if (unset.Count > 0) throw new InvalidOperationException($"{name}: the setting {unset[0]} has no value");
         var type = root.GetType();
+        // A plain Entity setting is given its domain's handle, as a Custom C# step's Entity pin is.
+        var handles = new Lazy<Func<string, Entities.Entity>?>(() => System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(type.Assembly) is ScriptLoadContext context ? context.EntityHandles() : null);
         foreach (var setting in settings)
         {
             if (setting.Value == null) continue;
             var property = SettingProperty(type, setting.Key)
                 ?? throw new InvalidOperationException($"{name}: {type.Name} has no setting {setting.Key}");
-            if (!TryConvert(setting.Value, property.PropertyType, out var value))
+            if (!TryConvert(setting.Value, property.PropertyType, handles, out var value))
                 throw new InvalidOperationException($"{name}: the saved value of setting {setting.Key} does not fit its type {property.PropertyType.Name}");
             // The value is not quoted: it may be a secret.
             if (Range(property) is { } range && value is int or long or double && !DefinitionGenerator.Within(range, Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture)))
@@ -59,8 +61,9 @@ internal static class DefinitionSettings
     }
 
     // An entity handle is made from its id by its class's (string) constructor, as EntityJsonConverter makes one: an id the
-    // constructor refuses (no id, or one of another domain) does not fit.
-    static bool TryConvert(JsonNode node, Type type, out object? value)
+    // constructor refuses (no id, or one of another domain) does not fit. A plain Entity's is made by the entity classes'
+    // EntityHandles.Create (handles), when there are any, so it is of its id's domain's class.
+    static bool TryConvert(JsonNode node, Type type, Lazy<Func<string, Entities.Entity>?> handles, out object? value)
     {
         value = null;
         var target = Nullable.GetUnderlyingType(type) ?? type;
@@ -69,6 +72,9 @@ internal static class DefinitionSettings
         switch (json.ValueKind)
         {
             case JsonValueKind.String when target == typeof(string): value = json.GetString(); return true;
+            case JsonValueKind.String when target == typeof(Entities.Entity) && handles.Value is { } create:
+                try { value = create(json.GetString()!); return true; }
+                catch (ArgumentException) { return false; }
             case JsonValueKind.String when typeof(Entities.Entity).IsAssignableFrom(target):
                 try { value = Activator.CreateInstance(target, json.GetString()); return true; }
                 catch (TargetInvocationException) { return false; }

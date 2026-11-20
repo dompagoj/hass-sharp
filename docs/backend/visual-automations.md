@@ -146,7 +146,8 @@ operations take `custom: true` and `nodeId` for a node's unsaved code. `kind` is
 code of a C# entity or C# device node is one class, and its `signature` is the class
 signature `{title, description, domain, settings}` read from it (its `[Node]` title
 else its name in words, its summary, an entity's domain or null, and each `[Setting]`
-property with its type, `secret`, an enum's `options` and its range). The class is
+property with its type, `secret`, an enum's `options`, its range, an entity
+handle's `domain` and `required` when it is required). The class is
 never created to read it. A type another node's code declares is not for a C#
 node's code either, as for a Custom C# node's: a setting of that type, or a class that
 derives from it, is refused, and the problem names the type in full and that node's kind and id: "`NodeLib.Custom_plug.Speed` belongs to the C# device node

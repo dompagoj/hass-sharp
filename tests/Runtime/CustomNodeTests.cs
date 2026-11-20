@@ -439,9 +439,10 @@ static class CustomNodeTests
     }
 
     // A required setting is given its value before Setup(), so its property draws no nullability warning (CS8618), with or
-    // without a constructor (which the compiler reports it at), in a C# entity's or C# device's code and in a library's
-    // class; a property that is no setting keeps it, and so does every property of a Custom C# step's code and of a
-    // library's class that is no SharpComponent.
+    // without a constructor (which the compiler reports it at), in a C# entity's or C# device's code for the node's class's
+    // settings and in a library's class; a property that is no setting keeps it, and so does a setting of a helper class in
+    // a node's code, a base property a setting hides, every property of a Custom C# step's code and of a library's class
+    // that is no SharpComponent.
     static void RequiredSettingsDrawNoWarning()
     {
         foreach (var (kind, type, constructor) in new[] { ("csharp_entity", "SharpLight", ""), ("csharp_entity", "SharpLight", "    public Lamp() { }\n"), ("csharp_device", "SharpDevice", ""), ("csharp_device", "SharpDevice", "    public Lamp() { }\n") })
@@ -450,6 +451,28 @@ static class CustomNodeTests
             var compiled = ClassCompiled(kind, source, provider: Entities);
             Check(compiled.Valid && NullWarned(compiled.Diagnostics) == "Other",
                 $"{kind}{(constructor.Length > 0 ? " with a constructor" : "")}: only the property that is no setting is warned of: " + Messages(compiled.Diagnostics));
+        }
+        // A class with a primary constructor: its required setting draws no warning either.
+        var primary = ClassCompiled("csharp_entity", "public class Lamp() : SharpLight\n{\n    [Setting] public string Host { get; set; }\n}");
+        Check(primary.Valid && NullWarned(primary.Diagnostics) == "", "a class with a primary constructor warns of no required setting: " + Messages(primary.Diagnostics));
+        // A base property hidden with new by the node's class's setting is never set: its warning stays, the derived one has none.
+        const string hidden = "public abstract class Base : SharpSwitch\n{\n    [Setting] public string Host { get; set; }\n}\npublic class Mine : Base\n{\n    [Setting] public new string Host { get; set; }\n}";
+        var hiding = ClassCompiled("csharp_entity", hidden);
+        var hostWarnings = hiding.Diagnostics.Where(d => d.Severity == 2 && d.Message.StartsWith("Non-nullable property 'Host'", StringComparison.Ordinal)).ToArray();
+        Check(hiding.Valid && NullWarned(hiding.Diagnostics) == "Host" && hostWarnings is [{ StartLine: 3 }],
+            "the hidden base property keeps its warning, on its own line, and the derived setting has none: " + Messages(hiding.Diagnostics));
+        // The host sets only the node's class's settings: a helper entity a device adds, beside it or inside it, keeps its
+        // warning, while the device's own required setting draws none.
+        const string relay = "public class Relay : SharpSwitch\n{\n    public Relay() : base(\"relay\", \"Relay\") { }\n    [Setting] public string Channel { get; set; }\n}";
+        foreach (var (plug, where) in new[]
+        {
+            ("public class Plug : SharpDevice\n{\n    public Plug() { Add(new Relay()); }\n}\n" + relay, "beside"),
+            ("public class Plug : SharpDevice\n{\n    public Plug() { Add(new Relay()); }\n    [Setting] public string Host { get; set; }\n}\n" + relay, "beside, with a setting of the device's own"),
+            ("public class Plug : SharpDevice\n{\n    public Plug() { Add(new Relay()); }\n    [Setting] public string Host { get; set; }\n" + relay.Replace("\n", "\n    ") + "\n}", "inside"),
+        })
+        {
+            var helper = ClassCompiled("csharp_device", plug);
+            Check(helper.Valid && NullWarned(helper.Diagnostics) == "Channel", $"a helper entity {where} the device keeps its warning, and only it: " + Messages(helper.Diagnostics));
         }
         // A library's classes: one deriving SharpComponent warns of no required setting, any other keeps every warning.
         var library = new NodeLibraryCompiler(Entities).Preview([new("meters", """
@@ -499,7 +522,7 @@ static class CustomNodeTests
         // A Custom C# step's code is no class node's: a SharpComponent class in it keeps its warning.
         var step = Compiled("public class Helper : SharpDevice\n{\n    [Setting] public string Host { get; set; }\n}\npublic static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(string value) { }\n}");
         Check(step.Valid && NullWarned(step.Diagnostics) == "Host", "a Custom C# step's code keeps its nullability warnings: " + Messages(step.Diagnostics));
-        Console.WriteLine("PASS required settings: no nullability warning for a required setting of a C# entity, a C# device or a library's class, with or without a constructor; every other property keeps it");
+        Console.WriteLine("PASS required settings: no nullability warning for a required setting of a C# entity's or C# device's class or a library's class, with or without a constructor; a helper class's setting, a hidden base property and every other property keep it");
     }
 
     // The types a node's code declares are its own: two nodes with a class of one name compile side by side, and another

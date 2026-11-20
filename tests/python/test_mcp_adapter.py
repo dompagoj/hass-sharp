@@ -1223,9 +1223,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                        'the setting <Label> has no value',
                        'Track(entity, change => ...)',"Entity '<id>' is unavailable.",
                        'Services.<Domain>.<Service>(...)','await Services.Light.TurnOn(Light, brightnessPct: 30)',
-                       'Http, Files, Track, State, CallService, Services and Log are members the class inherits from SharpComponent'):
+                       'Http, Files, Track, State, CallService, Services and Log are members the class inherits from SharpComponent',
+                       # The domains' classes outlast a restart, and a required setting's pin does not fall back to the class's value.
+                       'are kept between starts: a definition loaded before they arrive fails only on a first start or for a domain that is new',
+                       'A pin given neither keeps the value the class gives its property, unless its setting is required.'):
             self.assertIn(phrase,definitions)
-        for gone in ('a string, bool, int, long, double or enum','Http, Files, Track, State, CallService and Log'):
+        for gone in ('a string, bool, int, long, double or enum','Http, Files, Track, State, CallService and Log',"A domain's class exists once Home Assistant has given its entities"):
             self.assertNotIn(gone,definitions)
         self.assertIn('in a C# entity node or a C# device node: see definitions',result['semantics']['csharp'])
         self.assertIn('kind csharp_entity',result['guidance']); self.assertIn('kind csharp_device',result['guidance'])

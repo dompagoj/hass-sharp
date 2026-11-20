@@ -247,7 +247,8 @@ is recorded as it is, and a step that returns what it was given (a custom step o
 service response) records its output as it is.
 
 A C# node's settings are its class's own `[Setting]` properties, each an input of
-the node: type a value into it, or connect a Setting step to it (see
+the node: type a value into it, or connect a Setting step to it; an entity setting
+takes only an entity picked in the node (see
 [Settings as inputs](#settings-as-inputs)). A secret one takes only a Setting.
 
 ## Devices
@@ -667,7 +668,8 @@ Each setting takes one of these:
   [settings](#settings-and-secrets); no other step can feed it. Use this for what
   changes from one home to another, such as an address, so it is changed under
   **Settings**.
-- **Nothing**: the property keeps the value the class gives it.
+- **Nothing**: the property keeps the value the class gives it, unless the setting
+  is required (below).
 
 An entity setting takes no Setting step: pick its entity in the node. An entity id of
 another domain, sent through MCP, is a problem on the node ("Light is not a valid
@@ -675,14 +677,16 @@ Light entity value"). The class gets a handle of the entity, which reads its sta
 each time it is read (see [Follow another entity](#follow-another-entity)). An id
 Home Assistant does not have does not keep the definition from starting; reading the
 handle throws "Entity 'sensor.gone' is unavailable.". `LightEntity` and the other
-domains' classes are made from the entities Home Assistant has: a definition loaded
-before Home Assistant has given them fails to compile, and starts by itself once
-they arrive.
+domains' classes are made from the entity domains Home Assistant has, and are kept
+between starts: a definition loaded before they arrive fails to compile only on a
+first start or for a domain that is new, and starts by itself once they arrive.
 
 A `string` or entity setting with no initializer and no `?` is required: the
 definition cannot be saved while its pin has neither a value nor a wire ("Source is
-required"). The host sets it before `Setup()`, so the compiler does not warn that it
-is not set; inside the constructor it is still null. Give a setting that may stay
+required"). A required text setting whose field is emptied holds an empty text, not
+nothing, so the class checks for one itself where it matters. The host sets it
+before `Setup()`, so the compiler does not warn that it is not set; inside the
+constructor it is still null. Give a setting that may stay
 empty a `?` (`LightEntity? Light`) or an initializer (`= ""`); a default set in the
 constructor does not count. A setting does not take the `required` modifier. A
 required setting written with a backing field of its own still draws the compiler's
@@ -795,7 +799,7 @@ they had (see [restored state](#http-downloads-and-restored-state)) unless
 
 An entity setting gives the class an entity of Home Assistant, picked in the node.
 This C# entity is a sensor that reads twice what another sensor reads, and turns a
-light on while that is above a limit:
+light on while that is above a limit and off again at or below it:
 
 <!-- compiled: Doubled -->
 ```csharp
@@ -806,7 +810,7 @@ public class Doubled : SharpSensor
     [Setting("Source")]
     public SensorEntity Source { get; set; }
 
-    /// <summary>The light to turn on while the reading is above the limit; none when left empty.</summary>
+    /// <summary>The light to turn on while the reading is above the limit, and off at or below it; none when left empty.</summary>
     [Setting("Warning light")]
     public LightEntity? Light { get; set; }
 
@@ -820,7 +824,9 @@ public class Doubled : SharpSensor
         Track(Source, async change =>
         {
             Value = Source.NumericState * 2;
-            if (Light != null && Source.NumericState > Limit) await Services.Light.TurnOn(Light);
+            if (Light == null) return;
+            if (Source.NumericState > Limit) await Services.Light.TurnOn(Light);
+            else await Services.Light.TurnOff(Light);
         });
         return Task.CompletedTask;
     }
@@ -831,7 +837,8 @@ The node has three inputs. **Source** is required, so the definition is saved on
 once a sensor is picked; **Warning light** may stay empty; **Limit** is 100 unless a
 number is typed in. `Source.NumericState` reads the sensor's state when the callback
 runs, not when the definition started. `Services.Light.TurnOn(Light)` calls
-`light.turn_on` with the light as its target.
+`light.turn_on` with the light as its target, and `Services.Light.TurnOff(Light)`
+calls `light.turn_off` once the reading is back at or below the limit.
 
 ### Http and Files
 
@@ -863,8 +870,9 @@ A class that derives from `SharpCamera` takes a picture with one of Home Assista
 cameras, as a `SharpImage` and within 10 seconds, with **`CameraSnapshot(entityId)`**,
 or **`CameraSnapshot(entityId, cancellation)`** to stop waiting when a token is
 cancelled. Only a camera class has it: a sensor, a switch or a `SharpDevice` does
-not, so a camera that shows another camera's picture is a C# entity node of its
-own, not a camera a C# device adds.
+not, so a device's own code cannot call it. A camera that shows another camera's
+picture is a class of its own: a C# entity node, or a camera class written beside
+the device's class that the device adds.
 
 This is the code of a C# entity that is a camera:
 

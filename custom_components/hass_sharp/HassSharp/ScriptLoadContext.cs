@@ -28,6 +28,18 @@ public sealed class ScriptLoadContext : AssemblyLoadContext
         _generated = [(serviceCalls.AssemblyName, serviceCalls.Image), (serviceCalls.Entities.AssemblyName, serviceCalls.Entities.Image)];
     }
 
+    /// <summary>
+    /// The entity classes' <c>EntityHandles.Create</c> as this context loads them (the handle of an id's domain); null for
+    /// a context without the generated code.
+    /// </summary>
+    internal Func<string, Entities.Entity>? EntityHandles()
+    {
+        if (_generated.Length < 2) return null;
+        var name = _generated[1].Name;
+        var assembly = Assemblies.FirstOrDefault(a => a.GetName().Name == name) ?? LoadFromAssemblyName(new AssemblyName(name));
+        return assembly.GetType(EntityGenerator.Namespace + "." + EntityGenerator.Factory)?.GetMethod("Create", [typeof(string)])?.CreateDelegate<Func<string, Entities.Entity>>();
+    }
+
     protected override Assembly? Load(AssemblyName assemblyName)
     {
         // User automations must use the host's HassSharp types. Loading another copy

@@ -172,19 +172,26 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         // CancellationToken is no pin to describe), and every automation using it would carry the warning.
         bool NodeMethod(ISymbol? symbol) => symbol is IMethodSymbol method && method.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, nodeAttribute));
         var models = new Dictionary<SyntaxTree, SemanticModel>();
-        ISymbol? DeclaredAt(Location location)
-        {
-            if (location.SourceTree is not { } tree) return null;
-            if (!models.TryGetValue(tree, out var model)) models[tree] = model = compilation.GetSemanticModel(tree);
-            return DeclaredSymbolAt(model, location, cancellationToken);
-        }
+        SemanticModel Model(SyntaxTree tree) => models.TryGetValue(tree, out var model) ? model : models[tree] = compilation.GetSemanticModel(tree);
+        ISymbol? DeclaredAt(Location location) => location.SourceTree is { } tree ? DeclaredSymbolAt(Model(tree), location, cancellationToken) : null;
         var classes = new EntityClasses(frameworkAssembly, EntityPin, (location, message) => Report(location, message), cancellationToken);
-        // A required setting's nullability warning (UnsetRequiredSetting) is dropped in a C# entity's or C# device's code
-        // and in a library's code; a Custom C# step's code keeps it.
-        bool ClassCodeOrLibrary(SyntaxTree? tree) => tree != null && (trees.ContainsKey(tree) || customTrees.TryGetValue(tree, out var custom) && custom.IsClass);
+        // The [Setting] properties the class of a C# entity or C# device node takes, by key: the host sets only these.
+        var nodeSettings = new Dictionary<SyntaxTree, IReadOnlyDictionary<string, IPropertySymbol>>();
+        // A required setting's nullability warning (UnsetRequiredSetting) is dropped in a library's code (a library's class
+        // may be a node's base), and in a C# entity's or C# device's code for its node's class's settings only (a helper
+        // class in it is never given its settings); a Custom C# step's code keeps it.
+        bool RequiredSettingWarning(Diagnostic diagnostic)
+        {
+            if (diagnostic.Location.SourceTree is not { } tree) return false;
+            if (trees.ContainsKey(tree)) return UnsetRequiredSetting(diagnostic, classes.RequiredSetting, DeclaredAt);
+            if (!customTrees.TryGetValue(tree, out var custom) || !custom.IsClass) return false;
+            if (!nodeSettings.TryGetValue(tree, out var taken))
+                nodeSettings[tree] = taken = NodeClass(custom.Kind, tree, Model(tree), classes, cancellationToken).Creatable is [var type] ? SettingProperties(type, classes) : new Dictionary<string, IPropertySymbol>();
+            return UnsetRequiredSetting(diagnostic, p => taken.TryGetValue(p.Name, out var setting) && SymbolEqualityComparer.Default.Equals(setting, p) && classes.RequiredSetting(p), DeclaredAt);
+        }
         foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
         {
-            if (ClassCodeOrLibrary(diagnostic.Location.SourceTree) && UnsetRequiredSetting(diagnostic, classes, DeclaredAt)) continue;
+            if (RequiredSettingWarning(diagnostic)) continue;
             if (diagnostic.Id is "CS1591" or "CS1573" && diagnostic.Location.SourceTree is { } tree && customTrees.ContainsKey(tree)) continue;
             if (diagnostic.Id == "CS1591" && !NodeMethod(DeclaredAt(diagnostic.Location))) continue;
             if (diagnostic.Id == "CS1573" && !NodeMethod(DeclaredAt(diagnostic.Location)?.ContainingSymbol)) continue;
@@ -729,17 +736,17 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// Whether <paramref name="diagnostic"/> is the warning that a required setting is null when a constructor ends
     /// (CS8618, at the property, or at a constructor that names it only in its message). The host gives a required
     /// setting its value before <c>Setup()</c>, so the warning is not the code's to fix. Which code it is dropped in is
-    /// the caller's to decide.
+    /// the caller's to decide, and which properties are such settings there (<paramref name="requiredSetting"/>).
     /// </summary>
-    static bool UnsetRequiredSetting(Diagnostic diagnostic, EntityClasses classes, Func<Location, ISymbol?> declaredAt)
+    static bool UnsetRequiredSetting(Diagnostic diagnostic, Func<IPropertySymbol, bool> requiredSetting, Func<Location, ISymbol?> declaredAt)
     {
         if (diagnostic.Id != "CS8618") return false;
         var message = diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
         return declaredAt(diagnostic.Location) switch
         {
-            IPropertySymbol property => classes.RequiredSetting(property),
+            IPropertySymbol property => requiredSetting(property),
             IMethodSymbol { MethodKind: MethodKind.Constructor } constructor => constructor.ContainingType.GetMembers().OfType<IPropertySymbol>()
-                .Any(p => message.Contains($"property '{p.Name}'", StringComparison.Ordinal) && classes.RequiredSetting(p)),
+                .Any(p => message.Contains($"property '{p.Name}'", StringComparison.Ordinal) && requiredSetting(p)),
             _ => false,
         };
     }
@@ -759,7 +766,20 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             if (!models.TryGetValue(tree, out var model)) models[tree] = model = compilation.GetSemanticModel(tree);
             return DeclaredSymbolAt(model, location, cancellationToken);
         }
-        return diagnostic => UnsetRequiredSetting(diagnostic, classes, Declared);
+        return diagnostic => UnsetRequiredSetting(diagnostic, classes.RequiredSetting, Declared);
+    }
+
+    /// <summary>
+    /// The <c>[Setting]</c> properties <paramref name="type"/>'s signature takes, by key: its base types' and its own, one
+    /// declared again in a derived class in place of the base's (see <see cref="DescribeEntityType"/>).
+    /// </summary>
+    static IReadOnlyDictionary<string, IPropertySymbol> SettingProperties(INamedTypeSymbol type, EntityClasses read)
+    {
+        var taken = new Dictionary<string, IPropertySymbol>(StringComparer.Ordinal);
+        foreach (var owner in BaseTypes(type).Reverse().Append(type))
+            foreach (var property in owner.OriginalDefinition.GetMembers().OfType<IPropertySymbol>())
+                if (!property.IsIndexer && property.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, read.Setting))) taken[property.Name] = property;
+        return taken;
     }
 
     /// <summary>At a <c>[Setting]</c> property of a type a setting cannot have.</summary>
@@ -954,6 +974,21 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal const string DeviceSettingMessage = "A setting cannot be called device: that is the pin the entity's device connects to";
 
     /// <summary>
+    /// The classes a C# entity's or C# device's code declares, the device classes among them, those that could be the
+    /// node's class (of an entity's domain for <c>csharp_entity</c>, deriving <see cref="SharpDevice"/> otherwise), and of
+    /// those the ones a definition can create: the node's class when there is exactly one.
+    /// </summary>
+    static (INamedTypeSymbol[] Classes, INamedTypeSymbol[] Devices, INamedTypeSymbol[] Candidates, INamedTypeSymbol[] Creatable) NodeClass(
+        string kind, SyntaxTree tree, SemanticModel model, EntityClasses read, CancellationToken cancellationToken)
+    {
+        var classes = tree.GetRoot(cancellationToken).DescendantNodes().OfType<TypeDeclarationSyntax>().Select(d => model.GetDeclaredSymbol(d, cancellationToken)).OfType<INamedTypeSymbol>()
+            .Where(t => t.TypeKind == TypeKind.Class).Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default).ToArray();
+        var devices = classes.Where(t => read.Derives(t, read.Device)).ToArray();
+        var candidates = kind == "csharp_entity" ? classes.Where(t => read.Kind(t)?.Kind == "entity").ToArray() : devices;
+        return (classes, devices, candidates, candidates.Where(EntityClasses.Creatable).ToArray());
+    }
+
+    /// <summary>
     /// The class of a C# entity or C# device node, and its class signature (<c>{title, description, domain, settings}</c>),
     /// read from the node's own code; nothing of it is created. A C# entity's code has exactly one class a definition can
     /// create that derives an entity class, and no device class; a C# device's has exactly one that derives
@@ -963,17 +998,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     static (JsonObject Signature, string TypeExpression)? DescribeClassNode(CustomNodeSource custom, SyntaxTree tree, CSharpCompilation compilation, EntityClasses read,
         Action<Location, string> report, Func<IEnumerable<ITypeSymbol>, Location, bool> ownTypesArePrivate, Func<bool> clean, CancellationToken cancellationToken)
     {
-        var model = compilation.GetSemanticModel(tree);
         var root = tree.GetRoot(cancellationToken);
-        var classes = root.DescendantNodes().OfType<TypeDeclarationSyntax>().Select(d => model.GetDeclaredSymbol(d, cancellationToken)).OfType<INamedTypeSymbol>()
-            .Where(t => t.TypeKind == TypeKind.Class).Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default).ToArray();
+        var (classes, devices, candidates, creatable) = NodeClass(custom.Kind, tree, compilation.GetSemanticModel(tree), read, cancellationToken);
         read.CheckSettings(classes.Where(t => read.Derives(t, read.Component)));
         Location At(INamedTypeSymbol type) => type.Locations.FirstOrDefault(l => l.SourceTree == tree) ?? root.GetLocation();
         var entity = custom.Kind == "csharp_entity";
-        var devices = classes.Where(t => read.Derives(t, read.Device)).ToArray();
         if (entity) foreach (var device in devices) report(At(device), DeviceInEntityMessage(device.Name));
-        var candidates = entity ? classes.Where(t => read.Kind(t)?.Kind == "entity").ToArray() : devices;
-        var creatable = candidates.Where(EntityClasses.Creatable).ToArray();
         if (creatable.Length > 1) report(At(creatable[1]), SeveralClassesMessage(entity ? "entity" : "device", creatable.Length));
         else if (creatable.Length == 0 && candidates.Length > 0)
             // The class meant to be the one is a concrete one; abstract ones are its bases, unless they are all there is.

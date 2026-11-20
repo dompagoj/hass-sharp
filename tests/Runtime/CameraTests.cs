@@ -721,7 +721,21 @@ static class CameraTests
             var errors = descriptor.Diagnostics.Where(d => d.Severity == 3).Select(d => d.Message).ToArray();
             Check(!descriptor.Valid && errors.Length == 1 && errors[0].Contains("'CameraSnapshot' does not exist"), $"a {kind} that is no camera cannot take a picture: " + string.Join(" | ", errors));
         }
-        Console.WriteLine("PASS camera: CameraSnapshot is a camera's alone; a sensor's class and a device's class that call it do not compile");
+        // A camera class written beside the device's class is a camera: it takes the picture, and the device adds it.
+        const string station = """
+            public class Station : SharpDevice
+            {
+                public Station() { Add(new View("view")); }
+            }
+            public class View : SharpCamera
+            {
+                public View(string key) : base(key) { }
+                protected override async Task<SharpImage?> Frame() => await CameraSnapshot("camera.porch", Stopping);
+            }
+            """;
+        var helper = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", station, "csharp_device")]).Snapshot.Custom["c"];
+        Check(helper.Valid, "a camera class beside a device's class takes another camera's picture: " + string.Join(" | ", helper.Diagnostics.Select(d => d.Message)));
+        Console.WriteLine("PASS camera: CameraSnapshot is a camera's alone; a sensor's class and a device's class that call it do not compile, a camera class a device adds does");
     }
 
     static async Task Options(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)

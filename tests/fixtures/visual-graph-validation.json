@@ -44676,5 +44676,201 @@
     },
     "valid": true,
     "noDiagnostics": true
+  },
+  {
+    "name": "code csharp.signature: an entity setting whose domain is empty",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "lamp",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "lamp",
+            "source": "/// <summary>A sensor that follows a light.</summary>\npublic class Lamp : SharpSensor\n{\n    [Setting] public LightEntity Light { get; set; }\n}",
+            "signature": {
+              "title": "Lamp",
+              "description": "A sensor that follows a light.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Light",
+                  "label": "Light",
+                  "description": "",
+                  "type": "entity",
+                  "secret": false,
+                  "domain": ""
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lamp",
+    "inputId": "signature",
+    "contains": "The settings of this node cannot be read",
+    "messages": [
+      "The settings of this node cannot be read; open Edit code and apply it"
+    ],
+    "codes": [
+      "csharp.signature"
+    ]
+  },
+  {
+    "name": "code csharp.signature: an entity setting whose domain is a number",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "lamp",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "lamp",
+            "source": "/// <summary>A sensor that follows a light.</summary>\npublic class Lamp : SharpSensor\n{\n    [Setting] public LightEntity Light { get; set; }\n}",
+            "signature": {
+              "title": "Lamp",
+              "description": "A sensor that follows a light.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Light",
+                  "label": "Light",
+                  "description": "",
+                  "type": "entity",
+                  "secret": false,
+                  "domain": 5
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lamp",
+    "inputId": "signature",
+    "contains": "The settings of this node cannot be read",
+    "messages": [
+      "The settings of this node cannot be read; open Edit code and apply it"
+    ],
+    "codes": [
+      "csharp.signature"
+    ]
+  },
+  {
+    "name": "an entity setting of a domain given a text literal of an entity id",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "lamp",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "lamp",
+            "source": "/// <summary>A sensor that follows a light.</summary>\npublic class Lamp : SharpSensor\n{\n    [Setting] public LightEntity Light { get; set; }\n}",
+            "signature": {
+              "title": "Lamp",
+              "description": "A sensor that follows a light.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Light",
+                  "label": "Light",
+                  "description": "",
+                  "type": "entity",
+                  "secret": false,
+                  "domain": "light"
+                }
+              ]
+            },
+            "arguments": {
+              "Light": {
+                "kind": "literal",
+                "type": "string",
+                "value": "light.kitchen"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lamp",
+    "inputId": "Light",
+    "contains": "Light accepts Light entity, not Text",
+    "messages": [
+      "Light accepts Light entity, not Text"
+    ],
+    "codes": []
+  },
+  {
+    "name": "an entity setting of a domain given an entity id literal of no domain",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "lamp",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "lamp",
+            "source": "/// <summary>A sensor that follows a light.</summary>\npublic class Lamp : SharpSensor\n{\n    [Setting] public LightEntity Light { get; set; }\n}",
+            "signature": {
+              "title": "Lamp",
+              "description": "A sensor that follows a light.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Light",
+                  "label": "Light",
+                  "description": "",
+                  "type": "entity",
+                  "secret": false,
+                  "domain": "light"
+                }
+              ]
+            },
+            "arguments": {
+              "Light": {
+                "kind": "literal",
+                "type": "entity_id",
+                "value": "light.kitchen"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lamp",
+    "inputId": "Light",
+    "contains": "Light accepts Light entity, not Entity",
+    "messages": [
+      "Light accepts Light entity, not Entity"
+    ],
+    "codes": []
   }
 ]

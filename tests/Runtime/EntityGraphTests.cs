@@ -135,6 +135,7 @@ static class EntityGraphTests
             (nameof(ACSharpEntityGivenAnotherDomainIsForgotten), ACSharpEntityGivenAnotherDomainIsForgotten),
             (nameof(AClassFollowsTheEntityItIsGiven), AClassFollowsTheEntityItIsGiven),
             (nameof(AHandleOfAMissingEntityThrowsWhenRead), AHandleOfAMissingEntityThrowsWhenRead),
+            (nameof(APlainEntitySettingIsItsDomainsHandle), APlainEntitySettingIsItsDomainsHandle),
             (nameof(ARequiredSettingWithoutAValueStopsTheStart), ARequiredSettingWithoutAValueStopsTheStart),
             (nameof(AHandleSettingWaitsForTheEntityClasses), AHandleSettingWaitsForTheEntityClasses),
             (nameof(AClassCallsServicesWithTypedMethods), AClassCallsServicesWithTypedMethods) })
@@ -3682,6 +3683,29 @@ static class EntityGraphTests
     }
 
     /// <summary>
+    /// A plain <c>Entity</c> setting is given the handle of its entity's domain, as a Custom C# step's <c>Entity</c> pin is:
+    /// a light's id gives a <c>LightEntity</c>; an id of a domain without a class stays an <c>Entity</c>.
+    /// </summary>
+    static async Task APlainEntitySettingIsItsDomainsHandle()
+    {
+        await using var rig = await HandleRig("csharp-any", ("light.kitchen", "on"));
+        var calls = Calls();
+        var source = $$"""
+            public class Prober : SharpSensor
+            {
+                {{NoteMethod}}
+                [Setting] public Entity Any { get; set; }
+                [Setting] public Entity Other { get; set; }
+                protected override Task Setup() { Note($"{Any is LightEntity} {Any.EntityId} {Other.GetType().Name} {Other.EntityId}"); return Task.CompletedTask; }
+            }
+            """;
+        var node = Handled("csharp_entity", "prober", source, new JsonObject { ["Any"] = Lit("entity_id", "light.kitchen"), ["Other"] = Lit("entity_id", "garden_gnome.front") });
+        var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [node])));
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+        Check(calls.SequenceEqual(["True light.kitchen Entity garden_gnome.front"]), "a light's id gives a LightEntity, another domain's an Entity: " + string.Join(", ", calls));
+    }
+
+    /// <summary>
     /// Review Focus 3: a required setting wired to a Setting whose definition setting has no value. The save is accepted,
     /// the definition does not run: its status and its warning say the setting has no value, after the node; the class
     /// was created, and its <c>Setup()</c> never ran. A C# device alike, beside a C# entity that has all it needs: the
@@ -3729,7 +3753,7 @@ static class EntityGraphTests
         Check(!device["active"]!.GetValue<bool>() && device["activationError"]?.GetValue<string>() == "Shelf: Gateway: the setting Address has no value" && Status(device["document"]!.AsObject()) == "failed",
             "a C# device without its required setting fails the whole definition: " + device.ToJsonString());
         Check(calls.IsEmpty && rig.Home.Syncs("shelf").Length == 0 && !rig.Home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("shelf:", StringComparison.Ordinal)),
-            "no Setup() ran and nothing of the definition is registered or shown: " + string.Join(", ", calls));
+            "the gateway's Setup() never ran and nothing of the definition is registered or shown: " + string.Join(", ", calls));
     }
 
     /// <summary>

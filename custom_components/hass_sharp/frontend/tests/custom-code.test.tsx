@@ -899,7 +899,20 @@ it('names an entity setting\'s type in the code editor\'s Settings: Entity, with
   editors[0].change(`${plugCode()}\n`)
   await vi.waitFor(() => expect(settingNames()).toEqual(['Lamp', 'Source', 'Address']))
   const meta = () => [...dialog()!.querySelectorAll('[aria-label="Settings"] .hs-code-pin__meta')].map(el => el.textContent)
-  expect(meta()).toEqual(['Entity (light)', 'Entity', 'Text'])
+  expect(meta()).toEqual(['Entity (light) · Required', 'Entity', 'Text'])
+})
+
+it('says in the code editor\'s Settings which settings are required, as it says which are secret', async () => {
+  const signature = classSig([setting('Host', 'string', { required: true }), setting('Token', 'string', { secret: true, required: true }), setting('Address'), setting('Port', 'integer')])
+  const { host } = mountDefinition(plugDefinition(), { callWS: message => message.request?.operation === 'custom_preview'
+    ? Promise.resolve({ version: 1, ok: true, result: { valid: true, diagnostics: [], signature } }) : undefined })
+  await vi.waitFor(() => expect(card(host, 'plug')).toBeTruthy())
+  button(card(host, 'plug'), 'Edit code of Plug')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  editors[0].change(`${plugCode()}\n`)
+  await vi.waitFor(() => expect(settingNames()).toEqual(['Host', 'Token', 'Address', 'Port']))
+  const meta = () => [...dialog()!.querySelectorAll('[aria-label="Settings"] .hs-code-pin__meta')].map(el => el.textContent)
+  expect(meta()).toEqual(['Text · Required', 'Text · Secret · Required', 'Text', 'Whole number'])
 })
 
 it('applies a C# device\'s code as one undo step: the wire into a setting it dropped and the value typed into one now secret go, with both notices', async () => {
@@ -978,6 +991,11 @@ it('words the help of a C# device\'s code around SharpDevice and the entities it
   expect(help.textContent).toContain('Writing a C# device')
   for (const fact of ['SharpDevice', 'Add(', '[Setting("Label")]', 'Setup()', 'Start()', 'Stop()']) expect(help.textContent, fact).toContain(fact)
   expect(help.textContent).not.toContain('[Node')
+  // A setting may be an entity, which takes no Setting, and a string or entity one may be required; a class follows an
+  // entity with Track and calls services through Services as well as CallService.
+  for (const fact of ['LightEntity', 'takes no Setting', 'is required', 'Track(entity, ...)', 'Services.<Domain>.<Service>(...)', 'CallService(']) expect(help.textContent, fact).toContain(fact)
+  expect(help.textContent).not.toContain('or an enum.')
+  expect(help.textContent).not.toContain('A setting given nothing keeps')
 })
 
 it('keeps a C# device\'s unapplied code in the draft by its kind, opens it again on Restore, and never in a node of another kind', async () => {

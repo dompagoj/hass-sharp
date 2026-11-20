@@ -96,7 +96,7 @@ static class ServiceGenerator
         Line(0, "#nullable enable");
         Line(0, "namespace HassSharp");
         Line(0, "{");
-        Doc(1, "summary", "Gives <see cref=\"global::HassSharp.NodeContext\"/> its <c>Services</c>.");
+        Doc(1, "summary", "Gives <see cref=\"global::HassSharp.NodeContext\"/> its <c>Services</c>, and <see cref=\"global::HassSharp.ComponentServices\"/> its domains.");
         Line(1, "public static class NodeContextServices");
         Line(1, "{");
         Line(2, $"extension({NodeContextType} context)");

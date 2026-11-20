@@ -463,8 +463,9 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   (`setting.value`). Or wire a Setting step to it, `{kind: "data", source: <the
   Setting step>, sourcePort: "value", target: <the node>, targetPort: <property
   name>}`, leaving it out of `arguments`; a wire from any other step is an error
-  (`scope.settingSource`). A pin given neither keeps the class's own value. A secret
-  setting takes only a wire from a Setting step: a value is refused
+  (`scope.settingSource`). A pin given neither keeps the class's own value, unless its
+  setting is required (below). A secret setting takes only a wire from a Setting
+  step: a value is refused
   (`setting.secretLiteral`), so add a secret setting to the definition and let the
   user enter it in the panel.
 - **Entity settings.** A property of type `Entity`, or of a domain's class such as

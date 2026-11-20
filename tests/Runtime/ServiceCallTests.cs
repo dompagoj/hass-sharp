@@ -103,6 +103,8 @@ static class ServiceCallTests
             "extension(global::HassSharp.NodeContext context)", "public global::HassSharp.ServiceCalls.Services Services => new global::HassSharp.ServiceCalls.Services(context);",
             "readonly global::HassSharp.IServiceCaller __context;", "internal Services(global::HassSharp.IServiceCaller context) => __context = context;",
             "internal LightServices(global::HassSharp.IServiceCaller context) => __context = context;", "internal WeatherServices(global::HassSharp.IServiceCaller context) => __context = context;",
+            // The class that holds both extension blocks says what each extends.
+            "    /// Gives <see cref=\"global::HassSharp.NodeContext\"/> its <c>Services</c>, and <see cref=\"global::HassSharp.ComponentServices\"/> its domains.\n    /// </summary>\n    public static class NodeContextServices",
         })
             Check(source.Contains(expected), "the generated source lacks: " + expected);
         Check(!source.Contains("NodeContext __context") && !source.Contains("(global::HassSharp.NodeContext context) => __context"), "a generated class still holds a NodeContext");
@@ -232,7 +234,8 @@ static class ServiceCallTests
         var provider = new DiagnosticsProvider();
         var domains = EntitySchemaCatalog.Parse(Fixture("ha-entity-components.json")).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!));
         Check(provider.UseEntitySchema([.. domains]).Accepted, "the entity classes were not installed");
-        provider.UseServiceSchema(Schema(Calls));
+        // The class turns its light off again, so its services have light.turn_off beside the others.
+        provider.UseServiceSchema(Schema(Calls.Replace("""{"light":{""", """{"light":{"turn_off":{"name":"Turn off","target":{"entity":{"domain":"light"}},"fields":{}},""")));
         var node = new NodeLibraryCompiler(provider).Preview([], [new CustomNodeSource("doubled", source, "csharp_entity")]).Snapshot.Custom["doubled"];
         var shown = string.Join(" | ", node.Diagnostics.Select(d => $"{d.Severity} {d.StartLine}:{d.StartColumn} {d.Message}"));
         Check(node.Valid && node.Diagnostics.IsEmpty, "the guide's class compiles without a diagnostic: " + shown);
