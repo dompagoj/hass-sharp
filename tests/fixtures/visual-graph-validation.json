@@ -43085,7 +43085,7 @@
     ]
   },
   {
-    "name": "code setting.secretLiteral: a typed secret of another type is told both",
+    "name": "code setting.secretLiteral: a typed secret of another type is told only that it is a secret",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -43154,7 +43154,179 @@
     "inputId": "Token",
     "contains": "Token is a secret",
     "messages": [
-      "Token accepts Text, not Number",
+      "Token is a secret: connect a Setting instead of typing it here"
+    ],
+    "codes": [
+      "setting.secretLiteral"
+    ]
+  },
+  {
+    "name": "code setting.secretLiteral: a typed secret of an enum type is not quoted",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Token": {
+                "kind": "literal",
+                "type": "global::HassSharp.Entities.BinarySensorState",
+                "value": "s3cr3t-token"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Token",
+    "contains": "Token is a secret",
+    "messages": [
+      "Token is a secret: connect a Setting instead of typing it here"
+    ],
+    "codes": [
+      "setting.secretLiteral"
+    ]
+  },
+  {
+    "name": "code setting.secretLiteral: a typed secret under a wire from a Setting is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Token": {
+                "kind": "literal",
+                "type": "string",
+                "value": "s3cr3t-token"
+              }
+            }
+          }
+        },
+        {
+          "id": "token",
+          "kind": "setting",
+          "config": {
+            "key": "token"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "token.value:plug.Token",
+          "kind": "data",
+          "source": "token",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Token"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "token",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Token",
+    "contains": "Token is a secret",
+    "messages": [
       "Token is a secret: connect a Setting instead of typing it here"
     ],
     "codes": [

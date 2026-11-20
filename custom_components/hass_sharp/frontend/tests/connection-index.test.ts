@@ -38,7 +38,7 @@ function fullCheck(graph: Graph, source: string, sourcePort: string, target: str
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
 // Pinned totals of the agreement runs below. No pair needs the full check: the index decides every one itself.
-const GRAPHS = 533, PAIRS = 3234, ACCEPTED = 1041, BY_VALIDATION = 2193, SERVICES_ACCEPTED = 978, SERVICES_BY_VALIDATION = 2256
+const GRAPHS = 535, PAIRS = 3238, ACCEPTED = 1043, BY_VALIDATION = 2195, SERVICES_ACCEPTED = 980, SERVICES_BY_VALIDATION = 2258
 const FALLBACKS: string[] = []
 // The two structural-code cases whose graph has no node to wire (they pin graph.shape and graph.limit), and the one past the limit.
 const SKIPPED = ['code graph.shape: nodes is not a list: nodes or edges are not arrays', 'code graph.limit: no nodes: no node has an id and config',

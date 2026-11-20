@@ -594,6 +594,18 @@ static class EntityNodeTests
             "a typed value is taken, a typed secret is not: " + string.Join(" | ", typed.Select(Of1)));
         Check(!typed.Any(d => d.Message.Contains("s3cr3t", StringComparison.Ordinal)), "the secret is not repeated");
         Check(Problems(Of(new JsonObject { ["Token"] = new JsonObject { ["kind"] = "unset" } })).Count == 0, "a secret left unset is no problem");
+        // A typed secret is refused under a wire too (a document saved by hand or over MCP), and whatever its claimed type, the
+        // secret sentence is all that is said of it: no message quotes it.
+        foreach (var (operand, edges, why) in new (JsonObject, JsonObject[], string)[] {
+            (Lit("string", "s3cr3t-token"), [D("address", "plug", "Token")], "under a wire from a Setting"),
+            (Lit("number", 1234), [], "of another type"),
+            (Lit("global::HassSharp.Entities.BinarySensorState", "s3cr3t-token"), [], "of an enum type") })
+        {
+            var told = Problems(Of(new JsonObject { ["Token"] = operand }, edges));
+            Check(string.Join(" | ", told.Select(Of1)) == "setting.secretLiteral@plug:Token::3:Token is a secret: connect a Setting instead of typing it here",
+                $"a typed secret {why} is told only that it is one: " + string.Join(" | ", told.Select(Of1)));
+            Check(!told.Any(d => d.Message.Contains("s3cr3t", StringComparison.Ordinal) || d.Message.Contains("1234", StringComparison.Ordinal)), $"a typed secret {why} is not quoted");
+        }
         var other = Problems(Of(new JsonObject { ["Address"] = new JsonObject { ["kind"] = "expression", ["code"] = "Address" } }));
         Check(string.Join(" | ", other.Select(Of1)) == "@plug:Address::3:Address has an invalid value", "a value of another kind is what any input says of it: " + string.Join(" | ", other.Select(Of1)));
     }

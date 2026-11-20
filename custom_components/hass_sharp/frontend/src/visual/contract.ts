@@ -1609,6 +1609,12 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   }
   function operandType(node: GraphNode, port: string, raw: unknown, spec: InputSpec): string | undefined {
     const edge = incoming.get(key(node.id, port))
+    // A secret setting of a C# entity or a C# device is given by a Setting node only: a value typed into it is refused, a wire
+    // into it too or not, and nothing else is said of it, so that no message quotes it.
+    if (spec.setting?.secret === true && record(raw) && raw.kind === 'literal') {
+      error(node.id, words.secretLiteral(words.portLabel(spec, port)), port, undefined, 'setting.secretLiteral')
+      if (!edge) return
+    }
     if (edge) return dataOutputs(nodes.get(edge.source)!)[edge.sourcePort]?.type
     if (raw === undefined && !spec.required) return
     const label = words.portLabel(spec, port), subject = inputSubject(node, spec, port, catalog), service = serviceName(node, catalog)
@@ -1619,8 +1625,6 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // (a structural input): nothing can be typed in, null included.
     if (selectsProperties(nodeSpec(node.kind), port) || structural(spec)) { error(node.id, words.wireOnly(words.stepName(node, catalog)), port, port); return }
     if (raw.kind === 'literal') {
-      // A secret setting of a C# entity or a C# device is given by a Setting node only; whatever was typed is told, not repeated.
-      if (spec.setting?.secret === true) error(node.id, words.secretLiteral(label), port, undefined, 'setting.secretLiteral')
       type = text(raw.type, 'unknown')
       const v = raw.value
       const valid = validLiteral(type, v, catalog)

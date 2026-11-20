@@ -934,6 +934,13 @@ public static class VisualGraphValidator
         }
         string? Operand(JsonObject node, string port, JsonNode? raw, JsonNode spec, bool present = true)
         {
+            // A secret setting of a C# entity or a C# device is given by a Setting node only: a value typed into it is refused, a
+            // wire into it too or not, and nothing else is said of it, so that no message quotes it.
+            if (spec["setting"] is JsonObject setting && Bool(setting, "secret") && raw is JsonObject typed && Text(typed, "kind") == "literal")
+            {
+                Error(Id(node), Words.SecretLiteral(Words.PortLabel(spec, port)), port, code: "setting.secretLiteral");
+                if (!incoming.ContainsKey((Id(node), port))) return null;
+            }
             if (incoming.TryGetValue((Id(node), port), out var edge)) return Text(DataOutputs(nodes[Text(edge, "source")])[Text(edge, "sourcePort")], "type");
             var required = Bool(spec, "required");
             if (!present && !required) return null;
@@ -951,8 +958,6 @@ public static class VisualGraphValidator
             if (SelectsProperties(Spec(node), port) || Structural(spec)) { Error(Id(node), Words.WireOnly(Words.StepName(node, Spec(node))), port, port); return null; }
             if (Text(operand, "kind") == "literal")
             {
-                // A secret setting of a C# entity or a C# device is given by a Setting node only; whatever was typed is told, not repeated.
-                if (spec["setting"] is JsonObject setting && Bool(setting, "secret")) Error(Id(node), Words.SecretLiteral(label), port, code: "setting.secretLiteral");
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
                 var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
                 if (!valid) Error(Id(node), operand["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var named) || named.Length == 0 ? $"{subject} has a value without a type"

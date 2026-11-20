@@ -386,6 +386,19 @@ it('a setting pin takes a typed value or a Setting node, and a secret only a Set
   const fixed = connectData(typed, 'address', 'value', 'plug', 'Token')
   expect(fixed.nodes.find(n => n.id === 'plug')!.config.arguments).toEqual({ Address: lit('string', 'http://192.168.1.50'), Token: { kind: 'unset' } })
   expect(problems(fixed)).toEqual([])
+  // A typed secret is refused under a wire too (a document saved by hand or over MCP), and whatever its claimed type, the
+  // secret sentence is all that is said of it: no message quotes it.
+  const typedSecret = (operand: unknown, edges = graph.edges) => problems({ ...typed, edges, nodes: typed.nodes.map(n => n.id !== 'plug' ? n : { ...n, config: { ...n.config, arguments: { Token: operand } } }) })
+  const tokenWire = { id: 'token', kind: 'data' as const, source: 'address', sourcePort: 'value', target: 'plug', targetPort: 'Token' }
+  for (const [operand, edges] of [[lit('string', 's3cr3t-token'), [...graph.edges, tokenWire]], [lit('number', 1234), graph.edges], [lit('global::HassSharp.Entities.BinarySensorState', 's3cr3t-token'), graph.edges]] as const) {
+    const told = typedSecret(operand, [...edges])
+    expect(told, JSON.stringify(operand)).toEqual([secret[0]])
+    expect(JSON.stringify(told)).not.toContain('s3cr3t')
+  }
+  // Dropping a Setting on such a pin unsets the typed value, and the index agrees that the wire is fine.
+  const underWire = { ...typed, edges: [...graph.edges, tokenWire] }
+  expect(dataConnectionError(underWire, 'address', 'value', 'plug', 'Token', nodeCatalog, { quick: true })).toBeUndefined()
+  expect(problems(connectData(underWire, 'address', 'value', 'plug', 'Token'))).toEqual([])
   // A step's output is refused into a secret too: a Setting is all it takes.
   expect(dataConnectionError(typed, 'http', 'body', 'plug', 'Token', nodeCatalog, { quick: true })).toBe(words.settingSource('Token'))
   // A value of another kind than typed in or connected is what any input says of it.
