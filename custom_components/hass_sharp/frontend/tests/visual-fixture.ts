@@ -1,4 +1,4 @@
-import { addGraphNode, declaredEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addGraphNode, declaredEntities, listedEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
 import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
@@ -225,15 +225,14 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const problem = (code: string, message: string, inputId: string | null = null, portId: string | null = null): VisualDiagnostic =>
     ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId, code })
   /**
-   * A graph definition's entities as the store keeps and answers them, derived by the editor's own `withGraphTypes`
-   * (which mirrors `VisualNodeCatalog.WithGraphTypes`): those its Entity nodes declare; none for a class.
+   * A graph definition's entities as the store keeps and answers them, derived by the editor's own `listedEntities`
+   * (which mirrors `DefinitionGraph.ListedEntities`): those its Entity nodes declare, then each C# entity's; none for a class.
    */
   const derivedEntities = (body: DefinitionBody): DefinitionEntity[] | null => {
     if (body.logic.kind !== 'graph') return null
-    const graph = { ...body.logic.graph, definition: { settings: [] } }
-    return structuredClone(withGraphTypes(nodeCatalog, graph).definition?.entities ?? []) as DefinitionEntity[]
+    return listedEntities({ ...body.logic.graph, definition: { settings: [] } }, nodeCatalog) as DefinitionEntity[]
   }
-  /** A graph definition's devices, as `EntityDefinitionStore.Save` stores them: those its Device nodes declare. */
+  /** A graph definition's devices, as `EntityDefinitionStore.Save` stores them: those its Device nodes and C# devices declare. */
   const derivedDevices = (body: DefinitionBody): DerivedDevice[] => {
     if (body.logic.kind !== 'graph') return []
     return structuredClone(withGraphTypes(nodeCatalog, { ...body.logic.graph, definition: { settings: [] } }).definition?.devices ?? []) as DerivedDevice[]

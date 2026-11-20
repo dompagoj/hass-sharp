@@ -18,6 +18,11 @@ export interface DefinitionEntity {
   options?: Record<string, unknown>
   /** In a read answer: the key of the Device node it is on, null for none. Derived from the graph, never sent. */
   device?: string | null
+  /**
+   * In a read answer: true for a C# entity's, which holds only its key, its class's domain, a null name (its class names
+   * it) and its device; set by its node's kind, never read from a request.
+   */
+  csharp?: true
   [member: string]: unknown
 }
 /**
@@ -118,11 +123,12 @@ export interface EntityDocument extends DefinitionBody {
   device: DefinitionDevice | null
   settings: DefinitionSetting[]
   /**
-   * For a graph, the entities its Entity nodes declare, each with the device it is on, for reading only; none for a class
-   * (its code makes them).
+   * For a graph, the entities its Entity nodes declare, then its C# entities', each with the device it is on, for reading
+   * only; none for a class (its code makes them). The entities a C# device's code adds are not listed: they are in
+   * `liveEntities` and `registeredEntities`, under the unique id `<id>:<device key>:<entity key>`.
    */
   entities: DefinitionEntity[] | null
-  /** For a graph, the devices its Device nodes declare, in node order, for reading only; none for a class. */
+  /** For a graph, the devices its Device nodes declare, in node order, then its C# devices', for reading only; none for a class. */
   devices?: DerivedDevice[]
   enabled: boolean
   source: string
@@ -143,7 +149,8 @@ export interface EntityDocument extends DefinitionBody {
 }
 /**
  * A `list` entry: the document without its generated source, and with how many devices it makes in Home Assistant in
- * place of its device: a graph's Device nodes; for a class, 1 when it gives device details or its class is a device, else 0.
+ * place of its device: a graph's Device nodes and C# devices; for a class, 1 when it gives device details or its class is
+ * a device, else 0.
  */
 export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap' | 'device' | 'devices'> & { devices: number }
 /** An entry of the entities page's list (`list` with `view: 'home'`): a summary and how it has been running. */

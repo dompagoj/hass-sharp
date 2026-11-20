@@ -240,11 +240,17 @@ envelope; validation, conflicts and revisions work as above.
    them). A class is written with `library_save`.
 3. `entities_list({})` summarises every definition without its graph: `{id, name,
    revision, enabled, status, activationError, logic, devices, entities:[{key,
-   domain, name, entityId}], triggers:[{triggerId, label?, type, config, manual,
-   runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`;
-   `logic` is `"graph"` or the class's type id; `devices` is how many Home
-   Assistant devices it makes: for a graph definition its Device nodes, which
-   `entities_read` lists under `devices`; for a class definition 1 when it gives
+   domain, name, device, entityId}], triggers:[{triggerId, label?, type, config,
+   manual, runnable}]}`. `status` is `running`, `setup` (starting), `failed` or
+   `off`; `logic` is `"graph"` or the class's type id. A graph definition's
+   `entities` are its Entity nodes and C# entity nodes, each with `device`, the key
+   of the device it is on or null (a C# entity is named as Home Assistant has it,
+   else by its class's title), then each entity a C# device's code added, as Home
+   Assistant has registered it, with `device` the C# device's key: those are known
+   only once the definition has run. A class definition's entities have no
+   `device`. `devices` is how many Home Assistant devices it makes: for a graph
+   definition its Device nodes and C# device nodes, which `entities_read` lists
+   under `devices`; for a class definition 1 when it gives
    device details or its class derives from `SharpDevice` (for a class no node
    library offers any more, when it gives device details), else 0. Beside the
    result, `unreadable: [{id, reason, deletable}]` names each definition file that
@@ -254,9 +260,13 @@ envelope; validation, conflicts and revisions work as above.
    Assistant's `.storage/hass_sharp/entities` folder.
    `entities_read({id})` returns one complete document, with its `revision`,
    `source`, `automationId` and `registeredEntities`, and, for a graph, `devices`,
-   the devices its Device nodes declare, and `entities`, the entities its Entity
-   nodes declare, each with `device`, the key of the device it is on or null; both
-   are for reading only (a class's entities come from its code and are in
+   the devices its Device nodes and C# device nodes declare (a C# device's with
+   `csharp: true`), and `entities`, the entities its Entity nodes and C# entity
+   nodes declare, each with `device`, the key of the device it is on or null (a C#
+   entity's `{key, domain, name: null, device, csharp: true}`); both are for reading
+   only. The entities a C# device's code adds are in neither: they are in
+   `liveEntities` and `registeredEntities`, under the unique id `<definition
+   id>:<device key>:<entity key>` (a class's entities come from its code and are in
    `registeredEntities`). Read before every edit, and send back only `name`,
    `settings` and `logic`, and a class definition's `device`.
 4. `entities_preview({definition})` validates and compiles a definition without

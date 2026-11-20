@@ -142,6 +142,28 @@ describe('the entity picker', () => {
   })
 })
 
+describe('the entity pickers and a C# entity', () => {
+  // A C# sensor and a C# camera beside the plug's Entity nodes: their classes set their state and make their frames.
+  const signature = (title: string, domain: string) => ({ title, description: '', domain, settings: [] })
+  const withCSharp = () => add(add(entityGraph(), 'csharp_entity', 'thermo', { key: 'thermo', source: 'public class Thermometer : SharpSensor { }', signature: signature('Thermometer', 'sensor'), arguments: {} }),
+    'csharp_entity', 'cam', { key: 'cam', source: 'public class Cam : SharpCamera { }', signature: signature('Cam', 'camera'), arguments: {} })
+
+  it('offers no C# entity to Set state, Set available or Show frame: no step names one', async () => {
+    for (const kind of ['set_entity_state', 'set_entity_available']) {
+      const { el } = mount(step(withCSharp(), kind, 'step', {}), 'step')
+      expect(texts(await open(el, 'entity')), kind).toEqual(['Relay · Switch', 'Power · Sensor', 'Online · Binary sensor'])
+      dispose?.(); dispose = undefined; document.body.innerHTML = ''
+    }
+    const { el } = mount(step(withCSharp(), 'show_frame', 'frame', {}), 'frame')
+    expect(field(el, 'entity').querySelector('.hs-field-hint')?.textContent).toBe('Add a camera to this definition first.')
+  })
+
+  it('shows a step that names a C# entity as naming an entity the definition does not have', () => {
+    const { el } = mount(step(withCSharp(), 'set_entity_state', 'set', { entity: 'thermo' }), 'set')
+    expect(box(el, 'entity').value).toBe('Missing entity: thermo')
+  })
+})
+
 describe('the camera picker of Show frame', () => {
   const cameras = () => entityGraph({ nodes: [...plug, { key: 'front', domain: 'camera', name: 'Front door' }, { key: 'yard', domain: 'camera' }] })
 

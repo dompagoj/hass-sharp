@@ -392,6 +392,51 @@ const derivedEntities = (graph: unknown, catalog: VisualCatalogSnapshot): Catalo
     return { ...d.entity, device: (device === undefined ? undefined : deviceKey(nodes.get(device)!.config)) ?? null }
   })) as CatalogDefinition['entities']
 }
+/** A C# entity as a definition lists it for reading: its key, its class's domain, no name and the device it is on. */
+export interface ListedCSharpEntity { key?: unknown; domain: string | null; name: null; device: string | null; csharp: true }
+/**
+ * The entities the graph's C# entities declare, as a definition lists them for reading (its stored document and its
+ * answers, never the catalog's `definition`, whose entities steps name): for each node of the C# entity kind, in the
+ * order of the graph's `nodes`, its config's key as given (none when it has none), the domain its signature gives
+ * (`classSignature`; null when that cannot be read), no name (its code names it, else its title, as it runs), the key
+ * of the Device node it is on or null, and `csharp`, set here by the node's kind alone, never read from its config.
+ * Never its code, signature, settings or their values. Mirrors `VisualNodeCatalog.CSharpEntities`.
+ */
+export function csharpEntities(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): ListedCSharpEntity[] {
+  const spec = nodeSpec('csharp_entity', catalog)
+  if (spec?.declares !== 'entity') return []
+  const nodes = graphNodes(graph)
+  return (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record).filter(node => node.kind === 'csharp_entity').map(node => {
+    const device = deviceNodeOf(graph, text(node.id), catalog)
+    return {
+      ...picked(node.config, ['key']),
+      domain: structuredClone(classSignature(node as unknown as GraphNode, catalog)?.domain ?? null),
+      name: null,
+      device: (device === undefined ? undefined : deviceKey(nodes.get(device)!.config)) ?? null,
+      csharp: true,
+    }
+  })
+}
+/**
+ * The entities a definition's graph declares, as its stored document and its answers list them, for reading only: its
+ * Entity nodes' (as `withGraphTypes` lifts them), then each C# entity's (`csharpEntities`), the first of each key, a key
+ * being text. What makes an entry a C# entity's is its node's kind alone: an Entity node's entry, a copy of its config,
+ * is listed without a `csharp` member its config may hold. The entities a C# device adds are not among them: its code
+ * adds them as it runs. None past the catalog's limits. Mirrors `DefinitionGraph.ListedEntities`.
+ */
+export function listedEntities(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, unknown>[] {
+  const lifted = withGraphTypes(catalog, record(graph) ? { ...graph, definition: record(graph.definition) ? graph.definition : { settings: [] } } : graph)
+  const keys = new Set<string>(), listed: Record<string, unknown>[] = []
+  for (const entity of lifted.definition?.entities ?? [])
+    if (typeof entity.key === 'string' && !keys.has(entity.key)) {
+      keys.add(entity.key)
+      const { csharp: _csharp, ...copy } = structuredClone(entity)
+      listed.push(copy)
+    }
+  if (overLimit(catalog, graph)) return listed
+  for (const entity of csharpEntities(graph, catalog)) if (typeof entity.key === 'string' && !keys.has(entity.key)) { keys.add(entity.key); listed.push(entity as unknown as Record<string, unknown>) }
+  return listed
+}
 /**
  * The catalog with the definition of the graph a step is in: the catalog as it is when it has one already (the canvas
  * lifted it), else with the graph's definition, the entities its Entity nodes declare and the devices its Device nodes

@@ -874,6 +874,61 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answers, [('success',)])
         self.assertEqual((self.entities.entities, self.devices.devices, self.bridge._live), ({}, {}, {}))
 
+    def csharp_plug(self, *added, definition_id='plug1', plugs=('plug',), hub=True):
+        """A sync request as the host sends a graph with C# devices: the entities each device's code `added` (relay,
+        power) under the unique id <definition id>:<device key>:<entity key>, on that device; and, with `hub`, an Entity
+        node keyed `plug` like the device, standalone, under <definition id>:plug, which is another entity."""
+        kinds = {'relay': ('switch', 'Relay'), 'power': ('sensor', 'Power')}
+        entities = [description('plug', name='Plug sensor', definition=definition_id, device=None)] if hub else []
+        entities += [description(key, *kinds[key], definition=definition_id, device=plug, uniqueId=f'{definition_id}:{plug}:{key}')
+                     for plug in plugs for key in added]
+        return definition(*entities, definition_id=definition_id, devices=[device(f'Plug {plug}', plug) for plug in plugs])
+
+    async def test_a_csharp_device_keeps_the_entities_its_code_adds_under_it(self):
+        # The device (DOMAIN, "plug1:plug") with both entries on it; the Entity node keyed plug, plug1:plug, is not on it.
+        await self.sync(self.csharp_plug('relay', 'power'))
+        plug = identified(self.devices, 'plug1:plug')
+        self.assertEqual(plug.identifiers, {(DOMAIN, 'plug1:plug')})
+        self.assertEqual({e.unique_id: e.device_id for e in self.entities.entities.values()},
+                         {'plug1:plug': None, 'plug1:plug:relay': plug.id, 'plug1:plug:power': plug.id})
+        self.assertEqual(self.live('plug1:plug:relay').device_info['identifiers'], {(DOMAIN, 'plug1:plug')})
+        self.assertIsNone(self.live('plug1:plug').device_info)
+        hub, relay = self.live('plug1:plug'), self.live('plug1:plug:relay')
+        # A later sync in which the class adds only the relay removes the power entry, and nothing else.
+        await self.sync(self.csharp_plug('relay'))
+        self.assertEqual({e.unique_id: e.device_id for e in self.entities.entities.values()}, {'plug1:plug': None, 'plug1:plug:relay': plug.id})
+        self.assertIs(identified(self.devices, 'plug1:plug'), plug)
+        self.assertIs(self.live('plug1:plug:relay'), relay)
+        self.assertIs(self.live('plug1:plug'), hub)
+        self.assertNotIn('plug1:plug:power', self.bridge._live)
+        # The clean-up at start-up keeps the device and the entries of a definition that still exists, and removes those
+        # of one that is gone, three-part ids and all.
+        await self.sync(self.csharp_plug('relay', 'power', definition_id='gone', hub=False))
+        gone = identified(self.devices, 'gone:plug')
+        answers = await self.answers(self.bridge.begin_prune, json.dumps(['plug1']))
+        self.assertEqual(answers, [('success',)])
+        self.assertEqual({e.unique_id: e.device_id for e in self.entities.entities.values()}, {'plug1:plug': None, 'plug1:plug:relay': plug.id})
+        self.assertEqual(sorted(self.devices.devices), [plug.id])
+        self.assertIn(('remove', gone.id), self.devices.calls)
+        self.assertIs(self.live('plug1:plug:relay'), relay)
+
+    async def test_deleting_one_of_two_csharp_devices_removes_that_device_and_its_entries_only(self):
+        await self.sync(self.csharp_plug('relay', 'power', plugs=('plug_a', 'plug_b')))
+        plug_a, plug_b = identified(self.devices, 'plug1:plug_a'), identified(self.devices, 'plug1:plug_b')
+        self.assertEqual({e.unique_id: e.device_id for e in self.entities.entities.values()},
+                         {'plug1:plug': None, 'plug1:plug_a:relay': plug_a.id, 'plug1:plug_a:power': plug_a.id,
+                          'plug1:plug_b:relay': plug_b.id, 'plug1:plug_b:power': plug_b.id})
+        kept = {unique_id: self.live(unique_id) for unique_id in ('plug1:plug', 'plug1:plug_a:relay', 'plug1:plug_a:power')}
+        await self.sync(self.csharp_plug('relay', 'power', plugs=('plug_a',)))
+        self.assertIsNone(identified(self.devices, 'plug1:plug_b'))
+        self.assertEqual(self.devices.removed_with, {plug_b.id: []})
+        self.assertIs(identified(self.devices, 'plug1:plug_a'), plug_a)
+        self.assertEqual({e.unique_id: e.device_id for e in self.entities.entities.values()},
+                         {'plug1:plug': None, 'plug1:plug_a:relay': plug_a.id, 'plug1:plug_a:power': plug_a.id})
+        for unique_id, entity in kept.items():
+            self.assertIs(self.live(unique_id), entity)
+        self.assertFalse([u for u in self.bridge._live if u.startswith('plug1:plug_b:')])
+
     # Push
 
     async def test_push_applies_state_and_availability(self):

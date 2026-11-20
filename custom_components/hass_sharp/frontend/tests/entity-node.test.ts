@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, classSignature, connectData, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
 import { addConnected } from '../src/visual/flow/autoConnect'
@@ -306,6 +306,37 @@ it('a C# entity and a C# device are declarations, and no rule takes either for a
   expect(() => declaredEntities({ nodes: [{ id: 'o', kind: 'other', config: {} }] }, other)).toThrow('The kind other declares an entity that no list knows how to describe')
   const otherDevice = { ...nodeCatalog, nodes: { ...nodeCatalog.nodes, other: { ...nodeCatalog.nodes.device } } }
   expect(() => declaredDevices({ nodes: [{ id: 'o', kind: 'other', config: {} }] }, otherDevice)).toThrow('The kind other declares a device that no list knows how to describe')
+})
+
+it('a definition lists its Entity nodes\' entities, then each C# entity\'s, by its key, its class\'s domain and its device, and nothing of its code', () => {
+  // The graph EntityStoreTests.TheDerivedListsHoldTheCSharpNodes stores: the same C# entries and devices on both sides
+  // (an Entity node's entry is a copy of its config, here with the defaults a dropped node has).
+  let graph = add(empty(), 'device', 'hall', { key: 'hall', name: 'Hall' })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'binary_sensor', name: 'lamp', options: {}, arguments: { is_on: lit('boolean', true) } })
+  graph = add(graph, 'entity', 'plug', { key: 'plug', domain: 'binary_sensor', name: 'Plug sensor', options: {}, arguments: { is_on: lit('boolean', false) } })
+  graph = add(graph, 'csharp_entity', 'temp', { key: 'temp' })
+  graph = add(graph, 'csharp_entity', 'outside', { key: 'outside' })
+  graph = add(graph, 'csharp_device', 'plug_node', { key: 'plug', name: 'Plug' })
+  graph = connectData(connectData(graph, 'hall', 'entities', 'lamp', 'device'), 'hall', 'entities', 'temp', 'device')
+  expect(listedEntities(graph)).toEqual([
+    { key: 'lamp', domain: 'binary_sensor', name: 'lamp', options: {}, enabledByDefault: true, device: 'hall' },
+    { key: 'plug', domain: 'binary_sensor', name: 'Plug sensor', options: {}, enabledByDefault: true, device: null },
+    { key: 'temp', domain: 'sensor', name: null, device: 'hall', csharp: true },
+    { key: 'outside', domain: 'sensor', name: null, device: null, csharp: true },
+  ])
+  expect(derivedDevices(graph, nodeCatalog)).toEqual([{ key: 'hall', name: 'Hall' }, { key: 'plug', name: 'Plug', csharp: true }])
+  // The catalog's entities, which steps name, stay the Entity nodes'.
+  expect(withGraphTypes(nodeCatalog, { ...graph, definition: { settings: [] } }).definition!.entities.map(e => e.key)).toEqual(['lamp', 'plug'])
+  // csharp comes from the kind alone: a config that claims it, or another domain, is not read; an unreadable signature has no domain.
+  const claimed = updateNode(graph, 'lamp', { config: { ...graph.nodes.find(n => n.id === 'lamp')!.config, csharp: true } })
+  expect(Object.hasOwn(listedEntities(claimed)[0], 'csharp')).toBe(false)
+  expect(csharpEntities(claimed).map(e => e.csharp)).toEqual([true, true])
+  const unreadable = updateNode(graph, 'outside', { config: { ...graph.nodes.find(n => n.id === 'outside')!.config, signature: { title: 5 }, csharp: false, name: 'Mine' } })
+  expect(csharpEntities(unreadable)[1]).toEqual({ key: 'outside', domain: null, name: null, device: null, csharp: true })
+  for (const member of ['source', 'signature', 'arguments', 'Address', 'relay']) expect(JSON.stringify(listedEntities(graph))).not.toContain(member)
+  // A key an Entity node already has is listed once, as its Entity node's.
+  const twice = updateNode(graph, 'outside', { config: { ...graph.nodes.find(n => n.id === 'outside')!.config, key: 'lamp' } })
+  expect(listedEntities(twice).map(e => `${e.key}:${e.csharp === true}`)).toEqual(['lamp:false', 'plug:false', 'temp:true'])
 })
 
 it('a C# entity\'s Device pin sits in its header, and a type change leaves it alone', () => {

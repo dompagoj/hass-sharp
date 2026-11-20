@@ -581,6 +581,56 @@ it('says how many devices a definition makes: Device for one, the count for more
   expect(listed.some(d => Object.hasOwn(d, 'device'))).toBe(false)
 })
 
+it('lists a definition\'s own entities first, then each C# device\'s as Home Assistant has them, and counts its C# devices', async () => {
+  const signature = (title: string, domain: string | null) => ({ title, description: '', domain, settings: [] })
+  const at = (y: number) => ({ x: 60, y })
+  const csharpDevice = (key: string, name: string) => ({ id: `node-${key}`, kind: 'csharp_device', position: at(600),
+    config: { key, name, source: `public class ${name} : SharpDevice { }`, signature: signature(name, null), arguments: {} } })
+  // An Entity node keyed plug, a C# entity temp (its class names it Thermometer), then the C# devices strip and plug:
+  // hall:plug is the Entity node's entity, hall:plug:relay and hall:plug:plug the C# device plug's.
+  const body = (name: string, devices: Record<string, unknown>[]): DefinitionBody => ({ name, settings: [], logic: { kind: 'graph', graph: { version: 5, name, edges: [], nodes: [
+    { id: 'hub', kind: 'entity', position: at(0), config: { key: 'plug', domain: 'binary_sensor', name: 'Plug sensor' } },
+    { id: 'thermo', kind: 'csharp_entity', position: at(200), config: { key: 'temp', source: 'public class Thermometer : SharpSensor { }', signature: signature('Thermometer', 'sensor'), arguments: {} } },
+    ...devices] } as never } })
+  const live = (uniqueId: string, domain: string, name: string | null) =>
+    ({ uniqueId, key: uniqueId.slice(uniqueId.lastIndexOf(':') + 1), domain, name, entityId: `${domain}.${uniqueId.replaceAll(':', '_')}` })
+  const { root, fixture } = setup({ prepare: f => {
+    // Running: its live entities. The C# device strip's comes before plug's, as its node does, whatever their names.
+    f.entities.seed('hall', body('Hall', [csharpDevice('strip', 'Strip'), csharpDevice('plug', 'Plug')]), { liveEntities: [
+      live('hall:plug:relay', 'switch', 'Relay'), live('hall:temp', 'sensor', null), live('hall:plug', 'binary_sensor', 'Plug sensor'),
+      live('hall:strip:outlet', 'switch', 'Zeta outlet'), live('hall:plug:power', 'sensor', 'Power'), live('hall:plug:plug', 'switch', null)] })
+    // Off: the registry's, a C# device's entity with no name going by its own key, never by the Entity node's.
+    f.entities.seed('desk', body('Desk', [csharpDevice('plug', 'Plug')]), { enabled: false })
+    f.entities.registry.set('desk', [registered('desk:plug', 'binary_sensor.desk_plug', null), registered('desk:plug:plug', 'switch.desk_plug_plug', null),
+      registered('desk:plug:relay', 'switch.desk_relay', null, true), registered('desk:temp', 'sensor.desk_temp', null)])
+    // A C# device that has never run: its device is counted, and Home Assistant has none of its entities yet.
+    f.entities.seed('fresh', { name: 'Fresh', settings: [], logic: { kind: 'graph', graph: { version: 5, name: 'Fresh', edges: [], nodes: [csharpDevice('plug', 'Plug')] } as never } }, { enabled: false })
+  } })
+  await loaded(root)
+  expect(rows(card(root, 'hall'))).toEqual([
+    ['Plug sensor', 'Binary sensor', 'binary_sensor.hall_plug', '—'],
+    ['Thermometer', 'Sensor', 'sensor.hall_temp', '—'],
+    ['Zeta outlet', 'Switch', 'switch.hall_strip_outlet', '—'],
+    ['plug', 'Switch', 'switch.hall_plug_plug', '—'],
+    ['Power', 'Sensor', 'sensor.hall_plug_power', '—'],
+    ['Relay', 'Switch', 'switch.hall_plug_relay', '—'],
+  ])
+  expect(rows(card(root, 'desk'))).toEqual([
+    ['Plug sensor', 'Binary sensor', 'binary_sensor.desk_plug', '—'],
+    ['Thermometer', 'Sensor', 'sensor.desk_temp', '—'],
+    ['plug', 'Switch', 'switch.desk_plug_plug', '—'],
+    ['relay', 'Switch', 'switch.desk_relay', 'Disabled in Home Assistant'],
+  ])
+  const fresh = card(root, 'fresh')
+  expect(fresh.querySelector('.hs-ent-row')).toBeNull()
+  expect(fresh.querySelector('.hs-ent-card__none')?.textContent).toBe('Its entities appear after it has started once.')
+  expect(Object.fromEntries(['hall', 'desk', 'fresh'].map(id => [id, chip(card(root, id))]))).toEqual({ hall: '2 devices', desk: 'Device', fresh: 'Device' })
+  // Stored, each C# entity is listed with no name and its class's domain; a C# device's entities never are.
+  const read = (await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'read', id: 'hall' } }) as any).result
+  expect(read.entities).toEqual([{ key: 'plug', domain: 'binary_sensor', name: 'Plug sensor', device: null }, { key: 'temp', domain: 'sensor', name: null, device: null, csharp: true }])
+  expect(read.devices).toEqual([{ key: 'strip', name: 'Strip', csharp: true }, { key: 'plug', name: 'Plug', csharp: true }])
+})
+
 it('lists a file that cannot be read beside the cards of the readable definitions', async () => {
   const { root } = setup({ prepare: f => { three(f); f.entities.unreadable.set('broken', 'Invalid entity definition envelope') } })
   await loaded(root)

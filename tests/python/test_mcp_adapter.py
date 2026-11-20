@@ -596,7 +596,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c.args[0] for c in self.service.entities.await_args_list],[{'operation':'list'}])
         trigger={'triggerId':'poll','label':'Every minute','type':'ha','config':{'type':'ha','trigger':{'trigger':'time_pattern','minutes':'/1'}},'manual':True}
         self.assertEqual(result[0],{'id':'porch','name':'Porch plug','revision':4,'enabled':True,'status':'running','activationError':None,'logic':'graph','devices':1,
-            'entities':[{'key':'relay','domain':'switch','name':'Relay','entityId':'switch.porch_plug_relay'},{'key':'power','domain':'sensor','name':'Power','entityId':None}],
+            'entities':[{'key':'relay','domain':'switch','name':'Relay','device':None,'entityId':'switch.porch_plug_relay'},{'key':'power','domain':'sensor','name':'Power','device':None,'entityId':None}],
             'triggers':[{**trigger,'runnable':True}]})
         self.assertEqual(result[1],{'id':'plug','name':'Smart plug','revision':4,'enabled':True,'status':'failed','activationError':'Setup failed: no address',
             'logic':'library:plug:NodeLib.SmartPlug','devices':0,'entities':[{'key':'relay','domain':'switch','name':'Relay','entityId':'switch.relay'}],'triggers':[]})
@@ -605,6 +605,50 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         text=json.dumps(result)
         for absent in ('xxxxx','http://plug','settings','nodes','source','registeredEntities'):
             self.assertNotIn(absent,text)
+
+    async def test_entities_list_summarises_what_a_definitions_csharp_nodes_make(self):
+        # A hub lamp, a C# entity temp (listed with name null: its class names it) and a running C# device plug whose code
+        # added relay. The C# device's entity is no declared one: it is summarised as Home Assistant registered it, under
+        # its three-part unique id, its device the middle part. The C# entity is named as Home Assistant has it, else by
+        # its class's title.
+        temp_node={'id':'temp','kind':'csharp_entity','config':{'key':'temp','source':'public class Thermometer : SharpSensor { }',
+                   'signature':{'title':'Thermometer','description':'','domain':'sensor','settings':[]},'arguments':{}}}
+        plug_node={'id':'plug','kind':'csharp_device','config':{'key':'plug','name':'Plug','source':'public class Plug : SharpDevice { }',
+                   'signature':{'title':'Plug','description':'','domain':None,'settings':[]},'arguments':{}}}
+        graph={'version':5,'name':'Hall','nodes':[{'id':'lamp','kind':'entity','config':{'key':'lamp','domain':'binary_sensor','name':'Lamp'}},temp_node,plug_node],'edges':[]}
+        declared=[{'key':'lamp','domain':'binary_sensor','name':'Lamp','device':None},{'key':'temp','domain':'sensor','name':None,'device':None,'csharp':True}]
+        registered=[{'uniqueId':'hall:lamp','entityId':'binary_sensor.lamp','domain':'binary_sensor','name':'Lamp','disabled':False},
+                    {'uniqueId':'hall:plug:relay','entityId':'switch.plug_relay','domain':'switch','name':'Relay','disabled':False},
+                    {'uniqueId':'hall:temp','entityId':'sensor.hall_temperature','domain':'sensor','name':'Hall temperature','disabled':False}]
+        running=self.entity_document(id='hall',name='Hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph,'type':None},registeredEntities=registered,
+                                     liveEntities=[{'uniqueId':r['uniqueId'],'key':r['uniqueId'].rsplit(':',1)[1],'domain':r['domain'],'name':r['name'],'entityId':r['entityId']} for r in registered])
+        # Saved and never run: Home Assistant has none of them, so the C# entity takes its class's title, and the C# device's
+        # entities are not known yet.
+        new=self.entity_document(id='new_hall',name='New hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph,'type':None},registeredEntities=[],liveEntities=[],status='off')
+        # An Entity node keyed plug beside a C# device keyed plug: desk:plug is the hub's entity, desk:plug:relay the device's.
+        desk=self.entity_document(id='desk',name='Desk',entities=[{'key':'plug','domain':'binary_sensor','name':'Plug sensor','device':None}],devices=1,
+                                  logic={'kind':'graph','graph':{**graph,'nodes':[{'id':'hub','kind':'entity','config':{'key':'plug','domain':'binary_sensor','name':'Plug sensor'}},plug_node]},'type':None},
+                                  registeredEntities=[{'uniqueId':'desk:plug','entityId':'binary_sensor.plug_sensor','domain':'binary_sensor','name':'Plug sensor','disabled':False},
+                                                      {'uniqueId':'desk:plug:relay','entityId':'switch.desk_relay','domain':'switch','name':'Relay','disabled':False}])
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[running,new,desk]})
+        result={d['id']:d for d in (await self.call('entities_list',{})).data['result']}
+        self.assertEqual(result['hall']['entities'],[
+            {'key':'lamp','domain':'binary_sensor','name':'Lamp','device':None,'entityId':'binary_sensor.lamp'},
+            {'key':'temp','domain':'sensor','name':'Hall temperature','device':None,'entityId':'sensor.hall_temperature'},
+            {'key':'relay','domain':'switch','name':'Relay','device':'plug','entityId':'switch.plug_relay'}])
+        self.assertEqual(result['hall']['devices'],1)
+        self.assertEqual(result['new_hall']['entities'],[
+            {'key':'lamp','domain':'binary_sensor','name':'Lamp','device':None,'entityId':None},
+            {'key':'temp','domain':'sensor','name':'Thermometer','device':None,'entityId':None}])
+        self.assertEqual(result['desk']['entities'],[
+            {'key':'plug','domain':'binary_sensor','name':'Plug sensor','device':None,'entityId':'binary_sensor.plug_sensor'},
+            {'key':'relay','domain':'switch','name':'Relay','device':'plug','entityId':'switch.desk_relay'}])
+        text=json.dumps(result)
+        for absent in ('SharpSensor','SharpDevice','signature','csharp'):
+            self.assertNotIn(absent,text)
+        description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
+        self.assertIn('entities [{key, domain, name, device, entityId}]',description)
+        self.assertIn('C# device',description)
 
     async def test_entities_list_names_the_definitions_that_cannot_be_read(self):
         # A file the server cannot read (one an earlier build saved, or any other) is named apart, with why, so that a model
@@ -1169,7 +1213,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('or {name, device?, settings?, logic} with logic {kind: "class", type}',descriptions['entities_preview'])
         self.assertIn("send back only name, settings and logic, and a class definition's device, as the definition",descriptions['entities_read'])
         # A graph's devices and each entity's device are answered, for reading only.
-        self.assertIn('the devices its Device nodes declare',descriptions['entities_read'])
+        self.assertIn('the devices its Device nodes and C# device nodes declare',descriptions['entities_read'])
+        # A C# entity is listed with its key, its class naming it; a C# device's entities are Home Assistant's alone.
+        self.assertIn("a C# entity's marked csharp: true with name null, its class naming it",descriptions['entities_read'])
+        self.assertIn('The entities a C# device\'s code adds are not listed: they are in liveEntities and registeredEntities, under the unique id <definition id>:<device key>:<entity key>',descriptions['entities_read'])
         self.assertIn('each with device, the key of the device it is on or null',descriptions['entities_read'])
         # get_node_schema says how a Device node is wired, and what its Part of takes.
         self.assertIn('wire it with {kind: data, sourcePort: entities, targetPort: device} to each Entity node on the device',descriptions['get_node_schema'])

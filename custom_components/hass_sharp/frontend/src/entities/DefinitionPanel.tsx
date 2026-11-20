@@ -62,12 +62,17 @@ export function DefinitionPanel(props: DefinitionPanelProps) {
   )
 }
 
-/** The saved definition's entities with their Home Assistant ids: the running ones, else the entity registry's. */
+/**
+ * The saved definition's entities with their Home Assistant ids: the running ones, else the entity registry's. Only those
+ * it declares, whose unique id is `<id>:<key>`: an entity a C# device's code added (`<id>:<device key>:<key>`) is no
+ * step's, and is never taken for the Entity node of its key.
+ */
 export function liveEntitiesOf(document: EntityEditorDocument | undefined): DefinitionLiveEntity[] {
   if (!document) return []
-  if (document.liveEntities.length) return document.liveEntities.map(e => ({ key: e.key, entityId: e.entityId }))
   const prefix = `${document.id}:`
-  return document.registeredEntities.filter(e => e.uniqueId.startsWith(prefix)).map(e => ({ key: e.uniqueId.slice(prefix.length), entityId: e.entityId }))
+  if (document.liveEntities.length) return document.liveEntities.filter(e => e.uniqueId === `${prefix}${e.key}`).map(e => ({ key: e.key, entityId: e.entityId }))
+  return document.registeredEntities.filter(e => e.uniqueId.startsWith(prefix) && !e.uniqueId.slice(prefix.length).includes(':'))
+    .map(e => ({ key: e.uniqueId.slice(prefix.length), entityId: e.entityId }))
 }
 
 /** The entity adapter's overview: whether the saved definition is off, the definition form, and Delete. */

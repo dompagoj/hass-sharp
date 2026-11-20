@@ -132,7 +132,9 @@ static class EntityGraphTests
             (nameof(SettingsAreAppliedBeforeSetup), SettingsAreAppliedBeforeSetup),
             (nameof(AClassThatCannotStartFailsTheDefinition), AClassThatCannotStartFailsTheDefinition),
             (nameof(ACSharpEntityIsRestoredAndAHubCarriedOver), ACSharpEntityIsRestoredAndAHubCarriedOver),
-            (nameof(TwoEntitiesWithOneUniqueIdAreRefused), TwoEntitiesWithOneUniqueIdAreRefused) })
+            (nameof(TwoEntitiesWithOneUniqueIdAreRefused), TwoEntitiesWithOneUniqueIdAreRefused),
+            (nameof(TheAnswersListWhatTheCSharpNodesMake), TheAnswersListWhatTheCSharpNodesMake),
+            (nameof(ACSharpEntityGivenAnotherDomainIsForgotten), ACSharpEntityGivenAnotherDomainIsForgotten) })
         {
             try
             {
@@ -3528,5 +3530,100 @@ static class EntityGraphTests
         await rig.Scripts.LoadUserScripts([compiled], (_, error) => failure = error);
         Check(failure?.Message == "Dup twin: two entities have the key 'lamp'", "the host's key sentence: " + failure?.Message);
         Check(rig.Home.Syncs("dup_twin").Length == 0, "nothing of it is registered");
+    }
+
+    /// <summary>A strip whose one relay keeps the state its commands set.</summary>
+    const string StripSource = """
+        public class Strip : SharpDevice
+        {
+            public Strip()
+            {
+                SharpSwitch relay = null!;
+                relay = Add(new SharpSwitch("relay", "Relay")
+                {
+                    OnTurnOn = () => { relay.IsOn = true; return Task.CompletedTask; },
+                    OnTurnOff = () => { relay.IsOn = false; return Task.CompletedTask; },
+                });
+            }
+        }
+        """;
+    static IEnumerable<string> Keys(JsonNode? list) => list!.AsArray().Select(e => e!["key"]!.GetValue<string>());
+
+    /// <summary>
+    /// The read and list answers of a running definition with a Device node, two Entity nodes, two C# entities and a C#
+    /// device: <c>entities</c> lists the Entity nodes', then the C# entities' (<c>{key, domain, name: null, device,
+    /// csharp: true}</c>), and <c>devices</c> (a count in the list) the Device node and the C# device. What the C#
+    /// device's code adds is answered as Home Assistant has it, under a unique id of three parts: the C# device <c>plug</c>'s
+    /// relay is <c>hall:plug:relay</c>, never the Entity node <c>plug</c>'s <c>hall:plug</c>. Each entity runs once.
+    /// </summary>
+    static async Task TheAnswersListWhatTheCSharpNodesMake()
+    {
+        await using var rig = await Rig.Start("csharp-answers");
+        var graph = Graph("Hall", [DeviceNode("hall", "Hall"), Entity("lamp", "lamp", "binary_sensor", new { name = "Lamp" }, On(true)),
+            Entity("plug", "plug", "binary_sensor", new { name = "Plug sensor" }, On(false)), CSharp("csharp_entity", "temp", "temp", TempSource),
+            CSharp("csharp_entity", "probe", "probe", ProbeSource), CSharp("csharp_device", "plug_node", "plug", StripSource, name: "Plug")]);
+        Wire(graph, "hall", "lamp");
+        Wire(graph, "hall", "temp");
+        var saved = await rig.Save("hall", Definition("Hall", graph));
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+        await rig.Started("hall");
+        var sync = LastSync(rig, "hall");
+        Check(UniqueIds(sync) == "hall:lamp,hall:plug,hall:temp,hall:probe,hall:plug:relay", "each entity is synced once: " + sync["entities"]!.ToJsonString());
+        var read = await rig.Read("hall");
+        var listed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "hall")!.AsObject();
+        var csharp = new JsonArray(
+            new JsonObject { ["key"] = "temp", ["domain"] = "sensor", ["name"] = null, ["device"] = "hall", ["csharp"] = true },
+            new JsonObject { ["key"] = "probe", ["domain"] = "sensor", ["name"] = null, ["device"] = null, ["csharp"] = true });
+        foreach (var (what, answer) in new[] { ("read", read), ("list", listed) })
+        {
+            var entities = answer["entities"]!.AsArray();
+            Check(Keys(entities).SequenceEqual(["lamp", "plug", "temp", "probe"]), $"its {what} answer lists the Entity nodes, then the C# entities: " + entities.ToJsonString());
+            Check(entities[0]!["device"]!.GetValue<string>() == "hall" && entities[1]!["device"] == null && !entities[0]!.AsObject().ContainsKey("csharp"), $"its {what} answer's hubs: " + entities.ToJsonString());
+            Check(JsonNode.DeepEquals(new JsonArray([entities[2]!.DeepClone(), entities[3]!.DeepClone()]), csharp), $"its {what} answer's C# entities: " + entities.ToJsonString());
+            Check(Keys(answer["liveEntities"]).SequenceEqual(["lamp", "plug", "temp", "probe", "relay"])
+                && answer["liveEntities"]!.AsArray().Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["hall:lamp", "hall:plug", "hall:temp", "hall:probe", "hall:plug:relay"]),
+                $"its {what} answer's live entities, the C# device's relay under its device: " + answer["liveEntities"]!.ToJsonString());
+        }
+        Check(read["devices"]!.AsArray().Select(d => $"{d!["key"]}:{d["csharp"]?.GetValue<bool>() == true}").SequenceEqual(["hall:False", "plug:True"]), "the read answer's devices: " + read["devices"]!.ToJsonString());
+        Check(listed["devices"]!.GetValue<int>() == 2, "the list counts the Device node and the C# device: " + listed["devices"]!.ToJsonString());
+        var text = read["entities"]!.ToJsonString() + read["devices"]!.ToJsonString();
+        Check(!text.Contains("relay", StringComparison.Ordinal) && !text.Contains("source", StringComparison.Ordinal) && !text.Contains("signature", StringComparison.Ordinal),
+            "the C# device's entities and the nodes' code are listed in neither: " + text);
+    }
+
+    /// <summary>
+    /// Saved, while off, with another domain under the same key, a C# entity is another entity: its last state is
+    /// forgotten, as an Entity node's is, and so is that of the Entity node <c>plug</c> given another domain; one of the
+    /// same domain keeps its own. The relay the C# device <c>plug</c> adds, <c>hall:plug:relay</c>, is no entity a
+    /// document lists and keeps its state: nothing forgets it by the Entity node <c>plug</c>'s <c>hall:plug</c>.
+    /// </summary>
+    static async Task ACSharpEntityGivenAnotherDomainIsForgotten()
+    {
+        await using var rig = await Rig.Start("csharp-retyped");
+        Calls();
+        JsonObject Revision(bool retyped)
+        {
+            var plug = retyped ? Entity("plug", "plug", "binary_sensor", new { name = "Plug" }, On(true)) : Entity("plug", "plug", "switch", new { name = "Plug" });
+            var nodes = new List<JsonObject> { plug, CSharp("csharp_entity", "lamp", "lamp", retyped ? TempSource : LampSource("lamp")), CSharp("csharp_entity", "fan", "fan", LampSource("fan")),
+                CSharp("csharp_device", "plug_node", "plug", StripSource, name: "Plug strip") };
+            var edges = new List<JsonObject>();
+            if (!retyped) { nodes.Add(SetState("set_on", "plug", On(true))); edges.Add(Pin("plug", "command:turn_on", "set_on")); }
+            return Definition("Hall", Graph("Hall", [.. nodes], [.. edges]));
+        }
+        await rig.Save("hall", Revision(retyped: false));
+        await rig.Started("hall");
+        foreach (var id in new[] { "hall:plug", "hall:lamp", "hall:fan", "hall:plug:relay" })
+        {
+            await rig.Api.EntityCommand(id, "turn_on", null);
+            await rig.Until(id, s => Is(s, "is_on", true), id + " is on");
+        }
+        var states = rig.Scripts.States!;
+        Check(new[] { "hall:plug", "hall:lamp", "hall:fan", "hall:plug:relay" }.All(states.Ids().Contains), "each is remembered: " + string.Join(", ", states.Ids()));
+        await rig.Ok(new { operation = "set_enabled", id = "hall", enabled = false });
+        var saved = await rig.Save("hall", Revision(retyped: true), 1);
+        var ids = rig.Scripts.States!.Ids().ToArray();
+        Check(!ids.Contains("hall:lamp") && !ids.Contains("hall:plug"), "the C# entity and the Entity node given another domain are forgotten: " + string.Join(", ", ids));
+        Check(ids.Contains("hall:fan") && ids.Contains("hall:plug:relay"), "the C# switch of the same domain and the C# device's relay keep theirs: " + string.Join(", ", ids));
+        Check(saved["document"]!["entities"]!.AsArray().Single(e => e!["key"]!.GetValue<string>() == "lamp")!["domain"]!.GetValue<string>() == "sensor", "the C# entity is a sensor now: " + saved.ToJsonString());
     }
 }

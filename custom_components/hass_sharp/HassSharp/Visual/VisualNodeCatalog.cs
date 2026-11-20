@@ -144,9 +144,10 @@ public static class VisualNodeCatalog
     }
     /// <summary>
     /// The entities the graph's Entity nodes declare, each with its node's id, in the order of the graph's <c>nodes</c>;
-    /// none for a graph of the wrong shape. A C# entity's entity is its code's, which no list carries yet. Every kind that
-    /// declares an entity is named here on purpose: one this does not know is refused, never copied as it is (its config
-    /// may hold code). Mirrored by <c>declaredEntities</c> in <c>contract.ts</c>.
+    /// none for a graph of the wrong shape. A C# entity's entity is its code's: the definition's entities, which steps name
+    /// and the host builds, are its Entity nodes', and a C# entity is listed for reading only (<see cref="CSharpEntities"/>).
+    /// Every kind that declares an entity is named here on purpose: one this does not know is refused, never copied as it
+    /// is (its config may hold code). Mirrored by <c>declaredEntities</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<(string NodeId, JsonObject Entity)> DeclaredEntities(JsonObject graph, JsonObject catalog)
     {
@@ -241,6 +242,30 @@ public static class VisualNodeCatalog
     /// one does not pass it on.
     /// </summary>
     internal static bool IsCSharpDevice(JsonNode? device) => Flag(device, "csharp");
+    /// <summary>
+    /// The entities the graph's C# entities declare, as a definition lists them for reading (its stored document and its
+    /// answers, never the catalog's <c>definition</c>, whose entities steps name): for each node of the C# entity kind, in
+    /// the order of the graph's <c>nodes</c>, <c>{key, domain, name, device, csharp}</c>: its config's key as given (none
+    /// when it has none), the domain its signature gives (<see cref="ClassSignature"/>; null when that cannot be read),
+    /// no name (null: its code names it, else its title, as it runs), the key of the Device node it is on
+    /// (<see cref="DeviceOf"/>, <see cref="DeviceKey"/>) or null, and <c>csharp</c>, set here by the node's kind alone,
+    /// never read from its config. Never its code, signature, settings or their values. Mirrored by
+    /// <c>csharpEntities</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static IEnumerable<JsonObject> CSharpEntities(JsonObject graph, JsonObject catalog)
+    {
+        var nodes = GraphNodes(graph);
+        foreach (var raw in graph["nodes"] as JsonArray ?? [])
+        {
+            if (raw is not JsonObject node || Text(node, "kind") != "csharp_entity" || catalog["nodes"]?["csharp_entity"] is not { } spec || !Declares(spec, "entity")) continue;
+            var entity = Picked(node["config"], ["key"]);
+            entity["domain"] = ClassSignature(node, spec)?["domain"]?.DeepClone();
+            entity["name"] = null;
+            entity["device"] = DeviceOf(graph, Text(node, "id"), catalog) is { } device ? DeviceKey(nodes[device]["config"]) : null;
+            entity["csharp"] = true;
+            yield return entity;
+        }
+    }
     /// <summary>
     /// The definition's entities as a graph gives them: those its Entity nodes declare (<see cref="DeclaredEntities"/>),
     /// each with <c>device</c>, the key of the Device node it is on (<see cref="DeviceOf"/>), or null when it is on none or

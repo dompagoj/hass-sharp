@@ -88,9 +88,11 @@ public sealed record DefinitionBody(string Name, DefinitionDevice? Device, List<
 /// <summary>
 /// A saved entity definition: its body, with the source generated from it when it was saved, as one JSON file of
 /// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 3; a class definition an earlier build saved is 1 or 2.
-/// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, each with the key of the device it is
-/// on (<c>device</c>, null for none), and <see cref="Devices"/> the devices its Device nodes declare
-/// (<see cref="DefinitionGraph.Devices"/>); both for reading only. A class document has no devices, and writes none. A
+/// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, then each C# entity's
+/// (<c>{key, domain, name: null, device, csharp: true}</c>), each with the key of the device it is on (<c>device</c>, null
+/// for none; <see cref="DefinitionGraph.ListedEntities"/>), and <see cref="Devices"/> the devices its Device nodes
+/// declare, then each C# device's (<see cref="DefinitionGraph.Devices"/>); both for reading only. The entities a C# device
+/// adds are in neither: its code adds them as it runs. A class document has no devices, and writes none. A
 /// graph document's <see cref="Device"/> is null: one an earlier build of this phase stored is not read.
 /// </summary>
 public sealed record EntityDefinitionDocument(int Version, string Id, long Revision, string Name, DefinitionDevice? Device,
@@ -277,9 +279,10 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             // A graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its definition.
             // A valid preview had logic to preview.
             var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
-            // A graph's entities and devices are stored as its Entity and Device nodes declare them, for a read answer, a list
-            // and Home Assistant; a class has no devices.
-            var entities = graphLogic ? DefinitionGraph.Entities(preview.Graph!, catalog) : (JsonArray?)body.Entities?.DeepClone();
+            // A graph's entities and devices are stored as its Entity, C# entity, Device and C# device nodes declare them,
+            // for a read answer and a list; a class has no devices. The host is handed its plain entities from the graph
+            // again (DefinitionGraph.Entities), never these: a C# entity is its class.
+            var entities = graphLogic ? DefinitionGraph.ListedEntities(preview.Graph!, catalog) : (JsonArray?)body.Entities?.DeepClone();
             var devices = graphLogic ? DefinitionGraph.Devices(preview.Graph!, catalog.Root) : null;
             var document = new EntityDefinitionDocument(Version, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
                 entities, devices, logic, preview.Source, preview.SourceMap)

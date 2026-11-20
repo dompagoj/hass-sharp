@@ -137,6 +137,7 @@ static class EntityStoreTests
             (nameof(AVersionTwoGraphDocumentSaysToBuildItAgain), () => AVersionTwoGraphDocumentSaysToBuildItAgain(snapshot)),
             (nameof(AnOlderClassDocumentStillLoads), () => AnOlderClassDocumentStillLoads(snapshot)),
             (nameof(ARequestThatSendsDevicesBackIsAccepted), () => ARequestThatSendsDevicesBackIsAccepted(snapshot)),
+            (nameof(TheDerivedListsHoldTheCSharpNodes), () => TheDerivedListsHoldTheCSharpNodes(snapshot)),
             (nameof(ComposeGivesNoEntities), ComposeGivesNoEntities) })
             try { test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
@@ -311,6 +312,73 @@ static class EntityStoreTests
             var again = store.Save("plug", body, 1, snapshot, "g1");
             Check(again.Revision == 2 && again.Source == saved.Source && JsonNode.DeepEquals(again.Devices, PlugDevices())
                 && !File.ReadAllText(store.FilePath("plug")).Contains("evil", StringComparison.Ordinal), "it saves, with the Device nodes' devices and not those sent: " + again.Devices?.ToJsonString());
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// A graph of every kind that declares: the Device node <c>hall</c>, the Entity node <c>lamp</c> on it and the Entity
+    /// node <c>plug</c> on none (whose config claims <c>csharp</c>, which no list reads), the C# entity <c>temp</c> on <c>hall</c> and the C# entity <c>outside</c> on none (the
+    /// Thermometer template, a sensor), and the C# device <c>plug</c> (the Plug template, whose code adds a relay): an
+    /// entity and a device of one key, which are apart.
+    /// </summary>
+    static JsonObject EveryDeclaringKind() => Graph("Hall",
+        [N("hall", "device", new JsonObject { ["key"] = "hall", ["name"] = "Hall" }), Hub("lamp", "lamp", "binary_sensor", values: new JsonObject { ["is_on"] = Lit("boolean", true) }),
+            Hub("plug", "plug", "binary_sensor", new JsonObject { ["name"] = "Plug sensor", ["csharp"] = true }, new JsonObject { ["is_on"] = Lit("boolean", false) }),
+            EntityNodeTests.CSharpEntity("temp", "temp"), EntityNodeTests.CSharpEntity("outside", "outside"), EntityNodeTests.CSharpDevice("plug_node", "plug", "Plug")],
+        D("hall", "lamp", "device", "entities"), D("hall", "temp", "device", "entities"));
+
+    /// <summary>
+    /// The stored and read lists of a definition with C# nodes: its entities are its Entity nodes', then each C# entity's,
+    /// <c>{key, domain, name: null, device, csharp: true}</c>, its domain its class's and its device the Device node it is
+    /// wired to; its devices its Device nodes', then each C# device's, <c>{key, name, csharp: true}</c>. Nothing listed
+    /// holds code, a signature or a setting, and the entities a C# device's code adds are not listed. The host is handed
+    /// the Entity nodes' alone, so a C# entity is never made twice. A read answer sent back with its devices is accepted
+    /// and its devices ignored; with its entities it is refused, as for any graph.
+    /// </summary>
+    static void TheDerivedListsHoldTheCSharpNodes(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("csharp-lists");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator(VisualExecutionTests.Diagnostics));
+            var saved = store.Save("hall", GraphBody(EveryDeclaringKind(), null, name: "Hall"), 0, snapshot, "g1");
+            JsonArray expectedEntities = [
+                new JsonObject { ["key"] = "lamp", ["domain"] = "binary_sensor", ["name"] = "lamp", ["options"] = new JsonObject(), ["device"] = "hall" },
+                new JsonObject { ["key"] = "plug", ["domain"] = "binary_sensor", ["name"] = "Plug sensor", ["options"] = new JsonObject(), ["device"] = null },
+                new JsonObject { ["key"] = "temp", ["domain"] = "sensor", ["name"] = null, ["device"] = "hall", ["csharp"] = true },
+                new JsonObject { ["key"] = "outside", ["domain"] = "sensor", ["name"] = null, ["device"] = null, ["csharp"] = true }];
+            JsonArray expectedDevices = [new JsonObject { ["key"] = "hall", ["name"] = "Hall" }, new JsonObject { ["key"] = "plug", ["name"] = "Plug", ["csharp"] = true }];
+            var file = JsonNode.Parse(File.ReadAllText(store.FilePath("hall")))!;
+            Check(JsonNode.DeepEquals(file["entities"], expectedEntities) && JsonNode.DeepEquals(saved.Entities, expectedEntities),
+                "the Entity nodes' entities, then each C# entity's: " + file["entities"]?.ToJsonString());
+            Check(JsonNode.DeepEquals(file["devices"], expectedDevices) && JsonNode.DeepEquals(saved.Devices, expectedDevices),
+                "the Device node's device, then the C# device's: " + file["devices"]?.ToJsonString());
+            // Member for member: nothing listed is code, a signature, a setting or one of its values.
+            var listed = file["entities"]!.ToJsonString() + file["devices"]!.ToJsonString();
+            foreach (var absent in new[] { "source", "signature", "arguments", "Address", "Thermometer", "relay" })
+                Check(!listed.Contains(absent, StringComparison.Ordinal), $"nothing listed holds {absent}: " + listed);
+            var read = store.Read("hall")!;
+            Check(JsonNode.DeepEquals(read.Entities, expectedEntities) && JsonNode.DeepEquals(read.Devices, expectedDevices), "they read back as stored: " + read.Entities?.ToJsonString());
+            Check(read.Body.Entities == null, "the body of the stored graph has none: a regeneration composes from the graph alone");
+            // The host's entities: the Entity nodes' alone, in the store's order.
+            var composed = DefinitionGraph.Compose(read.Body);
+            Check(DefinitionGraph.Entities(composed, snapshot).Select(e => e!["key"]!.GetValue<string>()).SequenceEqual(["lamp", "plug"]),
+                "the host makes the Entity nodes' entities alone: " + DefinitionGraph.Entities(composed, snapshot).ToJsonString());
+
+            // Sent back as a read answer has them: the devices are ignored, the entities refused.
+            var answer = JsonSerializer.SerializeToNode(read, VisualStore.Json)!.AsObject();
+            var request = new JsonObject { ["name"] = answer["name"]!.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(), ["logic"] = answer["logic"]!.DeepClone(), ["devices"] = answer["devices"]!.DeepClone() };
+            request["devices"]!.AsArray().Add(new JsonObject { ["key"] = "evil", ["name"] = "Not on the canvas", ["csharp"] = true });
+            var again = store.Save("hall", request.Deserialize<DefinitionBody>(VisualStore.Json)!, 1, snapshot, "g1");
+            Check(again.Revision == 2 && again.Source == saved.Source && JsonNode.DeepEquals(again.Devices, expectedDevices) && JsonNode.DeepEquals(again.Entities, expectedEntities)
+                && !File.ReadAllText(store.FilePath("hall")).Contains("evil", StringComparison.Ordinal), "the devices sent back are ignored: " + again.Devices?.ToJsonString());
+            request.Remove("devices");
+            request["entities"] = answer["entities"]!.DeepClone();
+            var refused = Throws<DefinitionValidationException>(() => store.Save("hall", request.Deserialize<DefinitionBody>(VisualStore.Json)!, 2, snapshot, "g1"), "saving the entities back");
+            Check(refused.Preview.Diagnostics.Select(d => $"{d.Code} {d.InputId}").SequenceEqual(["definition.entitiesNotAllowed entities"]), "the entities sent back are refused: " + Codes(refused.Preview));
+            Check(store.Read("hall")!.Revision == 2, "and nothing is written");
+            Check(HassSharpManager.DeviceCount(again, snapshot) == 2, "the list counts the Device node and the C# device");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }

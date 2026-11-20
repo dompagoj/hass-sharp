@@ -411,11 +411,19 @@ it('the entity definition\'s adapter answers its saved entities\' keys and the e
   graph = updateNode(add(graph, 'device', 'spare'), 'spare', { config: {} })
   const saved = { id: 'desk', entities: [{ key: 'lamp', domain: 'light' }, { key: 'fan', domain: 'switch' }], registeredEntities: [], graph }
   // Running: its live entities; one Home Assistant has no id for yet is left out.
-  expect(adapter.savedEntities!(context({ ...saved, liveEntities: [{ key: 'lamp', entityId: 'light.desk_lamp' }, { key: 'fan', entityId: null }] })))
+  expect(adapter.savedEntities!(context({ ...saved, liveEntities: [{ uniqueId: 'desk:lamp', key: 'lamp', entityId: 'light.desk_lamp' }, { uniqueId: 'desk:fan', key: 'fan', entityId: null }] })))
     .toEqual({ keys: ['lamp', 'fan'], entityIds: { lamp: 'light.desk_lamp' }, deviceKeys: ['plug', 'hub'] })
   // Off or failed: the entity registry's, by unique id.
   expect(adapter.savedEntities!(context({ ...saved, liveEntities: [], registeredEntities: [{ uniqueId: 'desk:fan', entityId: 'switch.desk_fan' }, { uniqueId: 'other:lamp', entityId: 'light.other' }] })))
     .toEqual({ keys: ['lamp', 'fan'], entityIds: { fan: 'switch.desk_fan' }, deviceKeys: ['plug', 'hub'] })
+  // A C# device's entities (<id>:<device key>:<entity key>) are none of the steps': a C# device plug's lamp and plug are
+  // never taken for the Entity nodes lamp and plug, running or off.
+  const csharp = { ...saved, entities: [...saved.entities, { key: 'plug', domain: 'binary_sensor' }] }
+  expect(adapter.savedEntities!(context({ ...csharp, liveEntities: [{ uniqueId: 'desk:plug:lamp', key: 'lamp', entityId: 'light.desk_plug_lamp' }, { uniqueId: 'desk:plug:plug', key: 'plug', entityId: 'switch.desk_plug_plug' },
+    { uniqueId: 'desk:plug', key: 'plug', entityId: 'binary_sensor.desk_plug' }] })))
+    .toEqual({ keys: ['lamp', 'fan', 'plug'], entityIds: { plug: 'binary_sensor.desk_plug' }, deviceKeys: ['plug', 'hub'] })
+  expect(adapter.savedEntities!(context({ ...csharp, liveEntities: [], registeredEntities: [{ uniqueId: 'desk:plug:fan', entityId: 'switch.desk_plug_fan' }, { uniqueId: 'desk:plug:plug', entityId: 'switch.desk_plug_plug' }] })))
+    .toEqual({ keys: ['lamp', 'fan', 'plug'], entityIds: {}, deviceKeys: ['plug', 'hub'] })
   // No Device nodes: no saved devices.
   expect(adapter.savedEntities!(context({ ...saved, graph: empty(), liveEntities: [] }))!.deviceKeys).toEqual([])
   // The automation editor has no entities.

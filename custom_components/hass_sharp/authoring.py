@@ -33,8 +33,9 @@ def ready_entry(hass):
 
 def registered_entities(hass, entry_id):
     """On the loop: the config entry's entity registry entries of definitions, by definition id, each list sorted by
-    unique id. A definition's entity has the unique id `<definition id>:<entity key>`, and a definition id has no colon,
-    so the part before the first one is the definition (`plug2:relay` is not `plug`'s). One pass for a whole answer."""
+    unique id. A definition's entity has the unique id `<definition id>:<entity key>`, or `<definition id>:<device
+    key>:<entity key>` for one a C# device's code added, and a definition id has no colon, so the part before the first
+    one is the definition (`plug2:relay` is not `plug`'s); what follows it is not read here. One pass for a whole answer."""
     found = {}
     if entry_id is None:
         return found

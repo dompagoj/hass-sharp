@@ -72,10 +72,31 @@ internal static class DefinitionGraph
     /// <summary>
     /// The entities of a composed graph (<see cref="Compose"/>), as a copy: the ones its Entity nodes declare
     /// (<see cref="VisualNodeCatalog.WithGraphTypes"/>), the first of each key, each with <c>device</c>: the key of the
-    /// Device node it is on, or null.
+    /// Device node it is on, or null. These are what the host builds as plain entities and what steps name: never a C#
+    /// entity, which its class is (the host sets it up from <see cref="Components"/>), so that none is made twice.
     /// </summary>
     internal static JsonArray Entities(JsonObject composed, VisualCatalogSnapshot snapshot) =>
         new([.. VisualNodeCatalog.DefinitionItems(VisualNodeCatalog.WithGraphTypes(snapshot.Root, composed), "entities").Select(e => e.DeepClone())]);
+
+    /// <summary>
+    /// The entities a composed graph (<see cref="Compose"/>) declares, as its stored document and its answers list them,
+    /// for reading only: its Entity nodes' (<see cref="Entities"/>), then each C# entity's
+    /// (<see cref="VisualNodeCatalog.CSharpEntities"/>: <c>{key, domain, name: null, device, csharp: true}</c>), in node
+    /// order, the first of each key, a key being text. What makes an entry a C# entity's is its node's kind alone: an
+    /// Entity node's entry, a copy of its config, is listed without a <c>csharp</c> member its config may hold. The
+    /// entities a C# device adds are not among them: its code adds them as it runs, and Home Assistant has them
+    /// (<c>liveEntities</c>, <c>registeredEntities</c>). None past the catalog's limits.
+    /// </summary>
+    internal static JsonArray ListedEntities(JsonObject composed, VisualCatalogSnapshot snapshot)
+    {
+        var listed = Entities(composed, snapshot);
+        foreach (var entity in listed) entity!.AsObject().Remove("csharp");
+        if (VisualNodeCatalog.OverLimit(snapshot.Root, composed)) return listed;
+        var keys = listed.Select(e => VisualNodeCatalog.Text(e, "key")).ToHashSet(StringComparer.Ordinal);
+        foreach (var entity in VisualNodeCatalog.CSharpEntities(composed, snapshot.Root))
+            if (entity["key"] is JsonValue value && value.TryGetValue<string>(out var key) && keys.Add(key)) listed.Add(entity);
+        return listed;
+    }
 
     /// <summary>
     /// The devices of a composed graph (<see cref="Compose"/>), as a copy: those its Device nodes declare, as

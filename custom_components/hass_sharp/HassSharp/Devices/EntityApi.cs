@@ -58,7 +58,7 @@ public partial class HassSharpManager
 
     /// <summary>
     /// How many devices the definition makes in Home Assistant, as the list answers it in place of its device: a graph's
-    /// are those its Device nodes declare (<see cref="EntityDefinitionDocument.Devices"/>); a class makes one when it gives
+    /// are those its Device nodes and C# devices declare (<see cref="EntityDefinitionDocument.Devices"/>); a class makes one when it gives
     /// device details or, by <paramref name="libraries"/>, its class is a <see cref="SharpDevice"/>, else none.
     /// </summary>
     internal static int DeviceCount(EntityDefinitionDocument document, VisualCatalogSnapshot libraries) =>
@@ -358,7 +358,11 @@ public partial class HassSharpManager
     /// <summary>
     /// A graph's entity a save gives another domain under the same key is another entity: the last state the one before
     /// showed is forgotten, so that it does not come back as this one's. (An entity a save removes is forgotten as its
-    /// definition next starts.)
+    /// definition next starts.) The entities compared are those the two documents list: Entity nodes and C# entities alike
+    /// (a C# entity's domain is its class's), each known by <c>&lt;definition id&gt;:&lt;key&gt;</c>, as both are in Home
+    /// Assistant. The entities a C# device adds are listed by neither document (their unique ids have three parts,
+    /// <c>&lt;definition id&gt;:&lt;device key&gt;:&lt;entity key&gt;</c>), so none of them is forgotten here, and never by
+    /// a two-part id: a device's key is no entity key.
     /// </summary>
     void ForgetRetyped(EntityDefinitionDocument? before, EntityDefinitionDocument after)
     {
@@ -372,7 +376,8 @@ public partial class HassSharpManager
     static object PreviewJson(DefinitionPreview preview) => new { valid = preview.Valid, diagnostics = preview.Diagnostics, source = preview.Source, sourceMap = preview.SourceMap };
 
     /// <summary>
-    /// The request's definition with each Custom C# step's pins written from its code first when it asks so
+    /// The request's definition with each Custom C# step's pins, and each C# entity's and C# device's signature (its
+    /// settings), written from its code first when it asks so
     /// (<c>deriveSignatures</c>), as an automation's request does (<see cref="VisualGenerator.DeriveSignatures(JsonObject, VisualCatalogSnapshot, out List{VisualDiagnostic})"/>);
     /// a class, or a request that does not ask, as it came.
     /// </summary>
@@ -414,7 +419,7 @@ public partial class HassSharpManager
     /// The entity definitions' JSON API, answered in the envelope <see cref="VisualRequest"/> uses: <c>types</c>,
     /// <c>list</c>, <c>read</c>, <c>preview</c>, <c>save</c>, <c>set_enabled</c>, <c>delete</c> and <c>run</c> (a Trigger
     /// step, by hand). Saving or turning on a definition runs it; turning it off or deleting it unloads it. Preview and save
-    /// take <c>deriveSignatures</c>, as an automation's do: each Custom C# step's pins are first written from its code,
+    /// take <c>deriveSignatures</c>, as an automation's do: each Custom C# step's pins and each C# node's signature are first written from its code,
     /// what that removed is answered as warnings, and a preview answers the graph with those pins as <c>graph</c>.
     /// </summary>
     /// <param name="requestJson">The request: <c>operation</c> and that operation's fields.</param>
