@@ -1194,8 +1194,7 @@ static class EntityGraphTests
 
     /// <summary>
     /// A graph whose only node is a C# entity, or a C# device, declares what it makes: its preview does not ask for an
-    /// entity. Until such a node is compiled it cannot run, which the preview says on its code, as its one error; so it
-    /// cannot be saved yet.
+    /// entity, and has no problem at all. It is saved, with its node's factory in its source, and runs.
     /// </summary>
     static async Task AGraphWithOnlyACSharpNodeIsADefinition()
     {
@@ -1205,14 +1204,12 @@ static class EntityGraphTests
             var id = Id(node);
             var definition = Definition("Hall", Graph("Hall", [node]));
             var preview = await rig.Ok(new { operation = "preview", definition });
-            var errors = preview["diagnostics"]!.AsArray().Where(d => d!["severity"]!.GetValue<int>() == 3).ToArray();
-            Check(!preview["valid"]!.GetValue<bool>() && !preview["diagnostics"]!.AsArray().Any(d => d!["code"]?.GetValue<string>() == "definition.entitiesRequired"),
-                $"a graph of only {id} is asked for no entity: " + preview["diagnostics"]!.ToJsonString());
-            Check(errors.Length == 1 && errors[0]!["nodeId"]!.GetValue<string>() == id && errors[0]!["inputId"]!.GetValue<string>() == "source"
-                && errors[0]!["message"]!.GetValue<string>() == "C# entity and C# device nodes cannot run yet",
-                $"its one error is on {id}'s code, that it cannot run yet: " + preview["diagnostics"]!.ToJsonString());
-            var saved = await rig.Request(new { operation = "save", id = "hall", expectedRevision = 0, definition });
-            Check(saved["error"]?["code"]?.GetValue<string>() == "validation", $"a graph of only {id} cannot be saved yet: " + saved.ToJsonString());
+            Check(preview["valid"]!.GetValue<bool>() && preview["diagnostics"]!.AsArray().Count == 0,
+                $"a graph of only {id} is asked for no entity, and has no problem: " + preview["diagnostics"]!.ToJsonString());
+            var saved = await rig.Save("hall_" + id, definition);
+            Check(saved["saved"]!.GetValue<bool>() && saved["active"]!.GetValue<bool>() && saved["activationError"] == null
+                && saved["document"]!["source"]!.GetValue<string>().Contains($"\"{id}\" => new global::NodeLib.Custom_{id}.", StringComparison.Ordinal),
+                $"a graph of only {id} is saved with its factory, and runs: " + saved.ToJsonString());
         }
     }
 

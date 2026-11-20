@@ -95,7 +95,8 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     DefinitionPreview GenerateGraph(DefinitionBody body, VisualCatalogSnapshot snapshot)
     {
         var graph = DefinitionGraph.Compose(body);
-        var preview = new VisualGenerator(diagnostics ?? Fallback.Value, serviceCalls).Preview(graph, snapshot);
+        // The settings with their values, which the graph does not carry: a C# node's pin wired to a Setting is checked with its value.
+        var preview = new VisualGenerator(diagnostics ?? Fallback.Value, serviceCalls).Preview(graph, snapshot, body.Settings ?? []);
         return new(preview.Valid, preview.Diagnostics, preview.Valid ? preview.Source : "", null)
         {
             SourceMap = preview.Valid ? preview.SourceMap : [],
@@ -117,9 +118,12 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
             error("definition.duplicateSetting", $"{key} is set twice", key);
     }
 
-    // JSON null leaves the class default, so it fits every setting. A whole number is one a long holds, written without a
-    // fraction; it and a number are within the setting's range when it has one (its [Setting]'s, or an int's).
-    static bool Fits(EntitySettingDescriptor setting, JsonNode? value)
+    /// <summary>
+    /// Whether a value is one the setting takes. JSON null leaves the class default, so it fits every setting. A whole
+    /// number is one a long holds, written without a fraction; it and a number are within the setting's range when it has
+    /// one (its [Setting]'s, or an int's). An enum takes the text of one of its options.
+    /// </summary>
+    internal static bool Fits(EntitySettingDescriptor setting, JsonNode? value)
     {
         if (value == null || value.GetValueKind() == JsonValueKind.Null) return true;
         var kind = value.GetValueKind();
@@ -131,6 +135,21 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
             // Text, and true or false, fit as a graph setting's do.
             var type => DefinitionDocument.Fits(type, value),
         };
+    }
+
+    /// <summary>
+    /// The setting a C# entity's or C# device's signature lists (well formed: <see cref="VisualNodeCatalog.WellFormedClassSignature"/>),
+    /// as the class kind describes one, so that its values are checked and phrased alike: its options when it lists
+    /// them, and its range when it has one.
+    /// </summary>
+    internal static EntitySettingDescriptor Described(JsonObject setting)
+    {
+        static double? Bound(JsonNode? value) => value is JsonValue number && number.GetValueKind() == JsonValueKind.Number ? number.GetValue<double>() : null;
+        var description = VisualNodeCatalog.Text(setting, "description");
+        return new(VisualNodeCatalog.Text(setting, "key"), VisualNodeCatalog.Text(setting, "label"), description == "" ? null : description, VisualNodeCatalog.Text(setting, "type"),
+            setting["secret"] is JsonValue secret && secret.TryGetValue<bool>(out var hidden) && hidden,
+            [.. (setting["options"] as JsonArray ?? []).Select(o => o is JsonValue v && v.TryGetValue<string>(out var option) ? option : "")])
+        { Minimum = Bound(setting["minimum"]), Maximum = Bound(setting["maximum"]) };
     }
 
     /// <summary>Whether a number is within the setting's range: no smaller than its minimum and no larger than its maximum, each when it has one.</summary>

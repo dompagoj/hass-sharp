@@ -139,6 +139,16 @@ public static class VisualGraphValidator
         internal const string UnreadableSettings = "The settings of this node cannot be read; open Edit code and apply it";
         /// <summary>A Custom C# node whose stored signature is not what its code gives (the backend compiles it to know).</summary>
         internal const string StaleSignature = "The pins are out of date with the code: open Edit code and apply it";
+        /// <summary>
+        /// A C# entity or C# device whose stored settings differ from its code's in what changes wires or values (the
+        /// backend compiles it to know: <see cref="VisualGenerator.SameSettings"/>).
+        /// </summary>
+        internal const string OutOfDateSettings = "The settings are out of date with the code: open Edit code and apply it";
+        /// <summary>
+        /// A value given to a C# entity's or C# device's setting that the setting does not take (the backend checks it):
+        /// what it takes, never the value, which may be a secret.
+        /// </summary>
+        internal static string SettingValue(string label, string phrase) => $"{label} takes {phrase}";
         /// <summary>The things hand-written automations left behind, and what to do instead.</summary>
         internal const string OldCustomCode = "Custom C# code is now one static method marked [Node]; rewrite this node's code in that form";
         internal const string Imports = "Usings are no longer part of an automation; put using lines at the top of a Custom C# node's code";

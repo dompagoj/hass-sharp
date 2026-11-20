@@ -214,7 +214,7 @@ public static class VisualNodeCatalog
     /// A device's key as the definition's devices list it: a text that is not blank once trimmed, as given; null for none
     /// (blank, absent or not a text), when the device is no device of the list and an entity on it is on none.
     /// </summary>
-    static string? DeviceKey(JsonNode? config) =>
+    internal static string? DeviceKey(JsonNode? config) =>
         config?["key"] is JsonValue value && value.TryGetValue<string>(out var key) && VisualGraphValidator.Words.Trimmed(key).Length > 0 ? key : null;
     /// <summary>
     /// The device a Device node's config describes, as a definition lists one: a copy of it without a text that is blank

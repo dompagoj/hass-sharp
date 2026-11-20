@@ -208,6 +208,24 @@ an entity id Home Assistant does not have is a warning, `entity.unknown`.
 `deriveSignatures: true` first writes each Custom C# step's pins from its code, and
 the answer's `graph` is the graph with those pins and nothing else of the definition.
 
+A C# entity or C# device node's code is compiled as a class, its problems on the
+node's `source`. A stored `signature` that differs from the class's in its `domain`,
+the keys of its settings or their order, or a setting's `type`, `secret`, `options`,
+`minimum` or `maximum` is refused with `csharp.signature` on the node's `signature`:
+"The settings are out of date with the code: open Edit code and apply it"; one that
+differs in words only is refreshed. Then, for a node whose settings are current,
+each pin's value, typed or that of the Setting wired to it, is checked against its
+setting: a value the setting does not take is `setting.value` on the pin,
+"`{Label} takes {what it takes}`" (such as "Interval takes a whole number from 1 to
+3600"), without the value. With `deriveSignatures: true` each one's signature is
+written from its class, and the value and the wire of a setting the code no longer
+has are removed, each with a warning: "Removed the value of {Label}: the code no
+longer has that setting", "Removed the connection to {Label}: the code no longer has
+that setting". The source holds each node's code in `NodeLib.Custom_<escaped node
+id>` and `SharpNodes.Create(nodeId)`, which creates a node's class by its id; a graph
+without such a node has no `SharpNodes`. A Setting's value is never in the source:
+it is read when the definition starts. Previewing never creates a class.
+
 **save** checks as preview does, stores the definition and runs it (unless it is
 off), replacing the revision running. It waits up to 5 seconds for the
 definition's `Start()`; one still starting is answered with status `setup`. The

@@ -119,11 +119,319 @@ static class EntityGraphGeneratorTests
             (nameof(CommandAndSetupRootsBecomeActions), CommandAndSetupRootsBecomeActions),
             (nameof(AnEntityNodesFlowsBecomeActions), AnEntityNodesFlowsBecomeActions),
             (nameof(ATriggerInAnEntityGraphKeepsItsOwnAction), ATriggerInAnEntityGraphKeepsItsOwnAction),
-            (nameof(AutomationSourceIsUnchanged), () => { AutomationSourceIsUnchanged(); return Task.CompletedTask; }) })
+            (nameof(AutomationSourceIsUnchanged), () => { AutomationSourceIsUnchanged(); return Task.CompletedTask; }),
+            (nameof(AnEntityGraphWithoutCSharpNodesKeepsItsSource), () => { AnEntityGraphWithoutCSharpNodesKeepsItsSource(); return Task.CompletedTask; }) })
             try { await test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"Entity graph generator: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS entity graph generator: one action and method per root and per Entity node flow in id order, state dependencies from chosen entities, triggers and automations unchanged");
+        foreach (var (name, test) in new (string, Func<Task>)[] {
+            (nameof(ACSharpNodeGetsAFactory), ACSharpNodeGetsAFactory),
+            (nameof(AStaleSignatureIsToldSo), () => { AStaleSignatureIsToldSo(); return Task.CompletedTask; }),
+            (nameof(ASettingValueMustFit), () => { ASettingValueMustFit(); return Task.CompletedTask; }),
+            (nameof(ComponentsResolveTheirSettings), () => { ComponentsResolveTheirSettings(); return Task.CompletedTask; }),
+            (nameof(ASecretIsNotInTheSource), () => { ASecretIsNotInTheSource(); return Task.CompletedTask; }),
+            (nameof(DerivingDropsWhatTheCodeNoLongerHas), () => { DerivingDropsWhatTheCodeNoLongerHas(); return Task.CompletedTask; }),
+            (nameof(PreviewRunsNoConstructor), PreviewRunsNoConstructor) })
+            try { await test(); }
+            catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
+        if (failures.Count > 0) throw new Exception($"C# nodes in the entity graph generator: {failures.Count} failing:\n" + string.Join("\n", failures));
+        Console.WriteLine("PASS C# nodes generate: a factory of their classes, signatures checked against their code, values against their settings, components resolved, no secret in the source, nothing constructed");
+    }
+
+    // ---- C# entity and C# device nodes ----
+
+    /// <summary>The signature the compiler gives the code of a node of the kind, alone with the built-in catalog.</summary>
+    static JsonObject Compiled(string kind, string source)
+    {
+        var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
+        Check(descriptor.Valid, $"the {kind} code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+        return descriptor.Signature!;
+    }
+    /// <summary>A C# entity or C# device node of the code, with the signature its code gives and these values (typed literals) under arguments.</summary>
+    static JsonObject CSharp(string kind, string id, string key, string source, JsonObject? arguments = null, string? name = null)
+    {
+        var more = new JsonObject { ["source"] = source, ["signature"] = Compiled(kind, source), ["arguments"] = arguments ?? new JsonObject() };
+        return kind == "csharp_entity" ? EntityNodeTests.CSharpEntity(id, key, more) : EntityNodeTests.CSharpDevice(id, key, name ?? key, more);
+    }
+    /// <summary>A graph definition named Hall of the nodes and wires (no definition in the graph: the generator composes it), with these settings.</summary>
+    static DefinitionBody Body(JsonObject[] nodes, JsonObject[] edges, params DefinitionSetting[] settings) =>
+        new("Hall", null, [.. settings], null, new DefinitionLogic("graph", null, new JsonObject { ["version"] = 5, ["name"] = "Hall", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) }));
+    static DefinitionSetting Setting(string key, string type, JsonNode? value, bool secret = false) => new(key, value) { Label = key, Type = type, Secret = secret };
+    static DefinitionPreview Previewed(DefinitionBody body) => new DefinitionGenerator(Diagnostics).Preview(body, BuiltIn);
+    static string Shown(IEnumerable<VisualDiagnostic> diagnostics) => string.Join(" | ", diagnostics.Select(d => $"{d.Code}@{d.NodeId}:{d.InputId}:{d.Severity} {d.Message}"));
+    static JsonObject Lamp() => Hub("lamp", "lamp", "binary_sensor", values: new JsonObject { ["is_on"] = Lit("boolean", true) });
+    static string ThermometerSource => VisualNodeCatalog.Root["nodes"]!["csharp_entity"]!["config"]!["source"]!["default"]!.GetValue<string>();
+    static string PlugSource => VisualNodeCatalog.Root["nodes"]!["csharp_device"]!["config"]!["source"]!["default"]!.GetValue<string>();
+
+    /// <summary>
+    /// A graph with a C# device and a C# entity generates <c>SharpNodes.Create</c>, one case per node by its id (as a C#
+    /// string literal, whatever the id holds) creating its class, after the code of each in its own namespace; the source
+    /// compiles. The same graph without them has no <c>SharpNodes</c>.
+    /// </summary>
+    static async Task ACSharpNodeGetsAFactory()
+    {
+        var plug = CSharp("csharp_device", "plug", "plug", PlugSource, new JsonObject { ["Address"] = Lit("string", "http://192.168.1.50") });
+        var temp = CSharp("csharp_entity", "temp", "temp", ThermometerSource, new JsonObject { ["Address"] = Lit("string", "http://192.168.1.60/temperature") });
+        var preview = Previewed(Body([Lamp(), plug, temp], []));
+        Check(preview.Valid && preview.Diagnostics.Count == 0, "a graph with a C# device and a C# entity previews valid with no problem: " + Shown(preview.Diagnostics));
+        var lines = preview.Source.Split('\n');
+        var factory = Array.IndexOf(lines, "public static class SharpNodes {");
+        Check(factory >= 0 && lines[factory + 1] == "public static object? Create(string nodeId) => nodeId switch {"
+            && lines[factory + 2] == "\"plug\" => new global::NodeLib.Custom_plug.Plug(),"
+            && lines[factory + 3] == "\"temp\" => new global::NodeLib.Custom_temp.Thermometer(),"
+            && lines[factory + 4] == "_ => null,"
+            && lines[factory + 5] == "};" && lines[factory + 6] == "}",
+            "the source has SharpNodes.Create with a case for each node, in node order:\n" + string.Join("\n", lines.Skip(Math.Max(0, factory)).Take(8)));
+        Check(preview.Source.Contains("namespace NodeLib.Custom_plug\n", StringComparison.Ordinal) && preview.Source.Contains("namespace NodeLib.Custom_temp\n", StringComparison.Ordinal),
+            "each node's code is in the source, in its own namespace");
+        Check(preview.SourceMap.Count(m => m.NodeId == "plug") == 2 && preview.SourceMap.Count(m => m.NodeId == "temp") == 2,
+            "each node owns its case of the factory and its code in the source map: " + string.Join(", ", preview.SourceMap.Select(m => $"{m.NodeId} {m.StartLine}-{m.EndLine}")));
+        await CompilesWithAFactory(preview, ["plug", "temp"], "the graph with C# nodes");
+
+        var plain = Previewed(Body([Lamp()], []));
+        Check(plain.Valid && !plain.Source.Contains("SharpNodes", StringComparison.Ordinal), "the same graph without them has no SharpNodes");
+        var only = Previewed(Body([plug.DeepClone().AsObject()], []));
+        Check(only.Valid && only.Source.Contains("\"plug\" => new global::NodeLib.Custom_plug.Plug(),", StringComparison.Ordinal), "a graph of a C# device alone generates its factory: " + Shown(only.Diagnostics));
+        await CompilesWithAFactory(only, ["plug"], "a graph of a C# device alone");
+
+        // An id is a C# string literal in the factory: a quote, a backslash or a line break in it cannot end the literal.
+        const string odd = "a\"b\\c\nd";
+        var quoted = CSharp("csharp_entity", odd, "odd", ThermometerSource);
+        var oddPreview = Previewed(Body([quoted], []));
+        Check(oddPreview.Valid, "an id with a quote, a backslash and a line break previews valid: " + Shown(oddPreview.Diagnostics));
+        Check(oddPreview.Source.Contains("\"a\\u0022b\\\\c\\nd\" => new global::NodeLib.Custom_a_0022b_005Cc_000Ad.Thermometer(),", StringComparison.Ordinal),
+            "the id is escaped in its case: " + string.Join("\n", oddPreview.Source.Split('\n').Where(l => l.Contains("=> new", StringComparison.Ordinal))));
+        await CompilesWithAFactory(oddPreview, [odd], "the odd id");
+    }
+
+    /// <summary>
+    /// The source compiles (through <see cref="CodeCompiler"/>, as a definition's does) to an assembly with
+    /// <c>SharpNodes.Create(string)</c>; nothing is created: neither the factory nor any class of a node is called.
+    /// </summary>
+    static async Task CompilesWithAFactory(DefinitionPreview preview, string[] ids, string what)
+    {
+        var compiled = await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".cs"), preview.Source);
+        try
+        {
+            var factory = compiled.Assembly.GetType("SharpNodes");
+            var create = factory?.GetMethod("Create", [typeof(string)]);
+            Check(compiled.Assembly.GetType("VisualAutomation") != null && create is { IsStatic: true } && create.ReturnType == typeof(object), $"{what}: the source compiles, with SharpNodes.Create(string)");
+            foreach (var id in ids) Check(preview.Source.Contains(JsonSerializer.Serialize(id) + " => new ", StringComparison.Ordinal), $"{what}: the factory has {id}");
+        }
+        finally { compiled.Unload(); }
+    }
+
+    const string FanSource = """
+        public enum Speed { Slow, Medium }
+        /// <summary>A fan.</summary>
+        public class Fan : SharpDevice
+        {
+            [Setting] public int Count { get; set; }
+            [Setting(Minimum = 1, Maximum = 100)] public int Percent { get; set; } = 1;
+            [Setting] public Speed Mode { get; set; }
+            [Setting] public int Interval { get; set; } = 10;
+        }
+        """;
+
+    /// <summary>
+    /// A stored signature that differs from the code's in what changes wires or values is <c>csharp.signature</c>, on the
+    /// node's signature, alone for that node (no value is checked against pins the code does not have); one that differs
+    /// in words only is refreshed and answered in the preview's graph, with no problem.
+    /// </summary>
+    static void AStaleSignatureIsToldSo()
+    {
+        const string stale = "The settings are out of date with the code: open Edit code and apply it";
+        const string address = "public class Plug : SharpDevice\n{\n    [Setting] public string Address { get; set; } = \"\";\n}";
+        var plug = CSharp("csharp_device", "plug", "plug", address);
+        var compiled = plug["config"]!["signature"]!.AsObject();
+        // Host for Address, an integer holding 1.5: out of date, and only that is said.
+        var host = (JsonObject)compiled.DeepClone();
+        host["settings"]![0]!["key"] = "Host"; host["settings"]![0]!["label"] = "Host"; host["settings"]![0]!["type"] = "integer";
+        var renamed = (JsonObject)plug.DeepClone();
+        renamed["config"]!["signature"] = host.DeepClone(); renamed["config"]!["arguments"] = new JsonObject { ["Host"] = Lit("number", 1.5) };
+        var preview = Previewed(Body([renamed], []));
+        Check(!preview.Valid && preview.Source == "" && Shown(preview.Diagnostics) == $"csharp.signature@plug:signature:3 {stale}",
+            "a signature with Host for the code's Address is out of date, and nothing else is said: " + Shown(preview.Diagnostics));
+        // Each member that changes wires or values, alone.
+        foreach (var (what, change) in new (string, Action<JsonObject>)[] {
+            ("domain", s => s["domain"] = "switch"),
+            ("type", s => s["settings"]![0]!["type"] = "enum"),
+            ("secret", s => s["settings"]![0]!["secret"] = true),
+            ("options", s => s["settings"]![0]!["options"] = new JsonArray("a")),
+            ("minimum", s => s["settings"]![0]!["minimum"] = 1),
+            ("maximum", s => s["settings"]![0]!["maximum"] = 9),
+            ("another setting", s => s["settings"]!.AsArray().Add(new JsonObject { ["key"] = "Port", ["label"] = "Port", ["description"] = "", ["type"] = "integer", ["secret"] = false })),
+            ("no setting", s => s["settings"]!.AsArray().Clear()) })
+        {
+            var signature = (JsonObject)compiled.DeepClone(); change(signature);
+            var node = (JsonObject)plug.DeepClone(); node["config"]!["signature"] = signature;
+            var changed = Previewed(Body([node], []));
+            Check(!changed.Valid && changed.Diagnostics.Any(d => d is { Code: "csharp.signature", NodeId: "plug", InputId: "signature", Severity: 3 } && d.Message == stale),
+                $"a stored {what} that differs is out of date: " + Shown(changed.Diagnostics));
+        }
+        // Two settings in another order are out of date: the pins are in the class's order.
+        const string two = "public class Pair : SharpDevice\n{\n    [Setting] public string First { get; set; } = \"\";\n    [Setting] public string Second { get; set; } = \"\";\n}";
+        var pair = CSharp("csharp_device", "pair", "pair", two);
+        var swapped = (JsonObject)pair.DeepClone(); var settings = swapped["config"]!["signature"]!["settings"]!.AsArray();
+        var first = settings[0]!; settings.RemoveAt(0); settings.Add(first);
+        Check(Previewed(Body([swapped], [])).Diagnostics.Any(d => d.Code == "csharp.signature" && d.NodeId == "pair"), "two settings in another order are out of date");
+        // Words alone: refreshed in the preview's graph, valid, and nothing said.
+        var worded = (JsonObject)plug.DeepClone();
+        worded["config"]!["signature"]!["title"] = "Old title"; worded["config"]!["signature"]!["description"] = "Old words";
+        worded["config"]!["signature"]!["settings"]![0]!["label"] = "Old label"; worded["config"]!["signature"]!["settings"]![0]!["description"] = "Old help";
+        var refreshed = Previewed(Body([worded], []));
+        Check(refreshed.Valid && refreshed.Diagnostics.Count == 0, "a signature differing in words only previews valid with no problem: " + Shown(refreshed.Diagnostics));
+        var answered = refreshed.Graph!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "plug")!["config"]!["signature"];
+        Check(JsonNode.DeepEquals(answered, compiled), "the preview's graph has the code's words: " + answered?.ToJsonString());
+        // A node whose code does not compile is told that, and no value of it is checked.
+        var broken = (JsonObject)plug.DeepClone();
+        broken["config"]!["source"] = address.Replace("string Address", "Missing Address", StringComparison.Ordinal);
+        broken["config"]!["signature"] = host.DeepClone(); broken["config"]!["arguments"] = new JsonObject { ["Host"] = Lit("number", 1.5) };
+        var failed = Previewed(Body([broken], []));
+        Check(!failed.Valid && failed.Diagnostics.Any(d => d.NodeId == "plug" && d.InputId == "source" && d.Severity == 3) && !failed.Diagnostics.Any(d => d.Code is "setting.value" or "csharp.signature"),
+            "code that does not compile is told so, with no value or signature problem: " + Shown(failed.Diagnostics));
+    }
+
+    /// <summary>
+    /// Each pin's value, typed or from the Setting wired to it, is checked against the code's setting: a fraction in an
+    /// integer, a number outside the range, a text that is no member of the enum, a wired Setting's value alike; each is
+    /// <c>setting.value</c> on its pin, <c>{Label} takes {Phrase}</c>, and the value is never quoted.
+    /// </summary>
+    static void ASettingValueMustFit()
+    {
+        var fan = CSharp("csharp_device", "fan", "fan", FanSource, new JsonObject
+        {
+            ["Count"] = Lit("number", 1.5), ["Percent"] = Lit("number", 200), ["Mode"] = Lit("string", "Fast"),
+        });
+        var preview = Previewed(Body([fan, N("every", "setting", new { key = "interval" })], [D("every", "fan", "Interval")], Setting("interval", "number", 1.5)));
+        var values = preview.Diagnostics.Where(d => d.Code == "setting.value").ToArray();
+        Check(!preview.Valid && preview.Source == "" && values.Length == 4 && values.All(d => d is { NodeId: "fan", Severity: 3 }), "four values do not fit: " + Shown(preview.Diagnostics));
+        string Said(string pin) => values.SingleOrDefault(d => d.InputId == pin)?.Message ?? "(none)";
+        Check(Said("Count") == "Count takes a whole number from -2147483648 to 2147483647", "a fraction in an integer: " + Said("Count"));
+        Check(Said("Percent") == "Percent takes a whole number from 1 to 100", "a number outside the range: " + Said("Percent"));
+        Check(Said("Mode") == "Mode takes one of Slow, Medium", "a text that is no member of the enum: " + Said("Mode"));
+        Check(Said("Interval") == "Interval takes a whole number from -2147483648 to 2147483647", "a wired Setting's fraction in an integer, on the pin: " + Said("Interval"));
+        Check(!preview.Diagnostics.Any(d => d.Message.Contains("1.5", StringComparison.Ordinal) || d.Message.Contains("200", StringComparison.Ordinal) || d.Message.Contains("Fast", StringComparison.Ordinal)),
+            "no message quotes a value: " + Shown(preview.Diagnostics));
+        // Values that fit are no problem, typed or wired; an unset pin and a Setting without a value neither.
+        var fitting = CSharp("csharp_device", "fan", "fan", FanSource, new JsonObject { ["Count"] = Lit("number", 3), ["Percent"] = Lit("number", 100), ["Mode"] = Lit("string", "Medium") });
+        var fine = Previewed(Body([fitting, N("every", "setting", new { key = "interval" })], [D("every", "fan", "Interval")], Setting("interval", "number", 30)));
+        Check(fine.Valid && !fine.Diagnostics.Any(d => d.Code == "setting.value"), "values that fit are no problem: " + Shown(fine.Diagnostics));
+        var empty = Previewed(Body([CSharp("csharp_device", "fan", "fan", FanSource), N("every", "setting", new { key = "interval" })], [D("every", "fan", "Interval")], Setting("interval", "number", null)));
+        Check(empty.Valid, "unset pins and a Setting without a value are no problem: " + Shown(empty.Diagnostics));
+        // A value of the wrong type is the validator's type problem, said once: no setting.value beside it.
+        var wrong = Previewed(Body([CSharp("csharp_device", "fan", "fan", FanSource, new JsonObject { ["Count"] = Lit("string", "three") })], []));
+        Check(!wrong.Valid && wrong.Diagnostics.Count(d => d.InputId == "Count" && d.Severity == 3) == 1 && !wrong.Diagnostics.Any(d => d.Code == "setting.value"),
+            "a text in an integer is one problem, not a value problem too: " + Shown(wrong.Diagnostics));
+    }
+
+    /// <summary>
+    /// <see cref="DefinitionGraph.Components"/>: each C# node in node order, with its kind, key, name, Part of, the key
+    /// of the Device node a C# entity is wired to, its title, and its pins resolved: a typed value as typed, a wired
+    /// Setting as the definition's saved value for its key, an unset pin left out. A Device node and an Entity node are none.
+    /// </summary>
+    static void ComponentsResolveTheirSettings()
+    {
+        const string source = "public class Plug : SharpDevice\n{\n    [Setting] public string Address { get; set; } = \"\";\n    [Setting] public int Interval { get; set; } = 10;\n    [Setting] public string Room { get; set; } = \"\";\n}";
+        var plug = CSharp("csharp_device", "plug", "plug", source, new JsonObject { ["Interval"] = Lit("number", 30), ["Room"] = new JsonObject { ["kind"] = "unset" } }, name: "Hall plug");
+        plug["config"]!["via"] = new JsonObject { ["device"] = "strip" };
+        var temp = CSharp("csharp_entity", "temp", "thermometer", ThermometerSource, new JsonObject { ["Address"] = Lit("string", "http://192.168.1.60/temperature") });
+        var body = Body([N("strip", "device", new { key = "strip", name = "Strip" }), plug, Lamp(), N("address", "setting", new { key = "address" }), temp],
+            [D("address", "plug", "Address"), D("strip", "temp", "device", "entities")], Setting("address", "string", "http://192.168.1.50"));
+        var preview = Previewed(body);
+        Check(preview.Valid, "the graph previews valid: " + Shown(preview.Diagnostics));
+        var components = DefinitionGraph.Components(preview.Graph!, BuiltIn, body.Settings!);
+        static string Of(DefinitionComponent c) => $"{c.NodeId} {c.Kind} {c.Key} {c.Name ?? "-"} {(c.Via == null ? "-" : JsonSerializer.Serialize(c.Via, VisualStore.Json))} {c.Device ?? "-"} {c.Title} "
+            + "[" + string.Join(", ", c.Settings.Select(s => s.Key + "=" + s.Value?.ToJsonString())) + "]";
+        Same(components.Select(Of).ToList(), [
+            """plug device plug Hall plug {"definition":null,"deviceId":null,"device":"strip"} - Plug [Address="http://192.168.1.50", Interval=30]""",
+            """temp entity thermometer - - strip Thermometer [Address="http://192.168.1.60/temperature"]""",
+        ], "the components in node order, their settings resolved");
+        Check(DefinitionGraph.Components(Body([Lamp()], []).Logic.Graph!, BuiltIn, []).Count == 0, "a graph without C# nodes has no components");
+        // A C# entity on no device, and a Setting with no value saved, which leaves its pin out.
+        var alone = DefinitionGraph.Components(DefinitionGraph.Compose(Body([N("address", "setting", new { key = "address" }), CSharp("csharp_entity", "temp", "thermometer", ThermometerSource)], [D("address", "temp", "Address")], Setting("address", "string", null))), BuiltIn, [Setting("address", "string", null)]);
+        Same(alone.Select(Of).ToList(), ["temp entity thermometer - - - Thermometer []"], "a C# entity alone, its Setting without a value left out");
+    }
+
+    /// <summary>
+    /// A secret setting is given by a wired Setting: its saved value is in none of what a preview gives (its source, its
+    /// graph, its embedded catalog, its problems), and is resolved for the run by <see cref="DefinitionGraph.Components"/>.
+    /// A secret's value that does not fit is told without being quoted.
+    /// </summary>
+    static void ASecretIsNotInTheSource()
+    {
+        const string secret = "hunter2-graph-secret";
+        const string source = "public class Router : SharpDevice\n{\n    [Setting(Secret = true)] public string Password { get; set; } = \"\";\n    [Setting(Secret = true)] public int Pin { get; set; }\n}";
+        var router = CSharp("csharp_device", "router", "router", source);
+        var body = Body([router, N("password", "setting", new { key = "password" })], [D("password", "router", "Password")], Setting("password", "string", secret, secret: true));
+        var preview = Previewed(body);
+        Check(preview.Valid, "a wired secret previews valid: " + Shown(preview.Diagnostics));
+        Check(!preview.Source.Contains(secret, StringComparison.Ordinal), "the source does not hold the secret");
+        Check(!(preview.Graph?.ToJsonString() ?? "").Contains(secret, StringComparison.Ordinal) && !(preview.EmbeddedCatalog?.ToJsonString() ?? "").Contains(secret, StringComparison.Ordinal),
+            "nor does the preview's graph or embedded catalog");
+        Check(!JsonSerializer.Serialize(preview.Diagnostics).Contains(secret, StringComparison.Ordinal), "nor do its problems");
+        Check(DefinitionGraph.Components(preview.Graph!, BuiltIn, body.Settings!).Single().Settings.Single() is { Key: "Password" } resolved && resolved.Value!.GetValue<string>() == secret,
+            "Components resolves it for the run");
+        var pin = Previewed(Body([(JsonObject)router.DeepClone(), N("pin", "setting", new { key = "pin" })], [D("pin", "router", "Pin")], Setting("pin", "number", 1234.5, secret: true)));
+        Check(!pin.Valid && pin.Diagnostics.Any(d => d is { Code: "setting.value", NodeId: "router", InputId: "Pin" } && d.Message == "Pin takes a whole number from -2147483648 to 2147483647")
+            && !JsonSerializer.Serialize(pin.Diagnostics).Contains("1234", StringComparison.Ordinal), "a secret's value that does not fit is told, not quoted: " + Shown(pin.Diagnostics));
+    }
+
+    /// <summary>
+    /// Deriving (MCP and authoring) writes each C# node's signature from its code and removes the value and the wire of
+    /// each setting the code no longer has, one warning each, naming the setting as the node showed it; a C# entity's
+    /// Device wire stays. The result validates.
+    /// </summary>
+    static void DerivingDropsWhatTheCodeNoLongerHas()
+    {
+        const string source = "public class Plug : SharpDevice\n{\n    [Setting] public string Address { get; set; } = \"\";\n}";
+        var plug = CSharp("csharp_device", "plug", "plug", source, new JsonObject { ["Address"] = Lit("string", "http://192.168.1.50"), ["Host"] = Lit("string", "plug.local") });
+        var compiled = plug["config"]!["signature"]!.DeepClone();
+        var settings = plug["config"]!["signature"]!["settings"]!.AsArray();
+        settings.Add(new JsonObject { ["key"] = "Host", ["label"] = "Host name", ["description"] = "", ["type"] = "string", ["secret"] = false });
+        settings.Add(new JsonObject { ["key"] = "Port", ["label"] = "Port", ["description"] = "", ["type"] = "integer", ["secret"] = false, ["minimum"] = 1, ["maximum"] = 65535 });
+        var temp = CSharp("csharp_entity", "temp", "thermometer", ThermometerSource);
+        temp["config"]!["signature"]!["title"] = "An old title";
+        var graph = DefinitionGraph.Compose(Body([N("port", "setting", new { key = "port" }), plug, N("strip", "device", new { key = "strip", name = "Strip" }), temp],
+            [D("port", "plug", "Port"), D("strip", "temp", "device", "entities")], Setting("port", "number", 80)));
+        Check(Previewed(new("Hall", null, [Setting("port", "number", 80)], null, new("graph", null, DefinitionGraph.Decompose(graph)))).Diagnostics.Any(d => d.Code == "csharp.signature" && d.NodeId == "plug"),
+            "without deriving, the plug's signature is out of date");
+        var derived = new VisualGenerator(Diagnostics).DeriveSignatures(graph, BuiltIn, out var removed);
+        Same(removed.Select(d => $"{d.NodeId}:{d.InputId}:{d.Severity} {d.Message}").ToList(), [
+            "plug:Host:2 Removed the value of Host name: the code no longer has that setting",
+            "plug:Port:2 Removed the connection to Port: the code no longer has that setting",
+        ], "one warning for the value and one for the wire");
+        var node = derived["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "plug")!;
+        Check(JsonNode.DeepEquals(node["config"]!["signature"], compiled), "the plug's signature is the code's: " + node["config"]!["signature"]!.ToJsonString());
+        Check(node["config"]!["arguments"]!.AsObject().Select(p => p.Key).SequenceEqual(["Address"]), "the value of Host is gone and Address's kept: " + node["config"]!["arguments"]!.ToJsonString());
+        var edges = derived["edges"]!.AsArray().Select(e => $"{e!["source"]}>{e["target"]}.{e["targetPort"]}").ToList();
+        Same(edges, ["strip>temp.device"], "the wire into Port is gone, the C# entity's Device wire kept");
+        Check(derived["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "temp")!["config"]!["signature"]!["title"]!.GetValue<string>() == "Thermometer", "the C# entity's signature is written from its code too");
+        Check(JsonNode.DeepEquals(graph["nodes"]![1]!["config"]!["signature"]!["settings"]!.AsArray().Count, 3), "the graph given is not changed");
+        var again = Previewed(new("Hall", null, [Setting("port", "number", 80)], null, new("graph", null, DefinitionGraph.Decompose(derived))));
+        Check(again.Valid && !again.Diagnostics.Any(d => d.Severity == 3), "the derived graph validates: " + Shown(again.Diagnostics));
+        // Code that does not compile keeps its signature, and nothing of it is removed.
+        var broken = (JsonObject)graph.DeepClone();
+        broken["nodes"]![1]!["config"]!["source"] = source.Replace("string Address", "Missing Address", StringComparison.Ordinal);
+        var kept = new VisualGenerator(Diagnostics).DeriveSignatures(broken, BuiltIn, out var none);
+        Check(none.Count == 0 && JsonNode.DeepEquals(kept["nodes"]![1], broken["nodes"]![1]) && kept["edges"]!.AsArray().Count == 2, "code that does not compile keeps its signature, values and wires");
+    }
+
+    /// <summary>A class whose constructor and static constructor throw previews valid, and neither ran: preview only compiles.</summary>
+    static async Task PreviewRunsNoConstructor()
+    {
+        const string ran = "HASS_SHARP_PREVIEW_CONSTRUCTED";
+        Environment.SetEnvironmentVariable(ran, null);
+        var source = "public class Bomb : SharpSwitch\n{\n"
+            + "    static Bomb() { Environment.SetEnvironmentVariable(\"" + ran + "\", \"static\"); throw new InvalidOperationException(\"the static constructor ran\"); }\n"
+            + "    public Bomb() { Environment.SetEnvironmentVariable(\"" + ran + "\", \"instance\"); throw new InvalidOperationException(\"the constructor ran\"); }\n"
+            + "    [Setting] public string Host { get; set; } = \"\";\n}";
+        var preview = Previewed(Body([CSharp("csharp_entity", "bomb", "bomb", source, new JsonObject { ["Host"] = Lit("string", "bomb.local") })], []));
+        Check(preview.Valid && preview.Source.Contains("\"bomb\" => new global::NodeLib.Custom_bomb.Bomb(),", StringComparison.Ordinal), "a class that throws when created previews valid: " + Shown(preview.Diagnostics));
+        Check(Environment.GetEnvironmentVariable(ran) == null, "previewing created nothing: " + Environment.GetEnvironmentVariable(ran));
+        await CompilesWithAFactory(preview, ["bomb"], "the bomb");
+        Check(Environment.GetEnvironmentVariable(ran) == null, "compiling and loading its source created nothing: " + Environment.GetEnvironmentVariable(ran));
     }
 
     static async Task DerivedSensorHasOneRestartStartupActionWithBothSources()
@@ -345,4 +653,44 @@ static class EntityGraphGeneratorTests
     }
 
     static void AutomationSourceIsUnchanged() => GeneratedSourcePinTests.CheckGraphPin();
+
+    /// <summary>
+    /// The SHA-256 of the source each graph example of <c>authoring_examples.json</c> that is an entity definition without
+    /// a C# entity or C# device saves with, by title: recorded from the generator before it learned of C# nodes (at
+    /// e6bd24a), so a graph without one keeps its bytes. The pin file holds automations only.
+    /// </summary>
+    static readonly Dictionary<string, string> EntityGraphSources = new(StringComparer.Ordinal)
+    {
+        ["Motion in either room"] = "bd8341c638497af1e045978b467e83706a63e00c61828122fc1d87e04237fccd",
+        ["Plug over HTTP"] = "4f824fa994a411b3c447d41586d5cd125c8ccc023d341dc941093ebe62532a31",
+        ["Camera with a box"] = "3f2a7c03781bf1c90a0d56659c8aac3f04843bc7d644f08b9b189e361d6b3ede",
+        ["File at setup"] = "1acb308a280850e87e1446621754b0051be0a1cb3b8ca465bad18de4c8616be5",
+    };
+
+    /// <summary>
+    /// Each graph example that is an entity definition without C# nodes, saved through the store (the source
+    /// <c>EntityApi.CompileDefinition</c> compiles is the one the save generates), has the source it had before C# nodes.
+    /// </summary>
+    static void AnEntityGraphWithoutCSharpNodesKeepsItsSource()
+    {
+        var examples = JsonNode.Parse(File.ReadAllText("custom_components/hass_sharp/authoring_examples.json"))!["definitions"]!.AsArray();
+        var directory = Path.Combine(Path.GetTempPath(), "entity-graph-sources-" + Guid.NewGuid());
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator(Diagnostics));
+            var got = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var example in examples)
+            {
+                var body = example!["definition"]!.Deserialize<DefinitionBody>(VisualStore.Json)!;
+                if (body.Logic.Kind != "graph" || body.Logic.Graph!["nodes"]!.AsArray().Any(n => n!["kind"]!.GetValue<string>() is "csharp_entity" or "csharp_device")) continue;
+                var title = example["title"]!.GetValue<string>();
+                var saved = store.Save("example_" + got.Count, body, 0, BuiltIn, null);
+                got[title] = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(saved.Source)));
+            }
+            Check(got.Keys.Order(StringComparer.Ordinal).SequenceEqual(EntityGraphSources.Keys.Order(StringComparer.Ordinal)), "the entity graph examples without C# nodes are the four: " + string.Join(", ", got.Keys));
+            var changed = got.Where(p => EntityGraphSources[p.Key] != p.Value).Select(p => $"{p.Key}: expected {EntityGraphSources[p.Key]}, got {p.Value}").ToArray();
+            Check(changed.Length == 0, "the source of each is unchanged:\n  " + string.Join("\n  ", changed));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
 }

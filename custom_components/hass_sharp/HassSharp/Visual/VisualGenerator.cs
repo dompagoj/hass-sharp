@@ -146,11 +146,14 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         return catalog;
     }
     public VisualPreview Preview(JsonObject graph)=>Preview(graph,new NodeLibraryCompiler(diagnostics).Preview([]).Snapshot);
-    public VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources) {
+    public VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources)=>Preview(graph,sources,null);
+    VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources,IReadOnlyList<DefinitionSetting>? settings) {
         var libraries=new NodeLibraryCompiler(diagnostics).Preview(sources);
-        return libraries.Valid?Preview(graph,libraries.Snapshot):new(false,"",[],libraries.Diagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
+        return libraries.Valid?Preview(graph,libraries.Snapshot,settings):new(false,"",[],libraries.Diagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
     }
     static bool IsCustom(JsonObject node,VisualCatalogSnapshot snapshot)=>Text(VisualNodeCatalog.Spec(node,snapshot),"dynamicInputs")=="custom";
+    /// <summary>Whether the node is a C# entity or a C# device (<see cref="VisualNodeCatalog.IsClassNode"/>).</summary>
+    static bool IsClass(JsonObject node,VisualCatalogSnapshot snapshot)=>VisualNodeCatalog.IsClassNode(VisualNodeCatalog.Spec(node,snapshot));
     /// <summary>
     /// The code of each node that has some, with its kind: a Custom C# step's (a statement-style one is the validator's to
     /// report), a C# entity's or a C# device's.
@@ -216,6 +219,15 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         return SameJson(stored["pure"],compiled["pure"])&&Pins(stored["inputs"],compiled["inputs"],["types","required","nullable","hasDefaultValue","default"])&&Pins(stored["outputs"],compiled["outputs"],["type"]);
     }
     /// <summary>
+    /// Whether a C# entity's or C# device's stored signature has the settings its code gives in all that changes wires or
+    /// values: the same domain, the same setting keys in the same order, and for each its type, secret flag, options and
+    /// range. Its title, description and each setting's label and description are not compared.
+    /// </summary>
+    internal static bool SameSettings(JsonObject stored,JsonObject compiled) {
+        if(!SameJson(stored["domain"],compiled["domain"])||stored["settings"] is not JsonArray mine||compiled["settings"] is not JsonArray theirs||mine.Count!=theirs.Count)return false;
+        return mine.Zip(theirs).All(p=>p.First is JsonObject a&&p.Second is JsonObject b&&new[]{"key","type","secret","options","minimum","maximum"}.All(k=>SameJson(a[k],b[k])));
+    }
+    /// <summary>
     /// Whether each property a Select property node of the graph reads, of a type the stored signature lists, has the
     /// type and nullability the code gives it: the node's value has that type, so a change is a change of pins. The
     /// properties of a type no node reads, and every description, are not compared. A graph past the catalog's limits is
@@ -251,10 +263,12 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// <summary>
     /// A copy of the graph with each Custom C# node's signature written from its code, for a caller that writes only the
     /// code. Values and wires of pins that still exist are kept; those of pins that are gone are removed, and so are the
-    /// step order wires of a node that became a value node. A node whose code does not compile keeps its signature.
+    /// step order wires of a node that became a value node. A C# entity's and a C# device's signature is written from
+    /// its class alike: the values and wires of settings its code no longer has are removed, its kind's own pins (a C#
+    /// entity's Device) kept. A node whose code does not compile keeps its signature.
     /// </summary>
     public JsonObject DeriveSignatures(JsonObject graph,VisualCatalogSnapshot snapshot)=>DeriveSignatures(graph,snapshot,out _);
-    /// <param name="removed">One warning per value, value wire and step order wire removed, on its node, naming the pin.</param>
+    /// <param name="removed">One warning per value, value wire and step order wire removed, on its node, naming the pin as the node showed it.</param>
     public JsonObject DeriveSignatures(JsonObject graph,VisualCatalogSnapshot snapshot,out List<VisualDiagnostic> removed) {
         var warnings=new List<VisualDiagnostic>();removed=warnings;
         var next=(JsonObject)graph.DeepClone();
@@ -264,7 +278,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         var compiled=WithCustom(next,snapshot,ServiceCalls());
         var edges=next["edges"] as JsonArray;
         foreach(var node in (next["nodes"] as JsonArray??[]).OfType<JsonObject>()) {
-            // A C# entity's or C# device's signature is its class's settings, not a step's pins: it is not written here.
+            if(IsClass(node,compiled)) {DeriveSettings(node,compiled,edges,warnings);continue;}
             if(!IsCustom(node,compiled)||!compiled.Custom.TryGetValue(Text(node,"id"),out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)continue;
             var id=Text(node,"id");var old=cfg["signature"] as JsonObject;var signature=(JsonObject)custom.Signature.DeepClone();cfg["signature"]=signature;
             var inputs=signature["inputs"]!.AsObject();var outputs=signature["outputs"]!.AsObject();var pure=signature["pure"]!.GetValue<bool>();
@@ -285,14 +299,68 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         return next;
     }
     /// <summary>
+    /// <see cref="DeriveSignatures(JsonObject, VisualCatalogSnapshot, out List{VisualDiagnostic})"/> for one C# entity or C#
+    /// device: its class's signature written into it, and the value and each value wire of a pin that is neither one of
+    /// the class's settings nor one of its kind's own pins removed, with a warning naming it as the node showed it. Nothing
+    /// when its code did not compile.
+    /// </summary>
+    static void DeriveSettings(JsonObject node,VisualCatalogSnapshot compiled,JsonArray? edges,List<VisualDiagnostic> warnings) {
+        var id=Text(node,"id");
+        if(!compiled.Custom.TryGetValue(id,out var custom)||custom.Signature==null||node["config"] is not JsonObject cfg)return;
+        var spec=VisualNodeCatalog.Spec(node,compiled);
+        var old=VisualNodeCatalog.ClassSignature(node,spec);
+        cfg["signature"]=custom.Signature.DeepClone();
+        var pins=custom.Signature["settings"]!.AsArray().Select(s=>Text(s,"key")).Concat((spec?["inputs"] as JsonObject??[]).Select(p=>p.Key)).ToHashSet(StringComparer.Ordinal);
+        string Label(string key)=>VisualGraphValidator.Words.PortLabel((old?["settings"] as JsonArray??[]).OfType<JsonObject>().FirstOrDefault(s=>Text(s,"key")==key),key);
+        if(cfg["arguments"] is JsonObject arguments)foreach(var name in arguments.Select(p=>p.Key).Where(k=>!pins.Contains(k)).ToArray()) {
+            arguments.Remove(name);warnings.Add(new(id,$"Removed the value of {Label(name)}: the code no longer has that setting",2,InputId:name));
+        }
+        if(edges!=null)foreach(var edge in edges.OfType<JsonObject>().Where(e=>Text(e,"kind")=="data"&&Text(e,"target")==id&&!pins.Contains(Text(e,"targetPort"))).ToArray()) {
+            edges.Remove(edge);warnings.Add(new(id,$"Removed the connection to {Label(Text(edge,"targetPort"))}: the code no longer has that setting",2,InputId:Text(edge,"targetPort")));
+        }
+    }
+    /// <summary>
+    /// <c>setting.value</c>: each value a C# entity or C# device of <paramref name="upToDate"/> (whose settings are its
+    /// code's) is given, typed or from the Setting wired to it (<see cref="DefinitionGraph.Components"/>), that its setting
+    /// does not take (<see cref="DefinitionGenerator.Fits"/>: a fraction in an integer, a number outside the range, a text
+    /// no member of the enum), on its pin: <c>{Label} takes {Phrase}</c>, never quoting the value, which may be a secret. A
+    /// pin that already has a problem (a value of the wrong type, a secret typed in) is not checked again.
+    /// </summary>
+    static IEnumerable<VisualDiagnostic> SettingValues(JsonObject graph,VisualCatalogSnapshot snapshot,HashSet<string> upToDate,IReadOnlyList<DefinitionSetting> settings,List<VisualDiagnostic> errors) {
+        if(upToDate.Count==0)return [];
+        var found=new List<VisualDiagnostic>();
+        var nodes=VisualNodeCatalog.GraphNodes(graph);
+        foreach(var component in DefinitionGraph.Components(graph,snapshot,settings).Where(c=>upToDate.Contains(c.NodeId))) {
+            var node=nodes[component.NodeId];
+            var signature=VisualNodeCatalog.ClassSignature(node,VisualNodeCatalog.Spec(node,snapshot))!;
+            var pins=VisualNodeCatalog.DataInputs(node,null,snapshot);
+            foreach(var given in component.Settings) {
+                if(errors.Any(e=>e.Severity==3&&e.NodeId==component.NodeId&&e.InputId==given.Key))continue;
+                var setting=DefinitionGenerator.Described(signature["settings"]!.AsArray().OfType<JsonObject>().First(s=>Text(s,"key")==given.Key));
+                if(!DefinitionGenerator.Fits(setting,given.Value))
+                    found.Add(new(component.NodeId,VisualGraphValidator.Words.SettingValue(VisualGraphValidator.Words.PortLabel(pins[given.Key],given.Key),DefinitionGenerator.Phrase(setting)),InputId:given.Key,Code:"setting.value"));
+            }
+        }
+        return found;
+    }
+    /// <summary>
     /// Whether the graph has the nodes and edges arrays and is within the catalog's limits: otherwise the validator
     /// answers it with <c>graph.shape</c> or <c>graph.limit</c> alone, and nothing else of it is looked at or compiled.
     /// </summary>
     internal static bool Buildable(JsonObject root,JsonObject graph)=>graph["nodes"] is JsonArray&&graph["edges"] is JsonArray&&!VisualNodeCatalog.OverLimit(root,graph);
-    public VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot)
+    public VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot)=>Preview(graph,snapshot,null);
+    /// <summary>
+    /// The graph checked and, when valid, generated. A Custom C# node's stored pins and a C# entity's or C# device's stored
+    /// settings are checked against what its code gives; then, for a C# node whose settings are its code's, each pin's value
+    /// against its setting (<c>setting.value</c>): the value typed into it, or the value <paramref name="settings"/> gives
+    /// the Setting wired to it. The source has each C# node's code in its own namespace and, when the graph has a C# entity
+    /// or C# device, <c>SharpNodes.Create</c>, which creates one's class by its node's id: nothing is created here.
+    /// </summary>
+    /// <param name="settings">An entity definition's settings with their values, which no source or answer holds; none for an automation.</param>
+    internal VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot,IReadOnlyList<DefinitionSetting>? settings)
     {
         // A descriptor from an invalid library preview is never an executable snapshot.
-        if(snapshot.Compilation==null)return Preview(graph,snapshot.Sources);
+        if(snapshot.Compilation==null)return Preview(graph,snapshot.Sources,settings);
         if(snapshot.LibraryDiagnostics.Any(d=>d.Severity==3))return new(false,"",[],snapshot.LibraryDiagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
         var libraryErrors=snapshot.Compilation.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
         if(libraryErrors.Length>0)return new(false,"",[],libraryErrors.Select(d=>new VisualDiagnostic("$library:"+d.Location.SourceTree?.FilePath,d.GetMessage())).ToList());
@@ -309,21 +377,30 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         snapshot=WithCustom(graph,snapshot,services);
         var errors=new List<VisualDiagnostic>();
         JsonObject? refreshed=null;
+        // The C# entities and C# devices whose stored settings are what their code gives: only their values are checked.
+        var upToDate=new HashSet<string>(StringComparer.Ordinal);
+        void Refresh(string id,JsonObject signature) {
+            refreshed??=(JsonObject)graph.DeepClone();
+            refreshed["nodes"]!.AsArray().OfType<JsonObject>().First(n=>Text(n,"id")==id)["config"]!["signature"]=signature.DeepClone();
+        }
         foreach(var (id,custom) in snapshot.Custom.OrderBy(c=>c.Key,StringComparer.Ordinal)) {
             errors.AddRange(custom.Diagnostics.Select(d=>new VisualDiagnostic(id,d.Message,d.Severity,d.StartLine,d.StartColumn,"source")));
             var node=(graph["nodes"] as JsonArray??[]).OfType<JsonObject>().First(n=>Text(n,"id")==id);
+            if(IsClass(node,snapshot)) {
+                // Settings that cannot be read are the validator's to report (csharp.signature, on the same input).
+                if(!custom.Valid||VisualNodeCatalog.ClassSignature(node,VisualNodeCatalog.Spec(node,snapshot)) is not {} classSignature)continue;
+                if(!SameSettings(classSignature,custom.Signature!)) {errors.Add(new(id,VisualGraphValidator.Words.OutOfDateSettings,InputId:"signature",Code:"csharp.signature"));continue;}
+                upToDate.Add(id);
+                if(!SameJson(classSignature,custom.Signature))Refresh(id,custom.Signature!);
+                continue;
+            }
             if(!IsCustom(node,snapshot)||custom.Signature==null||node["config"]?["signature"] is not JsonObject stored||!VisualNodeCatalog.WellFormedSignature(stored))continue;
             if(!SamePins(stored,custom.Signature)||!SameSelected(graph,snapshot.Root,stored,custom.Signature))errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
-            else if(!SameJson(stored,custom.Signature)) {
-                refreshed??=(JsonObject)graph.DeepClone();
-                refreshed["nodes"]!.AsArray().OfType<JsonObject>().First(n=>Text(n,"id")==id)["config"]!["signature"]=custom.Signature.DeepClone();
-            }
+            else if(!SameJson(stored,custom.Signature))Refresh(id,custom.Signature);
         }
         if(refreshed!=null)graph=refreshed;
         errors.AddRange(VisualGraphValidator.Validate(graph,snapshot,out var inputTypes));
-        // A C# entity or C# device is not compiled yet, so a graph with one cannot run: it is previewed, and not generated.
-        foreach(var node in (graph["nodes"] as JsonArray??[]).OfType<JsonObject>().Where(n=>VisualNodeCatalog.IsClassNode(VisualNodeCatalog.Spec(n,snapshot))))
-            errors.Add(new(Text(node,"id"),"C# entity and C# device nodes cannot run yet",InputId:"source"));
+        errors.AddRange(SettingValues(graph,snapshot,upToDate,settings??[],errors));
         if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors){Graph=refreshed};
         var lines=new List<string>();var maps=new List<VisualSourceMap>();string? current=null;
         var customSections=new List<(string Id,int Start,int End)>();
@@ -455,10 +532,19 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             }
             Add("default: throw new global::System.InvalidOperationException(\"Unknown compiled node\");\n}\n}");Add("}");
             foreach(var library in snapshot.Sources) { Add($"// NodeLibrarySource {Q(library.Id)} revision {library.Revision.ToString(CultureInfo.InvariantCulture)}"); Section("$library:"+library.Id,NodeLibraryCompiler.WrapSource(library.Source)); }
-            // Each Custom C# node's code, in its own namespace; a diagnostic in it is the node's, at its own line and column.
-            foreach(var node in nodes.Where(n=>IsCustom(n,snapshot)&&snapshot.Custom.ContainsKey(Text(n,"id")))) {
-                var id=Text(node,"id");Add($"// Custom C# node {Q(id)}");var start=lines.Count+1;
+            // Each Custom C# node's code, and each C# entity's and C# device's, in its own namespace; a diagnostic in it is the
+            // node's, at its own line and column.
+            foreach(var node in nodes.Where(n=>VisualNodeCatalog.HasCode(VisualNodeCatalog.Spec(n,snapshot))&&snapshot.Custom.ContainsKey(Text(n,"id")))) {
+                var id=Text(node,"id");Add($"// {(IsClass(node,snapshot)?Text(VisualNodeCatalog.Spec(node,snapshot),"label"):"Custom C#")} node {Q(id)}");var start=lines.Count+1;
                 Add(NodeLibraryCompiler.WrapCustomSource(id,Text(node["config"],"source")));maps.Add(new(id,start,lines.Count));customSections.Add((id,start,lines.Count));
+            }
+            // The factory the host creates each C# entity's and C# device's class with, by its node's id; only a graph with one
+            // has it, so every other graph's source stays as it was. Each case is its node's.
+            var classes=nodes.Where(n=>IsClass(n,snapshot)&&snapshot.Custom.GetValueOrDefault(Text(n,"id"))?.TypeExpression!=null).ToArray();
+            if(classes.Length>0) {
+                Add("#nullable enable");Add("public static class SharpNodes {");Add("public static object? Create(string nodeId) => nodeId switch {");
+                foreach(var node in classes){var id=Text(node,"id");Section(id,$"{Q(id)} => new {snapshot.Custom[id].TypeExpression}(),");}
+                Add("_ => null,");Add("};");Add("}");
             }
             var source=string.Join('\n',lines)+"\n";
             var tree=CSharpSyntaxTree.ParseText(source,new CSharpParseOptions(LanguageVersion.Latest));

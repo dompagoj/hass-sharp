@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace HassSharp;
@@ -27,6 +28,21 @@ internal sealed record DefinitionRoots(string? Setup, IReadOnlyDictionary<string
 /// <param name="Label">The run's name: <c>{Name}: State</c>, <c>{Name}: {Command}</c> or <c>{Name}: When a frame is needed</c>.</param>
 /// <param name="TrackHistory">Whether its runs are recorded, as the node's <c>history</c> switches say.</param>
 internal sealed record HubFlow(string NodeId, string Port, string Method, string Kind, string Key, string? Command, string Label, bool TrackHistory);
+
+/// <summary>
+/// One C# entity or C# device node of a graph, as the host sets it up (<see cref="DefinitionGraph.Components"/>): what
+/// its node says, and its pins resolved to values.
+/// </summary>
+/// <param name="NodeId">The node's id: <c>SharpNodes.Create</c> creates its class by it.</param>
+/// <param name="Kind"><c>entity</c> for a C# entity, <c>device</c> for a C# device.</param>
+/// <param name="Key">The node's <c>config.key</c>.</param>
+/// <param name="Name">A C# device's <c>config.name</c>; null when it has none, and for a C# entity (its code names it).</param>
+/// <param name="Via">A C# device's Part of; null for none, and for a C# entity.</param>
+/// <param name="Device">The key of the Device node a C# entity is wired to; null when it stands alone, and for a C# device.</param>
+/// <param name="Title">Its class's title, as its signature has it.</param>
+/// <param name="Settings">Its pins resolved, in its class's order: a typed value as typed, a wired Setting as the
+/// definition's saved value for its key; a pin that is unset, or whose value is none, is left out.</param>
+internal sealed record DefinitionComponent(string NodeId, string Kind, string Key, string? Name, DefinitionVia? Via, string? Device, string Title, IReadOnlyList<DefinitionSetting> Settings);
 
 /// <summary>
 /// Between a stored entity definition and the graph its nodes are checked, generated and run as: the stored graph never
@@ -70,6 +86,63 @@ internal static class DefinitionGraph
     /// </summary>
     internal static JsonArray Devices(JsonObject composed, JsonObject catalog) =>
         VisualNodeCatalog.WithGraphTypes(catalog, composed)["definition"]?["devices"] is JsonArray devices ? (JsonArray)devices.DeepClone() : [];
+
+    /// <summary>
+    /// The graph's C# entities and C# devices, for the host to set up, in node order: each well-formed node (the first of
+    /// its id, as the validators read it) of a class node's kind (<see cref="VisualNodeCatalog.IsClassNode"/>) whose
+    /// settings can be read (<see cref="VisualNodeCatalog.ClassSignature"/>). Each pin is resolved from what the graph and
+    /// <paramref name="settings"/> say: the value wired to it when a Setting is (the definition's saved value for that
+    /// Setting's key), else the value typed into it, never into a secret one (a secret is given by a Setting alone). An unset
+    /// pin, a wire from anything else and a value of none (JSON null, a Setting not saved) leave the pin out: its property
+    /// keeps what its class gives it. Nothing here goes into a source or an answer: values may be secret.
+    /// </summary>
+    /// <param name="graph">A composed graph (<see cref="Compose"/>), as previewed: its C# nodes' signatures are their code's.</param>
+    /// <param name="settings">The definition's settings with their values; the first of each key counts.</param>
+    internal static IReadOnlyList<DefinitionComponent> Components(JsonObject graph, VisualCatalogSnapshot snapshot, IReadOnlyList<DefinitionSetting> settings)
+    {
+        var nodes = VisualNodeCatalog.GraphNodes(graph);
+        var wires = VisualNodeCatalog.ValueWires(graph, nodes);
+        var saved = new Dictionary<string, JsonNode?>(StringComparer.Ordinal);
+        foreach (var setting in settings) if (setting is { Key: { } key }) saved.TryAdd(key, setting.Value);
+        static bool None(JsonNode? value) => value is null || value.GetValueKind() == System.Text.Json.JsonValueKind.Null;
+        var components = new List<DefinitionComponent>();
+        foreach (var raw in graph["nodes"] as JsonArray ?? [])
+        {
+            if (raw is not JsonObject node || !nodes.TryGetValue(VisualNodeCatalog.Text(node, "id"), out var first) || !ReferenceEquals(first, node)) continue;
+            var spec = VisualNodeCatalog.Spec(node, snapshot);
+            if (!VisualNodeCatalog.IsClassNode(spec) || VisualNodeCatalog.ClassSignature(node, spec) is not { } signature) continue;
+            var id = VisualNodeCatalog.Text(node, "id");
+            var config = (JsonObject)node["config"]!;
+            var resolved = new List<DefinitionSetting>();
+            foreach (var setting in signature["settings"]!.AsArray().OfType<JsonObject>())
+            {
+                var key = VisualNodeCatalog.Text(setting, "key");
+                JsonNode? value = null;
+                if (wires.Find(e => VisualNodeCatalog.Text(e, "target") == id && VisualNodeCatalog.Text(e, "targetPort") == key) is { } wire)
+                {
+                    var source = nodes[VisualNodeCatalog.Text(wire, "source")];
+                    if (VisualNodeCatalog.Text(source, "kind") == "setting") value = saved.GetValueOrDefault(VisualNodeCatalog.Text(source["config"], "key"));
+                }
+                else if (setting["secret"] is not JsonValue secret || !secret.TryGetValue<bool>(out var hidden) || !hidden)
+                    value = VisualNodeCatalog.InputValue(node, key, snapshot) is JsonObject typed && VisualNodeCatalog.Text(typed, "kind") == "literal" ? typed["value"] : null;
+                if (!None(value)) resolved.Add(new(key, value!.DeepClone()));
+            }
+            var title = VisualNodeCatalog.Text(signature, "title");
+            if (VisualNodeCatalog.Declares(spec, "entity"))
+            {
+                var device = VisualNodeCatalog.DeviceOf(graph, id, snapshot.Root) is { } deviceNode ? VisualNodeCatalog.DeviceKey(nodes[deviceNode]["config"]) : null;
+                components.Add(new(id, "entity", VisualNodeCatalog.Text(config, "key"), null, null, device, title, resolved));
+            }
+            else
+            {
+                var name = VisualNodeCatalog.Text(config, "name") is var given && VisualGraphValidator.Words.Trimmed(given).Length > 0 ? given : null;
+                DefinitionVia? via = null;
+                try { via = config["via"]?.Deserialize<DefinitionVia>(VisualStore.Json); } catch (System.Text.Json.JsonException) { }
+                components.Add(new(id, "device", VisualNodeCatalog.Text(config, "key"), name, via, null, title, resolved));
+            }
+        }
+        return components;
+    }
 
     /// <summary>A copy of the graph without its <c>definition</c>; every other key is kept.</summary>
     internal static JsonObject Decompose(JsonObject graph)

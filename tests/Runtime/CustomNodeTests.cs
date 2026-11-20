@@ -331,7 +331,7 @@ static class CustomNodeTests
         var asStep = generator.Preview(G(Custom("c", plug)), Empty);
         Check(asStep.Diagnostics.Any(d => d.NodeId == "c" && d.Message == "Mark one method with [Node]: it becomes this node"), "as a step's code the class is refused: " + Messages(asStep.Diagnostics));
         var asDevice = generator.Preview(Definition(EntityNodeTests.CSharpDevice("c", "plug", "Plug", new() { ["source"] = plug })), Empty);
-        Check(!asDevice.Diagnostics.Any(d => d.Message.Contains("[Node]")) && asDevice.Diagnostics.Any(d => d.NodeId == "c" && d.Message == "C# entity and C# device nodes cannot run yet"),
+        Check(asDevice.Valid && asDevice.Diagnostics.Count == 0 && asDevice.Source.Contains("\"c\" => new global::NodeLib.Custom_c.Plug(),", StringComparison.Ordinal),
             "the same code in a C# device of the same id is compiled again, as a class: " + Messages(asDevice.Diagnostics));
         var broken = generator.Preview(Definition(EntityNodeTests.CSharpDevice("c", "plug", "Plug", new() { ["source"] = plug.Replace("SharpDevice", "SharpLight") })), Empty);
         Check(broken.Diagnostics.Any(d => d.NodeId == "c" && d.InputId == "source" && d.Message == NodeLibraryCompiler.NoDeviceClassMessage && d.StartLine == 1),
