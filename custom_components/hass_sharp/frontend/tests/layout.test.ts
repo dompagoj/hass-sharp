@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest'
 import { applyLayout, tidyLayout } from '../src/visual/layout'
 import { addNode, connectNodes, createGraph, updateNode, type VisualGraph } from '../src/visual/graph'
-
-const lit = (type: string, value: unknown) => ({ kind: 'literal', type, value })
+import { connectData } from '../src/visual/contract'
+import { add, empty, lit } from './visual-fixture'
 /** trigger → condition → (true) service, (false) delay → stop, and a Constant nothing reads. */
 const branching = () => {
   let graph = addNode(addNode(createGraph('Layout'), 'delay', 'wait'), 'stop', 'halt')
@@ -163,6 +163,49 @@ it('gives each trigger\'s flow its own band, in the order of the triggers, and l
   expect(positions.get('other')!.x).toBe(positions.get('trigger-1')!.x)
   noOverlaps(positions)
   // Tidying again keeps the bands in the same order.
+  const tidied = applyLayout(graph, positions)
+  expect(applyLayout(tidied, tidyLayout(tidied))).toBe(tidied)
+})
+
+it('a device sits before the entities wired to it', () => {
+  // The Entity nodes come before their devices in the graph, as when a Device node is added to entities already there.
+  let graph = add(empty(), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  graph = add(graph, 'entity', 'power', { key: 'power', domain: 'sensor', name: 'Power' })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  graph = add(graph, 'entity', 'fan', { key: 'fan', domain: 'switch', name: 'Fan' })
+  graph = add(graph, 'entity', 'alone', { key: 'alone', domain: 'switch', name: 'Alone' })
+  graph = add(graph, 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  graph = add(graph, 'device', 'desk', { key: 'desk', name: 'Desk' })
+  graph = add(graph, 'device', 'spare', { key: 'spare', name: 'Spare' })
+  // The lamp's Turn on runs a Log: the desk's band has a step, after the lamp. When started runs a Set state of its own band.
+  graph = add(graph, 'log', 'log', { value: lit('string', 'On') })
+  graph = connectNodes(graph, 'lamp', 'log', 'command:turn_on')
+  graph = add(graph, 'entity_setup', 'start')
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'alone', is_on: lit('boolean', true) })
+  graph = connectNodes(graph, 'start', 'set')
+  for (const [device, entity] of [['plug', 'relay'], ['plug', 'power'], ['desk', 'lamp'], ['desk', 'fan']]) graph = connectData(graph, device, 'entities', entity, 'device')
+  expect(graph.edges.filter(e => e.kind !== 'data')).toHaveLength(2)
+  const positions = tidyLayout(graph)
+  const x = (id: string) => positions.get(id)!.x
+  const left = Math.min(...[...positions.values()].map(p => p.x))
+  // Each device in the column before its first entity, at the left edge: every entity it is wired to is right of it.
+  for (const [device, entities] of [['plug', ['relay', 'power']], ['desk', ['lamp', 'fan']]] as const) {
+    for (const entity of entities) expect(x(device), `${device} before ${entity}`).toBeLessThan(x(entity))
+    expect(x(device)).toBe(left)
+  }
+  // Its entities in the next column, the step the lamp runs after them.
+  expect(x('relay')).toBe(x('power'))
+  expect(x('lamp')).toBe(x('fan'))
+  expect(x('log')).toBeGreaterThan(x('lamp'))
+  // The entities of one device stay in one band: none of the plug's sits among the desk's.
+  const span = (ids: string[]) => ({ top: Math.min(...ids.map(id => positions.get(id)!.y)), bottom: Math.max(...ids.map(id => positions.get(id)!.y + 120)) })
+  const plug = span(['plug', 'relay', 'power']), desk = span(['desk', 'lamp', 'fan', 'log'])
+  expect(plug.bottom <= desk.top || desk.bottom <= plug.top).toBe(true)
+  // A device with no entities, like any card connected to nothing, is in the last row; no two cards overlap.
+  expect(positions.get('spare')!.y).toBeGreaterThanOrEqual(Math.max(plug.bottom, desk.bottom))
+  expect([...positions.keys()].sort()).toEqual(graph.nodes.map(n => n.id).sort())
+  noOverlaps(positions)
+  // Tidying a tidy graph changes nothing.
   const tidied = applyLayout(graph, positions)
   expect(applyLayout(tidied, tidyLayout(tidied))).toBe(tidied)
 })

@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest'
 import { addGraphNode, connectData, dataInputs, declaredDevices, definitionDeviceKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
-import { canConnect, catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
+import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
+import { addConnected } from '../src/visual/flow/autoConnect'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition } from '../src/entities/model'
@@ -165,6 +166,60 @@ it('a new Device node has no step pins and no state', () => {
   expect([view.execIn, view.next, view.footer, view.unreachable]).toEqual([undefined, undefined, undefined, false])
   expect(view.title).toBe('Hall plug')
   expect(view.rows.map(row => row.output?.label)).toEqual(['Entities'])
+})
+
+it('a new Device node is named and keyed', () => {
+  // As the editor adds one: dropped from the palette, quick-added, or from a wire (each goes through addGraphNode).
+  let graph = addGraphNode(empty(), 'device', 'a', nodeCatalog)
+  graph = addGraphNode(graph, 'device', 'b', nodeCatalog)
+  const [a, b] = graph.nodes
+  expect(a.config).toEqual({ key: 'device', name: 'Device' })
+  expect(b.config).toEqual({ key: 'device_2', name: 'Device' })
+  // Its name is its own: no label, as an Entity node has none.
+  expect(a).not.toHaveProperty('label')
+  expect(b).not.toHaveProperty('label')
+  // Its only problem is that it has no entities yet (a warning): no key or name to give first.
+  expect(validateGraph(graph).filter(d => d.nodeId === 'a' || d.nodeId === 'b').map(d => `${d.nodeId}:${d.code}:${d.severity}`)).toEqual(['a:device.empty:2', 'b:device.empty:2'])
+  // Dropped from the palette or quick-added on the canvas.
+  const dropped = createNodeAt(graph, 'device', { x: 400, y: 200 }, undefined, nodeCatalog)
+  expect(dropped.nodes.at(-1)!.config).toEqual({ key: 'device_3', name: 'Device' })
+  expect(dropped.nodes.at(-1)!.position).toEqual({ x: 400, y: 200 })
+  // Added from a wire dragged out of an Entity node's Device pin and dropped on empty canvas.
+  const relay = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  const wired = addConnected(relay, 'device', { x: 0, y: 0 }, { nodeId: 'relay', handle: 'data:device', type: 'target' }, nodeCatalog, 'c')!.graph
+  expect(wired.nodes.find(n => n.id === 'c')!.config).toEqual({ key: 'device_3', name: 'Device' })
+  expect(deviceNodeOf(wired, 'relay')).toBe('c')
+  // Device keys and entity keys are separate: an entity keyed device does not take the key, nor a device an entity's.
+  const entityKeyed = add(empty(), 'entity', 'e', { key: 'device', domain: 'switch', name: 'Device' })
+  expect(addGraphNode(entityKeyed, 'device', 'd', nodeCatalog).nodes.at(-1)!.config.key).toBe('device')
+  const deviceKeyed = add(empty(), 'device', 'd', { key: 'binary_sensor' })
+  expect(addGraphNode(deviceKeyed, 'entity', 'e', nodeCatalog).nodes.at(-1)!.config.key).toBe('binary_sensor')
+  // Two devices of one name are fine: names need not be unique.
+  expect(validateGraph(dropped).filter(d => d.severity === 3)).toEqual([])
+})
+
+it('deleting a Device node asks nothing', () => {
+  // Hub (hub), Hall plug (plug, part of hub) with a nameless relay on it, and a lamp a Set state step uses.
+  let graph = add(empty(), 'device', 'hub', { key: 'hub', name: 'Hub' })
+  graph = add(graph, 'device', 'plug', { key: 'plug', name: 'Hall plug', via: { device: 'hub' } })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: '' })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'lamp' })
+  graph = connectData(connectData(graph, 'plug', 'entities', 'relay', 'device'), 'hub', 'entities', 'lamp', 'device')
+  expect(entityRemoval(graph, ['plug'], nodeCatalog)).toBeUndefined()
+  expect(entityRemoval(graph, ['plug', 'hub'], nodeCatalog)).toBeUndefined()
+  // With an Entity node a step uses, the question about that entity, in the same words.
+  expect(entityRemoval(graph, ['plug', 'hub', 'lamp'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
+  // Deleted, its wires go with it and its entities stand alone: a nameless one now needs its name.
+  const withoutPlug = removeNode(graph, 'plug', nodeCatalog)
+  expect(withoutPlug.edges.filter(e => e.source === 'plug' || e.target === 'plug')).toEqual([])
+  expect(withoutPlug.nodes.map(n => n.id)).toEqual(['hub', 'relay', 'lamp', 'set'])
+  expect(deviceNodeOf(withoutPlug, 'relay')).toBeUndefined()
+  expect(validateGraph(withoutPlug).filter(d => d.nodeId === 'relay' && d.severity === 3).map(d => d.code)).toEqual(['entity.name'])
+  // A device that was part of a deleted one says so.
+  const withoutHub = removeNode(graph, 'hub', nodeCatalog)
+  expect(deviceNodeOf(withoutHub, 'lamp')).toBeUndefined()
+  expect(validateGraph(withoutHub).filter(d => d.nodeId === 'plug' && d.severity === 3).map(d => d.code)).toEqual(['device.viaUnknown'])
 })
 
 it('a Device wire is not walked upstream of an entity, and makes no run of it a state flow\'s', () => {

@@ -1,4 +1,4 @@
-import { analyzeGraph, definitionEntityKeys, freeKey, nodeCatalog, type DiagnosticCode, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { analyzeGraph, definitionDeviceKeys, definitionEntityKeys, freeKey, nodeCatalog, type DiagnosticCode, type GraphEdge, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import type { VisualGraph } from './graph'
 import { createUuid } from './id'
 
@@ -153,12 +153,13 @@ export function pasteSteps(
   const move = 'at' in place ? { x: place.at.x - corner.x, y: place.at.y - corner.y } : place.offset
   const snap = (value: number) => (grid ? Math.round(value / grid) * grid : Math.round(value))
   const types = customTypeRenames(data.nodes, ids, catalog)
-  const keys = entityKeys(graph, data.nodes, catalog)
+  const keys = entityKeys(graph, data.nodes, catalog), devices = deviceKeys(graph, data.nodes, catalog)
   const nodes = data.nodes.map(node => {
     const config = types ? renameTypes(node.config, types) : structuredClone(node.config)
+    const entityRekeyed = keys ? rekey(node, config, keys, catalog) : config
     return {
       ...structuredClone(node), id: ids.get(node.id)!, position: { x: snap(position(node).x + move.x), y: snap(position(node).y + move.y) },
-      config: keys ? rekey(node, config, keys, catalog) : config,
+      config: devices ? rekeyDevice(node, entityRekeyed, devices, catalog) : entityRekeyed,
     }
   })
   const edgeIds = new Set((Array.isArray(graph.edges) ? graph.edges : []).flatMap(edge => (record(edge) && typeof edge.id === 'string' ? [edge.id] : [])))
@@ -193,7 +194,7 @@ export function pasteSteps(
 const finite = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
 const spec = (node: GraphNode, catalog: VisualCatalogSnapshot) => (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind] : undefined)
-const declares = (node: GraphNode, catalog: VisualCatalogSnapshot) => spec(node, catalog)?.declares === 'entity'
+const declares = (node: GraphNode, catalog: VisualCatalogSnapshot, what: 'entity' | 'device' = 'entity') => spec(node, catalog)?.declares === what
 /** A step of an entity definition whose `entity` names one of its entities by key (not a Home Assistant entity id). */
 const namesEntity = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
   const kind = spec(node, catalog)
@@ -206,9 +207,21 @@ const namesEntity = (node: GraphNode, catalog: VisualCatalogSnapshot) => {
  * node's of a key two copied nodes had. Undefined when the copy has no such node.
  */
 function entityKeys(graph: VisualGraph, copied: GraphNode[], catalog: VisualCatalogSnapshot) {
-  const nodes = copied.filter(node => declares(node, catalog) && typeof node.config.key === 'string' && node.config.key !== '')
+  return freeKeys(copied.filter(node => declares(node, catalog)), definitionEntityKeys(graph, catalog))
+}
+/**
+ * The key each pasted Device node is given, by its id in the copy, as `entityKeys` gives Entity nodes theirs, past the
+ * keys of the graph's devices (device keys and entity keys are apart): a copy is a new device. Undefined when the copy
+ * has no Device node with a key.
+ */
+function deviceKeys(graph: VisualGraph, copied: GraphNode[], catalog: VisualCatalogSnapshot) {
+  return freeKeys(copied.filter(node => declares(node, catalog, 'device')), definitionDeviceKeys(graph, catalog))
+}
+/** Each of the nodes with a text key: its key while `taken` and the nodes before it leave it free, else the next free one. */
+function freeKeys(declaring: GraphNode[], taken: string[]) {
+  const nodes = declaring.filter(node => typeof node.config.key === 'string' && node.config.key !== '')
   if (!nodes.length) return
-  const taken = definitionEntityKeys(graph, catalog), byNode = new Map<string, string>(), byKey = new Map<string, string>()
+  const byNode = new Map<string, string>(), byKey = new Map<string, string>()
   for (const node of nodes) {
     const key = node.config.key as string, given = freeKey(key, taken)
     taken.push(given)
@@ -226,6 +239,22 @@ function rekey(node: GraphNode, config: GraphNode['config'], keys: NonNullable<R
   if (own !== undefined) return { ...config, key: own }
   if (!namesEntity(node, catalog) || typeof config.entity !== 'string' || !keys.byKey.has(config.entity)) return config
   return { ...config, entity: keys.byKey.get(config.entity)! }
+}
+/**
+ * A pasted node's config with the keys `deviceKeys` gave: a Device node's own key, and its Part of when that names a
+ * device copied with it (the first copied device of that key). Part of a device not copied, or of a Home Assistant
+ * device, is kept as it was.
+ */
+function rekeyDevice(node: GraphNode, config: GraphNode['config'], keys: NonNullable<ReturnType<typeof deviceKeys>>, catalog: VisualCatalogSnapshot): GraphNode['config'] {
+  // A Device node without a key is given none, but may still be part of a copied device.
+  if (!declares(node, catalog, 'device')) return config
+  const own = keys.byNode.get(node.id), via = config.via
+  const parent = record(via) && typeof via.device === 'string' ? keys.byKey.get(via.device) : undefined
+  return {
+    ...config,
+    ...(own !== undefined ? { key: own } : {}),
+    ...(parent !== undefined && record(via) ? { via: { ...via, device: parent } } : {}),
+  }
 }
 
 /**

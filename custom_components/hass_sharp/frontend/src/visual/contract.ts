@@ -2004,7 +2004,9 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
   // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12). An
   // Entity node names no other: it is named after its type, and keyed by that name past every key the definition has.
+  // A Device node is named Device, keyed past the keys of the graph's devices (not its entities': apart from them).
   const named = spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
+    : spec.declares === 'device' ? { name: 'Device', key: freeKey('device', definitionDeviceKeys(graph, catalog)) }
     : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, definitionCatalog(catalog, graph)) : {}
   // A Custom C# node is titled by its method until someone names it; a node that declares an entity is named by it.
   const label = spec.dynamicInputs === 'custom' || spec.declares ? {} : { label: spec.label }

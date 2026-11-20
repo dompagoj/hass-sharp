@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { clipboardMarker, copySteps, customNamespace, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps } from '../src/visual/clipboard'
+import { clipboardMarker, copySteps, customNamespace, parseSteps, pasteRefusals, pasteSteps, readSteps, writeSteps, type StepClipboard } from '../src/visual/clipboard'
+import { add, empty } from './visual-fixture'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import richFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
-import { analyzeGraph, connectData, diagnosticCodes, nodeCatalog, validateGraph, words, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { analyzeGraph, connectData, deviceNodeOf, diagnosticCodes, nodeCatalog, validateGraph, words, type DiagnosticCode, type VisualCatalogSnapshot } from '../src/visual/contract'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -237,4 +238,71 @@ it('a pasted Entity node keeps its key where it is free, else takes the next fre
   expect(into(definition())).toEqual(['lamp', 'lamp_2', 'lamp'])
   // Into one whose Entity node has it: both move on, and the step with the first.
   expect(into(definition([lamp('x', 'lamp')]))).toEqual(['lamp', 'lamp_2', 'lamp_3', 'lamp_2'])
+})
+
+/** Hub (hub), Hall plug (plug, part of hub) with Relay on it, and Lamp, a switch on no device. */
+const devices = () => {
+  let graph = add(empty(), 'device', 'hub', { key: 'hub', name: 'Hub' }, { x: 0, y: 0 })
+  graph = add(graph, 'device', 'plug', { key: 'plug', name: 'Hall plug', via: { device: 'hub' } }, { x: 0, y: 200 })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }, { x: 400, y: 200 })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' }, { x: 400, y: 400 })
+  return connectData(graph, 'plug', 'entities', 'relay', 'device')
+}
+const pasteOf = (graph: VisualGraph, data: StepClipboard) => {
+  const result = pasteSteps(graph, structuredClone(data), nodeCatalog, { offset: { x: 40, y: 40 } })
+  if ('error' in result) throw new Error(result.error)
+  return { graph: result.graph, copies: result.ids.map(id => result.graph.nodes.find(n => n.id === id)!) }
+}
+const deviceWires = (graph: VisualGraph) => graph.edges.flatMap(e => (e.kind === 'data' && e.targetPort === 'device' ? [`${e.source}->${e.target}`] : []))
+
+it('a pasted device gets its own key, and a device pasted with it stays part of it', () => {
+  const graph = devices()
+  const before = structuredClone(graph)
+  const data = copySteps(graph, ['hub', 'plug', 'relay'])!
+  const { graph: pasted, copies } = pasteOf(graph, data)
+  const [hub, plug, relay] = copies
+  expect([hub.config.key, plug.config.key, relay.config.key]).toEqual(['hub_2', 'plug_2', 'relay_2'])
+  // The copy of the plug is part of the copy of the hub; the relay's copy is on the plug's copy.
+  expect(plug.config.via).toEqual({ device: 'hub_2' })
+  expect(deviceNodeOf(pasted, relay.id)).toBe(plug.id)
+  expect(deviceWires(pasted)).toEqual(['plug->relay', `${plug.id}->${relay.id}`])
+  // The originals are unchanged.
+  expect(pasted.nodes.slice(0, graph.nodes.length)).toEqual(before.nodes)
+  expect(pasted.edges.slice(0, graph.edges.length)).toEqual(before.edges)
+  expect(validateGraph(pasted).filter(d => d.severity === 3)).toEqual([])
+  // Pasted again, each copy takes the next free key, and the plug's copy follows its hub's.
+  const again = pasteOf(pasted, data).copies
+  expect(again.map(n => n.config.key)).toEqual(['hub_3', 'plug_3', 'relay_3'])
+  expect(again[1].config.via).toEqual({ device: 'hub_3' })
+  // A device pasted without the one it is part of keeps that key; one part of a Home Assistant device keeps it too.
+  expect(pasteOf(graph, copySteps(graph, ['plug'])!).copies[0].config).toMatchObject({ key: 'plug_2', via: { device: 'hub' } })
+  const ha = updateNode(graph, 'plug', { config: { ...graph.nodes[1].config, via: { deviceId: 'zigbee' } } })
+  expect(pasteOf(ha, copySteps(ha, ['hub', 'plug'])!).copies[1].config).toMatchObject({ key: 'plug_2', via: { deviceId: 'zigbee' } })
+  // Two devices of one key in a copy are given two keys; the device part of that key follows the first.
+  const twins = { marker: clipboardMarker, version: 1 as const, copiedAt: 0, edges: [], nodes: [
+    { id: 'a', kind: 'device', position: { x: 0, y: 0 }, config: { key: 'hub', name: 'Hub' } },
+    { id: 'b', kind: 'device', position: { x: 0, y: 0 }, config: { key: 'hub', name: 'Hub' } },
+    { id: 'c', kind: 'device', position: { x: 0, y: 0 }, config: { key: 'plug', name: 'Plug', via: { device: 'hub' } } },
+  ] }
+  expect(pasteOf(graph, twins).copies.map(n => [n.config.key, n.config.via])).toEqual([['hub_2', undefined], ['hub_3', undefined], ['plug_2', { device: 'hub_2' }]])
+  // Into another definition, against its keys: free there, a key is kept; device keys and entity keys are apart.
+  const other = add(add(empty('Other'), 'entity', 'e', { key: 'hub', domain: 'switch', name: 'Hub' }), 'device', 'd', { key: 'plug' })
+  const into = pasteOf(other, data).copies
+  expect(into.map(n => n.config.key)).toEqual(['hub', 'plug_2', 'relay'])
+  expect(into[1].config.via).toEqual({ device: 'hub' })
+})
+
+it('an entity pasted without its device stands alone', () => {
+  const graph = devices()
+  const { graph: pasted, copies } = pasteOf(graph, copySteps(graph, ['relay'])!)
+  const [relay] = copies
+  expect(relay.config.key).toBe('relay_2')
+  // No data edge into its Device pin: the wire from the device not copied is left behind.
+  expect(pasted.edges.filter(e => e.kind === 'data' && e.target === relay.id)).toEqual([])
+  expect(deviceNodeOf(pasted, relay.id)).toBeUndefined()
+  expect(deviceWires(pasted)).toEqual(['plug->relay'])
+  expect(validateGraph(pasted).filter(d => d.nodeId === relay.id && d.severity === 3)).toEqual([])
+  // A device pasted without its entities arrives with none.
+  const alone = pasteOf(graph, copySteps(graph, ['plug'])!)
+  expect(validateGraph(alone.graph).filter(d => d.nodeId === alone.copies[0].id).map(d => d.code)).toEqual(['device.empty'])
 })
