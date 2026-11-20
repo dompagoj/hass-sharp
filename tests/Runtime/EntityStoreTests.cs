@@ -85,7 +85,7 @@ static class EntityStoreTests
     internal static JsonObject MotionGraph() => DefinitionGraph.Decompose(JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "visual-graph-validation.json")))!.AsArray()
         .Single(c => c!["name"]!.GetValue<string>() == "entity graph: derived binary sensor")!["graph"]!.AsObject());
     /// <summary>The entities the acceptance graph's Entity node declares, as a definition's read answer lists them.</summary>
-    internal static JsonArray MotionEntities() => [Entity("any_motion", "binary_sensor", new { name = "Any motion" })];
+    internal static JsonArray MotionEntities() => [Entity("any_motion", "binary_sensor", new { name = "Any motion", device = (string?)null })];
     static DefinitionBody Motion() => GraphBody(MotionGraph(), null);
     /// <summary>
     /// A sensor whose value is a setting, through <paramref name="through"/> when given (a value node reading <c>value</c>):
@@ -128,9 +128,11 @@ static class EntityStoreTests
             (nameof(ARequestThatListsEntitiesIsRefused), () => ARequestThatListsEntitiesIsRefused(snapshot)),
             (nameof(AClassRequestKeepsItsOwnRefusal), () => AClassRequestKeepsItsOwnRefusal(snapshot)),
             (nameof(ADefinitionWithoutAnEntityNodeAsksForOne), () => ADefinitionWithoutAnEntityNodeAsksForOne(snapshot)),
-            (nameof(ASaveWritesVersionTwoWithTheDerivedEntities), () => ASaveWritesVersionTwoWithTheDerivedEntities(snapshot)),
+            (nameof(ASaveWritesVersionThreeWithTheDerivedDevices), () => ASaveWritesVersionThreeWithTheDerivedDevices(snapshot)),
             (nameof(AnOlderGraphDocumentSaysToBuildItAgain), () => AnOlderGraphDocumentSaysToBuildItAgain(snapshot)),
+            (nameof(AVersionTwoGraphDocumentSaysToBuildItAgain), () => AVersionTwoGraphDocumentSaysToBuildItAgain(snapshot)),
             (nameof(AnOlderClassDocumentStillLoads), () => AnOlderClassDocumentStillLoads(snapshot)),
+            (nameof(ARequestThatSendsDevicesBackIsAccepted), () => ARequestThatSendsDevicesBackIsAccepted(snapshot)),
             (nameof(ComposeGivesNoEntities), ComposeGivesNoEntities) })
             try { test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
@@ -213,21 +215,98 @@ static class EntityStoreTests
             ["definition.entitiesRequired|||Add an Entity node: an entity definition creates the entities on its canvas, and has none"]), "the one problem: " + Codes(preview));
     }
 
-    /// <summary>The stored file is version 2 and lists the entities its Entity nodes declare.</summary>
-    static void ASaveWritesVersionTwoWithTheDerivedEntities(VisualCatalogSnapshot snapshot)
+    /// <summary>
+    /// A switch <c>relay</c> on the Device node <c>plug</c> (Hall plug, model P1, a manufacturer of spaces and Part of
+    /// nothing), and a switch <c>bare</c> on none.
+    /// </summary>
+    static JsonObject PlugGraph() => Graph("Plug",
+        [N("plug", "device", new JsonObject { ["key"] = "plug", ["name"] = "Hall plug", ["manufacturer"] = " ", ["model"] = "P1", ["via"] = null }),
+            Hub("relay", "relay", "switch"), Hub("bare", "bare", "switch")],
+        D("plug", "relay", "device", "entities"));
+    /// <summary>The devices <see cref="PlugGraph"/> lists: its Device node's config, without the blank manufacturer and the null Part of.</summary>
+    static JsonArray PlugDevices() => [new JsonObject { ["key"] = "plug", ["name"] = "Hall plug", ["model"] = "P1" }];
+
+    /// <summary>
+    /// The stored file is version 3, lists the devices its Device nodes declare and the entities its Entity nodes declare,
+    /// each with the key of the device it is on or null; a class definition's file is version 3 too and lists no devices.
+    /// </summary>
+    static void ASaveWritesVersionThreeWithTheDerivedDevices(VisualCatalogSnapshot snapshot)
     {
         var directory = TempDirectory("version");
         try
         {
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            var saved = store.Save("motion", Motion(), 0, snapshot, "g1");
-            var file = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!;
-            Check(file["version"]!.GetValue<int>() == 2 && saved.Version == 2, "the file is version 2: " + file["version"]?.ToJsonString());
-            Check(JsonNode.DeepEquals(file["entities"], MotionEntities()), "it lists the node's entity: " + file["entities"]?.ToJsonString());
-            store.Save("plug", Body(), 0, snapshot, "g1");
-            Check(JsonNode.Parse(File.ReadAllText(store.FilePath("plug")))!["version"]!.GetValue<int>() == 2, "a class definition is saved at version 2 too");
-            Check(store.Read("motion")!.Body.Entities == null, "the body of a stored graph has no entities: a regeneration composes from the graph alone");
-            Check(store.Read("plug")!.Body.Entities == null, "a class definition's body has its own, none here");
+            var saved = store.Save("plug", GraphBody(PlugGraph(), null, name: "Plug"), 0, snapshot, "g1");
+            var file = JsonNode.Parse(File.ReadAllText(store.FilePath("plug")))!;
+            Check(file["version"]!.GetValue<int>() == 3 && saved.Version == 3, "the file is version 3: " + file["version"]?.ToJsonString());
+            Check(JsonNode.DeepEquals(file["devices"], PlugDevices()) && JsonNode.DeepEquals(saved.Devices, PlugDevices()), "it lists the Device node's device: " + file["devices"]?.ToJsonString());
+            var entities = file["entities"]!.AsArray();
+            Check(entities.Select(e => e!["key"]!.GetValue<string>()).SequenceEqual(["relay", "bare"]) && entities[0]!["device"]!.GetValue<string>() == "plug"
+                && entities[1]!.AsObject().TryGetPropertyValue("device", out var none) && none == null, "relay is on plug and bare on none: " + entities.ToJsonString());
+            var read = store.Read("plug")!;
+            Check(JsonNode.DeepEquals(read.Devices, PlugDevices()) && JsonNode.DeepEquals(read.Entities, entities), "they read back as stored: " + read.Devices?.ToJsonString());
+            Check(read.Body.Entities == null && !JsonSerializer.SerializeToNode(read.Body, VisualStore.Json)!.AsObject().ContainsKey("devices"),
+                "the body of a stored graph has neither: a regeneration composes from the graph alone");
+            Check(JsonNode.DeepEquals(store.Save("motion", Motion(), 0, snapshot, "g1").Devices, new JsonArray()) && JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!["devices"] is JsonArray { Count: 0 },
+                "a graph without Device nodes lists none");
+            store.Save("lamp", Body(), 0, snapshot, "g1");
+            var lamp = JsonNode.Parse(File.ReadAllText(store.FilePath("lamp")))!.AsObject();
+            Check(lamp["version"]!.GetValue<int>() == 3 && !lamp.ContainsKey("devices") && store.Read("lamp")!.Devices == null, "a class definition is saved at version 3 too, with no devices: " + lamp.ToJsonString());
+            Check(store.Read("lamp")!.Body.Entities == null, "a class definition's body has its own, none here");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// A version 2 graph document, which a phase 2 build saved, is skipped by List and reported as unreadable with the
+    /// sentence, can be deleted at revision 0, and is built again as a new definition.
+    /// </summary>
+    static void AVersionTwoGraphDocumentSaysToBuildItAgain(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("version-two");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            store.Save("motion", Motion(), 0, snapshot, "g1");
+            store.Save("lamp", Body(), 0, snapshot, "g1");
+            // As a phase 2 build wrote it: version 2, without devices.
+            var json = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!.AsObject();
+            json["version"] = 2; json.Remove("devices");
+            File.WriteAllText(store.FilePath("motion"), json.ToJsonString(VisualStore.Json));
+            var unreadable = new List<UnreadableDefinition>();
+            Check(store.List(unreadable: unreadable).Select(d => d.Id).SequenceEqual(["lamp"]), "List skips it");
+            Check(unreadable.SequenceEqual([new UnreadableDefinition("motion", EarlierBuild, true)]), "and reports it as unreadable, with the sentence, deletable: " + string.Join(", ", unreadable));
+            Check(Throws<JsonException>(() => store.Read("motion"), "reading it").Message == EarlierBuild, "reading it says why");
+            Throws<VisualConflictException>(() => store.Delete("motion", 1), "deleting it at its revision");
+            store.Delete("motion", 0);
+            Check(!File.Exists(store.FilePath("motion")) && store.Ids().SequenceEqual(["lamp"]), "revision 0 deletes it");
+            Check(store.Save("motion", Motion(), 0, snapshot, "g1") is { Version: 3, Revision: 1 }, "it is built again as a new definition");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// A read answer's definition sent back with its <c>devices</c> (and without <c>entities</c>, which is still refused)
+    /// is accepted: the devices sent are ignored, and those of the graph's Device nodes are stored.
+    /// </summary>
+    static void ARequestThatSendsDevicesBackIsAccepted(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("devices-back");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            var saved = store.Save("plug", GraphBody(PlugGraph(), null, name: "Plug"), 0, snapshot, "g1");
+            var answer = JsonSerializer.SerializeToNode(store.Read("plug"), VisualStore.Json)!.AsObject();
+            Check(answer["devices"] is JsonArray && answer["entities"]![0]!["device"]!.GetValue<string>() == "plug", "the read document has devices and each entity's device: " + answer.ToJsonString());
+            var request = new JsonObject { ["name"] = answer["name"]!.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(), ["logic"] = answer["logic"]!.DeepClone(), ["devices"] = answer["devices"]!.DeepClone() };
+            request["devices"]!.AsArray().Add(new JsonObject { ["key"] = "evil", ["name"] = "Not on the canvas" });
+            // As the API reads a request's definition.
+            var body = request.Deserialize<DefinitionBody>(VisualStore.Json)!;
+            var preview = new DefinitionGenerator().Preview(body, snapshot);
+            Check(preview.Valid && preview.Source == saved.Source, "the definition with devices previews to the source saved: " + Codes(preview));
+            var again = store.Save("plug", body, 1, snapshot, "g1");
+            Check(again.Revision == 2 && again.Source == saved.Source && JsonNode.DeepEquals(again.Devices, PlugDevices())
+                && !File.ReadAllText(store.FilePath("plug")).Contains("evil", StringComparison.Ordinal), "it saves, with the Device nodes' devices and not those sent: " + again.Devices?.ToJsonString());
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -260,7 +339,7 @@ static class EntityStoreTests
             Throws<VisualConflictException>(() => store.Delete("motion", 1), "deleting it at its revision");
             store.Delete("motion", 0);
             Check(!File.Exists(store.FilePath("motion")) && store.Ids().SequenceEqual(["plug"]), "revision 0 deletes it");
-            Check(store.Save("motion", Motion(), 0, snapshot, "g1") is { Version: 2, Revision: 1 }, "it is built again as a new definition");
+            Check(store.Save("motion", Motion(), 0, snapshot, "g1") is { Version: 3, Revision: 1 }, "it is built again as a new definition");
             // One with no Entity node is refused alike.
             var empty = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!.AsObject();
             empty["version"] = 1; empty["logic"]!["graph"]!["nodes"] = new JsonArray(); empty["entities"] = MotionEntities();
@@ -270,22 +349,25 @@ static class EntityStoreTests
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
-    /// <summary>A version 1 class document is read and listed as it is.</summary>
+    /// <summary>A version 1 or 2 class document, whose document is the same as a version 3 one, is read and listed as it is.</summary>
     static void AnOlderClassDocumentStillLoads(VisualCatalogSnapshot snapshot)
     {
-        var directory = TempDirectory("older-class");
-        try
+        foreach (var version in (int[])[1, 2])
         {
-            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            var saved = store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
-            Downgrade(store, "plug", 1);
-            Check(store.Read("plug") is { Version: 1, Revision: 1, Logic: { Kind: "class", Type: Plug } } read && read.Source == saved.Source && read.Settings[0].Value!.GetValue<string>() == "10.0.0.5",
-                "it reads back as it was");
-            Check(store.List().Select(d => d.Id).SequenceEqual(["plug"]), "it is listed");
-            Check(new DefinitionGenerator().Preview(store.Read("plug")!.Body, snapshot) is { Valid: true } preview && preview.Source == saved.Source, "it regenerates its source");
-            Check(store.Save("plug", store.Read("plug")!.Body, 1, snapshot, "g1").Version == 2, "saved again, it is version 2");
+            var directory = TempDirectory("older-class");
+            try
+            {
+                var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+                var saved = store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
+                Downgrade(store, "plug", version);
+                Check(store.Read("plug") is { Revision: 1, Logic: { Kind: "class", Type: Plug } } read && read.Version == version && read.Source == saved.Source && read.Settings[0].Value!.GetValue<string>() == "10.0.0.5",
+                    $"version {version}: it reads back as it was");
+                Check(store.List().Select(d => d.Id).SequenceEqual(["plug"]), $"version {version}: it is listed");
+                Check(new DefinitionGenerator().Preview(store.Read("plug")!.Body, snapshot) is { Valid: true } preview && preview.Source == saved.Source, $"version {version}: it regenerates its source");
+                Check(store.Save("plug", store.Read("plug")!.Body, 1, snapshot, "g1").Version == 3, $"version {version}: saved again, it is version 3");
+            }
+            finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
         }
-        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
     /// <summary>The composed definition is the settings (and a device marker): its entities are the graph's Entity nodes.</summary>
@@ -759,7 +841,11 @@ static class EntityStoreTests
             Check(first.Valid && second.Valid && gone.Valid, "the libraries compile");
             var half = first.Snapshot.Root["nodes"]!.AsObject().Single(n => n.Key.StartsWith("library:maths:", StringComparison.Ordinal)).Key;
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            var body = GraphBody(LevelGraph(half), null, [Typed("offset", "number", "4")], "Level");
+            // Its sensor on a Device node, whose device the rebuild keeps as it keeps the entities.
+            var level = LevelGraph(half);
+            level["nodes"]!.AsArray().Insert(0, N("meter", "device", new { key = "meter", name = "Meter" }));
+            level["edges"]!.AsArray().Add(D("meter", "s", "device", "entities"));
+            var body = GraphBody(level, null, [Typed("offset", "number", "4")], "Level");
             var check = new DefinitionGenerator().Preview(body, first.Snapshot);
             Check(check.Valid, "the library graph is valid: " + Codes(check));
             var saved = store.Save("level", body, 0, first.Snapshot, "g1");
@@ -771,6 +857,9 @@ static class EntityStoreTests
                 && rebuilt.Source == preview.Source && rebuilt.Source.Contains("revision 2", StringComparison.Ordinal) && rebuilt.SourceMap.SequenceEqual(preview.SourceMap),
                 "Rebuilt gives the next revision with the source against the new library");
             Check(rebuilt.Logic.Graph is { } graph && !graph.ContainsKey("definition") && JsonNode.DeepEquals(graph, stored.Logic.Graph), "the rebuilt graph is stored without its definition");
+            Check(JsonNode.DeepEquals(stored.Devices, JsonNode.Parse("""[{"key":"meter","name":"Meter"}]""")) && JsonNode.DeepEquals(rebuilt.Devices, stored.Devices)
+                && JsonNode.DeepEquals(rebuilt.Entities, stored.Entities) && stored.Entities![0]!["device"]!.GetValue<string>() == "meter",
+                "Rebuilt keeps the stored devices and entities: " + rebuilt.Devices?.ToJsonString());
             Check(store.Read("level")!.Revision == 1, "Rebuilt does not write");
             Check(store.RefreshDerived("level", 1, preview.Source, preview.SourceMap, "g2") && store.Read("level") is { Revision: 1 } refreshed && refreshed.Source == preview.Source
                 && JsonNode.DeepEquals(refreshed.Logic.Graph, stored.Logic.Graph), "RefreshDerived stores the regenerated source at the same revision");
@@ -783,7 +872,7 @@ static class EntityStoreTests
     }
 
     /// <summary>
-    /// A class definition's stored file, byte for byte apart from its save time, as phase 1 wrote it but for its version, 2: its settings have
+    /// A class definition's stored file, byte for byte apart from its save time, as phase 1 wrote it but for its version, 3: it lists no devices, its settings have
     /// no label, type or secret, and a label, type or secret a client sends with them is not stored.
     /// </summary>
     static void ClassDefinitionFilesAreUnchanged(VisualCatalogSnapshot snapshot)
@@ -798,7 +887,7 @@ static class EntityStoreTests
                 "public static class SharpDefinition { public static object Create() => new global::NodeLib.ShellyPlug(); }",
                 "// NodeLibrarySource \"shelly\" revision 1",
                 NodeLibraryCompiler.WrapSource(EntityTypeTests.Shelly)) + "\n";
-            string Expected(string id) => "{\"version\":2,\"id\":\"" + id + "\",\"revision\":1,\"name\":\"Kitchen plug\","
+            string Expected(string id) => "{\"version\":3,\"id\":\"" + id + "\",\"revision\":1,\"name\":\"Kitchen plug\","
                 + "\"device\":{\"manufacturer\":\"Shelly\",\"model\":\"Plug S\",\"swVersion\":null,\"hwVersion\":null,\"configurationUrl\":null,\"suggestedArea\":\"Kitchen\",\"via\":null},"
                 + "\"settings\":[{\"key\":\"Host\",\"value\":\"10.0.0.5\"},{\"key\":\"Token\",\"value\":null}],\"entities\":null,"
                 + "\"logic\":{\"kind\":\"class\",\"type\":\"" + Plug + "\",\"graph\":null},"
@@ -813,7 +902,7 @@ static class EntityStoreTests
                 return json.ToJsonString(VisualStore.Json);
             }
             store.Save("plug9", Body(settings: settings), 0, snapshot, "g1");
-            Check(Stored("plug9") == Expected("plug9"), "a class definition's file is as phase 1 wrote it, at version 2:\n" + Stored("plug9") + "\n" + Expected("plug9"));
+            Check(Stored("plug9") == Expected("plug9"), "a class definition's file is as phase 1 wrote it, at version 3 (no devices, no key or name on its device):\n" + Stored("plug9") + "\n" + Expected("plug9"));
             Check(File.ReadAllText(store.FilePath("plug9")).Replace(JsonNode.Parse(File.ReadAllText(store.FilePath("plug9")))!["savedUtc"]!.ToJsonString(), "\"SAVED\"") == Expected("plug9"),
                 "the file's own bytes match too");
             Console.WriteLine("PASS entity store: a class definition's stored file is byte-identical to phase 1's apart from its save time");

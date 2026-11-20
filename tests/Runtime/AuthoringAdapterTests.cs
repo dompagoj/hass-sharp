@@ -138,13 +138,13 @@ static class AuthoringAdapterTests
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration=previous; Directory.Delete(path,true); }
     }
 
-    /// <summary>The entities each graph example creates, as its preview derives them from its Entity nodes (each member given must match).</summary>
+    /// <summary>The entities each graph example creates, as its preview derives them from its Entity nodes (each member given must be there and match; device null: on no Device node).</summary>
     static readonly Dictionary<string,string> DerivedEntities=new()
     {
-        ["Motion in either room"]="""[{"key":"any_motion","domain":"binary_sensor","name":"Any motion","deviceClass":"motion"}]""",
-        ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet"},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"}}]""",
-        ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","options":{"frame_interval":2}}]""",
-        ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic"}]""",
+        ["Motion in either room"]="""[{"key":"any_motion","domain":"binary_sensor","name":"Any motion","deviceClass":"motion","device":null}]""",
+        ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet","device":null},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"},"device":null}]""",
+        ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","options":{"frame_interval":2},"device":null}]""",
+        ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic","device":null}]""",
     };
 
     /// <summary>
@@ -185,7 +185,7 @@ static class AuthoringAdapterTests
             var composed=new DefinitionGenerator(diagnostics).Preview(body,snapshot).Graph!;
             var derived=DefinitionGraph.Entities(composed,snapshot);
             var expected=JsonNode.Parse(DerivedEntities[title])!.AsArray();
-            VisualExecutionTests.Check(derived.Count==expected.Count&&expected.Select((e,i)=>e!.AsObject().All(p=>JsonNode.DeepEquals(p.Value,derived[i]![p.Key]))).All(x=>x),
+            VisualExecutionTests.Check(derived.Count==expected.Count&&expected.Select((e,i)=>e!.AsObject().All(p=>derived[i]!.AsObject().ContainsKey(p.Key)&&JsonNode.DeepEquals(p.Value,derived[i]![p.Key]))).All(x=>x),
                 $"example definition {title} derives its entities {expected.ToJsonString()}: "+derived.ToJsonString());
             foreach(var node in graph["nodes"]!.AsArray())
             {

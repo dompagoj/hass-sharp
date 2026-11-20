@@ -276,6 +276,8 @@ public partial class HassSharpManager
     /// stored definition's, which the save puts in (<see cref="DefinitionSetting.Keep"/>). One sent back as an answer masks
     /// it, <c>hasValue</c> and no value, is kept alike; with a value, the value wins (<see cref="DefinitionSetting.HasValue"/>).
     /// An <c>entities</c> key given as null is an empty list: a graph's is refused whatever it holds, and a class's is none.
+    /// A <c>devices</c> key, as a read answer has it, is no member of a body and is ignored: a graph's devices are its
+    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>).
     /// </summary>
     static DefinitionBody DefinitionBody(JsonObject request)
     {

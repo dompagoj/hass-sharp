@@ -57,10 +57,20 @@ internal static class DefinitionGraph
 
     /// <summary>
     /// The entities of a composed graph (<see cref="Compose"/>), as a copy: the ones its Entity nodes declare
-    /// (<see cref="VisualNodeCatalog.WithGraphTypes"/>), the first of each key.
+    /// (<see cref="VisualNodeCatalog.WithGraphTypes"/>), the first of each key, each with <c>device</c>: the key of the
+    /// Device node it is on, or null.
     /// </summary>
     internal static JsonArray Entities(JsonObject composed, VisualCatalogSnapshot snapshot) =>
         new([.. VisualNodeCatalog.DefinitionItems(VisualNodeCatalog.WithGraphTypes(snapshot.Root, composed), "entities").Select(e => e.DeepClone())]);
+
+    /// <summary>
+    /// The devices of a composed graph (<see cref="Compose"/>), as a copy: those its Device nodes declare, as
+    /// <see cref="VisualNodeCatalog.WithGraphTypes"/> lists them (<see cref="VisualNodeCatalog.DerivedDevices"/>): each
+    /// Device node's config in node order, without a text left blank or a Part of of null; one without a key is left
+    /// out, and two of one key are both listed. Empty for a graph that has none, or past the catalog's limits.
+    /// </summary>
+    internal static JsonArray Devices(JsonObject composed, JsonObject catalog) =>
+        VisualNodeCatalog.WithGraphTypes(catalog, composed)["definition"]?["devices"] is JsonArray devices ? (JsonArray)devices.DeepClone() : [];
 
     /// <summary>A copy of the graph without its <c>definition</c>; every other key is kept.</summary>
     internal static JsonObject Decompose(JsonObject graph)

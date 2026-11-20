@@ -97,16 +97,20 @@ GRAPH = p.Schema({p.Required("version"): int, p.Required("name"): str, p.Require
 # An entity definition: strict at its top and in logic, open below (a device or a setting is checked by the server, which
 # says what is wrong in words). A read answers the other kind of logic's member as null; a save may send it back.
 # entities is no part of it, but it is passed on: the server answers a graph's listed entities with the sentence that
-# says to use Entity nodes, and takes a class's empty list, which is better than a schema error naming the key.
+# says to use Entity nodes, and takes a class's empty list, which is better than a schema error naming the key. devices,
+# which a read answer lists (a graph's are its Device nodes), is no part of it either: it is passed on and the server
+# ignores it, so a read answer's definition sent back with it still saves.
 DEFINITION = p.Schema({p.Required("name"): str, p.Optional("device"): p.Any(None, OBJECT), p.Optional("settings"): [OBJECT],
-                       p.Optional("entities"): p.Any(None, [OBJECT]),
+                       p.Optional("entities"): p.Any(None, [OBJECT]), p.Optional("devices"): object,
                        p.Required("logic"): p.Any({p.Required("kind"): p.In(["graph"]), p.Required("graph"): GRAPH, p.Optional("type"): None},
                                                   {p.Required("kind"): p.In(["class"]), p.Required("type"): str, p.Optional("graph"): None})})
 DOCUMENT_KIND = {p.Optional("document"): p.In(["automation", "entity"])}
 # What an entities_read answer adds to the definition it was sent (EntityJson and authoring.py), none of which a save takes:
-# its entities too, which for a graph are those its Entity nodes declare.
+# its entities and devices too, which for a graph are those its Entity and Device nodes declare. A definition sent with
+# devices alone is not refused (the server ignores them); one refused for another of these keys is told to remove them too.
 STORED_DOCUMENT_KEYS = ("version", "id", "revision", "enabled", "status", "source", "sourceMap", "savedUtc", "catalogGeneration", "automationId",
-                        "active", "currentRevisionActive", "activationError", "liveEntities", "registeredEntities", "triggers", "entities")
+                        "active", "currentRevisionActive", "activationError", "liveEntities", "registeredEntities", "triggers", "entities",
+                        "devices")
 # The tools whose change is stored before their answer is read.
 SAVING_TOOLS = ("entities_save", "library_save", "library_delete")
 ID = p.All(str, p.Match(r"^[a-z0-9][a-z0-9_-]{0,79}$"))

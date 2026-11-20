@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using HassSharp;
 using static VisualExecutionTests;
@@ -204,6 +205,42 @@ static class EntityNodeTests
         Check(VisualNodeCatalog.DeviceOf(graph, "stray", catalog) == null, "nor is one whose Device pin is wired from a node that is not a Device node");
         Check(VisualNodeCatalog.DeviceOf(graph, "missing", catalog) == null && VisualNodeCatalog.DeviceOf(graph, "plug", catalog) == null, "an id that is no Entity node is on none");
         Check(!VisualNodeCatalog.DeclaredDevices(new JsonObject { ["nodes"] = 3 }, catalog).Any(), "a graph of the wrong shape declares no device");
+
+        // The definition's devices, and each entity's device, as a stored document and the graph's catalog list them.
+        var derived = DefinitionGraph.Devices(graph, catalog);
+        Check(JsonNode.DeepEquals(derived, JsonNode.Parse("""[{"key":"plug","name":"Hall plug","model":"P1"},{"key":"hub","name":"Hub","via":{"deviceId":"zigbee"}}]""")),
+            "DefinitionGraph.Devices lists each Device node's config in node order: " + derived.ToJsonString());
+        Check(!ReferenceEquals(derived[0], graph["nodes"]![0]!["config"]), "as a copy");
+        var lifted = VisualNodeCatalog.WithGraphTypes(catalog, graph)["definition"]!;
+        Check(JsonNode.DeepEquals(lifted["devices"], derived), "the graph's catalog lists the same devices: " + lifted["devices"]?.ToJsonString());
+        var entities = DefinitionGraph.Entities(graph, VisualCatalogSnapshot.BuiltIn);
+        string Devices(JsonArray list) => string.Join(",", list.Select(e => e!["key"] + "=" + (e.AsObject().TryGetPropertyValue("device", out var device) ? device?.ToJsonString() ?? "null" : "absent")));
+        Check(Devices(entities) == "relay=\"plug\",power=\"plug\",bare=null,stray=null", "each entity names the key of its device, or null: " + Devices(entities));
+        Check(Devices(lifted["entities"]!.AsArray()) == Devices(entities), "the graph's catalog alike: " + Devices(lifted["entities"]!.AsArray()));
+
+        // A text left blank and Part of nothing are left out; a device with no usable key is no device, and an entity on it is on none.
+        var odd = Graph(null,
+            N("a", "device", new { key = "desk", name = "Desk", manufacturer = " \t ", model = "", via = (object?)null }),
+            N("b", "device", new { key = "  ", name = "Blank" }), N("c", "device", new { key = 5, name = "Number" }), N("d", "device", new { name = "None" }),
+            N("e", "device", new { key = "desk", name = "Second desk", via = new { device = "desk" } }),
+            Hub("on_blank", "on_blank", "switch"), Hub("on_number", "on_number", "switch"), Hub("on_second", "on_second", "switch"));
+        odd["edges"] = new JsonArray(D("b", "on_blank", "device", "entities"), D("c", "on_number", "device", "entities"), D("e", "on_second", "device", "entities"));
+        Check(JsonNode.DeepEquals(DefinitionGraph.Devices(odd, catalog), JsonNode.Parse("""[{"key":"desk","name":"Desk"},{"key":"desk","name":"Second desk","via":{"device":"desk"}}]""")),
+            "blank texts and a null Part of are left out, a device without a usable key too, and two of one key are both listed: " + DefinitionGraph.Devices(odd, catalog).ToJsonString());
+        Check(Devices(DefinitionGraph.Entities(odd, VisualCatalogSnapshot.BuiltIn)) == "on_blank=null,on_number=null,on_second=\"desk\"",
+            "an entity on a device without a usable key is on none: " + Devices(DefinitionGraph.Entities(odd, VisualCatalogSnapshot.BuiltIn)));
+        Check(DefinitionGraph.Devices(new JsonObject { ["nodes"] = 3, ["definition"] = new JsonObject() }, catalog).Count == 0, "a graph of the wrong shape has no devices");
+
+        // A listed device is what a definition's device is read as: its key and name, and Part of another device of this definition.
+        var plug = derived[0].Deserialize<DefinitionDevice>(VisualStore.Json)!;
+        var hub = derived[1].Deserialize<DefinitionDevice>(VisualStore.Json)!;
+        var second = DefinitionGraph.Devices(odd, catalog)[1].Deserialize<DefinitionDevice>(VisualStore.Json)!;
+        Check(plug is { Key: "plug", Name: "Hall plug", Model: "P1", Via: null } && hub is { Key: "hub", Via: { DeviceId: "zigbee", Device: null, Definition: null } }
+            && second is { Key: "desk", Via: { Device: "desk", DeviceId: null } }, "a listed device reads as a DefinitionDevice with its key, name and Part of");
+        // A class's device, which has no key, name or Part of another device, is written as it was.
+        Check(JsonSerializer.Serialize(new DefinitionDevice("Shelly", null, null, null, null, null, new DefinitionVia("hub", null)), VisualStore.Json)
+            == """{"manufacturer":"Shelly","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":"hub","deviceId":null}}""",
+            "a device without a key, name or device of this definition writes none of them");
     }
 
     /// <summary>

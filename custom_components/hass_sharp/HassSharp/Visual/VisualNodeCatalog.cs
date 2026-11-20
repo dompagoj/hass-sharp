@@ -110,6 +110,45 @@ public static class VisualNodeCatalog
         return wire != null && Declares(catalog["nodes"]?[Text(nodes[Text(wire, "source")], "kind")], "device") ? Text(wire, "source") : null;
     }
     /// <summary>
+    /// A device's key as the definition's devices list it: a text that is not blank once trimmed, as given; null for none
+    /// (blank, absent or not a text), when the device is no device of the list and an entity on it is on none.
+    /// </summary>
+    static string? DeviceKey(JsonNode? config) =>
+        config?["key"] is JsonValue value && value.TryGetValue<string>(out var key) && VisualGraphValidator.Words.Trimmed(key).Length > 0 ? key : null;
+    /// <summary>
+    /// The device a Device node's config describes, as a definition lists one: a copy of it without a text that is blank
+    /// once trimmed and without a Part of of null (none: nothing to show). Mirrored by <c>deviceDescription</c> in <c>contract.ts</c>.
+    /// </summary>
+    static JsonObject DeviceDescription(JsonObject config)
+    {
+        var device = (JsonObject)config.DeepClone();
+        foreach (var (member, value) in device.ToArray())
+            if (value is JsonValue text && text.TryGetValue<string>(out var words) && VisualGraphValidator.Words.Trimmed(words).Length == 0 || member == "via" && value == null)
+                device.Remove(member);
+        return device;
+    }
+    /// <summary>
+    /// The definition's devices as a graph gives them: those of its Device nodes with a key (<see cref="DeviceKey"/>), in
+    /// node order, each described (<see cref="DeviceDescription"/>); two of one key are both listed (the validator refuses
+    /// the second). Mirrored by <c>derivedDevices</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static IEnumerable<JsonObject> DerivedDevices(JsonObject graph, JsonObject catalog) =>
+        DeclaredDevices(graph, catalog).Where(d => DeviceKey(d.Device) != null).Select(d => DeviceDescription(d.Device));
+    /// <summary>
+    /// The definition's entities as a graph gives them: those its Entity nodes declare (<see cref="DeclaredEntities"/>),
+    /// each with <c>device</c>, the key of the Device node it is on (<see cref="DeviceOf"/>), or null when it is on none or
+    /// on one without a key (<see cref="DeviceKey"/>).
+    /// </summary>
+    static IEnumerable<JsonObject> DerivedEntities(JsonObject graph, JsonObject catalog)
+    {
+        var nodes = GraphNodes(graph);
+        foreach (var (nodeId, entity) in DeclaredEntities(graph, catalog))
+        {
+            entity["device"] = DeviceOf(graph, nodeId, catalog) is { } device ? DeviceKey(nodes[device]["config"]) : null;
+            yield return entity;
+        }
+    }
+    /// <summary>
     /// The kind of document a graph is: <c>entity</c> when it has an object <c>definition</c> (an entity definition's
     /// logic, its settings composed into it), else <c>automation</c>.
     /// </summary>
@@ -245,8 +284,9 @@ public static class VisualNodeCatalog
     /// <c>types</c> whose id the catalog does not have. Each node lists what its own compile knows a type converts to and
     /// from, so the entries of one id are merged: the first node's entry, with <c>assignableTo</c> and
     /// <c>assignableFrom</c> the union of every node's (in node order). The order of the nodes never changes what is
-    /// accepted. An entity graph's <c>definition</c> is carried too, its <c>entities</c> those its nodes declare
-    /// (<see cref="DeclaredEntities"/>), whatever the graph's own lists. The catalog itself when there are none, and for a graph past the catalog's limits:
+    /// accepted. An entity graph's <c>definition</c> is carried too, its <c>entities</c> those its nodes declare, each with
+    /// the key of its device (<see cref="DerivedEntities"/>), and its <c>devices</c> those of its Device nodes
+    /// (<see cref="DerivedDevices"/>), whatever the graph's own lists. The catalog itself when there are none, and for a graph past the catalog's limits:
     /// the validator answers that graph with <c>graph.limit</c> alone, and nothing is merged or resolved for it, whoever asks.
     /// </summary>
     internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
@@ -278,7 +318,8 @@ public static class VisualNodeCatalog
         if (definition != null)
         {
             var copy = (JsonObject)definition.DeepClone();
-            copy["entities"] = new JsonArray([.. DeclaredEntities(graph, catalog).Select(d => (JsonNode)d.Entity)]);
+            copy["entities"] = new JsonArray([.. DerivedEntities(graph, catalog)]);
+            copy["devices"] = new JsonArray([.. DerivedDevices(graph, catalog)]);
             merged["definition"] = copy;
             ResolveSettings(merged, graph);
         }

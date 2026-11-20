@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, declaredDevices, definitionDeviceKeys, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, declaredDevices, definitionDeviceKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
@@ -234,6 +234,36 @@ it('a definition\'s devices are its Device nodes, and an entity is on the one wi
   expect([deviceNodeOf(graph, 'relay'), deviceNodeOf(graph, 'power')]).toEqual(['plug', 'plug'])
   expect([deviceNodeOf(graph, 'bare'), deviceNodeOf(graph, 'stray'), deviceNodeOf(graph, 'missing'), deviceNodeOf(graph, 'plug')]).toEqual([undefined, undefined, undefined, undefined])
   expect(declaredDevices({ nodes: 3 })).toEqual([])
+
+  // The graph's lifted definition lists its devices, and each entity the key of the device it is on, as the server stores them.
+  const lifted = withGraphTypes(nodeCatalog, graph).definition!
+  expect(lifted.devices).toEqual([{ key: 'plug', name: 'Hall plug', model: 'P1' }, { key: 'hub', name: 'Hub', via: { deviceId: 'zigbee' } }])
+  expect(derivedDevices(graph, nodeCatalog)).toEqual(lifted.devices)
+  expect(lifted.devices[0]).not.toBe(graph.nodes[0].config)
+  expect(lifted.entities.map(e => [e.key, e.device])).toEqual([['relay', 'plug'], ['power', 'plug'], ['bare', null], ['stray', null]])
+  expect(lifted.entities.every(e => Object.hasOwn(e, 'device'))).toBe(true)
+  // The canvas's lifted definition alike.
+  const canvas = definitionCatalog(nodeCatalog, graph).definition!
+  expect([canvas.devices, canvas.entities]).toEqual([lifted.devices, lifted.entities])
+})
+
+it('a text left blank and Part of nothing are no part of a listed device, and a device without a key is none', () => {
+  let graph = add(empty(), 'device', 'a', { key: 'desk', name: 'Desk', manufacturer: ' \t ', model: '', via: null })
+  graph = add(graph, 'device', 'b', { key: '  ', name: 'Blank' })
+  graph = add(graph, 'device', 'c', { key: 5, name: 'Number' })
+  graph = add(graph, 'device', 'd', { name: 'None' })
+  graph = add(graph, 'device', 'e', { key: 'desk', name: 'Second desk', via: { device: 'desk' } })
+  for (const id of ['on_blank', 'on_number', 'on_second']) graph = add(graph, 'entity', id, { key: id, domain: 'switch', name: id })
+  graph = { ...graph, nodes: graph.nodes.map(n => n.id === 'd' ? { ...n, config: { name: 'None' } } : n) }
+  graph = connectData(connectData(connectData(graph, 'b', 'entities', 'on_blank', 'device'), 'c', 'entities', 'on_number', 'device'), 'e', 'entities', 'on_second', 'device')
+  const lifted = withGraphTypes(nodeCatalog, graph).definition!
+  // Two of one key are both listed: the validator refuses the second.
+  expect(lifted.devices).toEqual([{ key: 'desk', name: 'Desk' }, { key: 'desk', name: 'Second desk', via: { device: 'desk' } }])
+  expect(lifted.entities.map(e => [e.key, e.device])).toEqual([['on_blank', null], ['on_number', null], ['on_second', 'desk']])
+  expect(derivedDevices({ nodes: 3, definition: { settings: [] } }, nodeCatalog)).toEqual([])
+  // An automation's graph has no definition, so nothing is lifted.
+  const { definition: _definition, ...automation } = graph
+  expect(withGraphTypes(nodeCatalog, automation).definition).toBeUndefined()
 })
 
 it('a device\'s problems are on its node: a circle of Part of on each of its devices, no entities on the node as a whole', () => {

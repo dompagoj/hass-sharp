@@ -196,6 +196,24 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.requests, [request])
         self.assertEqual(self.validated, [])
 
+    async def test_a_definition_sent_back_with_its_devices_reaches_dotnet_as_sent(self):
+        # A read answer lists the devices its Device nodes declare: a definition sent back with them has its triggers
+        # checked as any graph's, and goes to .NET as it was sent (which ignores them), its answer passed on.
+        devices = [{'key': 'plug', 'name': 'Hall plug', 'model': 'P1'}]
+        body = {**definition(nodes=[trigger('poll', {'trigger': 'state', 'entity_id': 'switch.plug'})]), 'devices': devices}
+        self.documents['plug'] = {'version': 3, 'devices': devices, 'entities': [{'key': 'relay', 'domain': 'switch', 'device': 'plug'}]}
+        answer = await self.send({'operation': 'preview', 'definition': body})
+        self.assertTrue(answer['ok'] and answer['result']['valid'])
+        self.assertEqual(self.requests, [{'operation': 'preview', 'definition': body}])
+        self.requests.clear()
+        save = {'operation': 'save', 'id': 'plug', 'expectedRevision': 2, 'definition': body}
+        answer = await self.send(save)
+        self.assertTrue(answer['ok'])
+        self.assertEqual(self.requests, [{'operation': 'preview', 'definition': body}, save])
+        self.assertEqual(answer['result']['document']['devices'], devices)
+        self.assertEqual(answer['result']['document']['entities'], [{'key': 'relay', 'domain': 'switch', 'device': 'plug'}])
+        self.assertEqual([c['trigger'] for c in self.validated], ['state', 'state'])
+
     async def test_a_graph_request_listing_entities_has_nothing_else_checked(self):
         # .NET refuses a graph definition sent with entities and checks nothing else; its triggers are not checked either.
         listed = {'code': 'definition.entitiesNotAllowed', 'nodeId': None, 'inputId': 'entities', 'severity': 3,

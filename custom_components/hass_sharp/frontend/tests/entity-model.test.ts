@@ -70,6 +70,22 @@ describe('editor graph', () => {
       expect(definitionBody(editorGraph({ ...body, entities: [{ key: 'door', domain: 'binary_sensor', name: 'Door' }] } as never))).toEqual(body)
     }
   })
+  it('the editor ignores an answer\'s devices and each entity\'s device, and the body sent has none', () => {
+    for (const body of [motion(), plug()]) {
+      const answered = {
+        ...body, version: 3, devices: [{ key: 'plug', name: 'Hall plug', model: 'P1' }],
+        entities: [{ key: 'door', domain: 'binary_sensor', name: 'Door', device: 'plug' }],
+      }
+      const graph = editorGraph(answered as never)
+      expect(graph.definition).toEqual({ settings: body.settings, device: body.device })
+      expect(graph).not.toHaveProperty('devices')
+      expect(graph.nodes).toEqual(body.logic.kind === 'graph' ? body.logic.graph.nodes : [])
+      const sent = definitionBody(graph)
+      expect(sent).not.toHaveProperty('devices')
+      expect(sent).not.toHaveProperty('entities')
+      expect(sent).toEqual(body)
+    }
+  })
   it('keeps a stored via untouched', () => {
     const body = plug()
     body.device = { ...body.device!, via: { definition: 'hub', deviceId: null } }

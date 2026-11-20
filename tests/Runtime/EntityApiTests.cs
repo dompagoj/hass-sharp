@@ -82,7 +82,7 @@ static class EntityApiTests
 
     /// <summary>
     /// A graph definition that lists its entities is refused by preview and save with the one sentence about
-    /// <c>entities</c>. A version 1 graph document from an earlier development build is skipped by list (logged once, with
+    /// <c>entities</c>. A version 2 graph document from an earlier development build (phase 2) is skipped by list (logged once, with
     /// the sentence), its read answers the sentence as its error, and delete at revision 0 removes it.
     /// </summary>
     static async Task AListAndAnOlderDocumentAreRefusedInWords(HassSharpManager api, EntityTestHome home)
@@ -104,10 +104,17 @@ static class EntityApiTests
         }
         var saved = await Entity(new { operation = "save", id = "door", expectedRevision = 0, definition = Door() });
         Check(saved["ok"]!.GetValue<bool>(), "without the key it saves: " + saved.ToJsonString());
+        // The read and list answers carry its devices (none: it has no Device node) and the device each entity is on.
+        var current = (await Entity(new { operation = "read", id = "door" }))["result"]!;
+        var summary = (await Entity(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "door")!;
+        foreach (var (what, given) in new[] { ("read", current), ("list", summary) })
+            Check(given["version"]!.GetValue<int>() == 3 && given["devices"] is JsonArray { Count: 0 } && given["entities"]![0]!.AsObject().TryGetPropertyValue("device", out var on) && on == null,
+                $"its {what} answer is version 3, lists no devices, and its entity is on none: " + given.ToJsonString());
 
+        // A phase 2 build's graph document is version 2.
         var path = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "door.json");
         var file = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
-        file["version"] = 1;
+        file["version"] = 2; file.Remove("devices");
         File.WriteAllText(path, file.ToJsonString());
         var list = (await Entity(new { operation = "list" }))["result"]!.AsArray();
         Check(!list.Any(d => d!["id"]!.GetValue<string>() == "door"), "list leaves it out: " + list.ToJsonString());
@@ -137,7 +144,7 @@ static class EntityApiTests
         await Entity(new { operation = "delete", id = "broken", expectedRevision = 0 });
         var after = await Entity(new { operation = "list" });
         Check(after["unreadable"] is JsonArray { Count: 0 }, "with both deleted, the list names none: " + after.ToJsonString());
-        Console.WriteLine("PASS entity api: a listed entities key is refused in words, and a version 1 graph document is skipped, listed apart with why, answered with why, and deleted at revision 0 with its entities");
+        Console.WriteLine("PASS entity api: a listed entities key is refused in words, and a version 2 graph document is skipped, listed apart with why, answered with why, and deleted at revision 0 with its entities");
     }
 
     static JsonObject N(string id, string kind, object? config = null) => VisualExecutionTests.N(id, kind, config);

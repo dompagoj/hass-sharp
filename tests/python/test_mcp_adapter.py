@@ -497,9 +497,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             {'id':'relay','kind':'entity','config':{'key':'relay','domain':'switch','name':'Relay'},'size':{'width':220,'height':112}},
             {'id':'power','kind':'entity','config':{'key':'power','domain':'sensor','name':'Power'}},
             {'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'x'*5000}}}],'edges':[]}
-        return {'version':2,'id':'porch','revision':4,'name':'Porch plug','device':{'model':'Plug'},
+        return {'version':3,'id':'porch','revision':4,'name':'Porch plug','device':{'model':'Plug'},
                 'settings':[{'key':'address','label':'Address','type':'string','value':'http://plug'},{'key':'token','label':'Token','type':'string','value':None,'secret':True,'hasValue':True}],
-                'entities':[{'key':'relay','domain':'switch','name':'Relay'},{'key':'power','domain':'sensor','name':'Power'}],
+                'entities':[{'key':'relay','domain':'switch','name':'Relay','device':None},{'key':'power','domain':'sensor','name':'Power','device':None}],
+                'devices':[],
                 'logic':{'kind':'graph','graph':graph,'type':None},'source':'class Porch {}','sourceMap':[],'enabled':True,'savedUtc':'2026-11-19T00:00:00Z',
                 'catalogGeneration':'g','automationId':'definition-auto','active':True,'currentRevisionActive':True,'activationError':None,'status':'running',
                 'liveEntities':[],'registeredEntities':[{'uniqueId':'porch:relay','entityId':'switch.porch_plug_relay','domain':'switch','name':None,'disabled':False}],
@@ -781,6 +782,32 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('entities?',self.adapter.TOOLS[name][1])
             self.assertIn('{name, device?, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
         self.assertIn('The definition you send is {name, device?, settings?, logic}',self.adapter.SEMANTICS['definitions'])
+
+    async def test_a_definition_sent_back_with_its_devices_reaches_the_server(self):
+        # A read answer lists the devices its Device nodes declare, and each entity's device: a definition sent back with
+        # them is no schema error. They reach the server as sent, which ignores them (a graph's devices are its Device
+        # nodes), and the save's answer is passed on.
+        devices=[{'key':'plug','name':'Hall plug','model':'P1','via':{'deviceId':'zigbee'}}]
+        document=self.entity_document(devices=devices)
+        answers={'entities_preview':{'version':1,'ok':True,'result':{'valid':True,'diagnostics':[],'source':'','sourceMap':[],'graph':self.GRAPH}},
+                 'entities_save':{'version':1,'ok':True,'result':{'id':'porch','saved':True,'document':document,'active':True,'activationError':None}}}
+        for name,args in (('entities_preview',{}),('entities_save',{'id':'porch','expectedRevision':4})):
+            for sent in (devices,[]):
+                with self.subTest(name=name,devices=sent):
+                    self.service.entities.reset_mock()
+                    self.service.entities.return_value=answers[name]
+                    definition={**self.DEFINITION,'devices':sent}
+                    result=await self.call(name,{**args,'definition':definition})
+                    self.assertFalse(result.error,result.data)
+                    self.assertEqual(self.service.entities.await_args.args[0]['definition'],definition)
+        self.assertEqual(result.data['result']['document']['devices'],devices)
+        # Sent back whole, a read answer is refused for its revision and the rest, and told to remove its devices too.
+        self.service.entities.reset_mock()
+        refused=await self.call('entities_save',{'id':'porch','expectedRevision':4,'definition':document})
+        self.assertTrue(refused.error)
+        self.service.entities.assert_not_called()
+        self.assertIn('devices',self.adapter.STORED_DOCUMENT_KEYS)
+        self.assertRegex(json.dumps(refused.data),r'remove [^"]*\bdevices, enabled, entities\b')
 
     async def test_the_wrong_kind_of_document_is_refused_in_words(self):
         # Each way a document reaches the wrong tool, or a definition the wrong shape: the phrases its refusal must hold,

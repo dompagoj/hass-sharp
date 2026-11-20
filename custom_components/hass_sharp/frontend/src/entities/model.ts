@@ -16,6 +16,25 @@ export interface DefinitionEntity {
   enabledByDefault?: boolean
   /** Only the options the domain lists (`entityDomains`). */
   options?: Record<string, unknown>
+  /** In a read answer: the key of the Device node it is on, null for none. Derived from the graph, never sent. */
+  device?: string | null
+  [member: string]: unknown
+}
+/**
+ * A device a graph definition's Device node declares, as a read answer lists it (`devices`): the node's config, without a
+ * text left blank or a Part of of nothing. Derived from the graph, for reading only; a request's is ignored.
+ */
+export interface DerivedDevice {
+  key: string
+  name?: string
+  manufacturer?: string
+  model?: string
+  swVersion?: string
+  hwVersion?: string
+  configurationUrl?: string
+  suggestedArea?: string
+  /** Part of: a Home Assistant device (`{deviceId}`) or another Device node of this definition (`{device}`, its key). */
+  via?: { deviceId: string } | { device: string }
   [member: string]: unknown
 }
 /**
@@ -88,14 +107,19 @@ export interface DefinitionTrigger {
 }
 /** A saved definition as `read` and `save` answer it (`list` without `source` and `sourceMap`). */
 export interface EntityDocument extends DefinitionBody {
-  /** 2; a class definition saved by an earlier build is 1. */
-  version: 1 | 2
+  /** 3; a class definition saved by an earlier build is 1 or 2 (a graph one of those is unreadable). */
+  version: 1 | 2 | 3
   id: string
   revision: number
   device: DefinitionDevice | null
   settings: DefinitionSetting[]
-  /** For a graph, the entities its Entity nodes declare, for reading only; none for a class (its code makes them). */
+  /**
+   * For a graph, the entities its Entity nodes declare, each with the device it is on, for reading only; none for a class
+   * (its code makes them).
+   */
   entities: DefinitionEntity[] | null
+  /** For a graph, the devices its Device nodes declare, in node order, for reading only; none for a class. */
+  devices?: DerivedDevice[]
   enabled: boolean
   source: string
   sourceMap: SourceRange[]
@@ -159,8 +183,8 @@ const editorDefinition = (graph: Graph) => graph.definition as unknown as Editor
 /**
  * The graph the visual editor edits for a graph definition: its logic graph named after the definition, with the whole
  * definition under `definition`, so the editor's dirty tracking, undo, drafts and conflicts cover all of it. Class
- * definitions are edited by a form, from the body itself. The entities a read answer lists are its Entity nodes'
- * (edited on the nodes), so they are not carried.
+ * definitions are edited by a form, from the body itself. The entities and devices a read answer lists are its Entity
+ * and Device nodes' (edited on the nodes), so they are not carried.
  */
 export function editorGraph(body: DefinitionBody): Graph {
   if (body.logic.kind !== 'graph') throw new Error('A class definition has no editor graph; edit its body')
@@ -193,7 +217,8 @@ const settingToSend = (setting: DefinitionSetting): DefinitionSetting => {
 
 /**
  * The body an editor graph stands for, for `preview` and `save`: the name from the graph, the logic graph without its
- * definition. It has no `entities`: they are the graph's Entity nodes, and the server refuses a list of them.
+ * definition. It has no `entities`: they are the graph's Entity nodes, and the server refuses a list of them. Nor has it
+ * `devices`: they are the graph's Device nodes (the server ignores a list of them).
  */
 export function definitionBody(graph: Graph): DefinitionBody {
   if (!record(graph.definition)) throw new Error('This graph has no definition: it is not an entity definition’s')

@@ -40087,6 +40087,223 @@
     ]
   },
   {
+    "name": "a device part of a key two Device nodes have is part of the first of them",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": "hub"
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Hub"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "second_hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Desk hub",
+            "via": {
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "window",
+          "kind": "entity",
+          "config": {
+            "key": "window",
+            "domain": "binary_sensor",
+            "name": "Window"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "second_hub.entities:window.device",
+          "kind": "data",
+          "source": "second_hub",
+          "target": "window",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "second_hub",
+    "inputId": "key",
+    "contains": "already used by Hub",
+    "messages": [
+      "The key hub is already used by Hub: give this device its own"
+    ],
+    "codes": [
+      "definition.duplicateDevice"
+    ]
+  },
+  {
+    "name": "three devices in a circle of Part of are each told",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": "hub"
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": {
+              "device": "desk"
+            }
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "desk",
+          "kind": "device",
+          "config": {
+            "key": "desk",
+            "name": "Desk plug",
+            "via": {
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "window",
+          "kind": "entity",
+          "config": {
+            "key": "window",
+            "domain": "binary_sensor",
+            "name": "Window"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "desk.entities:window.device",
+          "kind": "data",
+          "source": "desk",
+          "target": "window",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "desk",
+    "inputId": "via",
+    "contains": "Desk plug ends up being part of itself: change what one of these devices is part of",
+    "messages": [
+      "Desk plug ends up being part of itself: change what one of these devices is part of",
+      "Hall plug ends up being part of itself: change what one of these devices is part of",
+      "Hub ends up being part of itself: change what one of these devices is part of"
+    ],
+    "codes": [
+      "device.viaCycle",
+      "device.viaCycle",
+      "device.viaCycle"
+    ]
+  },
+  {
     "name": "a Device node's configuration URL of another kind is refused",
     "graph": {
       "version": 5,

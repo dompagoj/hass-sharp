@@ -17,9 +17,13 @@ export type GraphEdge = ExecutionEdge | DataEdge
 export interface GraphDefinition { settings: { key: string; type: string }[]; device?: unknown }
 /**
  * The definition a catalog carries for an entity definition's graph (`withGraphTypes`, `definitionCatalog`): the
- * graph's, with the entities its Entity nodes declare, each by its key and domain (a key of the catalog's `entityDomains`).
+ * graph's, with the entities its Entity nodes declare, each by its key and domain (a key of the catalog's `entityDomains`)
+ * and the key of the device it is on (`device`, null for none), and the devices its Device nodes declare (`derivedDevices`).
  */
-export interface CatalogDefinition extends GraphDefinition { entities: ({ key: string; domain: string } & Record<string, unknown>)[] }
+export interface CatalogDefinition extends GraphDefinition {
+  entities: ({ key: string; domain: string; device: string | null } & Record<string, unknown>)[]
+  devices: ({ key: string } & Record<string, unknown>)[]
+}
 /** A graph is an entity definition's when it has an object `definition`; otherwise it is an automation's. */
 export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: GraphEdge[]; definition?: GraphDefinition }
 /** The kind of document a graph is, as `graphDocument` tells it and a node's `documents` lists them. */
@@ -321,19 +325,50 @@ export const entityKey = (name: string) => {
   return new RegExp(words.entityKeyPattern).test(key) ? key : 'entity'
 }
 /**
- * The definition's entities as a graph gives them: the ones its Entity nodes declare, whatever its `definition` lists.
- * As `VisualNodeCatalog.WithGraphTypes` gives them.
+ * A device's key as the definition's devices list it: a text that is not blank once trimmed, as given; undefined for
+ * none (blank, absent or not a text), when the device is no device of the list and an entity on it is on none.
+ * Mirrors `VisualNodeCatalog.DeviceKey`.
  */
-const derivedEntities = (graph: unknown, catalog: VisualCatalogSnapshot): CatalogDefinition['entities'] =>
-  structuredClone(declaredEntities(graph, catalog).map(d => d.entity)) as CatalogDefinition['entities']
+const deviceKey = (config: unknown): string | undefined =>
+  record(config) && typeof config.key === 'string' && config.key.replace(blankEnds, '') ? config.key : undefined
+/**
+ * The device a Device node's config describes, as a definition lists one: a copy of it without a text that is blank
+ * once trimmed and without a Part of of null (none: nothing to show). Mirrors `VisualNodeCatalog.DeviceDescription`.
+ */
+function deviceDescription(config: Record<string, unknown>): Record<string, unknown> {
+  const device = structuredClone(config)
+  for (const [member, value] of Object.entries(device))
+    if (typeof value === 'string' && !value.replace(blankEnds, '') || member === 'via' && value === null) delete device[member]
+  return device
+}
+/**
+ * The definition's devices as a graph gives them: those of its Device nodes with a key, in node order, each described
+ * (`deviceDescription`); two of one key are both listed (the validator refuses the second). Mirrors
+ * `VisualNodeCatalog.DerivedDevices`.
+ */
+export const derivedDevices = (graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): CatalogDefinition['devices'] =>
+  declaredDevices(graph, catalog).filter(d => deviceKey(d.device) !== undefined).map(d => deviceDescription(d.device)) as CatalogDefinition['devices']
+/**
+ * The definition's entities as a graph gives them: the ones its Entity nodes declare, whatever its `definition` lists,
+ * each with `device`, the key of the Device node it is on (`deviceNodeOf`), or null when it is on none or on one without
+ * a key. As `VisualNodeCatalog.WithGraphTypes` gives them.
+ */
+const derivedEntities = (graph: unknown, catalog: VisualCatalogSnapshot): CatalogDefinition['entities'] => {
+  const nodes = graphNodes(graph)
+  return structuredClone(declaredEntities(graph, catalog).map(d => {
+    const device = deviceNodeOf(graph, d.nodeId, catalog)
+    return { ...d.entity, device: (device === undefined ? undefined : deviceKey(nodes.get(device)!.config)) ?? null }
+  })) as CatalogDefinition['entities']
+}
 /**
  * The catalog with the definition of the graph a step is in: the catalog as it is when it has one already (the canvas
- * lifted it), else with the graph's definition and the entities its Entity nodes declare; the catalog as it is for an
+ * lifted it), else with the graph's definition, the entities its Entity nodes declare and the devices its Device nodes
+ * declare, as `withGraphTypes` lifts them; the catalog as it is for an
  * automation's graph.
  */
 export function definitionCatalog(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
   if (catalog.definition || !record(graph) || !record(graph.definition)) return catalog
-  return { ...catalog, definition: { ...structuredClone(graph.definition), entities: derivedEntities(graph, catalog) } as unknown as CatalogDefinition }
+  return { ...catalog, definition: { ...structuredClone(graph.definition), entities: derivedEntities(graph, catalog), devices: derivedDevices(graph, catalog) } as unknown as CatalogDefinition }
 }
 /** The definition's entity with this key. */
 export const definitionEntity = (catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
@@ -500,7 +535,8 @@ export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot 
  * order). The order of the nodes never changes what is accepted. The catalog itself when there are none, and for a
  * graph past the catalog's limits: the validator answers that graph with `graph.limit` alone, and nothing is merged or
  * resolved for it, whoever asks. An entity graph's `definition` is carried too, its `entities` those the graph's Entity
- * nodes declare (a list on the graph is ignored). Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
+ * nodes declare, each with the key of its device, and its `devices` those of its Device nodes (`derivedDevices`; a list
+ * on the graph is ignored). Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
  * their entries alone.
  */
 export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
@@ -527,7 +563,7 @@ export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): 
   const merged: VisualCatalogSnapshot = { ...catalog, types: Object.keys(added).length ? Object.assign(Object.create(null), catalog.types, added) : catalog.types }
   if (selecting.length) resolveOutputs(merged, graph)
   if (definition) {
-    merged.definition = { ...structuredClone(definition), entities: derivedEntities(graph, catalog) }
+    merged.definition = { ...structuredClone(definition), entities: derivedEntities(graph, catalog), devices: derivedDevices(graph, catalog) }
     resolveSettings(merged, graph)
   }
   return merged

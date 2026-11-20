@@ -166,7 +166,8 @@ it('builds the derived motion sensor from a new definition through the page, and
   expect(body).toEqual(motionExample)
   await vi.waitFor(() => expect(history.get()).toBe('/entities/any_motion'))
   // The store derives the entity from the node.
-  expect(fixture.entities.documents.get('any_motion')!.entities).toEqual([{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {} }])
+  expect(fixture.entities.documents.get('any_motion')!.entities).toEqual([{ key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {}, device: null }])
+  expect(fixture.entities.documents.get('any_motion')!.devices).toEqual([])
   expectClean(root)
 
   // Opened again, it shows what was saved, with its entity's id in Home Assistant and its key fixed.

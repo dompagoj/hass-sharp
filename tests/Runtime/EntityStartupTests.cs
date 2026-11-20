@@ -85,7 +85,7 @@ static class EntityStartupTests
     {
         var located = typeof(HassSharpManager).GetMethod("Located", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static,
             [typeof(EntityDefinitionDocument), typeof(string)])!;
-        var document = new EntityDefinitionDocument(1, "steps", 1, "Steps", null, [], null, new DefinitionLogic("graph", null, null), "",
+        var document = new EntityDefinitionDocument(1, "steps", 1, "Steps", null, [], null, null, new DefinitionLogic("graph", null, null), "",
             [new VisualSourceMap("n1", 1, 2), new VisualSourceMap("a_step_with_a_long_id", 3, 4), new VisualSourceMap("$library:maths", 5, 6)]);
         string Located(int line) => (string)located.Invoke(null, [document, $"/config/.storage/entity_steps.cs({line},5): error CS0103: The name 'x' does not exist in the current context"])!;
         Check(Located(1) == "The name 'x' does not exist in the current context (CS0103)", "a short step id: " + Located(1));

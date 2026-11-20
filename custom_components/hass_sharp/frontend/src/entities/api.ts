@@ -22,11 +22,11 @@ export interface EntityEnabledResult {
 }
 
 /**
- * A definition file the backend cannot read, as a list names it beside its result: its id and why (for one an earlier
- * development build saved, "saved by an earlier development build; delete it and build it again"). It can only be
- * deleted, at revision 0.
+ * A definition file the backend cannot read, as a list names it beside its result: its id, why (for a graph definition
+ * an earlier development build saved, version 1 or 2, "saved by an earlier development build; delete it and build it
+ * again"), and whether a delete at revision 0 can remove it (`deletable`: its name is a definition id and only its
+ * content is wrong); one that is not deletable is removed by hand.
  */
-/** A definition file the list cannot read: its id, why, and whether a delete at revision 0 can remove it. */
 export interface UnreadableDefinition { id: string; reason: string; deletable: boolean }
 
 type Envelope<T> = { version: 1; ok: true; result: T; unreadable?: UnreadableDefinition[] } | { version: 1; ok: false; error: { code: string; detail: unknown } }

@@ -6,10 +6,16 @@ using System.Text.RegularExpressions;
 
 namespace HassSharp;
 
-/// <summary>The device a definition's device is connected through, such as a hub: another definition's, or a Home Assistant device.</summary>
+/// <summary>
+/// The device a definition's device is connected through, such as a hub: another definition's, a Home Assistant device,
+/// or, for a Device node, another Device node of the same definition.
+/// </summary>
 /// <param name="Definition">The id of the definition whose device it is; null for a Home Assistant device.</param>
 /// <param name="DeviceId">The Home Assistant device id; null for a definition's device.</param>
-public sealed record DefinitionVia(string? Definition, string? DeviceId);
+/// <param name="Device">The key of another Device node of the same definition (a Device node's <c>{"device": key}</c>);
+/// null, and not written, otherwise.</param>
+public sealed record DefinitionVia(string? Definition, string? DeviceId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Device = null);
 
 /// <summary>What the device page shows about a definition's device, each null for none (or the class's own).</summary>
 /// <param name="Manufacturer">Who made the device.</param>
@@ -20,7 +26,16 @@ public sealed record DefinitionVia(string? Definition, string? DeviceId);
 /// <param name="SuggestedArea">The area Home Assistant suggests when it first registers the device.</param>
 /// <param name="Via">The device it is connected through.</param>
 public sealed record DefinitionDevice(string? Manufacturer, string? Model, string? SwVersion, string? HwVersion,
-    string? ConfigurationUrl, string? SuggestedArea, DefinitionVia? Via);
+    string? ConfigurationUrl, string? SuggestedArea, DefinitionVia? Via)
+{
+    /// <summary>A Device node's key, as a graph definition's <c>devices</c> list it; null, and not written, for a class's or a request's device.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Key { get; init; }
+    /// <summary>
+    /// A Device node's name, as a graph definition's <c>devices</c> list it; null, and not written, for a class's or a
+    /// request's device, which the definition's name names.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Name { get; init; }
+}
 
 /// <summary>
 /// A setting of the definition: for a class, a value for one of its <c>[Setting]</c> properties (the class declares the
@@ -63,18 +78,23 @@ public sealed record DefinitionLogic(string Kind, string? Type, JsonObject? Grap
 /// <param name="Settings">Values for the class's settings, one not given keeping the class default; or a graph's settings.</param>
 /// <param name="Entities">A request gives none: a graph definition's entities are its Entity nodes, and a request that
 /// lists them, even as an empty list, is refused (<c>definition.entitiesNotAllowed</c>); a class definition's come from its
-/// code, and an empty list is the same as none.</param>
+/// code, and an empty list is the same as none. A request's <c>devices</c>, as a read answer has them, is no member: it
+/// is ignored, a graph's devices being its Device nodes.</param>
 /// <param name="Logic">The class or graph that gives it its behaviour.</param>
 public sealed record DefinitionBody(string Name, DefinitionDevice? Device, List<DefinitionSetting>? Settings,
     JsonArray? Entities, DefinitionLogic Logic);
 
 /// <summary>
 /// A saved entity definition: its body, with the source generated from it when it was saved, as one JSON file of
-/// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 2; a class definition an earlier build saved is 1.
-/// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, for reading only.
+/// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 3; a class definition an earlier build saved is 1 or 2.
+/// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, each with the key of the device it is
+/// on (<c>device</c>, null for none), and <see cref="Devices"/> the devices its Device nodes declare
+/// (<see cref="DefinitionGraph.Devices"/>); both for reading only. A class document has no devices, and writes none.
 /// </summary>
 public sealed record EntityDefinitionDocument(int Version, string Id, long Revision, string Name, DefinitionDevice? Device,
-    List<DefinitionSetting> Settings, JsonArray? Entities, DefinitionLogic Logic, string Source, List<VisualSourceMap> SourceMap)
+    List<DefinitionSetting> Settings, JsonArray? Entities,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonArray? Devices,
+    DefinitionLogic Logic, string Source, List<VisualSourceMap> SourceMap)
 {
     /// <summary>Off: the definition is not loaded, and its entities are unavailable. Saving keeps it.</summary>
     public bool Enabled { get; init; } = true;
@@ -83,8 +103,8 @@ public sealed record EntityDefinitionDocument(int Version, string Id, long Revis
     /// <summary>The library generation <see cref="Source"/> was generated from.</summary>
     public string? CatalogGeneration { get; init; }
     /// <summary>
-    /// The definition as written, to preview or save again; derived, never stored. A graph's has no entities: they are its
-    /// Entity nodes, so a regeneration composes from the graph alone.
+    /// The definition as written, to preview or save again; derived, never stored. A graph's has no entities and no
+    /// devices: they are its Entity and Device nodes, so a regeneration composes from the graph alone.
     /// </summary>
     [JsonIgnore] public DefinitionBody Body => new(Name, Device, Settings, Logic?.Kind == "graph" ? null : Entities, Logic!);
     /// <summary>
@@ -128,16 +148,16 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
         return Path.Combine(directory, id + ".json");
     }
 
-    /// <summary>The version of the document a save writes: a graph's entities are its Entity nodes.</summary>
-    internal const int Version = 2;
+    /// <summary>The version of the document a save writes: a graph's entities are its Entity nodes, its devices its Device nodes.</summary>
+    internal const int Version = 3;
     /// <summary>
-    /// What a graph definition an earlier development build saved (version 1, whose entities may be a list) is told: it
-    /// is not read, and is deleted as any unreadable file is.
+    /// What a graph definition an earlier development build saved (version 1, whose entities may be a list, or 2, which
+    /// lists no devices) is told: it is not read, and is deleted as any unreadable file is.
     /// </summary>
     internal const string EarlierBuild = "saved by an earlier development build; delete it and build it again";
 
-    // Version 2; or 1 for a class definition, whose document is the same in both.
-    static bool Complete(EntityDefinitionDocument? document, string id) => document != null && (document.Version == Version || document.Version == 1 && document.Logic?.Kind == "class")
+    // Version 3; or 1 or 2 for a class definition, whose document is the same in all three.
+    static bool Complete(EntityDefinitionDocument? document, string id) => document != null && (document.Version == Version || document.Version is 1 or 2 && document.Logic?.Kind == "class")
         && document.Id == id && document.Name != null && document.Settings != null && document.Logic != null && document.Source != null && document.SourceMap != null && document.Revision >= 1;
 
     /// <summary>The definition, or null when there is none.</summary>
@@ -149,7 +169,7 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             var path = FilePath(id);
             if (!File.Exists(path)) return null;
             var document = JsonSerializer.Deserialize<EntityDefinitionDocument>(File.ReadAllText(path), VisualStore.Json);
-            if (document is { Version: 1, Logic.Kind: "graph" }) throw new JsonException(EarlierBuild);
+            if (document is { Version: < Version, Logic.Kind: "graph" }) throw new JsonException(EarlierBuild);
             if (!Complete(document, id)) throw new JsonException("Invalid entity definition envelope");
             return document;
         }
@@ -252,10 +272,12 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             // A graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its definition.
             // A valid preview had logic to preview.
             var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
-            // A graph's entities are stored as its Entity nodes declare them, for a read answer, a list and Home Assistant.
+            // A graph's entities and devices are stored as its Entity and Device nodes declare them, for a read answer, a list
+            // and Home Assistant; a class has no devices.
             var entities = graphLogic ? DefinitionGraph.Entities(preview.Graph!, catalog) : (JsonArray?)body.Entities?.DeepClone();
+            var devices = graphLogic ? DefinitionGraph.Devices(preview.Graph!, catalog.Root) : null;
             var document = new EntityDefinitionDocument(Version, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
-                entities, logic, preview.Source, preview.SourceMap)
+                entities, devices, logic, preview.Source, preview.SourceMap)
                 { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow, EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
             Directory.CreateDirectory(directory);
             VisualStore.Write(path, document);
@@ -283,7 +305,7 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
 
     /// <summary>
     /// The definition at the next revision with the source of a new preview, such as one against changed libraries; its
-    /// flag and save time stay. Nothing is written: the caller writes it with the libraries.
+    /// flag, save time, entities and devices stay. Nothing is written: the caller writes it with the libraries.
     /// </summary>
     /// <exception cref="DefinitionValidationException">The preview is not valid.</exception>
     public EntityDefinitionDocument Rebuilt(EntityDefinitionDocument old, DefinitionPreview preview, string? catalogGeneration)

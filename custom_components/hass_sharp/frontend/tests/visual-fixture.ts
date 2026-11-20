@@ -1,6 +1,6 @@
 import { addGraphNode, declaredEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
-import type { DefinitionBody, DefinitionEntity, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
+import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
 
 /** A value typed in on a step's input. */
@@ -232,6 +232,11 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const graph = { ...body.logic.graph, definition: { settings: [] } }
     return structuredClone(withGraphTypes(nodeCatalog, graph).definition?.entities ?? []) as DefinitionEntity[]
   }
+  /** A graph definition's devices, as `EntityDefinitionStore.Save` stores them: those its Device nodes declare. */
+  const derivedDevices = (body: DefinitionBody): DerivedDevice[] => {
+    if (body.logic.kind !== 'graph') return []
+    return structuredClone(withGraphTypes(nodeCatalog, { ...body.logic.graph, definition: { settings: [] } }).definition?.devices ?? []) as DerivedDevice[]
+  }
   /**
    * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a request that
    * lists entities (a graph's at all, a class's when it lists one), a graph with no Entity node, and each Entity node's
@@ -401,9 +406,9 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const d = body.device
     const { definition: _definition, ...logicGraph } = (body.logic.kind === 'graph' ? body.logic.graph : {}) as Record<string, unknown>
     return {
-      version: 2, id, revision, name: body.name,
+      version: 3, id, revision, name: body.name,
       device: d ? { manufacturer: d.manufacturer ?? null, model: d.model ?? null, swVersion: d.swVersion ?? null, hwVersion: d.hwVersion ?? null, configurationUrl: d.configurationUrl ?? null, suggestedArea: d.suggestedArea ?? null, via: d.via ?? null } : null,
-      settings, entities: derivedEntities(body),
+      settings, entities: derivedEntities(body), ...(body.logic.kind === 'graph' ? { devices: derivedDevices(body) } : {}),
       logic: body.logic.kind === 'graph' ? { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph } : { kind: 'class', type: body.logic.type, graph: null },
       source: '// HassSharp entity definition (fixture)', sourceMap: [], enabled, savedUtc: new Date().toISOString(), catalogGeneration: generation(),
       ...running(id, body, enabled), registeredEntities: [],

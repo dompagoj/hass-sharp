@@ -1052,8 +1052,14 @@ static class EntityGraphTests
             && problem["code"]!.GetValue<string>() == "definition.entitiesNotAllowed" && problem["inputId"]!.GetValue<string>() == "entities"
             && problem["message"]!.GetValue<string>() == EntityStoreTests.ListedEntities, "the read answer saved back with its entities is refused: " + refused.ToJsonString());
         back.Remove("entities");
+        // Its devices are for reading too, but sent back they are no problem: they are left as the graph's Device nodes give them.
+        Check(read["devices"] is JsonArray { Count: 0 } && entities[0]!.AsObject().TryGetPropertyValue("device", out var on) && on == null,
+            "the read answer lists no device, and its entity is on none: " + read.ToJsonString());
+        back["devices"] = new JsonArray(new JsonObject { ["key"] = "evil", ["name"] = "Not on the canvas" });
         var again = await rig.Save("door", back, read["revision"]!.GetValue<long>());
         Check(JsonNode.DeepEquals(again["document"]!["entities"], read["entities"]), "the read answer saved back without them answers the same entities: " + again["document"]!["entities"]!.ToJsonString());
+        Check(again["document"]!["devices"] is JsonArray { Count: 0 } && !again.ToJsonString().Contains("evil", StringComparison.Ordinal),
+            "the devices it sent back are ignored: " + again["document"]!.ToJsonString());
     }
 
     /// <summary>A definition that has no Entity node is asked for one, and for nothing else.</summary>
