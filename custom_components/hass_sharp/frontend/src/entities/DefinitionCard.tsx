@@ -16,8 +16,6 @@ import { cardEntities, shownEntities, type CardEntity, type HomeDefinition } fro
 const switchTitles = { on: entityTexts.enabledOn, off: entityTexts.enabledOff }
 /** What the backend says of a definition with nothing loaded and no error of its own. */
 const notActive = 'Not active'
-/** Beside "Class" when the classes could not be read. */
-const classNameFailed = 'Could not load the class’s name.'
 
 export type DefinitionTone = 'running' | 'starting' | 'failed' | 'stopped' | 'off'
 /**
@@ -25,7 +23,7 @@ export type DefinitionTone = 'running' | 'starting' | 'failed' | 'stopped' | 'of
  * its start threw and its entities exist and are unavailable) or Not running (on, and not loaded for no reason the
  * backend recorded), with the reason when there is one; and "Changes not applied" while an older revision runs.
  */
-export function definitionStatus(item: Pick<HomeDefinition, 'enabled' | 'activationError' | 'status' | 'currentRevisionActive'>): { label: string; tone: DefinitionTone; error?: string; stale?: string } {
+function definitionStatus(item: Pick<HomeDefinition, 'enabled' | 'activationError' | 'status' | 'currentRevisionActive'>): { label: string; tone: DefinitionTone; error?: string; stale?: string } {
   if (!item.enabled) return { label: 'Off', tone: 'off' }
   const error = item.activationError && item.activationError !== notActive ? item.activationError : undefined
   if (item.status === 'failed') return { label: 'Failed', tone: 'failed', error }
@@ -53,9 +51,9 @@ export interface StateWords { text: string; spoken?: string; none?: boolean; qui
  * The whole of a state shown on a card, which clamps a long one to three lines; none for one in muted words, nor for one
  * read out in other words (a password's dots).
  */
-export const stateTitle = (state: StateWords) => (state.quiet || state.none || state.spoken ? undefined : state.text)
+const stateTitle = (state: StateWords) => (state.quiet || state.none || state.spoken ? undefined : state.text)
 /** An entity's state text, read out as its `spoken` words when it has them. */
-export function StateText(props: { state: StateWords }) {
+function StateText(props: { state: StateWords }) {
   return (
     <Show when={props.state.spoken} fallback={props.state.text}>
       {spoken => <><span aria-hidden="true">{props.state.text}</span><span class="hs-visually-hidden">{spoken()}</span></>}
@@ -96,7 +94,7 @@ export function entityStateText(domain: string, state: LiveState, now: number): 
 }
 
 /** An entity's state on its card: Disabled in Home Assistant, none yet, or its state in words ({@link entityStateText}). */
-export function cardStateText(entity: CardEntity, states: LiveStates, now: number): StateWords {
+function cardStateText(entity: CardEntity, states: LiveStates, now: number): StateWords {
   if (entity.disabled) return { text: 'Disabled in Home Assistant', quiet: true }
   const state = entity.entityId ? states[entity.entityId] : undefined
   if (!state) return { text: '—', spoken: 'No state', none: true }
@@ -135,15 +133,11 @@ export function definitionsSummary(items: readonly HomeDefinition[]): string {
 
 /**
  * One entity definition on the entities page. The whole card is the link to its editor (the name is the link's text;
- * how it works and its status describe it); the switch and the "⋯" menu sit above the link. Setting values are never
+ * its devices and its status describe it); the switch and the "⋯" menu sit above the link. Setting values are never
  * shown.
  */
 export function DefinitionCard(props: {
   item: HomeDefinition
-  /** A class definition's class: its title, null when no node library offers it, undefined while not known. */
-  classTitle?: string | null
-  /** The classes could not be read: a class definition says so beside "Class". */
-  classFailed?: boolean
   states: LiveStates
   /** The time a button's last press is told from: the page's clock. */
   now: number
@@ -160,9 +154,6 @@ export function DefinitionCard(props: {
   const name = () => props.item.name
   const status = createMemo(() => definitionStatus(props.item))
   const entities = createMemo(() => cardEntities(props.item))
-  const graph = () => props.item.logic.kind === 'graph'
-  const logic = () => (graph() ? 'Nodes' : props.classTitle === null ? 'Class not found' : props.classTitle ?? 'Class')
-  const unnamed = () => !graph() && props.classTitle === undefined && !!props.classFailed
   return (
     <li
       class="hs-home-card hs-ent-card"
@@ -174,12 +165,9 @@ export function DefinitionCard(props: {
           <A class="hs-home-card__link" href={`/entities/${encodeURIComponent(props.item.id)}`} aria-describedby={describedBy}>{name()}</A>
         </h2>
         <div id={describedBy} class="hs-home-card__about">
-          <p class="hs-ent-card__kind">
-            <span class="hs-ent-card__logic" classList={{ 'hs-ent-card__logic--missing': !graph() && props.classTitle === null }}
-              title={unnamed() ? classNameFailed : undefined}>{logic()}</span>
-            <Show when={unnamed()}><small class="hs-ent-card__hint">{classNameFailed}</small></Show>
-            <Show when={props.item.devices > 0}><span class="hs-home-chip hs-ent-card__device">{props.item.devices === 1 ? 'Device' : `${props.item.devices} devices`}</span></Show>
-          </p>
+          <Show when={props.item.devices > 0}>
+            <p class="hs-ent-card__kind"><span class="hs-home-chip hs-ent-card__device">{props.item.devices === 1 ? 'Device' : `${props.item.devices} devices`}</span></p>
+          </Show>
           <p class={`hs-ent-card__status hs-ent-card__status--${status().tone}`}>{status().label}</p>
           <Show when={status().error}>
             {error => (
@@ -222,12 +210,10 @@ export function DefinitionCard(props: {
             <p class="hs-ent-card__more">and {entities().length - shownEntities} more</p>
           </Show>
         </Show>
-        <Show when={graph()}>
-          <p class="hs-home-card__runs">
-            <RunDots runs={props.item.recentRuns} />
-            <span class="hs-ent-card__runs-today">{`${plural(props.item.runsToday, 'run')} today`}</span>
-          </p>
-        </Show>
+        <p class="hs-home-card__runs">
+          <RunDots runs={props.item.recentRuns} />
+          <span class="hs-ent-card__runs-today">{`${plural(props.item.runsToday, 'run')} today`}</span>
+        </p>
       </div>
       <Show when={props.admin}>
         <div class="hs-home-card__actions">

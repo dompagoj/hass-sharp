@@ -45,9 +45,6 @@ export const entityTexts: EditorTexts = {
   traceDeleted: 'This entity definition no longer exists.',
 }
 
-/** The code of the error `read` throws for a definition built from a class, which this editor does not edit. */
-export const classDefinitionCode = 'class_definition'
-
 /**
  * A saved definition as the editor holds it. Off is said by `enabled`: an answer's "Not active" for a definition the
  * person turned off is not an activation problem to show, and its saved revision, unloaded while it is off, is no
@@ -71,9 +68,8 @@ const result = (saved: EntitySaveResult) => ({ ...saved, active: saved.document.
  * and downloads without secret values, Run now for its Trigger steps, and the definition form as the inspector's
  * overview. Nothing else is run by hand: an entity's commands are tried from Home Assistant (ruling R1).
  *
- * The entity definition's page reads a definition before it chooses its editor; `handed` gives this editor that read
- * for its first read of the definition (once), so it is not read twice. A definition built from a class is refused
- * with {@link classDefinitionCode}: this editor never makes a graph of one (a run's page says so in its words).
+ * The entity definition's page reads a definition before it opens this editor; `handed` gives this editor that read
+ * for its first read of the definition (once), so it is not read twice.
  */
 export function entityAdapter(
   hass: Pick<HomeAssistant, 'callWS'>,
@@ -82,12 +78,7 @@ export function entityAdapter(
   const api = entityApi(hass)
   return {
     document: 'entity',
-    read: async id => {
-      const document = options.handed?.(id) ?? await api.read(id)
-      if (document.logic.kind !== 'graph')
-        throw new EntityApiError(classDefinitionCode, 'This entity definition is built from a class in a node library, not from steps.')
-      return held(document)
-    },
+    read: async id => held(options.handed?.(id) ?? await api.read(id)),
     // The entity API's check answers no source map: no line of the generated C# then selects a step.
     preview: async graph => { const preview = await api.preview(definitionBody(graph)); return { ...preview, sourceMap: preview.sourceMap ?? [] } },
     save: async (id, graph, expectedRevision, saveOptions) => result(await api.save(id, definitionBody(graph), expectedRevision, saveOptions?.enabled)),

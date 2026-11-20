@@ -545,7 +545,7 @@ describe('devices in the right panel', () => {
     expect(el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!.value).toBe('Hall plug')
     for (const id of ['key', 'manufacturer', 'model', 'swVersion', 'hwVersion', 'configurationUrl', 'suggestedArea', 'via'])
       expect(el.querySelectorAll(`.hs-inspector [data-input-id="${id}"]`), id).toHaveLength(1)
-    // The labels, placeholders and hints a class definition's device form has too.
+    // Its labels, placeholders and hints.
     expect(control(el, 'Model').placeholder).toBe('Not set')
     expect(control(el, 'Configuration URL').type).toBe('url')
     expect(field(el, 'configurationUrl').textContent).toContain("A page of the device's own, linked from its page in Home Assistant.")
@@ -591,7 +591,7 @@ describe('devices in the right panel', () => {
     expect(partOf().selectedOptions[0].textContent).toBe('Another device of this definition')
     expect(local()!.querySelector('.hs-field-hint')).toBeNull()
 
-    // A Home Assistant device, as a class definition's device form offers one: without the device of this definition's entities.
+    // A Home Assistant device: without the device of this definition's entities.
     pickLabel(partOf(), 'A Home Assistant device…')
     const ha = () => el.querySelector<HTMLElement>('.hs-inspector [data-field="viaDevice"]')
     await vi.waitFor(() => expect(ha()).not.toBeNull())
@@ -780,7 +780,7 @@ describe('devices in the right panel', () => {
       expect(settingRow(el, 'Port').querySelector('.hs-error')!.textContent).toBe('Enter a whole number.')
       typeInto(input('Port'), '8080')
       expect(argument(node, 'Port')).toEqual(lit('number', 8080))
-      // Its range is said under it, as the class page says it.
+      // Its range is said under it.
       expect(settingRow(el, 'Port').querySelector('.hs-field-hint')!.textContent).toBe('Between 1 and 65535. About Port.')
       typeInto(input('Ratio'), '1.5')
       expect(argument(node, 'Ratio')).toEqual(lit('number', 1.5))

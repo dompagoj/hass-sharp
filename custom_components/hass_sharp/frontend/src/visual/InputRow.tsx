@@ -150,7 +150,7 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
   const editSpec = (): InputSpec | undefined => {
     const s = inputSpec()
     if (!s || secret()) return undefined
-    // A class's number setting says its range before its own description, as the class page says it.
+    // A class's number setting says its range before its own description.
     const range = s.setting ? rangeHint(s.setting) : undefined
     const description = row.description ?? s.description
     return range ? { ...s, description: [range, description].filter(Boolean).join(' ') } : row.description !== undefined ? { ...s, description: row.description } : s

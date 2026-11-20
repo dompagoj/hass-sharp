@@ -975,7 +975,7 @@ it('keeps showing its own run when the definition, read before, cannot be read a
   expect(steps(root)).toHaveLength(3)
 })
 
-it('shows the not-found state for a run of another definition, a definition that is gone, and one built from a class', async () => {
+it('shows the not-found state for a run of another definition and a definition that is gone', async () => {
   // A run that belongs to another definition (or an automation).
   const foreign = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:lamp', visualId: 'lamp', cause: 'Setup', trigger: { kind: 'setup' } }) }))
   await vi.waitFor(() => expect(foreign.root.textContent).toContain('This run is not one of this entity definition’s runs.'))
@@ -990,12 +990,6 @@ it('shows the not-found state for a run of another definition, a definition that
   expect(gone.root.querySelector('.hs-flow')).toBeNull()
   button(gone.root, 'Back to entities').click()
   await vi.waitFor(() => expect(gone.history.get()).toBe('/entities'))
-  dispose?.(); document.body.innerHTML = ''
-  // A class's definition records no runs.
-  const lamp = mountDefinition(async () => { throw { code: 'not_found', message: 'Run run-7 was not found.' } }, { path: '/entities/lamp/runs/run-7', prepare: fixture => fixture.entities.seed('lamp', { name: 'Lamp', device: null, settings: [], logic: { kind: 'class', type: 'library:lib:Lamp' } }) })
-  await vi.waitFor(() => expect(lamp.root.textContent).toContain('This entity definition is built from a class in a node library, not from steps.'))
-  button(lamp.root, 'Open in editor').click()
-  await vi.waitFor(() => expect(lamp.history.get()).toBe('/entities/lamp'))
   dispose?.(); document.body.innerHTML = ''
   // A run that cannot be read at all, of a definition that is there: the run's own error, and the way to the editor.
   const missing = mountDefinition(async () => { throw { code: 'not_found', message: 'Run run-7 was not found.' } })

@@ -7,26 +7,18 @@ import { Dialog } from '../components/Dialog'
 import { startOfToday } from '../automations/model'
 import { focusSoon } from '../visual/soon'
 import { createNotice } from '../visual/TopBar'
-import { definitionsQueryKey, EntityApiError, entityApi, entityError, entityTypesQueryKey, type UnreadableDefinition } from '../entities/api'
+import { definitionsQueryKey, EntityApiError, entityApi, entityError, type UnreadableDefinition } from '../entities/api'
 import { DefinitionCard, definitionPollInterval, definitionsSummary, noteStarting, watchedEntityIds } from '../entities/DefinitionCard'
 import { DeleteDefinitionDialog } from '../entities/DeleteDefinition'
 import { liveState } from '../entities/liveState'
 import type { HomeDefinition } from '../entities/model'
 
-/** The two ways to build an entity definition, as "New entity definition" offers them. */
-const starts = [
-  { logic: 'graph', title: 'Build with nodes', description: 'Define entities and their behaviour with steps.' },
-  { logic: 'class', title: 'Use a class from the node library', description: 'Create entities from a C# class in your node library, with its settings.' },
-] as const
-type Logic = (typeof starts)[number]['logic']
-
 const byName = (a: HomeDefinition, b: HomeDefinition) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
 
 /**
  * The Entities section: a card for each entity definition, with its status, its entities and their live states, its
- * switch and its menu; "New entity definition" names a draft and opens it in the editor, built with nodes or from a
- * class. The list is read as the automations page reads its own: again while a run is going or a definition starts,
- * and after a switch or a delete. A definition file the backend cannot read is listed apart, by its id and why, with
+ * switch and its menu; "New entity definition" names a draft and opens it in the node editor. The list is read as the
+ * automations page reads its own: again while a run is going or a definition starts, and after a switch or a delete. A definition file the backend cannot read is listed apart, by its id and why, with
  * Delete (at revision 0) its only action, or, for one a delete cannot remove, how to remove it by hand.
  */
 export const EntitiesListView = (_props: RouteSectionProps) => {
@@ -57,23 +49,8 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   const unreadable = (): UnreadableDefinition[] => home.data?.unreadable ?? []
   const byId = createMemo(() => new Map(items().map(item => [item.id, item])))
   const ids = createMemo(() => items().map(item => item.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, i) => id === b[i]) })
-  // One request for the whole page, only when a definition is built from a class.
-  const types = useQuery(() => ({
-    queryKey: [...entityTypesQueryKey],
-    queryFn: () => api.types(),
-    staleTime: 0,
-    enabled: items().some(item => item.logic.kind === 'class'),
-  }))
-  const classTitle = (item: HomeDefinition) => {
-    if (item.logic.kind !== 'class' || !types.isSuccess) return undefined
-    const type = item.logic.type
-    return types.data.types.find(found => found.id === type)?.title ?? null
-  }
-  // A node library save can change the classes offered and rebuild definitions (new revisions): both are read again.
-  const librariesChanged = () => {
-    void queryClient.invalidateQueries({ queryKey: [...entityTypesQueryKey] })
-    void queryClient.invalidateQueries({ queryKey: [...definitionsQueryKey] })
-  }
+  // A node library save can rebuild definitions (new revisions): the list is read again.
+  const librariesChanged = () => void queryClient.invalidateQueries({ queryKey: [...definitionsQueryKey] })
   window.addEventListener('hass-sharp-libraries-changed', librariesChanged)
   onCleanup(() => window.removeEventListener('hass-sharp-libraries-changed', librariesChanged))
   // One subscription for every card's entities.
@@ -94,18 +71,17 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   }
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...definitionsQueryKey] })
 
-  // ---- New entity definition: named first, then a draft in the editor, built with nodes or from a class.
+  // ---- New entity definition: named first, then a draft in the node editor.
   const [newOpen, setNewOpen] = createSignal(false)
   const [name, setName] = createSignal('')
-  const [logic, setLogic] = createSignal<Logic>('graph')
   createEffect(() => { if (!newOpen()) setName('') })
-  const openNew = (start: Logic = 'graph') => { setName(''); setLogic(start); setNewOpen(true) }
+  const openNew = () => { setName(''); setNewOpen(true) }
   const closeNew = () => setNewOpen(false)
   const submitNew = () => {
     const wanted = name().trim()
     if (!wanted) return
     setNewOpen(false)
-    navigate(`/entities/new?logic=${logic()}&name=${encodeURIComponent(wanted)}`)
+    navigate(`/entities/new?name=${encodeURIComponent(wanted)}`)
   }
 
   // ---- On/off: shown at once (on is "Starting" until the list is read again), put back with a message on failure.
@@ -168,19 +144,6 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
     }
   }
 
-  const StartChoices = () => (
-    <div class="hs-ent-starts">
-      <For each={starts}>
-        {start => (
-          <button type="button" class="hs-ent-start" onClick={() => openNew(start.logic)}>
-            <strong>{start.title}</strong>
-            <small>{start.description}</small>
-          </button>
-        )}
-      </For>
-    </div>
-  )
-
   return (
     <section class="hs-page hs-home" ref={page} aria-labelledby="entities-title">
       <header class="hs-home-heading">
@@ -209,8 +172,8 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
       <Show when={home.isSuccess && !items().length && !unreadable().length}>
         <div class="hs-home-empty" role="status">
           <h2>No entity definitions yet</h2>
-          <p>An entity definition creates new entities and devices in Home Assistant. Build what they do with nodes, or use a C# class from your node library.</p>
-          <StartChoices />
+          <p>An entity definition creates new entities and devices in Home Assistant. Build what they do with nodes.</p>
+          <Button variant="primary" onClick={() => openNew()}><Icon name="plus" />New entity definition</Button>
         </div>
       </Show>
       <Show when={home.isSuccess && items().length}>
@@ -221,8 +184,6 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
                 {item => (
                   <DefinitionCard
                     item={item()}
-                    classTitle={classTitle(item())}
-                    classFailed={types.isError}
                     states={states()}
                     now={now()}
                     admin={admin()}
@@ -271,17 +232,6 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
           <p class="hs-muted">Set it up in the editor, then save it: its entities appear in Home Assistant.</p>
           <Field label="Entity definition name" type="text" name="name" autofocus required value={name()}
             hint="You can change it in the editor." onInput={event => setName(event.currentTarget.value)} />
-          <fieldset class="hs-ent-choices">
-            <legend>How it works</legend>
-            <For each={starts}>
-              {start => (
-                <label class="hs-ent-choice">
-                  <input type="radio" name="logic" value={start.logic} checked={logic() === start.logic} onChange={() => setLogic(start.logic)} />
-                  <span class="hs-ent-choice__text"><strong>{start.title}</strong><small>{start.description}</small></span>
-                </label>
-              )}
-            </For>
-          </fieldset>
         </form>
       </Dialog>
       <DeleteDefinitionDialog open={!!deleteItem()} name={deleteItem()?.name ?? ''} deleting={deleting()}

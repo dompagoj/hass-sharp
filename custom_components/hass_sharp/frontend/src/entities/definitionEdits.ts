@@ -1,7 +1,7 @@
 import { blankEnds, declaredEntities, entityTypeLabel, freeKey, words, type ConfigSpec, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
-import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
+import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionEntity, type DefinitionSetting, type EditorDefinition, type EntityDocument } from './model'
 
 /**
  * The definition form's changes to an editor graph's `definition` (its settings), each a new graph: one undo step when
@@ -273,26 +273,9 @@ export function copyNotice(copied: VisualGraph): string | undefined {
   return `The copy has no saved value for ${list}. Type ${names.length === 1 ? 'it' : 'them'} again.`
 }
 
-// ---- A class definition's device
-
-/** A device's details with `member` set to `value`, or left out when it is blank; its parent (`via`) stays as it is. */
-export function withDetail(device: DefinitionDevice | null, member: keyof DefinitionDevice, value: string): DefinitionDevice {
-  const next: DefinitionDevice = { ...(device ?? {}) }
-  if (value.trim()) (next as Record<string, unknown>)[member] = value
-  else delete next[member]
-  return next
-}
-/** The device part of `via` (`{definition}` or `{deviceId}`), or of nothing (null); its details stay as they are. */
-export function withVia(device: DefinitionDevice | null, via: DefinitionVia | null): DefinitionDevice {
-  const next: DefinitionDevice = { ...(device ?? {}) }
-  if (via) next.via = via
-  else delete next.via
-  return next
-}
-
 // ---- Problems
 
-const settingCodes = /^definition\.(setting(Key|Type)|duplicateSetting|unknownSetting)$/
+const settingCodes = /^definition\.(setting(Key|Type)|duplicateSetting)$/
 /** The form's row a problem about no step is about: `setting:<key>`, by its code and `inputId`. */
 export function problemRow(diagnostic: VisualDiagnostic): string | undefined {
   const key = diagnostic.inputId, code = diagnostic.code ?? ''

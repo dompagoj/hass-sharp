@@ -45,9 +45,7 @@ it('sends /devices to the entities page, and keeps the entity definition routes'
   const root = document.createElement('div'); document.body.append(root)
   const hass = {
     user: { is_admin: true },
-    callWS: async (message: any) => (message.type === 'hass_sharp/entities'
-      ? { version: 1, ok: true, result: message.request.operation === 'types' ? { types: [], generation: 'g' } : [] }
-      : { entities: [] }),
+    callWS: async (message: any) => (message.type === 'hass_sharp/entities' ? { version: 1, ok: true, result: [] } : { entities: [] }),
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const history = createMemoryHistory(); history.set({ value: '/devices' })
@@ -58,7 +56,7 @@ it('sends /devices to the entities page, and keeps the entity definition routes'
   await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Entities'))
   expect(activeLinks(root)).toEqual(['Entities'])
   // The list page has not replaced the editor's routes.
-  for (const path of ['/entities/new?logic=class&name=Camera', '/entities/plug']) {
+  for (const path of ['/entities/new?name=Camera', '/entities/plug']) {
     history.set({ value: path })
     await vi.waitFor(() => expect(root.querySelector('#entities-title')).toBeNull())
     expect(root.querySelector('main')!.children.length, path).toBeGreaterThan(0)

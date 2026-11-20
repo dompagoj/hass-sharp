@@ -193,8 +193,8 @@ export function EntityDeviceField(props: { ctx: StepPickerContext }) {
 /**
  * One option the entity's type takes (`entityDomains[…].options`), by its rule: a list of texts (one per line), a
  * choice of its values, a number, a switch, or a text; its hint is the catalog's, and one the type needs says so. A
- * number is read as the class page's number fields read theirs: a text that is not one is kept as typed (the form
- * then says so on the field, and Save waits). Empty, an option is left out (the type's default); so is a switch off.
+ * text typed into a number that is not a number is kept as typed (the form then says so on the field, and Save waits).
+ * Empty, an option is left out (the type's default); so is a switch off.
  */
 function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; errors: string[]; onChange(value: unknown): void }) {
   const name = () => `option:${props.option}`

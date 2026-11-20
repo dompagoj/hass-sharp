@@ -20,7 +20,7 @@ export interface SaveState {
 }
 
 /** The save-state chip's words (long, and short for the compact full-screen bar), tone and explanation. */
-export function saveChip(state: SaveState) {
+function saveChip(state: SaveState) {
   const explanation = `${state.revision === undefined ? 'Not saved yet' : `Saved revision ${state.revision}`}${state.dirty ? '; there are unsaved changes' : ''}`
   if (state.saving) return { text: 'Saving…', short: 'Saving…', tone: 'busy', explanation }
   const problems = state.errors ? plural(state.errors, 'problem') : ''

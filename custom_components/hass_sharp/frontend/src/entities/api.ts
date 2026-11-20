@@ -1,9 +1,9 @@
 import type { HomeAssistant, RunAcceptedResponse } from '../types'
 import { VisualApiError, visualError, type VisualDiagnostic, type VisualPreview } from '../visual/api'
-import type { DefinitionBody, DefinitionSummary, EntityDocument, EntityType, HomeDefinition } from './model'
+import type { DefinitionBody, DefinitionSummary, EntityDocument, HomeDefinition } from './model'
 
 /** `preview`'s answer, and the detail of a refused save's `validation` error. */
-export type EntityPreview = VisualPreview
+type EntityPreview = VisualPreview
 export interface EntitySaveResult {
   id: string
   saved: true
@@ -50,8 +50,6 @@ export class EntityApiError extends VisualApiError {
 }
 /** The query key of every list of entity definitions (the entities page's): a save, a switch or a delete makes them stale. */
 export const definitionsQueryKey = ['entity-definitions'] as const
-/** The query key of the classes node libraries offer (`types`): a node library save makes it stale. */
-export const entityTypesQueryKey = ['entity-types'] as const
 
 /** What to tell the user about a failed request: as `visualError` does for automations. */
 export const entityError = visualError
@@ -88,8 +86,6 @@ export function entityApi(hass: Pick<HomeAssistant, 'callWS'>) {
     return response
   }
   return {
-    /** The classes the node libraries declare, by id. */
-    types: () => request<{ types: EntityType[]; generation: string }>('types'),
     list: () => request<DefinitionSummary[]>('list'),
     /** The entities page's list, and the definition files that cannot be read; `todayUtc` is the start of the viewer's day, for `runsToday`. */
     homePage: async (todayUtc: string) => {

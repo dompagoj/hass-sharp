@@ -7,10 +7,10 @@ import { HassCtx } from '../src/context'
 import { EntitiesListView } from '../src/views/EntitiesListView'
 import { definitionPollInterval, noteStarting } from '../src/entities/DefinitionCard'
 import { entityTexts } from '../src/entities/adapter'
-import { definitionsQueryKey, entityTypesQueryKey } from '../src/entities/api'
+import { definitionsQueryKey } from '../src/entities/api'
 import type { DefinitionBody, HomeDefinition, RegisteredEntity } from '../src/entities/model'
 import type { RecentRun } from '../src/visual/api'
-import { visualFixture, type FixtureEntityType } from './visual-fixture'
+import { visualFixture } from './visual-fixture'
 
 // The Entities section's list page, over the in-memory entity API, with Home Assistant's `subscribe_entities` faked.
 let dispose: (() => void) | undefined
@@ -21,35 +21,19 @@ afterEach(() => { dispose?.(); dispose = undefined; client?.clear(); document.bo
 type Fixture = ReturnType<typeof visualFixture>
 type Subscription = { message: any; push(event: unknown): void; unsubscribe: ReturnType<typeof vi.fn> }
 
-const cameraType: FixtureEntityType = {
-  id: 'library:cams:NodeLib.Camera', sourceId: 'cams', typeExpression: 'global::NodeLib.Camera', kind: 'device', domain: null,
-  title: 'Driveway camera', description: 'A camera with face detection.',
-  settings: [
-    { key: 'Host', label: 'Host', description: null, type: 'string', secret: false, options: [] },
-    { key: 'Password', label: 'Password', description: null, type: 'string', secret: true, options: [] },
-  ],
-  entities: [{ key: 'stream', domain: 'camera', name: 'Driveway' }],
-}
-/** An entity class: a definition of it makes a device only when it gives device details. */
-const relayType: FixtureEntityType = {
-  id: 'library:cams:NodeLib.Relay', sourceId: 'cams', typeExpression: 'global::NodeLib.Relay', kind: 'entity', domain: 'switch',
-  title: 'Relay', description: null, settings: [], entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }],
-}
-
 /**
  * The list at `/entities` over a new in-memory backend. `hold` delays the replies to these operations until released;
- * `refuse` makes Home Assistant refuse every entity request with that `{code, message}`; `failTypes` fails `types`.
+ * `refuse` makes Home Assistant refuse every entity request with that `{code, message}`.
  */
-function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string }; failTypes?: boolean } = {}) {
+function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string } } = {}) {
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
-  const fixture = visualFixture({ entityTypes: [cameraType, relayType] })
+  const fixture = visualFixture()
   options.prepare?.(fixture)
   const held: (() => void)[] = []
   const release = () => held.splice(0).forEach(go => go())
-  const control = { refuse: options.refuse, failTypes: options.failTypes ?? false }
+  const control = { refuse: options.refuse }
   const callWS = async (message: any) => {
     if (message.type === 'hass_sharp/entities' && control.refuse) throw control.refuse
-    if (message.request?.operation === 'types' && control.failTypes) throw { code: 'entity_request_failed', message: 'Entity request failed; check integration logs' }
     if (options.hold?.includes(message.request?.operation)) await new Promise<void>(go => held.push(go))
     return fixture.callWS(message)
   }
@@ -90,8 +74,11 @@ const plug: DefinitionBody = {
   logic: graph('Plug', [{ key: 'power', domain: 'sensor', name: 'Power' }, { key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'online', domain: 'binary_sensor' },
     { key: 'boost', domain: 'switch', name: 'Boost', enabledByDefault: false }], ['plug']),
 }
+/** A camera on a Device node, with a face count, a plain and a secret setting. */
 const camera: DefinitionBody = {
-  name: 'Driveway', settings: [{ key: 'Host', value: '10.0.0.9' }, { key: 'Password', value: 'camera-secret' }], logic: { kind: 'class', type: cameraType.id },
+  name: 'Driveway',
+  settings: [{ key: 'Host', type: 'string', label: 'Host', value: '10.0.0.9' }, { key: 'Password', type: 'string', label: 'Password', secret: true, value: 'camera-secret' }],
+  logic: graph('Driveway', [{ key: 'stream', domain: 'camera', name: 'Driveway' }, { key: 'faces', domain: 'sensor' }], ['driveway']),
 }
 const porch: DefinitionBody = { name: 'Porch light', settings: [], logic: graph('Porch light', [{ key: 'light', domain: 'switch', name: 'Porch' }]) }
 const registered = (uniqueId: string, entityId: string, name: string | null, disabled = false): RegisteredEntity =>
@@ -99,7 +86,7 @@ const registered = (uniqueId: string, entityId: string, name: string | null, dis
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
 const run = (status: RecentRun['status'], minutes = 5): RecentRun => ({ runId: `${status}-${minutes}`, status, startUtc: minutesAgo(minutes), durationMs: 20 })
 
-/** A running graph device, a failed class definition (entities from the registry) and a graph definition that is off. */
+/** A running graph device, a failed camera (entities from the registry) and a graph definition that is off. */
 function three(fixture: Fixture) {
   const entities = fixture.entities
   entities.seed('plug', plug)
@@ -142,22 +129,25 @@ const type = (input: HTMLInputElement, value: string) => { input.value = value; 
 const loaded = (root: Element) => vi.waitFor(() => expect(root.querySelector('.hs-home-grid[aria-label="Entity definitions"], .hs-home-empty, [aria-label="Entity definitions that cannot be read"]')).not.toBeNull())
 const requests = (fixture: Fixture, operation: string) => fixture.entities.requests.filter(r => r.operation === operation)
 
-it('shows each definition: its name, how it works, its device, its status, its entities and, built with nodes, its runs', async () => {
+it('shows each definition: its name, its device, its status, its entities and its runs', async () => {
   const { root, fixture } = setup({ prepare: three })
   await loaded(root)
-  // By name; one list request with the viewer's day, one types request for the whole page.
+  // By name; one list request with the viewer's day, and no other request.
   expect(cards(root)).toEqual(['camera', 'plug', 'porch'])
   expect(requests(fixture, 'list')[0]).toMatchObject({ operation: 'list', view: 'home' })
   expect(typeof requests(fixture, 'list')[0].todayUtc).toBe('string')
-  await vi.waitFor(() => expect(card(root, 'camera').querySelector('.hs-ent-card__logic')?.textContent).toBe('Driveway camera'))
-  expect(requests(fixture, 'types')).toHaveLength(1)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(requests(fixture, 'types')).toEqual([])
+  expect(fixture.entities.requests.map(r => r.operation)).toEqual(['list'])
 
   const plugCard = card(root, 'plug')
   const link = plugCard.querySelector<HTMLAnchorElement>('a.hs-home-card__link')!
   expect(link.getAttribute('href')).toBe('/entities/plug')
   expect(link.textContent).toBe('Plug')
   expect(root.querySelector(`#${link.getAttribute('aria-describedby')}`)?.textContent).toContain('Running')
-  expect(plugCard.querySelector('.hs-ent-card__logic')?.textContent).toBe('Nodes')
+  // No kind label: every definition is built with nodes.
+  expect(plugCard.querySelector('.hs-ent-card__logic')).toBeNull()
+  expect(plugCard.textContent).not.toContain('Nodes')
   expect(plugCard.querySelector('.hs-ent-card__device')?.textContent).toBe('Device')
   expect(status(plugCard)).toBe('Running')
   expect(error(plugCard)).toBeNull()
@@ -175,20 +165,18 @@ it('shows each definition: its name, how it works, its device, its status, its e
   expect(plugCard.querySelector('.hs-ent-card__runs-today')?.textContent).toBe('3 runs today')
   expect(plugCard.querySelector('.hs-ent-card__runs-today a, .hs-run-dots a')).toBeNull()
 
-  // A class definition whose start failed: its entities exist (from the registry) and are unavailable.
+  // A definition whose start failed: its entities exist (from the registry) and are unavailable.
   const cameraCard = card(root, 'camera')
   expect(cameraCard.classList.contains('hs-home-card--attention')).toBe(true)
   expect(status(cameraCard)).toBe('Failed')
   expect(error(cameraCard)).toBe('Could not reach the camera')
-  // Its class is a device class: it makes one device.
+  // Its Device node: one device.
   expect(cameraCard.querySelector('.hs-ent-card__device')?.textContent).toBe('Device')
   // Enabled first; a registry entry without a name goes by its key.
   expect(rows(cameraCard)).toEqual([
     ['Driveway', 'Camera', 'camera.driveway', '—'],
     ['faces', 'Sensor', 'sensor.driveway_faces', 'Disabled in Home Assistant'],
   ])
-  // A class records no runs.
-  expect(cameraCard.querySelector('.hs-run-dots, .hs-ent-card__runs-today')).toBeNull()
 
   // Off: no error, the entities the registry keeps, its runs today (none).
   const porchCard = card(root, 'porch')
@@ -213,7 +201,7 @@ it('says why a definition is not running, starting, or running an older revision
     f.entities.controls.activationError = 'Not active'
     f.entities.seed('idle', { ...porch, name: 'Idle porch' })
     f.entities.controls.activation = 'running'
-    f.entities.seed('gone', { name: 'Old class', settings: [], logic: { kind: 'class', type: 'library:old:NodeLib.Gone' } }, { liveEntities: [], status: 'setup' })
+    f.entities.seed('starting', { ...porch, name: 'Starting porch' }, { liveEntities: [], status: 'setup' })
     f.entities.seed('stale', porch, { currentRevisionActive: false, activationError: 'Entity key light is used twice' })
     f.entities.seed('older', { ...porch, name: 'Older porch' }, { currentRevisionActive: false, activationError: null })
     f.entities.seed('station', many)
@@ -231,11 +219,8 @@ it('says why a definition is not running, starting, or running an older revision
   expect(status(idle)).toBe('Not running')
   expect(error(idle)).toBeNull()
   expect(idle.textContent).not.toContain('Not active')
-  // Starting, from a class no longer offered.
-  const gone = card(root, 'gone')
-  expect(status(gone)).toBe('Starting')
-  await vi.waitFor(() => expect(gone.querySelector('.hs-ent-card__logic')?.textContent).toBe('Class not found'))
-  expect(card(root, 'broken').querySelector('.hs-ent-card__logic')?.textContent).toBe('Driveway camera')
+  // Starting.
+  expect(status(card(root, 'starting'))).toBe('Starting')
   // Running an older revision: said, with the reason when there is one.
   const stale = card(root, 'stale')
   expect(status(stale)).toBe('Running')
@@ -565,19 +550,16 @@ it('says how many devices a definition makes: Device for one, the count for more
     f.entities.seed('hall', { name: 'Hall', settings: [], logic: graph('Hall', [{ key: 'lamp', domain: 'switch', name: 'Lamp' }], ['plug', 'hub']) })
     f.entities.seed('desk', { name: 'Desk', settings: [], logic: graph('Desk', [{ key: 'fan', domain: 'switch', name: 'Fan' }], ['desk']) })
     f.entities.seed('porch', porch)
-    // A class of a device class with no device details; one of an entity class with them, and one without.
     f.entities.seed('camera', camera)
-    f.entities.seed('relay', { name: 'Relay', device: { manufacturer: 'Acme' }, settings: [], logic: { kind: 'class', type: relayType.id } })
-    f.entities.seed('bare', { name: 'Bare relay', settings: [], logic: { kind: 'class', type: relayType.id } })
   } })
   await loaded(root)
-  expect(cards(root)).toEqual(['bare', 'desk', 'camera', 'hall', 'porch', 'relay'])
+  expect(cards(root)).toEqual(['desk', 'camera', 'hall', 'porch'])
   expect(Object.fromEntries(cards(root).map(id => [id, chip(card(root, id!))]))).toEqual({
-    hall: '2 devices', desk: 'Device', porch: null, camera: 'Device', relay: 'Device', bare: null,
+    hall: '2 devices', desk: 'Device', porch: null, camera: 'Device',
   })
   // The list answers the count, and no device of its own.
   const listed = (await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'list' } }) as any).result as any[]
-  expect(Object.fromEntries(listed.map(d => [d.id, d.devices]))).toEqual({ bare: 0, camera: 1, desk: 1, hall: 2, porch: 0, relay: 1 })
+  expect(Object.fromEntries(listed.map(d => [d.id, d.devices]))).toEqual({ camera: 1, desk: 1, hall: 2, porch: 0 })
   expect(listed.some(d => Object.hasOwn(d, 'device'))).toBe(false)
 })
 
@@ -646,43 +628,37 @@ it('opens a definition from its menu', async () => {
   await vi.waitFor(() => expect(history.get()).toBe('/entities/camera'))
 })
 
-it('names a class it could not look up, and reads the classes and the list again after a node library is saved', async () => {
-  const { root, fixture, control } = setup({ prepare: three, failTypes: true })
+it('reads the list again after a node library is saved', async () => {
+  const { root, fixture } = setup({ prepare: three })
   await loaded(root)
-  const logic = () => card(root, 'camera').querySelector('.hs-ent-card__logic')
-  await vi.waitFor(() => expect(card(root, 'camera').querySelector('.hs-ent-card__hint')?.textContent).toBe('Could not load the class’s name.'))
-  expect(logic()?.textContent).toBe('Class')
-  expect(logic()?.getAttribute('title')).toBe('Could not load the class’s name.')
-  // The page still works.
-  expect(status(card(root, 'camera'))).toBe('Failed')
-  control.failTypes = false
-  const before = { list: requests(fixture, 'list').length, types: fixture.calls.filter(c => c.request?.operation === 'types').length }
+  const before = requests(fixture, 'list').length
   window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
-  await vi.waitFor(() => expect(logic()?.textContent).toBe('Driveway camera'))
-  expect(card(root, 'camera').querySelector('.hs-ent-card__hint')).toBeNull()
-  expect(logic()?.hasAttribute('title')).toBe(false)
-  expect(requests(fixture, 'list').length).toBeGreaterThan(before.list)
-  expect(requests(fixture, 'types').length).toBeGreaterThan(0)
-  expect(client.getQueryState([...entityTypesQueryKey])?.status).toBe('success')
+  await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(before))
+  expect(requests(fixture, 'types')).toEqual([])
+  expect(status(card(root, 'camera'))).toBe('Failed')
 })
 
-it('starts a new entity definition, named, built with nodes or from a class', async () => {
+it('starts a new entity definition, named, in the node editor', async () => {
   const { root, history } = setup({ prepare: three })
   await loaded(root)
   button(root.querySelector('.hs-home-heading')!, 'New entity definition').click()
   const dialog = await vi.waitFor(() => { const found = root.querySelector<HTMLDialogElement>('dialog[open]'); expect(found).not.toBeNull(); return found! })
+  expect(dialog.querySelector('h2')?.textContent).toBe('New entity definition')
+  expect(dialog.textContent).toContain('Set it up in the editor, then save it: its entities appear in Home Assistant.')
   const name = dialog.querySelector<HTMLInputElement>('input[name="name"]')!
   await vi.waitFor(() => expect(document.activeElement).toBe(name))
-  const choices = [...dialog.querySelectorAll<HTMLInputElement>('input[type="radio"]')]
-  expect(choices.map(c => c.closest('label')?.querySelector('strong')?.textContent)).toEqual(['Build with nodes', 'Use a class from the node library'])
-  expect(choices.map(c => c.closest('label')?.querySelector('small')?.textContent)).toEqual([
-    'Define entities and their behaviour with steps.', 'Create entities from a C# class in your node library, with its settings.'])
-  expect(choices[0].checked).toBe(true)
+  expect(dialog.querySelector(`label[for="${name.id}"]`)?.textContent).toBe('Entity definition name')
+  expect(dialog.querySelector(`#${name.id}-hint`)?.textContent).toBe('You can change it in the editor.')
+  // A name, and no choice of how it works.
+  expect(dialog.querySelectorAll('input[type="radio"], fieldset')).toHaveLength(0)
+  expect(dialog.textContent).not.toContain('How it works')
+  expect(dialog.querySelectorAll('input')).toHaveLength(1)
+  expect([...dialog.querySelectorAll('button')].map(b => b.textContent?.trim()).filter(text => text === 'Cancel' || text === 'Continue')).toEqual(['Cancel', 'Continue'])
   expect(button(dialog, 'Continue').disabled).toBe(true)
   type(name, 'Garden sensors')
   dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  await vi.waitFor(() => expect(history.get()).toBe('/entities/new?logic=graph&name=Garden%20sensors'))
-  expect(root.querySelector('[data-opened]')?.textContent).toBe('/entities/new?logic=graph&name=Garden%20sensors')
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/new?name=Garden%20sensors'))
+  expect(root.querySelector('[data-opened]')?.textContent).toBe('/entities/new?name=Garden%20sensors')
   dispose?.(); document.body.innerHTML = ''
   const second = setup({ prepare: three })
   await loaded(second.root)
@@ -694,26 +670,26 @@ it('starts a new entity definition, named, built with nodes or from a class', as
   button(second.root.querySelector('.hs-home-heading')!, 'New entity definition').click()
   await vi.waitFor(() => expect(again.open).toBe(true))
   expect(again.querySelector<HTMLInputElement>('input[name="name"]')!.value).toBe('')
-  again.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].click()
   type(again.querySelector<HTMLInputElement>('input[name="name"]')!, 'Front camera')
   button(again, 'Continue').click()
-  await vi.waitFor(() => expect(second.history.get()).toBe('/entities/new?logic=class&name=Front%20camera'))
+  await vi.waitFor(() => expect(second.history.get()).toBe('/entities/new?name=Front%20camera'))
 })
 
-it('explains the section when there is none yet, with both ways to start', async () => {
-  const { root, history } = setup()
+it('explains the section when there is none yet, with one button to start', async () => {
+  const { root, history, fixture } = setup()
   await loaded(root)
   const empty = root.querySelector('.hs-home-empty')!
   expect(empty.querySelector('h2')?.textContent).toBe('No entity definitions yet')
-  expect(empty.textContent).toContain('new entities and devices in Home Assistant')
-  const start = [...empty.querySelectorAll<HTMLButtonElement>('button.hs-ent-start')]
-  expect(start.map(b => b.querySelector('strong')?.textContent)).toEqual(['Build with nodes', 'Use a class from the node library'])
-  start[1].click()
+  expect(empty.querySelector('p')?.textContent).toBe('An entity definition creates new entities and devices in Home Assistant. Build what they do with nodes.')
+  const buttons = [...empty.querySelectorAll<HTMLButtonElement>('button')]
+  expect(buttons.map(b => b.textContent?.trim())).toEqual(['New entity definition'])
+  buttons[0].click()
   const dialog = await vi.waitFor(() => root.querySelector<HTMLDialogElement>('dialog[open]')!)
-  expect(dialog.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1].checked).toBe(true)
+  expect(dialog.querySelectorAll('input[type="radio"]')).toHaveLength(0)
   type(dialog.querySelector<HTMLInputElement>('input[name="name"]')!, 'Doorbell')
   button(dialog, 'Continue').click()
-  await vi.waitFor(() => expect(history.get()).toBe('/entities/new?logic=class&name=Doorbell'))
+  await vi.waitFor(() => expect(history.get()).toBe('/entities/new?name=Doorbell'))
+  expect(requests(fixture, 'types')).toEqual([])
 })
 
 it('shows skeleton cards while loading and a failure with Try again; says when the user is no administrator or HassSharp is not running', async () => {
@@ -765,7 +741,7 @@ it('reads the list again every 5 s while a definition is starting or a run just 
   expect(since.has('x')).toBe(false)
 })
 
-it('lays out for 360 px: one column of cards, entity rows that wrap, choices that stack', async () => {
+it('lays out for 360 px: one column of cards, entity rows that wrap', async () => {
   const { root } = setup({ prepare: f => { three(f); f.entities.seed('long', { ...porch, name: 'A very long entity definition name without_any_spaces_in_it_at_all_whatsoever_to_wrap' }) } })
   await loaded(root)
   // Happy DOM has no layout: check the rules the layout keys on, and that the page uses those classes.
@@ -773,7 +749,6 @@ it('lays out for 360 px: one column of cards, entity rows that wrap, choices tha
   expect(css).toMatch(/\.hs-app \.hs-ent-row \{[^}]*min-width: 0/)
   expect(css).toMatch(/\.hs-app \.hs-ent-row__id \{[^}]*overflow-wrap: anywhere/)
   expect(css).toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-ent-row \{[^}]*grid-template-columns: minmax\(0, 1fr\)/)
-  expect(css).toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-ent-starts \{[^}]*grid-template-columns: minmax\(0, 1fr\)/)
   // A long state is clamped to three lines in both layouts.
   expect(css).toMatch(/\.hs-app \.hs-ent-row__state \{[^}]*-webkit-line-clamp: 3;[^}]*overflow: hidden/)
   expect(css).not.toMatch(/@media \(max-width: 700px\) \{[^@]*\.hs-app \.hs-ent-row__state \{[^}]*(display|-webkit-line-clamp|overflow):/)

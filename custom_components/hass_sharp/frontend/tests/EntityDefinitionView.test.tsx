@@ -556,23 +556,22 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
   expect(sheet.dataset.peek).toBe('true')
 })
 
-it('hands a definition built from a class, saved or new, to its own page', async () => {
-  const { root } = setup('/entities/plug1', fixture => fixture.entities.seed('plug1', { name: 'Plug one', settings: [{ key: 'Host', value: '10.0.0.1' }], logic: { kind: 'class', type: 'library:shelly:NodeLib.FakePlug' } }))
-  await vi.waitFor(() => expect(root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).not.toBeNull())
-  expect(root.querySelector('h1')!.textContent).toBe('Plug one')
-  expect(nameInput(root).value).toBe('Plug one')
-  expect(root.querySelector('section[aria-label="Entity definition editor"]')).toBeNull()
-  dispose!(); document.body.innerHTML = ''
-  // A new one: the class page at once, which asks only for the classes.
-  const fresh = setup('/entities/new?logic=class&name=Shelly')
-  expect(fresh.root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).not.toBeNull()
-  expect(fresh.root.querySelector('h1')!.textContent).toBe('Shelly')
-  await vi.waitFor(() => expect(fresh.fixture.entities.requests).toEqual([{ operation: 'types' }]))
-  expect(fresh.root.querySelector('section[aria-label="Entity definition editor"]')).toBeNull()
+it('opens an old link to a new class definition in the node editor with its name, ignoring what it does not know', async () => {
+  const { root, fixture } = setup('/entities/new?logic=class&type=x&name=Plug')
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  expect(root.querySelector('section[aria-label="Entity definition editor"]')).not.toBeNull()
+  expect(nameInput(root).value).toBe('Plug')
+  // The starter graph: one Entity node, a binary sensor named after the definition.
+  const graph = json(root)
+  expect(graph.definition).toEqual({ settings: [] })
+  expect(graph.nodes.map((n: any) => [n.kind, n.config.key, n.config.domain, n.config.name])).toEqual([['entity', 'plug', 'binary_sensor', 'Plug']])
+  expect(root.querySelector('section.hs-cdef')).toBeNull()
+  // Nothing is asked of the entity API: no classes, no read.
+  expect(fixture.entities.requests).toEqual([])
 })
 
 it('starts a new definition named from the address, with an Entity node, a binary sensor named after it, and the editor in its words', async () => {
-  const { root, fixture } = setup('/entities/new?logic=graph&name=Hall motion')
+  const { root, fixture } = setup('/entities/new?name=Hall motion')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   expect(nameInput(root).value).toBe('Hall motion')
   const graph = json(root)
@@ -1080,33 +1079,15 @@ const editorShown = (root: Element) => !!root.querySelector('section[aria-label=
 const catalogAsked = (fixture: Fixture) => fixture.calls.some(c => c.type === 'hass_sharp/node_library' && c.request?.operation === 'catalog')
 const reads = (fixture: Fixture) => fixture.entities.requests.filter(r => r.operation === 'read').length
 
-it('opens a definition built from a class without the graph editor, even while it is being read', async () => {
+it('opens a definition built from steps in the graph editor, read once', async () => {
   let release!: () => void
-  const { root, fixture } = setup('/entities/plug1', f => {
-    f.entities.seed('plug1', { name: 'Plug one', settings: [{ key: 'Host', value: '10.0.0.1' }], logic: { kind: 'class', type: 'library:shelly:NodeLib.FakePlug' } })
-    release = holdReads(f)
-  })
+  const { root, fixture } = setup('/entities/plug', f => { f.entities.seed('plug', plugBody()); release = holdReads(f) })
   await vi.waitFor(() => expect(root.querySelector('[role="status"]')?.textContent).toBe('Loading saved entity definition…'))
   expect(editorShown(root)).toBe(false)
   expect(root.textContent).not.toContain('Loading saved graph')
   expect(button(root, 'Back to entities')).toBeDefined()
   await new Promise(resolve => setTimeout(resolve, 20))
   expect(catalogAsked(fixture)).toBe(false)
-  release()
-  await vi.waitFor(() => expect(root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).not.toBeNull())
-  expect(nameInput(root).value).toBe('Plug one')
-  expect(editorShown(root)).toBe(false)
-  expect(root.textContent).not.toContain('Loading saved graph')
-  await new Promise(resolve => setTimeout(resolve, 20))
-  expect(catalogAsked(fixture)).toBe(false)
-  expect(reads(fixture)).toBe(1)
-})
-
-it('opens a definition built from steps in the graph editor, read once', async () => {
-  let release!: () => void
-  const { root, fixture } = setup('/entities/plug', f => { f.entities.seed('plug', plugBody()); release = holdReads(f) })
-  await vi.waitFor(() => expect(root.querySelector('[role="status"]')?.textContent).toBe('Loading saved entity definition…'))
-  expect(editorShown(root)).toBe(false)
   release()
   await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   expect(root.querySelector('section[aria-label="Entity definition editor"]')).not.toBeNull()
@@ -1127,7 +1108,6 @@ it('says a definition that is not stored was not found, and one that could not b
   const { root, history } = setup('/entities/nothing')
   await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('This entity definition was not found. It may have been deleted.'))
   expect(editorShown(root)).toBe(false)
-  expect(root.querySelector('section.hs-cdef[aria-label="Entity definition"]')).toBeNull()
   button(root, 'Back to entities').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities'))
   dispose!(); document.body.innerHTML = ''
@@ -1146,22 +1126,6 @@ it('says a definition that is not stored was not found, and one that could not b
   button(again.root, 'Try again').click()
   await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   expect(nameInput(again.root).value).toBe('Plug')
-})
-
-it('mounts a new class definition\'s page once', async () => {
-  // Each page made is a section of its own.
-  const mounted = new Set<Element>()
-  const observer = new MutationObserver(records => {
-    for (const record of records) for (const node of record.addedNodes)
-      if (node instanceof Element) for (const e of [node, ...node.querySelectorAll('*')]) if (e.matches('section.hs-cdef[aria-label="Entity definition"]')) mounted.add(e)
-  })
-  observer.observe(document.body, { childList: true, subtree: true })
-  const { root, fixture } = setup('/entities/new?logic=class&name=Shelly')
-  await vi.waitFor(() => expect(fixture.entities.requests).toEqual([{ operation: 'types' }]))
-  await new Promise(resolve => setTimeout(resolve, 20))
-  observer.disconnect()
-  expect(root.querySelectorAll('section.hs-cdef[aria-label="Entity definition"]')).toHaveLength(1)
-  expect(mounted.size).toBe(1)
 })
 
 // ---- The six types beyond the first three: their options in an Entity node's section, their steps, and what the server refuses.

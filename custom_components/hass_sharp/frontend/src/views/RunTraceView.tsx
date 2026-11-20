@@ -4,7 +4,7 @@ import { useNavigate, useParams } from '@solidjs/router'
 import { useQuery } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import { useHass } from '../context'
-import { classDefinitionCode, entityAdapter } from '../entities/adapter'
+import { entityAdapter } from '../entities/adapter'
 import type { RunTraceResponse } from '../types'
 import { automationAdapter, type EditorAdapter } from '../visual/adapter'
 import { visualApi, visualError } from '../visual/api'
@@ -29,10 +29,9 @@ export const unanswered = (error: unknown) => typeof (error as { code?: unknown 
  *
  * With another adapter (an entity definition's, {@link EntityRunTraceView}) the document is read, and the editor and
  * list linked, through it, in its words; `ownRunsOnly` then shows a run only on its own document's page: a run of
- * another document, a document that no longer exists and one that cannot be read as the adapter's (an entity definition
- * built from a class) each say so instead, and a document that cannot be read just now offers Try again (one read before,
- * which showed the run is its own, keeps the run on the page). An
- * automation's page follows the run's automation, as it always has.
+ * another document and a document that no longer exists each say so instead, and a document that cannot be read just
+ * now offers Try again (one read before, which showed the run is its own, keeps the run on the page). An automation's
+ * page follows the run's automation, as it always has.
  */
 export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boolean } = {}) {
   const hass = useHass()
@@ -84,9 +83,8 @@ export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boo
   // Back is always the document's Runs tab: the history could lead out of the panel.
   const back = () => navigate(`${editorHref()}?drawer=runs`)
   /**
-   * Why a page that shows only its own runs does not show this one: the document is gone, cannot be read as this
-   * page's (its own words), could not be read now (`retry`), or the run is another's. The run is known to be its own
-   * only once the document is read.
+   * Why a page that shows only its own runs does not show this one: the document is gone, could not be read now
+   * (`retry`), or the run is another's. The run is known to be its own only once the document is read.
    */
   const refused = (): { text: string; gone?: boolean; retry?: boolean } | undefined => {
     if (!own) return
@@ -94,8 +92,6 @@ export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boo
     if (current.isError) {
       const code = adapter.apiError(current.error)?.code
       if (code === 'not_found') return { text: texts.traceDeleted ?? 'This automation no longer exists.', gone: true }
-      // An entity definition built from a class, which has no recorded runs: the read's own words.
-      if (code === classDefinitionCode) return { text: visualError(current.error) }
       // Any other failure of a read again: the document read before still says the run is its own, so it stays.
       if (run && document && run.visualId === params.id && run.automationId === document.automationId) return
       // Otherwise whether the run is its own is not known, so it is not shown until a read succeeds.

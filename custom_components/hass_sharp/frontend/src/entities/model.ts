@@ -43,9 +43,9 @@ export interface DerivedDevice {
   [member: string]: unknown
 }
 /**
- * A setting: a graph's own (with `label`, `type` and `secret`), or a value for a class's setting (key and value only).
- * An answer masks a secret as `value: null`, `secret: true` and `hasValue` (whether a value is stored); `hasValue` is
- * never changed by typing. A request sends `keep: true` and no value to leave the stored value as it is.
+ * A setting of a definition, with its `label`, `type` and `secret`. An answer masks a secret as `value: null`, `secret:
+ * true` and `hasValue` (whether a value is stored); `hasValue` is never changed by typing. A request sends `keep: true`
+ * and no value to leave the stored value as it is.
  */
 export interface DefinitionSetting {
   key: string
@@ -57,15 +57,11 @@ export interface DefinitionSetting {
   hasValue?: boolean
   keep?: boolean
 }
-/**
- * The device a class definition's device is connected through: another class definition's (`{definition}`), or a Home
- * Assistant device (`{deviceId}`). An answer also carries the other member as null.
- */
-export interface DefinitionVia {
-  definition?: string | null
+/** A Home Assistant device a device is part of (`{deviceId}`). */
+interface DefinitionVia {
   deviceId?: string | null
 }
-/** What Home Assistant's device page shows for a class definition; each null for none (or the class's own). */
+/** What Home Assistant's device page shows of a device; each null for none. */
 export interface DefinitionDevice {
   manufacturer?: string | null
   model?: string | null
@@ -76,11 +72,11 @@ export interface DefinitionDevice {
   /** Part of: the device it is connected through, if any. */
   via?: DefinitionVia | null
 }
-/** Where the behaviour comes from; an answer also carries the other kind's member as null. */
-export type DefinitionLogic = { kind: 'graph'; graph: Graph; type?: null } | { kind: 'class'; type: string; graph?: null }
+/** Where the behaviour comes from: a node graph. An answer also carries `type` as null, which nothing reads. */
+export type DefinitionLogic = { kind: 'graph'; graph: Graph; type?: null }
 /**
- * A definition as the user writes it: the `definition` of `preview` and `save`. Only a class definition has a `device`:
- * a graph's devices are its Device nodes, and the server refuses a graph request whose device is not null.
+ * A definition as the user writes it: the `definition` of `preview` and `save`. The editor never sends a `device`: its
+ * devices are its Device nodes, and the server refuses a request whose device is not null.
  */
 export interface DefinitionBody {
   name: string
@@ -115,20 +111,20 @@ export interface DefinitionTrigger {
 }
 /** A saved definition as `read` and `save` answer it (`list` without `source` and `sourceMap`). */
 export interface EntityDocument extends DefinitionBody {
-  /** 3; a class definition saved by an earlier build is 1 or 2 (a graph one of those is unreadable). */
+  /** 3; one an earlier development build saved (1 or 2) is unreadable. */
   version: 1 | 2 | 3
   id: string
   revision: number
-  /** A class definition's device details; null for none, and always for a graph. */
-  device: DefinitionDevice | null
+  /** Always null in an answer, which nothing reads. */
+  device?: null
   settings: DefinitionSetting[]
   /**
-   * For a graph, the entities its Entity nodes declare, then its C# entities', each with the device it is on, for reading
-   * only; none for a class (its code makes them). The entities a C# device's code adds are not listed: they are in
-   * `liveEntities` and `registeredEntities`, under the unique id `<id>:<device key>:<entity key>`.
+   * The entities its Entity nodes declare, then its C# entities', each with the device it is on, for reading only. The
+   * entities a C# device's code adds are not listed: they are in `liveEntities` and `registeredEntities`, under the
+   * unique id `<id>:<device key>:<entity key>`.
    */
   entities: DefinitionEntity[] | null
-  /** For a graph, the devices its Device nodes declare, in node order, then its C# devices', for reading only; none for a class. */
+  /** The devices its Device nodes declare, in node order, then its C# devices', for reading only. */
   devices?: DerivedDevice[]
   enabled: boolean
   source: string
@@ -144,33 +140,20 @@ export interface EntityDocument extends DefinitionBody {
   liveEntities: LiveEntity[]
   /** Sorted by unique id. */
   registeredEntities: RegisteredEntity[]
-  /** A graph's Trigger steps, in the graph's order; none for a class. Python adds it to every list, read and save answer. */
+  /** Its Trigger steps, in the graph's order. Python adds it to every list, read and save answer. */
   triggers?: DefinitionTrigger[]
 }
 /**
- * A `list` entry: the document without its generated source, and with how many devices it makes in Home Assistant in
- * place of its device: a graph's Device nodes and C# devices; for a class, 1 when it gives device details or its class is
- * a device, else 0.
+ * A `list` entry: the document without its generated source, and with how many devices it makes in Home Assistant (its
+ * Device nodes and C# devices) in place of the list of them.
  */
 export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap' | 'device' | 'devices'> & { devices: number }
 /** An entry of the entities page's list (`list` with `view: 'home'`): a summary and how it has been running. */
 export type HomeDefinition = DefinitionSummary & Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc'>
-/** A setting a class declares, as the `types` answer gives it. */
-export interface EntityTypeSetting {
-  key: string
-  label: string
-  description: string | null
-  type: 'string' | 'boolean' | 'integer' | 'number' | 'enum'
-  secret: boolean
-  /** An `enum` setting's member names, in declaration order; empty for any other. */
-  options: string[]
-  minimum?: number
-  maximum?: number
-}
 /**
  * The range a number setting of a class's signature declares, as its hint says it: "At least 1.", "At most 60." or
  * "Between 1 and 3600."; none without one. An `int`'s own bounds, given for a side the setting does not declare, are
- * no range. A C# node's settings and a class definition's say it alike.
+ * no range.
  */
 export function rangeHint(setting: Pick<ClassSetting, 'type' | 'minimum' | 'maximum'>): string | undefined {
   if (setting.type !== 'integer' && setting.type !== 'number') return
@@ -187,8 +170,8 @@ export const shownEntities = 6
 export interface CardEntity { key: string; name: string; domain: string; entityId: string | null; disabled: boolean; device?: string }
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
 /**
- * What follows a definition's id in one of its entities' unique ids: `<key>` for an entity it declares (an Entity node's,
- * a C# entity's, a class's), `<device key>:<key>` for one a C# device's code added. Keys hold no colon, so the tail is
+ * What follows a definition's id in one of its entities' unique ids: `<key>` for an entity it declares (an Entity node's
+ * or a C# entity's), `<device key>:<key>` for one a C# device's code added. Keys hold no colon, so the tail is
  * read whole: never as a key split at its first colon alone, which would take `plug:relay` for the entity `plug`. A
  * unique id without the definition's prefix is no C# device's entity: it is its own key, whole.
  */
@@ -201,12 +184,12 @@ function uniqueIdTail(definitionId: string, uniqueId: string): { key: string; de
 }
 /**
  * A definition's entities: those it registered while running (or failed), else Home Assistant's entity registry's,
- * which keeps them while it is off or not loaded; a class definition that never started has neither, nor do a C#
- * device's entities before it has run. Whether Home Assistant has one disabled always comes from the registry. Each is
- * named by its name (its own, else the one the definition gives it: an Entity node's, else a C# entity's class's
- * title), else its key, else its entity id; a C# device's entity by its own name, else its key. The entities the
- * definition declares come first, then each C# device's, in the order of its nodes (one whose node is gone last);
- * in each, enabled ones come first, each group by name.
+ * which keeps them while it is off or not loaded; a C# device's entities have neither before it has run. Whether Home
+ * Assistant has one disabled always comes from the registry. Each is named by its name (its own, else the one the
+ * definition gives it: an Entity node's, else a C# entity's class's title), else its key, else its entity id; a C#
+ * device's entity by its own name, else its key. The entities the definition declares come first, then each C#
+ * device's, in the order of its nodes (one whose node is gone last); in each, enabled ones come first, each group by
+ * name.
  */
 export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'> & { logic?: HomeDefinition['logic'] }): CardEntity[] {
   const graphNodes = item.logic?.kind === 'graph' && Array.isArray(item.logic.graph?.nodes) ? item.logic.graph.nodes : []
@@ -247,19 +230,6 @@ export function deviceEntities(item: Parameters<typeof cardEntities>[0]): Record
   for (const entity of listed) if (entity.device !== undefined) (byDevice[entity.device] ??= []).push({ name: entity.name, entityId: entity.entityId })
   return byDevice
 }
-/** A device or entity class a node library declares, which a class definition creates (`types`). */
-export interface EntityType {
-  /** `library:<source id>:<namespace-qualified name>`. */
-  id: string
-  sourceId: string
-  typeExpression: string
-  kind: 'device' | 'entity'
-  domain: string | null
-  title: string
-  description: string | null
-  settings: EntityTypeSetting[]
-}
-
 /**
  * The definition an editor graph carries in `graph.definition`: every member of its settings. The validator reads the
  * settings' keys and types, and ignores the rest. Its entities are its Entity nodes, and its devices its Device nodes.
@@ -274,13 +244,12 @@ const record = (value: unknown): value is Record<string, unknown> => value !== n
 const editorDefinition = (graph: Graph) => graph.definition as unknown as EditorDefinition
 
 /**
- * The graph the visual editor edits for a graph definition: its logic graph named after the definition, with the whole
- * definition under `definition`, so the editor's dirty tracking, undo, drafts and conflicts cover all of it. Class
- * definitions are edited by a form, from the body itself. The entities and devices a read answer lists are its Entity
- * and Device nodes' (edited on the nodes), so they are not carried; nor is its device, which is null.
+ * The graph the visual editor edits for a definition: its logic graph named after the definition, with the whole
+ * definition under `definition`, so the editor's dirty tracking, undo, drafts and conflicts cover all of it. The
+ * entities and devices a read answer lists are its Entity and Device nodes' (edited on the nodes), so they are not
+ * carried; nor is its device, which is null.
  */
 export function editorGraph(body: DefinitionBody): Graph {
-  if (body.logic.kind !== 'graph') throw new Error('A class definition has no editor graph; edit its body')
   const definition: EditorDefinition = { settings: structuredClone(body.settings ?? []) }
   return { ...structuredClone(body.logic.graph), name: body.name, definition: definition as unknown as GraphDefinition }
 }

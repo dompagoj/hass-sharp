@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { entityApi, EntityApiError, entityError } from '../src/entities/api'
 import { VisualApiError } from '../src/visual/api'
 import { definitionBody, editorGraph, newGraphDefinition, type DefinitionBody } from '../src/entities/model'
-import { visualFixture, type FixtureEntityType } from './visual-fixture'
+import { visualFixture } from './visual-fixture'
 
 const ok = (result: unknown) => ({ version: 1, ok: true, result })
 const fail = (code: string, detail: unknown) => ({ version: 1, ok: false, error: { code, detail } })
@@ -22,7 +22,6 @@ const body = (): DefinitionBody => ({
 describe('entity API client', () => {
   it('sends each operation as the backend reads it', async () => {
     const { api, messages } = client()
-    await api.types()
     await api.list()
     await api.homePage('2026-11-18T00:00:00.000Z')
     await api.read('motion')
@@ -32,9 +31,8 @@ describe('entity API client', () => {
     await api.save('motion', body(), 3, true)
     await api.setEnabled('motion', false)
     await api.remove('motion', 4)
-    expect(messages.map(m => m.type)).toEqual(Array(10).fill('hass_sharp/entities'))
+    expect(messages.map(m => m.type)).toEqual(Array(9).fill('hass_sharp/entities'))
     expect(messages.map(m => m.request)).toEqual([
-      { operation: 'types' },
       { operation: 'list' },
       { operation: 'list', view: 'home', todayUtc: '2026-11-18T00:00:00.000Z' },
       { operation: 'read', id: 'motion' },
@@ -45,7 +43,7 @@ describe('entity API client', () => {
       { operation: 'set_enabled', id: 'motion', enabled: false },
       { operation: 'delete', id: 'motion', expectedRevision: 4 },
     ])
-    expect(Object.keys(messages[5].request)).not.toContain('enabled')
+    expect(Object.keys(messages[4].request)).not.toContain('enabled')
   })
   it('runs a Trigger step of a definition by its id and answers the run id', async () => {
     const { api, messages } = client(() => ok({ version: 1, runId: 'run-7' }))
@@ -111,15 +109,12 @@ describe('entity API client', () => {
 })
 
 describe('the in-memory entities backend', () => {
-  const tokenType: FixtureEntityType = {
-    id: 'library:shelly:NodeLib.FakePlug', sourceId: 'shelly', typeExpression: 'global::NodeLib.FakePlug', kind: 'device', domain: null,
-    title: 'FakePlug', description: null, settings: [
-      { key: 'Host', label: 'Host', description: null, type: 'string', secret: false, options: [] },
-      { key: 'Password', label: 'Password', description: null, type: 'string', secret: true, options: [] },
-    ],
-  }
   const secretBody = (): DefinitionBody => ({ ...body(), settings: [...body().settings!, { key: 'token', value: 'hunter2', label: 'Token', type: 'string', secret: true }] })
-  const setup = () => { const fixture = visualFixture({ entityTypes: [tokenType] }); return { fixture, api: entityApi(fixture as any) } }
+  const setup = () => { const fixture = visualFixture(); return { fixture, api: entityApi(fixture as any) } }
+  /** A plug of two entities, its relay (no name) and its power, each an Entity node. */
+  const plugBody = (): DefinitionBody => ({ name: 'Plug one', settings: [], logic: { kind: 'graph', graph: { version: 5, name: 'Plug one', edges: [], nodes: [
+    { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch' }, position: { x: 60, y: 100 } },
+    { id: 'power', kind: 'entity', config: { key: 'power', domain: 'sensor', name: 'Power' }, position: { x: 60, y: 300 } }] } } })
 
   it('saves with revisions, answers a stale save with a conflict and reads not_found for an unknown id', async () => {
     const { fixture, api } = setup()
@@ -178,27 +173,10 @@ describe('the in-memory entities backend', () => {
     await expect(api.save('motion', { ...body(), settings: [{ key: 'token', value: 'x', keep: true }] }, 2)).rejects.toMatchObject({ code: 'invalid_request' })
     await expect(api.preview({ ...body(), settings: [{ key: 'token', value: 'x', keep: true }] })).rejects.toMatchObject({ code: 'invalid_request' })
   })
-  it('masks the secret settings its class declares, or every setting when the class is gone', async () => {
-    const { fixture, api } = setup()
-    const plug: DefinitionBody = { name: 'Plug one', settings: [{ key: 'Host', value: '10.0.0.1' }, { key: 'Password', value: 'pw' }], logic: { kind: 'class', type: tokenType.id } }
-    await api.save('plug1', plug, 0)
-    expect(fixture.entities.documents.get('plug1')!.settings).toEqual(plug.settings)
-    expect((await api.read('plug1')).settings).toEqual([{ key: 'Host', value: '10.0.0.1' }, { key: 'Password', value: null, secret: true, hasValue: true }])
-    // A setting the class does not declare (renamed since, or a stray) is never answered in clear.
-    await api.save('plug1', { ...plug, settings: [...plug.settings!, { key: 'Old', value: 'stray' }] }, 1)
-    expect((await api.read('plug1')).settings[2]).toEqual({ key: 'Old', value: null, secret: true, hasValue: true })
-    expect(JSON.stringify(await api.list())).not.toContain('stray')
-    await api.save('plug1', plug, 2)
-    fixture.entities.types.length = 0
-    expect((await api.read('plug1')).settings).toEqual([{ key: 'Host', value: null, secret: true, hasValue: true }, { key: 'Password', value: null, secret: true, hasValue: true }])
-    // Sent back as answered: every value kept.
-    await api.save('plug1', { ...plug, settings: (await api.read('plug1')).settings }, 3)
-    expect(fixture.entities.documents.get('plug1')!.settings.map(s => s.value)).toEqual(['10.0.0.1', 'pw'])
-  })
   it('lists the home view with seeded runs and registry entries, and switches definitions on and off', async () => {
     const { fixture, api } = setup()
     fixture.entities.seed('motion', body())
-    fixture.entities.seed('plug1', { name: 'Plug one', settings: [], logic: { kind: 'class', type: tokenType.id } }, { enabled: false })
+    fixture.entities.seed('plug1', plugBody(), { enabled: false })
     fixture.entities.registry.set('plug1', [{ uniqueId: 'plug1:relay', entityId: 'switch.plug1_relay', domain: 'switch', name: null, disabled: false }])
     fixture.entities.runs.set('motion', { runsToday: 2, lastRunUtc: '2026-11-18T08:00:00Z', recentRuns: [{ runId: 'r1', status: 'Succeeded', startUtc: '2026-11-18T08:00:00Z', durationMs: 4 }] })
     const { definitions: home, unreadable } = await api.homePage('2026-11-18T00:00:00.000Z')
@@ -209,8 +187,7 @@ describe('the in-memory entities backend', () => {
     expect((await api.list())[0]).not.toHaveProperty('runsToday')
     await expect(api.setEnabled('plug1', true)).resolves.toEqual({ id: 'plug1', enabled: true, active: true, activationError: null })
     expect((await api.read('plug1')).status).toBe('running')
-    await expect(api.save('plug1', { name: 'Plug one', settings: [], logic: { kind: 'class', type: tokenType.id } }, 1, false)).rejects.toMatchObject({ code: 'invalid_request' })
-    await expect(api.types()).resolves.toEqual({ types: [tokenType], generation: 'saved-fixture' })
+    await expect(api.save('plug1', plugBody(), 1, false)).rejects.toMatchObject({ code: 'invalid_request' })
   })
   it('previews valid unless a test seeds diagnostics, and refuses such a save', async () => {
     const { fixture, api } = setup()
@@ -223,7 +200,6 @@ describe('the in-memory entities backend', () => {
   it('refuses an id outside the definition id rule on every operation that takes one', async () => {
     const { fixture, api } = setup()
     for (const id of ['Any motion', '_motion', 'new:1', 'a'.repeat(81), '']) {
-      await expect(api.save(id, { ...body(), logic: { kind: 'class', type: tokenType.id } }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
       await expect(api.save(id, body(), 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
       await expect(api.read(id)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
       await expect(api.setEnabled(id, true)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID' })
@@ -236,7 +212,6 @@ describe('the in-memory entities backend', () => {
   it('refuses to save the id new, which is the new-definition page, as the real save does', async () => {
     const { fixture, api } = setup()
     await expect(api.save('new', body(), 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
-    await expect(api.save('new', { ...body(), logic: { kind: 'class', type: tokenType.id } }, 0)).rejects.toMatchObject({ code: 'invalid_request', message: 'Invalid definition ID: new is reserved' })
     expect(fixture.entities.documents.has('new')).toBe(false)
     await expect(api.read('new')).rejects.toMatchObject({ code: 'not_found' })
   })
@@ -250,10 +225,6 @@ describe('the in-memory entities backend', () => {
     await expect(fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'save', id: 'motion', definition: body() } })).resolves.toMatchObject({ ok: false, error: { code: 'validation' } })
     await expect(api.save('Bad id', body(), 0)).rejects.toMatchObject({ code: 'validation' })
     await expect(api.save('motion', { ...body(), settings: [{ key: 'token', value: 'x', keep: true }] }, 0)).rejects.toMatchObject({ code: 'invalid_request' })
-    // A class is not: its revision is checked before its validation.
-    const plug: DefinitionBody = { name: '', settings: [], logic: { kind: 'class', type: tokenType.id } }
-    await expect(api.save('motion', plug, 0)).rejects.toMatchObject({ code: 'conflict' })
-    await expect(api.save('plug', plug, 0)).rejects.toMatchObject({ code: 'validation', detail: { diagnostics: [{ code: 'definition.name' }] } })
     fixture.entities.controls.diagnostics = []
     // A valid graph: a missing revision, then a stale one, then enabled for a saved definition.
     await expect(fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'save', id: 'motion', definition: body() } })).resolves.toEqual({ version: 1, ok: false, error: { code: 'invalid_request', detail: 'expectedRevision is required: the revision this replaces, 0 for a new definition' } })
@@ -359,13 +330,9 @@ describe('the in-memory entities backend', () => {
     await api.save('motion', two, 1)
     expect((await api.read('motion')).registeredEntities.map(e => [e.uniqueId, e.disabled])).toEqual([['motion:any_motion', false], ['motion:tamper', true]])
   })
-  it("lists a class definition's entities from what its class reports, and keeps them registered while it is off", async () => {
-    const plugType: FixtureEntityType = { ...tokenType, id: 'library:shelly:NodeLib.Plug', entities: [{ key: 'relay', domain: 'switch', name: null }, { key: 'power', domain: 'sensor', name: 'Power' }] }
-    const fixture = visualFixture({ entityTypes: [plugType] }), api = entityApi(fixture as any)
-    // The types answer is the real descriptor: no entities.
-    const { entities: _entities, ...descriptor } = plugType
-    expect((await api.types()).types).toStrictEqual([descriptor])
-    const plug: DefinitionBody = { name: 'Plug one', settings: [], logic: { kind: 'class', type: plugType.id } }
+  it("lists a definition's entities from its Entity nodes, and keeps them registered while it is off", async () => {
+    const { fixture, api } = setup()
+    const plug = plugBody()
     const saved = await api.save('plug1', plug, 0)
     expect(saved.document.liveEntities).toEqual([
       { uniqueId: 'plug1:relay', key: 'relay', domain: 'switch', name: null, entityId: 'switch.plug1_relay' },
@@ -391,7 +358,7 @@ describe('the in-memory entities backend', () => {
     await api.remove('plug1', 2)
     fixture.entities.controls.activation = 'notLoaded'
     expect((await api.save('plug1', plug, 0)).document.registeredEntities).toEqual([])
-    // A seeded running class definition reports its entities too.
+    // A seeded running definition reports its entities too.
     fixture.entities.controls.activation = 'running'
     expect(fixture.entities.seed('plug2', plug).liveEntities.map(e => e.entityId)).toEqual(['switch.plug2_relay', 'sensor.plug2_power'])
     expect((await api.read('plug2')).registeredEntities.map(e => e.uniqueId)).toEqual(['plug2:power', 'plug2:relay'])
@@ -400,15 +367,15 @@ describe('the in-memory entities backend', () => {
     const { fixture, api } = setup()
     const send = (request: Record<string, unknown>) => fixture.callWS({ type: 'hass_sharp/entities', request })
     const refused = (detail: string) => ({ version: 1, ok: false, error: { code: 'invalid_request', detail } })
-    const classBody = { name: 'Plug one', settings: [], logic: { kind: 'class', type: tokenType.id } }
-    expect(await send({ operation: 'save', id: 7, expectedRevision: 0, definition: classBody })).toEqual(refused('id must be a string'))
-    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 1.5, definition: classBody })).toEqual(refused('expectedRevision must be a whole number'))
-    expect(await send({ operation: 'save', id: 'plug', expectedRevision: '0', definition: classBody })).toEqual(refused('expectedRevision must be a whole number'))
+    const plug = plugBody()
+    expect(await send({ operation: 'save', id: 7, expectedRevision: 0, definition: plug })).toEqual(refused('id must be a string'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 1.5, definition: plug })).toEqual(refused('expectedRevision must be a whole number'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: '0', definition: plug })).toEqual(refused('expectedRevision must be a whole number'))
     expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: [] })).toEqual(refused('definition must be an object'))
-    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: classBody, enabled: 'no' })).toEqual(refused('enabled must be true or false'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: plug, enabled: 'no' })).toEqual(refused('enabled must be true or false'))
     // Read before the id's form: a bad enabled is refused first.
-    expect(await send({ operation: 'save', id: 'Bad id', expectedRevision: 0, definition: classBody, enabled: 1 })).toEqual(refused('enabled must be true or false'))
-    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: classBody, enabled: null })).toMatchObject({ ok: true })
+    expect(await send({ operation: 'save', id: 'Bad id', expectedRevision: 0, definition: plug, enabled: 1 })).toEqual(refused('enabled must be true or false'))
+    expect(await send({ operation: 'save', id: 'plug', expectedRevision: 0, definition: plug, enabled: null })).toMatchObject({ ok: true })
     expect(await send({ operation: 'read', id: ['plug'] })).toEqual(refused('id must be a string'))
     expect(await send({ operation: 'read' })).toEqual(refused('id is required'))
     expect(await send({ operation: 'set_enabled', id: 'plug', enabled: 'true' })).toEqual(refused('enabled must be true or false'))
@@ -439,9 +406,6 @@ describe('the in-memory entities backend', () => {
     fixture.entities.controls.activation = 'setup'
     await api.setEnabled('motion', true)
     expect((await api.read('motion')).triggers).toEqual(answer(false))
-    // A class has no steps.
-    fixture.entities.seed('plug', { name: 'Plug', settings: [], logic: { kind: 'class', type: tokenType.id } })
-    expect((await api.read('plug')).triggers).toEqual([])
   })
   it('runs a Trigger step of a running definition, and refuses the rest in the words EntityApi does', async () => {
     const { fixture, api } = setup()
@@ -456,8 +420,6 @@ describe('the in-memory entities backend', () => {
     await refused('motion', 'log', 'Only a Trigger step can be run by hand; Write it down is not one')
     await refused('motion', 'quiet', 'Trigger does not permit manual execution')
     await expect(api.run('other', 'poll')).rejects.toMatchObject({ code: 'not_found', message: 'Entity definition not found' })
-    fixture.entities.seed('plug', { name: 'Plug', settings: [], logic: { kind: 'class', type: tokenType.id } })
-    await refused('plug', 'poll', 'A class definition has no steps to run')
     fixture.entities.controls.activation = 'failed'
     fixture.entities.controls.activationError = 'Start threw: no network'
     await api.save('motion', steps(), 1)

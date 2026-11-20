@@ -190,7 +190,7 @@ function PlainValue(props: { type: string; value: JsonValue | undefined; onChang
  * `label` names the field (default "Value"), `note` follows the state in its hint (default: about drafts and
  * downloads; empty for none), and `errors` are the server's problems with it, shown under it.
  */
-export function SecretValue(props: {
+function SecretValue(props: {
   type: string; setting: DefinitionSetting; onChange(value: JsonValue): void; onClear(): void
   name?: string; label?: string; note?: string; errors?: string[]
 }) {

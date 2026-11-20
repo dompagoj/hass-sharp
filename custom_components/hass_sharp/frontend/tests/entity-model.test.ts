@@ -126,8 +126,7 @@ describe('editor graph', () => {
     expect(body).toEqual(before)
     expect(graph).toEqual(copy)
   })
-  it('refuses a class definition and a graph with no definition', () => {
-    expect(() => editorGraph({ name: 'Plug one', settings: [{ key: 'Host', value: '10.0.0.1' }], logic: { kind: 'class', type: 'library:shelly:NodeLib.FakePlug' } })).toThrow(/class/)
+  it('refuses a graph with no definition', () => {
     expect(() => definitionBody(plugGraph())).toThrow(/definition/)
   })
 

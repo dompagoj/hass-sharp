@@ -1,6 +1,6 @@
 import { addGraphNode, declaredEntities, listedEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
-import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, EntityType, RegisteredEntity } from '../src/entities/model'
+import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, RegisteredEntity } from '../src/entities/model'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
 
 /** A value typed in on a step's input. */
@@ -159,29 +159,19 @@ export type FixtureRuns = Partial<Pick<HomeAutomation, 'recentRuns' | 'runsToday
  * `running`, `setup`, `failed`, `stopped`), or no host as its script did not load (`notLoaded`).
  */
 export type FixtureActivation = 'running' | 'setup' | 'failed' | 'stopped' | 'notLoaded'
-/**
- * A class for the fixture's `types`, with the entities its instance reports once loaded (`entities`, fixture only: the
- * real `types` answer lists none, and neither does the fixture's).
- */
-export type FixtureEntityType = EntityType & { entities?: { key: string; domain: string; name?: string | null }[] }
 
 /**
  * The in-memory `hass_sharp/entities` backend of {@link visualFixture} (`fixture.entities`), answering as
  * `EntityApi.EntityRequest` and the Python route do, in the `{version, ok, result | error}` envelope.
  *
  * - `documents`: the stored definitions by id, as the store keeps them: secrets in clear, `logic` as `{kind, type, graph}`,
- *   the graph without `definition`, at `version` 2, a graph's `entities` derived as `EntityDefinitionStore.Save` stores
- *   them (those its Entity nodes declare), with the run fields an answer has (`automationId` `entity:<id>`, `status`,
- *   …). Every
- *   answer masks secrets from it: a graph's `secret` settings, and every setting of a class except those its type in
- *   `types` declares and does not mark secret (all of them when the type is not in `types`, as for a library that does
- *   not compile).
+ *   the graph without `definition`, at `version` 3, its `entities` derived as `EntityDefinitionStore.Save` stores them
+ *   (those its Entity nodes declare), with the run fields an answer has (`automationId` `entity:<id>`, `status`, …).
+ *   Every answer masks its `secret` settings.
  * - `seed(id, body, fields?)`: stores a definition at revision 1, as `controls.activation` says it runs (off with
  *   `{enabled: false}`); `fields` overrides any member of the stored document (`status`, `liveEntities`, …).
- * - `types`: the classes (`FixtureEntityType`, from the `entityTypes` option), answered by `types` without their
- *   `entities`, whose `generation` is the library generation. A class's `entities` are what its instance reports.
  * - With a host that is not stopping (`running`, `setup` while its start runs, `failed` when its start threw; each after
- *   its entities were made), a definition answers `liveEntities`: a graph's entities, or its class's `entities`, each
+ *   its entities were made), a definition answers `liveEntities`: its entities, each
  *   `{uniqueId: '<id>:<key>', key, domain, name, entityId: '<domain>.<id>_<key>'}`. Each such load also records them as
  *   Home Assistant's registry would (`published`, replaced on the next load), each `disabled` as the entry of its unique
  *   id seeded in `registry` (else recorded before) is, as Home Assistant keeps an entry's `disabled_by`; they are
@@ -200,14 +190,11 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *   that error is the backend's `Not active`, as for no recorded reason). `controls.activationError` is the text of
  *   `failed` and `notLoaded`. A definition off by the user is `off`, `active: false`, `activationError: 'Not active'` in
  *   documents and `null` in the save and `set_enabled` answers.
- * - `controls.classChecks` (off by default): a class definition's class and setting values are checked as the real
- *   preview and save check them; `controls.libraryErrors`: the node libraries do not compile (`definition.library`,
- *   and every class setting answered masked).
  *
  * The document checks are the real ones a test meets most (codes of `DefinitionDocument`/`DefinitionGenerator`): a name
- * of 1–120 characters (`definition.name`), no list of entities (`definition.entitiesNotAllowed`: a graph's at all, even
- * empty or null, a class's when it lists one), no device for a graph (`definition.deviceNotAllowed`: one that is not
- * null) and, for a graph, at least one Entity node (`definition.entitiesRequired`),
+ * of 1–120 characters (`definition.name`), no list of entities (`definition.entitiesNotAllowed`: at all, even empty or
+ * null), no device (`definition.deviceNotAllowed`: one that is not null) and at least one Entity node
+ * (`definition.entitiesRequired`),
  * each with options as `DefinitionDocument.Options` checks them (`definition.entityOption`, on the node: one its domain
  * has, of its type, not an empty list, a number Home Assistant takes and within its rule's range, a pattern that is a
  * regular expression, every option the domain needs, a min below the max); with any of them the seeded diagnostics are
@@ -215,10 +202,10 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *
  * Every definition `list`, `read` and `save` answer carries `triggers`, as Python's `definition_triggers` gives them: a
  * graph's Trigger steps `{triggerId, method, manual, runnable}`, `runnable` only while its saved revision runs and is
- * `running` and the step can be started with Run now; none for a class. `run` (`id`, `triggerId`) answers
- * `{version: 1, runId: 'manual-entity-run'}`, recorded in `runs` of `controls`, or refuses as `EntityApi.DispatchDefinition`
- * does, each `invalid_request` in its words: a class definition, one that is off, one whose saved revision is not
- * running, a step that is not there, one that is not a Trigger, one that cannot be started with Run now.
+ * `running` and the step can be started with Run now. `run` (`id`, `triggerId`) answers `{version: 1, runId:
+ * 'manual-entity-run'}`, recorded in `runs` of `controls`, or refuses as `EntityApi.DispatchDefinition` does, each
+ * `invalid_request` in its words: a definition that is off, one whose saved revision is not running, a step that is not
+ * there, one that is not a Trigger, one that cannot be started with Run now.
  *
  * Refusals come in the real order, with the real `invalid_request` texts for a field missing (`id is required`) or of
  * the wrong type (`id must be a string`, `expectedRevision must be a whole number`, `enabled must be true or false`).
@@ -227,29 +214,20 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  * `definition.logic` is `{kind: 'graph', graph: <an object>}` is first previewed, as Python does: `keep` with a value
  * (`invalid_request`), then `validation`, whatever its id and revision. Then, for every save: `id`, `expectedRevision`,
  * the `definition` (missing, not an object, `keep` with a value), `enabled`, the id pattern, the reserved id `new`
- * ("Invalid definition ID: new is reserved"), a stale revision (`conflict`), `enabled` for a saved definition, and a
- * class's `validation`. A setting sent with `keep`, or with `hasValue` and no value, is stored with the value (and
- * secret flag) stored before; any other as sent.
+ * ("Invalid definition ID: new is reserved"), a stale revision (`conflict`), and `enabled` for a saved definition. A
+ * setting sent with `keep`, or with `hasValue` and no value, is stored with the value (and secret flag) stored before;
+ * any other as sent.
  */
-function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generation: () => string) {
+function entitiesFixture(generation: () => string) {
   const documents = new Map<string, EntityDocument>()
   /** The definition files that cannot be read, by id, with why (`Read`'s message): listed apart, deleted at revision 0. */
   const unreadable = new Map<string, string>()
   const registry = new Map<string, RegisteredEntity[]>()
   const published = new Map<string, RegisteredEntity[]>()
   const runs = new Map<string, FixtureRuns>()
-  const types = structuredClone(options.entityTypes ?? [])
   const requests: any[] = []
   const controls = {
     diagnostics: [] as VisualDiagnostic[], activation: 'running' as FixtureActivation, activationError: 'Fixture start failed',
-    /**
-     * Check a class definition as `DefinitionGenerator.Preview` does (off unless a test turns it on): the class is in
-     * `types` (`definition.unknownType`), and each setting is one it declares (`definition.unknownSetting`), of its type
-     * and range (`definition.settingType`), once (`definition.duplicateSetting`); a kept value is checked as stored.
-     */
-    classChecks: false,
-    /** The node libraries do not compile: every definition is refused (`definition.library`), and a class's settings are all answered masked. */
-    libraryErrors: false,
     /** The Trigger steps `run` started, in order. */
     runs: [] as { id: string; triggerId: string }[],
   }
@@ -259,30 +237,26 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const problem = (code: string, message: string, inputId: string | null = null, portId: string | null = null): VisualDiagnostic =>
     ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId, code })
   /**
-   * A graph definition's entities as the store keeps and answers them, derived by the editor's own `listedEntities`
-   * (which mirrors `DefinitionGraph.ListedEntities`): those its Entity nodes declare, then each C# entity's; none for a class.
+   * A definition's entities as the store keeps and answers them, derived by the editor's own `listedEntities` (which
+   * mirrors `DefinitionGraph.ListedEntities`): those its Entity nodes declare, then each C# entity's.
    */
-  const derivedEntities = (body: DefinitionBody): DefinitionEntity[] | null => {
-    if (body.logic.kind !== 'graph') return null
-    return listedEntities({ ...body.logic.graph, definition: { settings: [] } }, nodeCatalog) as DefinitionEntity[]
-  }
-  /** A graph definition's devices, as `EntityDefinitionStore.Save` stores them: those its Device nodes and C# devices declare. */
+  const derivedEntities = (body: DefinitionBody): DefinitionEntity[] =>
+    listedEntities({ ...body.logic.graph, definition: { settings: [] } }, nodeCatalog) as DefinitionEntity[]
+  /** A definition's devices, as `EntityDefinitionStore.Save` stores them: those its Device nodes and C# devices declare. */
   const derivedDevices = (body: DefinitionBody): DerivedDevice[] => {
-    if (body.logic.kind !== 'graph') return []
     return structuredClone(withGraphTypes(nodeCatalog, { ...body.logic.graph, definition: { settings: [] } }).definition?.devices ?? []) as DerivedDevice[]
   }
   /**
    * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a request that
-   * lists entities (a graph's at all, a class's when it lists one), a graph request with a device, a graph with no
-   * Entity node, and each Entity node's options, whose problems are on it, about `option:<option>`. A graph request that
-   * lists entities, or else gives a device, gets that refusal alone (beside its name's): nothing else of it is checked.
+   * lists entities, a request with a device, a graph with no Entity node, and each Entity node's options, whose problems
+   * are on it, about `option:<option>`. A request that lists entities, or else gives a device, gets that refusal alone
+   * (beside its name's): nothing else of it is checked.
    */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 120) problems.push(problem('definition.name', 'Give the definition a name of up to 120 characters'))
     // As EntityApi reads it: an entities key given as null is an empty list.
     const listed = Object.hasOwn(body, 'entities') ? (body as { entities?: unknown }).entities ?? [] : undefined
-    if (body.logic?.kind === 'class' && Array.isArray(listed) && listed.length) problems.push(problem('definition.entitiesNotAllowed', "A class definition's entities come from its code"))
     if (body.logic?.kind !== 'graph') return problems
     if (listed !== undefined) return [...problems, problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities')]
     if (!empty(body.device)) return [...problems, problem('definition.deviceNotAllowed', "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", 'device')]
@@ -356,41 +330,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     }
     return out
   }
-  /** A class's setting value problems, as `DefinitionGenerator.Settings` words them; `before` gives a kept value. */
-  const classProblems = (body: DefinitionBody, before?: EntityDocument): VisualDiagnostic[] => {
-    if (controls.libraryErrors) return [problem('definition.library', 'The node libraries have errors; fix them first')]
-    if (!controls.classChecks || body.logic?.kind !== 'class') return []
-    const name = body.logic.type
-    if (typeof name !== 'string' || !name.trim()) return [problem('definition.unknownType', 'No entity class was given: choose the class the definition creates')]
-    const type = types.find(t => t.id === name)
-    if (!type) return [problem('definition.unknownType', `No entity class ${name} in the node libraries`)]
-    const given = (body.settings ?? []).map(s => {
-      const kept = s.keep === true || (s.hasValue === true && empty(s.value))
-      return { key: s.key, value: kept ? before?.settings.find(old => old.key === s.key)?.value ?? null : s.value ?? null }
-    })
-    const problems: VisualDiagnostic[] = []
-    for (const key of new Set(given.map(s => s.key))) if (!type.settings.some(s => s.key === key)) problems.push(problem('definition.unknownSetting', `${type.title} has no setting ${key}`, key))
-    // A number's range as `DefinitionGenerator.Phrase` words it: from … to …, of at least …, or of at most ….
-    const range = (s: (typeof type.settings)[number]) =>
-      s.minimum !== undefined && s.maximum !== undefined ? ` from ${s.minimum} to ${s.maximum}` : s.minimum !== undefined ? ` of at least ${s.minimum}` : s.maximum !== undefined ? ` of at most ${s.maximum}` : ''
-    const phrase = (s: (typeof type.settings)[number]) =>
-      s.type === 'integer' ? `a whole number${range(s)}` : s.type === 'number' ? `a number${range(s)}`
-        : s.type === 'enum' ? `one of ${s.options.join(', ')}` : s.type === 'boolean' ? 'true or false' : 'a text'
-    const within = (s: (typeof type.settings)[number], value: number) => value >= (s.minimum ?? -Infinity) && value <= (s.maximum ?? Infinity)
-    const fits = (s: (typeof type.settings)[number], value: unknown) =>
-      empty(value) || (s.type === 'integer' ? Number.isInteger(value) && within(s, value as number)
-        : s.type === 'number' ? typeof value === 'number' && Number.isFinite(value) && within(s, value)
-        : s.type === 'enum' ? typeof value === 'string' && s.options.includes(value)
-        : s.type === 'boolean' ? typeof value === 'boolean' : typeof value === 'string')
-    for (const { key, value } of given) {
-      const setting = type.settings.find(s => s.key === key)
-      if (setting && !fits(setting, value)) problems.push(problem('definition.settingType', `${setting.label} takes ${phrase(setting)}`, key))
-    }
-    for (const key of new Set(given.map(s => s.key).filter((key, i, all) => all.indexOf(key) !== i))) problems.push(problem('definition.duplicateSetting', `${key} is set twice`, key))
-    return problems
-  }
-  const preview = (body: DefinitionBody, before?: EntityDocument) => {
-    const problems = [...documentProblems(body), ...classProblems(body, before)]
+  const preview = (body: DefinitionBody) => {
+    const problems = documentProblems(body)
     // A problem on an Entity node is the graph's: reported with the graph's own, as the server does.
     const diagnostics = problems.some(p => p.nodeId === null) ? problems : [...problems, ...structuredClone(controls.diagnostics)]
     const valid = !diagnostics.some(d => d.severity >= 3)
@@ -402,8 +343,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     // Its script loaded; its host, unless it has none or the one it has is stopping (`EntityApi.RunningHost`).
     const loaded = activation !== 'off' && activation !== 'notLoaded'
     const host = activation === 'running' || activation === 'setup' || activation === 'failed' ? activation : undefined
-    // A graph's entities (listed and declared by its Entity nodes), or those its class's instance reports (`FixtureEntityType.entities`).
-    const made = body.logic.kind === 'graph' ? derivedEntities(body) ?? [] : types.find(t => t.id === body.logic.type)?.entities ?? []
+    // Its entities, listed and declared by its Entity nodes.
+    const made = derivedEntities(body)
     return {
       automationId: `entity:${id}`, active: loaded, currentRevisionActive: loaded,
       activationError: activation === 'off' ? 'Not active' : activation === 'notLoaded' || host === 'failed' ? controls.activationError : null,
@@ -429,30 +370,25 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const started = (document: EntityDocument) => ({ active: document.currentRevisionActive, activationError: document.enabled ? document.activationError : null })
   /** The document as the store keeps it, from a request's body and the definition stored before. */
   const stored = (id: string, body: DefinitionBody, revision: number, enabled: boolean, before?: EntityDocument): EntityDocument => {
-    const graph = body.logic.kind === 'graph'
     const settings = (body.settings ?? []).map(setting => {
       const old = before?.settings.find(s => s.key === setting.key)
       const kept = setting.keep === true || (setting.hasValue === true && empty(setting.value))
       const value = kept ? old?.value ?? null : setting.value ?? null
-      if (!graph) return { key: setting.key, value }
       const secret = setting.secret === true || (kept && old?.secret === true)
       return { key: setting.key, value, ...(empty(setting.label) ? {} : { label: setting.label }), ...(empty(setting.type) ? {} : { type: setting.type }), ...(secret ? { secret } : {}) }
     })
-    // A graph's device is refused before this; a class's is stored with every member.
-    const d = graph ? null : body.device
-    const { definition: _definition, ...logicGraph } = (body.logic.kind === 'graph' ? body.logic.graph : {}) as Record<string, unknown>
+    // A device is refused before this: the one stored is null.
+    const { definition: _definition, ...logicGraph } = body.logic.graph as unknown as Record<string, unknown>
     return {
-      version: 3, id, revision, name: body.name,
-      device: d ? { manufacturer: d.manufacturer ?? null, model: d.model ?? null, swVersion: d.swVersion ?? null, hwVersion: d.hwVersion ?? null, configurationUrl: d.configurationUrl ?? null, suggestedArea: d.suggestedArea ?? null, via: d.via ?? null } : null,
-      settings, entities: derivedEntities(body), ...(body.logic.kind === 'graph' ? { devices: derivedDevices(body) } : {}),
-      logic: body.logic.kind === 'graph' ? { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph } : { kind: 'class', type: body.logic.type, graph: null },
+      version: 3, id, revision, name: body.name, device: null,
+      settings, entities: derivedEntities(body), devices: derivedDevices(body),
+      logic: { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph },
       source: '// HassSharp entity definition (fixture)', sourceMap: [], enabled, savedUtc: new Date().toISOString(), catalogGeneration: generation(),
       ...running(id, body, enabled), registeredEntities: [],
     } as EntityDocument
   }
-  /** A graph's Trigger steps as `definition_triggers` answers them; none for a class. */
+  /** Its Trigger steps as `definition_triggers` answers them. */
   const triggersOf = (document: EntityDocument) => {
-    if (document.logic.kind !== 'graph') return []
     const running = document.currentRevisionActive && document.status === 'running'
     return document.logic.graph.nodes.filter(node => node.kind === 'trigger').map(node => {
       const manual = node.config?.manual !== false
@@ -462,24 +398,19 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   }
   /** The document as an answer gives it: secrets masked, the registry's entries, its Trigger steps. */
   const answered = (document: EntityDocument) => {
-    const type = document.logic.kind === 'class' ? types.find(t => t.id === document.logic.type) : undefined
-    // As EntityLifecycle.WithoutSecretValues: a graph's setting is answered only when no setting of its key is secret, a
-    // class's only when its type declares it, not secret.
-    const masked = (key: string) => document.logic.kind === 'graph' ? document.settings.some(s => s.key === key && s.secret === true)
-      : controls.libraryErrors || !type || !type.settings.some(s => s.key === key && !s.secret)
+    // As EntityLifecycle.WithoutSecretValues: a setting is answered only when no setting of its key is secret.
+    const masked = (key: string) => document.settings.some(s => s.key === key && s.secret === true)
     const settings = document.settings.map(s => (masked(s.key) ? { ...s, value: null, secret: true, hasValue: !empty(s.value) } : s))
     const entries = [...(registry.get(document.id) ?? published.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
     return structuredClone({ ...document, settings, registeredEntities: entries, triggers: triggersOf(document) })
   }
   /**
-   * The document as the list answers it: without its source, and its device counted instead (as `EntityApi` lists it): a
-   * graph's devices are its Device nodes'; a class makes one when it gives device details or its class is a device.
+   * The document as the list answers it: without its source, and its devices counted instead (as `EntityApi` lists
+   * them): its Device nodes' and C# devices'.
    */
   const summary = (document: EntityDocument) => {
-    const { source: _source, sourceMap: _sourceMap, device, ...rest } = answered(document)
-    const devices = document.logic.kind === 'graph' ? document.devices?.length ?? 0
-      : device || types.find(t => t.id === document.logic.type)?.kind === 'device' ? 1 : 0
-    return { ...rest, devices }
+    const { source: _source, sourceMap: _sourceMap, device: _device, devices, ...rest } = answered(document)
+    return { ...rest, devices: devices?.length ?? 0 }
   }
   const sorted = () => [...documents.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
   /** A refusal, thrown by the field readers and answered by `callWS`. */
@@ -524,14 +455,13 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const existing = documents.get(id)
     if ((existing?.revision ?? 0) !== expected) return fail('conflict', 'Revision conflict; reload the current document')
     if (existing && enabled !== undefined) refuse('enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')
-    const checked = preview(definition, existing)
+    const checked = preview(definition)
     if (!checked.valid) return fail('validation', checked)
     const document = keep(stored(id, definition, expected + 1, existing?.enabled ?? enabled ?? true, existing))
     return ok({ id, saved: true, document: answered(document), ...started(document), ...(checked.diagnostics.length ? { diagnostics: checked.diagnostics } : {}) })
   }
   const answer = (request: any) => {
     switch (request.operation) {
-      case 'types': return ok({ types: types.map(({ entities: _entities, ...type }) => structuredClone(type)), generation: generation() })
       case 'list': {
         const view = optionalText(request, 'view')
         if (view !== undefined && view !== 'home') refuse('Unknown list view; the entity definitions list has the view home')
@@ -555,7 +485,6 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
         const id = text(request, 'id')
         checkId(id)
         const document = found(id), triggerId = text(request, 'triggerId')
-        if (document.logic.kind !== 'graph') refuse('A class definition has no steps to run')
         if (!document.enabled) refuse('The entity definition is off')
         if (!document.currentRevisionActive || document.status !== 'running')
           refuse(`The saved revision of this entity definition is not running: ${document.activationError && document.activationError !== 'Not active' ? document.activationError : 'it has not started'}`)
@@ -598,11 +527,11 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const seed = (id: string, body: DefinitionBody, fields: Partial<EntityDocument> = {}) => {
     return keep({ ...stored(id, body, 1, fields.enabled ?? true), ...structuredClone(fields) })
   }
-  return { documents, unreadable, registry, published, runs, types, requests, controls, seed, callWS }
+  return { documents, unreadable, registry, published, runs, requests, controls, seed, callWS }
 }
 
 export function visualFixture(
-  options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[]; entityTypes?: FixtureEntityType[] } = {},
+  options: { catalog?: VisualCatalogSnapshot; libraries?: { id: string; name: string; revision: number; source: string }[] } = {},
 ) {
   const documents = new Map<string, VisualDocument>()
   const runs = new Map<string, FixtureRuns>()
@@ -634,7 +563,7 @@ export function visualFixture(
     /** `type_definition` waits for this before it answers. */
     holdTypeDefinition: undefined as Promise<unknown> | undefined,
   }
-  const entities = entitiesFixture(options, () => controls.generation)
+  const entities = entitiesFixture(() => controls.generation)
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
     valid: !controls.invalid,
     source: 'class VisualAutomation\n{\n  // generated on server\n}',
