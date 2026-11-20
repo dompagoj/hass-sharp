@@ -144,7 +144,7 @@ internal sealed partial class DefinitionHost
 
     /// <summary>
     /// Sets up the graph's C# entity and C# device nodes, in node order, each with the class kind's steps
-    /// (<see cref="SetUpClass"/>): creates its class (<c>SharpNodes.Create</c> of the compiled graph), applies its settings,
+    /// (<see cref="SetUpClass"/>): creates its class (<see cref="CompiledDefinition.Create"/>), applies its settings,
     /// gives a C# entity its node's key and, when its code names it none, its class's title if it stands alone (none on a
     /// device, whose name Home Assistant then shows), restores, sets up and seals. Every constructor and <c>Setup()</c> of
     /// them runs within <see cref="SetupTimeout"/> on one clock. A failure fails the definition's start, naming the node:
@@ -179,18 +179,18 @@ internal sealed partial class DefinitionHost
         : node.Kind == "entity" ? "C# entity" : "C# device";
 
     /// <summary>
-    /// The class of the C# node, as the compiled graph's <c>SharpNodes.Create</c> makes it: a C# entity's an entity, a C#
-    /// device's a device. Made on a thread of its own, within <see cref="SetupTimeout"/> on the clock the C# nodes'
-    /// set-up shares (the first makes it), as a <c>Setup()</c> is: a constructor, or a static one, that never returns
-    /// fails the start (<c>{who} could not be created: its constructor did not finish within {n} s</c>) and is left to
-    /// run on in the background, as such a <c>Setup()</c> is. What its constructor throws, or none made, is
-    /// <c>{who} could not be created: {reason}</c>.
+    /// The class of the C# node, as its definition's <see cref="CompiledDefinition.Create"/> (the compiled graph's
+    /// <c>SharpNodes.Create</c>) makes it: a C# entity's an entity, a C# device's a device. Made on a thread of its own,
+    /// within <see cref="SetupTimeout"/> on the clock the C# nodes' set-up shares (the first makes it), as a <c>Setup()</c>
+    /// is: a constructor, or a static one, that never returns fails the start (<c>{who} could not be created: its
+    /// constructor did not finish within {n} s</c>) and is left to run on in the background, as such a <c>Setup()</c> is.
+    /// What its constructor throws, or none made, is <c>{who} could not be created: {reason}</c>.
     /// </summary>
     async Task<SharpComponent> CreateNode(DefinitionComponent node, string who)
     {
-        var create = script.CompiledScript.Assembly.GetType("SharpNodes")?.GetMethod("Create", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string)]);
+        var create = definition.Create;
         var clock = setupClock ??= new SetupClock();
-        var creating = Task.Factory.StartNew(() => create?.Invoke(null, System.Reflection.BindingFlags.DoNotWrapExceptions, null, [node.NodeId], null),
+        var creating = Task.Factory.StartNew(() => create?.Invoke(node.NodeId),
             CancellationToken.None, TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
         bool ended;
         try { ended = await Within(creating, clock); }

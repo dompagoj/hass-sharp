@@ -3549,7 +3549,10 @@ static class EntityGraphTests
         compiled.VisualCatalog = running.VisualCatalog;
         var given = running.Definition!;
         compiled.Definition = new("dup_twin", "Dup twin", null, given.Settings)
-            { Entities = given.Entities, Devices = given.Devices, Roots = given.Roots, Components = [.. given.Components.Select(c => c with { Key = "lamp" })] };
+            {
+                Entities = given.Entities, Devices = given.Devices, Roots = given.Roots, Components = [.. given.Components.Select(c => c with { Key = "lamp" })],
+                Create = HassSharpManager.NodeClasses(compiled.Assembly),
+            };
         Exception? failure = null;
         await rig.Scripts.LoadUserScripts([compiled], (_, error) => failure = error);
         Check(failure?.Message == "Dup twin: two entities have the key 'lamp'", "the host's key sentence: " + failure?.Message);

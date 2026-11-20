@@ -36,6 +36,12 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
     /// definition and for a graph without such nodes.
     /// </summary>
     internal IReadOnlyList<DefinitionComponent> Components { get; init; } = [];
+    /// <summary>
+    /// For a definition built from nodes with <see cref="Components"/>, what makes the class of the C# node with that id:
+    /// the compiled graph's <c>SharpNodes.Create</c>, null for a node it has no class for; null for a definition without
+    /// such nodes. The host calls it for each component as it sets the graph up.
+    /// </summary>
+    internal Func<string, object?>? Create { get; init; }
 }
 
 /// <summary>

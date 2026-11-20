@@ -105,12 +105,23 @@ public partial class HassSharpManager
         script.VisualCatalog = catalog;
         // A graph's devices are its Device nodes and its C# devices: it is no device itself. Its C# nodes take their
         // settings' values here, from the document, which only the host reads (they may be secret).
+        var components = DefinitionGraph.Components(graph, snapshot, document.Settings);
         script.Definition = new(document.Id, document.Name, null, document.Settings)
         {
             Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots,
-            Components = DefinitionGraph.Components(graph, snapshot, document.Settings),
+            Components = components, Create = components.Count > 0 ? NodeClasses(script.Assembly) : null,
         };
         return script;
+    }
+
+    /// <summary>
+    /// What makes the class of a compiled graph's C# node by its node id: the assembly's <c>SharpNodes.Create</c>, called
+    /// as it is (what it throws unwrapped); null for every node when the assembly has none.
+    /// </summary>
+    internal static Func<string, object?> NodeClasses(System.Reflection.Assembly assembly)
+    {
+        var create = assembly.GetType("SharpNodes")?.GetMethod("Create", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string)]);
+        return nodeId => create?.Invoke(null, System.Reflection.BindingFlags.DoNotWrapExceptions, null, [nodeId], null);
     }
 
     /// <summary>
