@@ -55,7 +55,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     const string SettingUp = "setup", Running = "running", Failed = "failed", Stopped = "stopped";
     static readonly IDisposable Nothing = new Handle(() => { });
 
-    /// <summary>How long the <c>Setup()</c> of a definition's device and entities may take together; settable for tests.</summary>
+    /// <summary>
+    /// How long the constructors and <c>Setup()</c>s of a definition's C# nodes may take together (the <c>Setup()</c> of
+    /// each entity a C# device adds among them), and, on a clock of its own, its When started flow; settable for tests.
+    /// </summary>
     internal static TimeSpan SetupTimeout { get; set; } = TimeSpan.FromSeconds(60);
     /// <summary>How long preparing waits for Home Assistant to register the entities; settable for tests.</summary>
     internal static TimeSpan SyncTimeout { get; set; } = TimeSpan.FromSeconds(30);
@@ -153,7 +156,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     {
         lifetime.ThrowIfCancellationRequested();
         stopping = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
-        var all = await PrepareGraph(definition.Entities);
+        var all = await PrepareGraph();
         var devices = Devices();
         var keys = devices.Select(device => device.Key!).ToHashSet(StringComparer.Ordinal);
         var json = new JsonObject

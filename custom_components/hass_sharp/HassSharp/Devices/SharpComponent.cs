@@ -77,9 +77,10 @@ public abstract class SharpComponent
 
     /// <summary>
     /// Runs once before the entities are registered, with the settings applied: the place to check settings or fetch
-    /// what the device needs. A failure leaves Home Assistant untouched. The <c>Setup()</c>s of a definition's device
-    /// and entities have 60 seconds together, not counting the time a download of <see cref="Files"/> receives; one that
-    /// takes longer fails the definition, which is tried again when the libraries or Home Assistant's services change.
+    /// what the device needs. A failure leaves Home Assistant untouched. The constructors and <c>Setup()</c>s of a
+    /// definition's C# nodes, with the <c>Setup()</c> of each entity a C# device adds, have 60 seconds together, not
+    /// counting the time a download of <see cref="Files"/> receives; one that takes longer fails the definition, which is
+    /// tried again when the libraries or Home Assistant's services change.
     /// </summary>
     protected internal virtual Task Setup() => Task.CompletedTask;
 

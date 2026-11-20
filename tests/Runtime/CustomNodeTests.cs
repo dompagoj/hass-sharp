@@ -361,6 +361,11 @@ static class CustomNodeTests
         }
         Exactly("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", NodeLibraryCompiler.SettingTypeMessage("DateTime"), 3, 31);
         Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] internal string Hidden { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Hidden"), 3, 31);
+        Exactly("csharp_device", "public class Plug : SharpDevice\n{\n\n    [Setting] public string X { get; } = \"\";\n}", NodeLibraryCompiler.SettingSetterMessage, 4, 29);
+        Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public static string Shared { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Shared"), 3, 36);
+        Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Minimum = 1)] public string Host { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingRangeTypeMessage("string"), 3, 42);
+        Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Minimum = 5, Maximum = 1)] public int Upside { get; set; }\n}", NodeLibraryCompiler.SettingRangeOrderMessage, 3, 52);
+        Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Maximum = 2.5)] public long Fraction { get; set; }\n}", NodeLibraryCompiler.SettingRangeWholeMessage, 3, 42);
         // A class of the right kind beside an abstract helper base, or a nested helper of another kind, is the one.
         Check(ClassCompiled("csharp_entity", "public abstract class Base : SharpSwitch { }\npublic class Mine : Base { }").Valid, "an abstract base of an entity class is a helper");
         Check(ClassCompiled("csharp_device", "public class Plug : SharpDevice\n{\n    public class Relay : SharpSwitch { }\n}").Valid, "an entity class inside a device class is its helper");

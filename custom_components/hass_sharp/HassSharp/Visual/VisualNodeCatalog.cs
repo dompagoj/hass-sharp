@@ -289,7 +289,7 @@ public static class VisualNodeCatalog
     /// logic, its settings composed into it), else <c>automation</c>.
     /// </summary>
     internal static string GraphDocument(JsonObject graph) => graph["definition"] is JsonObject ? "entity" : "automation";
-    /// <summary>The types a graph definition's setting can have, and so the setting's value in its graph.</summary>
+    /// <summary>The types a definition's setting can have, and so the setting's value in its graph.</summary>
     internal static readonly string[] SettingTypes = ["string", "number", "boolean"];
     /// <summary>
     /// The well-formed entries (an object with a text <c>key</c>) of one list of the definition the graph's catalog

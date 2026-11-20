@@ -14,7 +14,7 @@ const cases = shared.cases as Case[]
 
 const entityOf = (c: Case) => ({ key: c.key, domain: c.domain, ...(c.name ? { name: c.name } : {}), ...(c.options !== undefined ? { options: c.options } : {}) }) as DefinitionEntity
 const body = (c: Case): DefinitionBody => ({
-  name: 'Options', device: null, settings: [],
+  name: 'Options', settings: [],
   logic: { kind: 'graph', graph: { version: 5, name: 'Options', nodes: [{ id: 'e', kind: 'entity', config: entityOf(c) as unknown as Record<string, unknown> }], edges: [] } },
 })
 function same(got: VisualDiagnostic[], want: Expected[]) {

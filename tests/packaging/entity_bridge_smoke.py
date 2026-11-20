@@ -311,7 +311,7 @@ def camera_snapshot(definition_id, entity_id, on_bytes, on_error):
 
 
 PyInterop.BeginCameraSnapshot = Action[String, String, Action[Array[Byte]], Action[String]](camera_snapshot)
-# Harmless stand-ins for the rest: a library and a definition use none of them, and Init and unload need them set.
+# Harmless stand-ins for the rest: the definitions here use none of them, and Init and unload need them set.
 PyInterop.CallService = Action[String, String, String, Action, Action[String]](other('CallService'))
 PyInterop.CallServiceWithResponse = Action[String, String, String, Action[String], Action[String]](other('CallServiceWithResponse'))
 PyInterop.SubscribeToEntityTracking = Action[String](lambda entity_id: record('subscribe', entity_id))
@@ -475,8 +475,8 @@ try:
         saved = request(manager.EntityRequest, {'operation': 'save', 'id': GRAPH_DEFINITION, 'expectedRevision': 0, 'definition': {
             'name': 'Smoke graph', 'settings': [], 'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
-        # A saved library's compiler warnings would come along (none is saved yet); of the graph, only the one command.
-        own = [d for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
+        # No library is saved, so every warning is the graph's: only the one command.
+        own = saved.get('diagnostics') or []
         check([d.get('code') for d in own] == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
         check(own[0].get('nodeId') == 'bare' and own[0].get('portId') == 'command:turn_on' and 'Bare' in own[0].get('message', '') and 'Turn on' in own[0]['message'],
               f"the warning is on the bare switch's Turn on and names both: {own[0]}")

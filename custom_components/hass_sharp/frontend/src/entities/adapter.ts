@@ -11,7 +11,7 @@ import { copyNotice, entityRemoval, optionProblems, problemRow, renameDefinition
 import { EntityHelp } from './EntityHelp'
 import { definitionBody, definitionId, deviceEntities, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
 
-/** A saved graph definition as the editor holds it: the answer, with its editor graph (the whole definition in it). */
+/** A saved definition as the editor holds it: the answer, with its editor graph (the whole definition in it). */
 export type EntityEditorDocument = EntityDocument & { graph: VisualGraph }
 
 /** The entity definition editor's words. */
@@ -63,7 +63,7 @@ const held = (document: EntityDocument): EntityEditorDocument => ({
 const result = (saved: EntitySaveResult) => ({ ...saved, active: saved.document.enabled ? saved.active : true, document: held(saved.document) })
 
 /**
- * The editor of an entity definition built from steps: the `hass_sharp/entities` API, ids from the name (fixed at the
+ * The editor of an entity definition: the `hass_sharp/entities` API, ids from the name (fixed at the
  * first save), a starter with one binary sensor named after the definition, `/entities` and `/entities/<id>`, drafts
  * and downloads without secret values, Run now for its Trigger steps, and the definition form as the inspector's
  * overview. Nothing else is run by hand: an entity's commands are tried from Home Assistant (ruling R1).

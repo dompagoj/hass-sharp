@@ -160,7 +160,7 @@ export function RunTraceView(props: { adapter?: EditorAdapter; ownRunsOnly?: boo
 }
 
 /**
- * `/entities/:id/runs/:runId`: one run of an entity definition built from steps, read through the entity API, linked
+ * `/entities/:id/runs/:runId`: one run of an entity definition, read through the entity API, linked
  * back to its editor (`/entities/<id>`) and worded for it; only the definition's own runs are shown.
  */
 export function EntityRunTraceView() {

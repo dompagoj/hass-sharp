@@ -214,6 +214,8 @@ static class EntityHostTests
         Check(device == """[{"key":"hall","name":"Hall light","manufacturer":"Ikea","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Hall","via":{"deviceId":"abc123"}}]""", "the Device node of a C# entity: " + device);
         var wired = synced["entities"]![0]!;
         Check(wired["device"]?.GetValue<string>() == "hall" && wired["uniqueId"]!.GetValue<string>() == "lamp:light", "the C# entity is on its Device node: " + synced.ToJsonString());
+        // On a device, a C# entity whose code names it none has no name, not its class's title: Home Assistant shows the device's.
+        Check(wired.AsObject().TryGetPropertyValue("name", out var named) && named == null, "the C# entity on its Device node has no name of its own: " + synced.ToJsonString());
         Console.WriteLine("PASS entity host: a C# entity alone syncs \"devices\":[] and \"device\":null and the unique id <id>:<node key>, or is on the Device node it is wired to");
         await manager.UnloadUserScriptsAsync();
     }

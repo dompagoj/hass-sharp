@@ -1,8 +1,9 @@
 namespace HassSharp;
 
 /// <summary>
-/// A custom Home Assistant device: one definition with several entities that share its logic and its settings, such
-/// as a smart plug with a relay and a power reading. Add the entities in the constructor with <see cref="Add{T}"/>.
+/// A custom Home Assistant device: the class of a C# device node, with several entities that share its code and its
+/// settings, such as a smart plug with a relay and a power reading. Add the entities in the constructor with
+/// <see cref="Add{T}"/>.
 /// The device metadata (<see cref="Manufacturer"/>, <see cref="Model"/> and the rest) is read once, after
 /// <see cref="SharpComponent.Setup"/>: set it there at the latest, as changing it later has no effect.
 /// </summary>

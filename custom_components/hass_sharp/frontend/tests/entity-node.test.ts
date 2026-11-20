@@ -41,7 +41,7 @@ it('a new Set state step chooses a node\'s entity', () => {
 
 it('the editor lists no entity of a read answer: its entities are its nodes\'', () => {
   const node = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor' }).nodes[0]
-  const body = { name: 'Nodes', device: null, settings: [], entities: [{ key: 'door', domain: 'binary_sensor' }, { key: 'old', domain: 'switch' }], logic: { kind: 'graph', graph: { version: 5, name: 'Nodes', nodes: [node], edges: [] } } }
+  const body = { name: 'Nodes', settings: [], entities: [{ key: 'door', domain: 'binary_sensor' }, { key: 'old', domain: 'switch' }], logic: { kind: 'graph', graph: { version: 5, name: 'Nodes', nodes: [node], edges: [] } } }
   const graph = editorGraph(body as never)
   expect(graph.definition).toEqual({ settings: [] })
   expect(withGraphTypes(nodeCatalog, graph).definition!.entities.map(e => e.key)).toEqual(['door'])

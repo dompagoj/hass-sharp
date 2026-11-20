@@ -322,7 +322,7 @@ envelope; validation, conflicts and revisions work as above.
 
 ### The Entity node
 
-Each entity of a graph definition is a node of kind `entity`. Its `config` is
+An Entity node (kind `entity`) is one entity of a definition. Its `config` is
 `{key, domain, name, icon?, deviceClass?, entityCategory?, enabledByDefault?,
 options?, history?, arguments?}`: `key` matches `^[a-z][a-z0-9_]{0,39}$` and is
 unique, `domain` is one of the ten in the catalog's `entityDomains` and `options`
@@ -373,7 +373,7 @@ succeeds and a When started flow that stops lets the definition start.
 
 ### The Device node
 
-Each device of a graph definition is a node of kind `device`; a definition may have
+A Device node (kind `device`) is one device of a definition; a definition may have
 several, or none, and is not a device itself; so is a C# device node (see
 [C# entity and C# device nodes](#c-entity-and-c-device-nodes)). Its `config` is
 <!-- config: device -->
@@ -420,7 +420,7 @@ its power sensor on it:
 }
 ```
 
-A saved graph definition's `entities_read` answer lists `devices` (the config of each Device
+A saved definition's `entities_read` answer lists `devices` (the config of each Device
 node with a key, without its blank texts, then each C# device node's `{key, name,
 via?, csharp: true}`) and gives each of its `entities` its `device`. Nobody sends them: `devices` sent back with a definition are ignored.
 Home Assistant knows a device by the definition's id and the device's key, and an

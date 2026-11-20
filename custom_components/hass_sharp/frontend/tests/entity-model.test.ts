@@ -189,8 +189,7 @@ describe('secret settings', () => {
     Object.assign(setting(graph, 'token'), { value: null, hasValue: false })
     expect(definitionBody(graph).settings![2]).toEqual({ key: 'token', value: null, label: 'Token', type: 'string', secret: true })
   })
-  it('keeps every setting of a class answer masked under the fallback the same way', () => {
-    // A class whose library does not compile: every setting answered masked. The form edits the body; the same rule applies.
+  it('sends every masked setting as answered: kept when it holds a value, cleared when it holds none', () => {
     const graph = editorGraph({ ...maskedPlug(), settings: [{ key: 'Host', value: null, secret: true, hasValue: true }, { key: 'Port', value: null, secret: true, hasValue: false }] })
     expect(definitionBody(graph).settings).toEqual([{ key: 'Host', secret: true, keep: true }, { key: 'Port', value: null, secret: true }])
   })

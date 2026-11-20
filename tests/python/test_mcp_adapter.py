@@ -667,7 +667,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         earlier='saved by an earlier development build; delete it and build it again'
         unreadable=[{'id':'hall','reason':earlier,'deletable':True},{'id':'broken','reason':'Invalid entity definition envelope','deletable':True},
                     {'id':'Hall','reason':'Invalid definition ID','deletable':False}]
-        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(id='motion',device=None)],'unreadable':unreadable})
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(id='motion')],'unreadable':unreadable})
         listed=(await self.call('entities_list',{})).data
         self.assertEqual(listed['unreadable'],unreadable)
         self.assertEqual([d['id'] for d in listed['result']],['motion'])
@@ -809,8 +809,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('{name, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
         self.assertIn('The definition you send is {name, settings?, logic}',self.adapter.SEMANTICS['definitions'])
 
-    async def test_a_graph_definition_that_sends_a_device_gets_the_servers_sentence(self):
-        # A graph's devices are its Device nodes: a graph definition sent with a device still reaches the server, whose
+    async def test_a_definition_that_sends_a_device_gets_the_servers_sentence(self):
+        # A definition's devices are its Device nodes: one sent with a device still reaches the server, whose
         # refusal says so in words, rather than a schema error about the key. null, as a read answer has it, is no device.
         sentence="Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin"
         refused={'version':1,'ok':False,'error':{'code':'validation','detail':{'valid':False,'source':'','diagnostics':[
@@ -901,9 +901,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
              ['the nodes and edges go inside logic.graph',"Send as definition only name, settings and logic: remove entities, which an entities_read answer adds"],['for an automation']),
             # The form an earlier build took, a list of entities beside the nodes: a definition still, whose entities are Entity nodes.
             ('entities_save',save({'name':'Porch','entities':entities,'nodes':[],'edges':[]}),
-             ['the nodes and edges go inside logic.graph','remove entities, which an entities_read answer adds',"a graph definition's entities are its Entity nodes, one node of kind entity for each"],['for an automation']),
+             ['the nodes and edges go inside logic.graph','remove entities, which an entities_read answer adds',"a definition's entities are its nodes, an Entity node (kind entity) or a C# entity node for each, or those a C# device node's code adds"],['for an automation']),
             ('entities_save',save({'version':5,'name':'Porch','entities':entities,'nodes':[],'edges':[]}),
-             ['the nodes and edges go inside logic.graph',"a graph definition's entities are its Entity nodes"],['for an automation','remove version']),
+             ['the nodes and edges go inside logic.graph',"a definition's entities are its nodes"],['for an automation','remove version']),
             ('entities_save',{'id':'x','expectedRevision':0,'graph':self.DEFINITION},['send it as definition, not graph'],['for an automation']),
             # A definition and a separate graph argument: the graph goes inside the definition's logic.
             ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph'}},'graph':self.GRAPH},
@@ -969,7 +969,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             # 8. The mirror: a definition, or a graph carrying a definition's parts, sent to an automation's tool.
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'logic':{'kind':'graph'}}},[to_entities],[]),
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'settings':[]}},[to_entities],[]),
-            ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'entities':[]}},[to_entities,"a graph definition's entities are its Entity nodes"],[]),
+            ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'entities':[]}},[to_entities,"a definition's entities are its nodes"],[]),
             ('save',{'id':'x','expectedRevision':0,'definition':self.DEFINITION},[to_entities],[]),
             ('preview',{'graph':self.DEFINITION},['preview takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_preview'],[]),
             ('save',{'id':'x','expectedRevision':0,'graph':{'name':'Porch','settings':[],'graph':composed}},
@@ -1119,8 +1119,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 # 13. Entities written into a graph are removed, and each said to be an Entity node instead; never moved.
                 all(('add an Entity node for each entity instead' in s)==bool(re.search(r'remove its (\w+ and )*entities',s)) for s in sentences)
                 and 'entities' not in moved,
-                # 14. A list of entities at the top of a definition: removed, and said to be Entity nodes.
-                ("a graph definition's entities are its Entity nodes" in hint)==bool(analysed and 'entities' in f.stored),
+                # 14. A list of entities at the top of a definition: removed, and said to be its nodes.
+                ("a definition's entities are its nodes" in hint)==bool(analysed and 'entities' in f.stored),
                 # 15. A device written into a graph is removed, and said to be a Device node instead; never moved.
                 all(('add a Device node for each device instead' in s)==bool(re.search(r'remove its (\w+ and )*device\b',s)) for s in sentences)
                 and 'device' not in moved,
@@ -1181,7 +1181,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # A definition is no device: its devices are its Device nodes.
         self.assertIn('the definition itself is not a device',definitions)
         # A definition is built from nodes: the rules know no class definition, its device or its via {definition}.
-        for gone in ('kind: \"class\"','class definition',"a class's",'entities_types','{definition:','For now logic may instead'):
+        for gone in ('kind: \"class\"','class definition',"a class's",'entities_types','{definition:','For now logic may instead','as for a class in a node library'):
             self.assertNotIn(gone,definitions)
         self.assertNotIn('entities [{',definitions)
         # A Stop step's run is recorded as Stopped, and it is no failure: the command's service call succeeds.
@@ -1270,7 +1270,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # A definition is built from nodes: no tool, nor the prompt, speaks of a class definition, its type id, its device,
         # a class's entities or the tool that listed the classes.
         for name,text in {**descriptions,'PROMPT':prompt}.items():
-            for gone in ('kind: "class"','logic.kind class','class definition',"a class's","the class's type id",'entities_types','{definition:'):
+            for gone in ('kind: "class"','logic.kind class','class definition',"a class's","the class's type id",'entities_types','{definition:','as for a class in a node library'):
                 self.assertNotIn(gone,text,name)
         self.assertIn('Send a secret setting back unchanged to keep its value, with a new value to replace it, or with value null and no hasValue to clear it. Ask the user first.',descriptions['entities_save'])
         self.assertIn('A new id uses expectedRevision 0 (new is not an id).',descriptions['entities_save'])

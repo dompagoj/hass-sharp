@@ -28,7 +28,7 @@ public abstract partial class SharpEntity : SharpComponent
     string? name;
     readonly ConcurrentDictionary<string, object?> attributes = new();
 
-    /// <summary>An entity whose key is <c>main</c>: such as a C# entity node's class, which the host gives its node's key (<see cref="Adopt"/>).</summary>
+    /// <summary>An entity keyed <c>main</c>, such as a C# entity node's class until the host gives it its node's key (<see cref="Adopt"/>).</summary>
     protected SharpEntity() : this("main") { }
 
     /// <summary>An entity with its own key, unique within its device.</summary>
@@ -178,8 +178,8 @@ public abstract partial class SharpEntity : SharpComponent
         throw new NotSupportedException($"{Domain} entity '{Key}' has no command {name}.");
 
     /// <summary>
-    /// Checks a command's data as <see cref="Command"/> does before its handler runs, without running it: for a definition
-    /// built from nodes, whose Entity node's command flow is the handler. Data the command does not read is not checked.
+    /// Checks a command's data as <see cref="Command"/> does before its handler runs, without running it: for the entity of
+    /// an Entity node, whose command flow is the handler. Data the command does not read is not checked.
     /// </summary>
     /// <exception cref="ArgumentException">The entity does not take the data; the message names the entity and the value.</exception>
     internal virtual void CheckData(string name, JsonElement data) { }

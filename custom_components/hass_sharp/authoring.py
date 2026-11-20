@@ -89,7 +89,7 @@ class AuthoringService:
         (`preview_request`), then `native_triggers` validates the graph's Home Assistant triggers, whose diagnostics
         follow the preview's (an error as severity 3). Returns the answer to give, which is the preview, a refusal of
         .NET's, or a save refused in the `validation` form before .NET stores anything; None when the save may go on.
-        A definition refused for listing `entities` (`definition.entitiesNotAllowed`), or a graph's for sending a device
+        A definition refused for listing `entities` (`definition.entitiesNotAllowed`), or for sending a device
         (`definition.deviceNotAllowed`), has nothing else checked, its triggers included."""
         preview = await self._request(method, preview_request, is_admin=True)
         if not preview.get("ok"):
@@ -135,7 +135,7 @@ class AuthoringService:
         return await self._request(self.manager.NodeLibraryRequest, request, is_admin=is_admin)
 
     async def entities(self, request, *, is_admin):
-        """An entity definition request, answered by .NET (`run` too, which runs a Trigger step by hand). A graph
+        """An entity definition request, answered by .NET (`run` too, which runs a Trigger step by hand). A
         definition's Home Assistant triggers are checked on preview and save as an automation's are (`visual`), with
         `deriveSignatures` passed on to that preview, and every definition a list, read or save answers gains
         `registeredEntities`, its entities in the entity registry, which has them while it is off or failed too, and

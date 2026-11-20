@@ -2,7 +2,7 @@ import { addGraphNode, classSignature, declaredEntities, entityKey, entityKeyHol
 import type { HomeAutomation, SourceRange } from '../visual/api'
 
 /**
- * An entity a graph definition describes. `key` is permanent once saved (`^[a-z][a-z0-9_]{0,39}$`); the backend keeps
+ * An entity a definition describes. `key` is permanent once saved (`^[a-z][a-z0-9_]{0,39}$`); the backend keeps
  * members it does not know.
  */
 export interface DefinitionEntity {
@@ -26,7 +26,7 @@ export interface DefinitionEntity {
   [member: string]: unknown
 }
 /**
- * A device a graph definition's Device node declares, as a read answer lists it (`devices`): the node's config, without a
+ * A device a definition's Device node declares, as a read answer lists it (`devices`): the node's config, without a
  * text left blank or a Part of of nothing. Derived from the graph, for reading only; a request's is ignored.
  */
 export interface DerivedDevice {
@@ -99,7 +99,7 @@ export interface RegisteredEntity {
   name: string | null
   disabled: boolean
 }
-/** A Trigger step of a saved graph definition, as an automation's are answered (`runnable_triggers`). */
+/** A Trigger step of a saved definition, as an automation's are answered (`runnable_triggers`). */
 export interface DefinitionTrigger {
   triggerId: string
   method: string
@@ -189,7 +189,7 @@ function uniqueIdTail(definitionId: string, uniqueId: string): { key: string; de
  * name.
  */
 export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'> & { logic?: HomeDefinition['logic'] }): CardEntity[] {
-  const graphNodes = item.logic?.kind === 'graph' && Array.isArray(item.logic.graph?.nodes) ? item.logic.graph.nodes : []
+  const graphNodes = Array.isArray(item.logic?.graph?.nodes) ? item.logic.graph.nodes : []
   const csharpNodes = graphNodes.filter(node => node.kind === 'csharp_entity' || node.kind === 'csharp_device')
   const keyOf = (node: (typeof graphNodes)[number]) => (typeof node.config?.key === 'string' ? node.config.key : undefined)
   // A C# entity's stored name is null (its class names it): its class's title, as its node shows it.
@@ -244,7 +244,7 @@ const editorDefinition = (graph: Graph) => graph.definition as unknown as Editor
  * The graph the visual editor edits for a definition: its logic graph named after the definition, with the whole
  * definition under `definition`, so the editor's dirty tracking, undo, drafts and conflicts cover all of it. The
  * entities and devices a read answer lists are its Entity and Device nodes' (edited on the nodes), so they are not
- * carried; nor is its device, which is null.
+ * carried.
  */
 export function editorGraph(body: DefinitionBody): Graph {
   const definition: EditorDefinition = { settings: structuredClone(body.settings ?? []) }
@@ -313,7 +313,7 @@ function withoutTypedSecrets(node: Graph['nodes'][number]): Graph['nodes'][numbe
 export { entityKey }
 
 /**
- * A new graph definition: no settings, and a graph whose one step is an Entity node, a binary sensor named after the
+ * A new definition: no settings, and a graph whose one step is an Entity node, a binary sensor named after the
  * definition (no name when that is blank) and keyed by that name. It has no device: its devices are Device nodes.
  */
 export function newGraphDefinition(name: string): DefinitionBody {

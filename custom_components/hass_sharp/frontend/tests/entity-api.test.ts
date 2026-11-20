@@ -445,6 +445,18 @@ describe('the in-memory entities backend', () => {
     }
     expect(fixture.entities.documents.size).toBe(0)
   })
+  it('tells graph logic with no graph to give one, after its name, as the server does', async () => {
+    const { fixture, api } = setup()
+    const refusal = { nodeId: null, message: 'Give the definition a graph: its logic is a graph of nodes, and none was given', severity: 3, startLine: null, startColumn: null, inputId: null, portId: null, code: 'definition.graph' }
+    for (const logic of [{ kind: 'graph' }, { kind: 'graph', graph: null }]) {
+      const definition = { name: 'Any motion', settings: [], logic } as unknown as DefinitionBody
+      const preview = { valid: false, diagnostics: [refusal], source: '', sourceMap: [] }
+      expect(await api.preview(definition)).toEqual(preview)
+      await expect(api.save('motion', definition, 0)).rejects.toMatchObject({ code: 'validation', detail: preview })
+      expect((await api.preview({ ...definition, name: '' })).diagnostics.map(d => d.code)).toEqual(['definition.name', 'definition.graph'])
+    }
+    expect(fixture.entities.documents.size).toBe(0)
+  })
   it('previews first only a graph Python reads as one: an object', async () => {
     const { fixture, api } = setup()
     fixture.entities.controls.diagnostics = [{ nodeId: 's', message: 'On is required', severity: 3, startLine: null, startColumn: null }]

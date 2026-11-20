@@ -629,7 +629,7 @@ const button = (root: Element, name: string) => {
 
 /** The plug as stored: a secret password, a relay and a power sensor (Entity nodes); the relay's Turn on logs the password's step. */
 const plugBody = (): DefinitionBody => ({
-  name: 'Plug', device: null,
+  name: 'Plug',
   settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: 'stored-secret' }],
   logic: { kind: 'graph', graph: plugGraph() },
 })
@@ -900,7 +900,7 @@ it('shows a picture as the recorder\'s short text, as plain words on its card an
     trace: { format: 1, runId: 'run-8', rootNodeId: 'front', rootPort: 'frame', startedUtc: '2026-11-18T01:00:01Z', complete: true, truncated: false, dropped: 0, trigger: { platform: 'frame', entity: 'front' }, events: list, summary },
   }
   const { root } = mountDefinition(async () => answer, { path: '/entities/doorbell/runs/run-8', prepare: fixture => fixture.entities.seed('doorbell', {
-    name: 'Doorbell', device: null, settings: [], logic: { kind: 'graph', graph: doorbell() } }) })
+    name: 'Doorbell', settings: [], logic: { kind: 'graph', graph: doorbell() } }) })
   await vi.waitFor(() => expect(steps(root)).toHaveLength(4))
   // On the cards: the words alone, never in quotes.
   const chips = (id: string) => [...card(root, id).querySelectorAll('.hs-value-chip')].map(chip => chip.textContent)

@@ -159,23 +159,23 @@ internal static class SharpDomains
         Typed.FirstOrDefault(typed => typed.Domain == domain).Type is { } type ? ((SharpEntity)Activator.CreateInstance(type)!).DomainOptions() : [];
 
     /// <summary>
-    /// The typed entity a graph definition's document describes: its <c>key</c>, and its <c>name</c>, <c>icon</c>,
-    /// <c>deviceClass</c>, <c>entityCategory</c>, <c>enabledByDefault</c> and <c>options</c> (those its domain's
-    /// <c>entityDomains</c> entry lists, such as a sensor's <c>unit</c>), each absent or null for none (the class's
-    /// default). The document was checked when it was saved (<see cref="DefinitionDocument.Check"/>); a field of another
+    /// The typed entity an Entity node describes, as the definition's document lists it: its <c>key</c>, and its
+    /// <c>name</c>, <c>icon</c>, <c>deviceClass</c>, <c>entityCategory</c>, <c>enabledByDefault</c> and <c>options</c>
+    /// (those its domain's <c>entityDomains</c> entry lists, such as a sensor's <c>unit</c>), each absent or null for none
+    /// (the class's default). The document was checked when it was saved (<see cref="DefinitionDocument.Check"/>); a field of another
     /// type is read as absent.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The domain is not one a definition built from nodes creates.</exception>
+    /// <exception cref="InvalidOperationException">The domain is not one an Entity node creates.</exception>
     /// <exception cref="ArgumentException">The key is not an entity key, or a text's pattern is not a regular expression.</exception>
     internal static SharpEntity Create(string domain, JsonObject description)
     {
         var described = new EntityDescription(description);
         return Graph.TryGetValue(domain, out var known) ? known.Create(described)
-            : throw new InvalidOperationException($"Entity {described.Key} has the domain {domain}, which a definition built from nodes cannot create");
+            : throw new InvalidOperationException($"Entity {described.Key} has the domain {domain}, which an Entity node cannot create");
     }
 
     /// <summary>
-    /// The domains a definition built from nodes creates: how to create each one's entity from the document's
+    /// The domains an Entity node creates: how to create each one's entity from the document's
     /// description, and, for each of its state keys, which values it takes and how it keeps one. A domain added later is
     /// one entry here, beside its <c>entityDomains</c> entry in the catalog (which gives its command labels).
     /// </summary>
@@ -294,7 +294,7 @@ internal static class SharpDomains
         value is null ? null : value is double number ? refuses(number) : "is not a number";
 }
 
-/// <summary>The fields every entity of a graph definition's document has, read as <see cref="SharpDomains.Create"/> reads them.</summary>
+/// <summary>The fields every entity of a definition's document has, read as <see cref="SharpDomains.Create"/> reads them.</summary>
 internal sealed class EntityDescription(JsonObject description)
 {
     internal static string? Text(JsonNode? node) => node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? value.GetValue<string>() : null;
@@ -321,7 +321,7 @@ internal sealed class EntityDescription(JsonObject description)
     public string[]? Texts(string option) => Options?[option] is JsonArray values ? values.Select(Text).OfType<string>().ToArray() : null;
 }
 
-/// <summary>A domain a definition built from nodes creates: its entity from a description, and its state keys.</summary>
+/// <summary>A domain an Entity node creates: its entity from a description, and its state keys.</summary>
 internal sealed record GraphDomain(Func<EntityDescription, SharpEntity> Create, IReadOnlyDictionary<string, GraphState> State);
 
 /// <summary>

@@ -148,8 +148,8 @@ signature `{title, description, domain, settings}` read from it (its `[Node]` ti
 else its name in words, its summary, an entity's domain or null, and each `[Setting]`
 property with its type, `secret`, an enum's `options` and its range). The class is
 never created to read it. A type another node's code declares is not for a C#
-node's code either, as for a Custom C# node's: a setting of that type is refused, and
-the problem names the type in full and that node's kind and id: "`NodeLib.Custom_plug.Speed` belongs to the C# device node
+node's code either, as for a Custom C# node's: a setting of that type, or a class that
+derives from it, is refused, and the problem names the type in full and that node's kind and id: "`NodeLib.Custom_plug.Speed` belongs to the C# device node
 `plug`; declare the type in this code or in a node library to use it here" (C#
 entity node, C# device node or Custom C# node). A class
 in a node library is in reach, and a node's class may derive from it.

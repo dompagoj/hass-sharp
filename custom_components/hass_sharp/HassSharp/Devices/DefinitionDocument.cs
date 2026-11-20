@@ -15,7 +15,7 @@ namespace HassSharp;
 internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null, string? node = null);
 
 /// <summary>
-/// The checks of a graph definition's document, before its graph is looked at: its graph, the options of its Entity
+/// The checks of a definition's document, before its graph is looked at: its graph, the options of its Entity
 /// nodes and its settings, as <see cref="DefinitionGraph.Compose"/> puts the settings into the graph. A document that
 /// passes them composes to a definition the validator reads (it never answers <c>definition.invalid</c>).
 /// </summary>

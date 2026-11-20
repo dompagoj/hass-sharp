@@ -456,7 +456,8 @@ null they are false. A type that one Custom C# node declares belongs to that nod
 is not for another node's code (declare the type in a node library to share it):
 another node whose pin has that type is refused, though a wire can carry it into
 `object` or an interface it implements. The same holds for a type a C# entity or C#
-device declares (another node's pin or setting of that type is refused), and the problem
+device declares (another node's pin or setting of that type is refused), and a C# entity's
+or C# device's class may not derive from a type another node declares; the problem
 names the kind of node that has it: "NodeLib.Custom_thermometer.Level belongs to the C# entity node
 thermometer; declare the type in this code or in a node library to use it here".
 

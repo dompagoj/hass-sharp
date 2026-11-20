@@ -784,9 +784,9 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('Relay', self.state('switch.plug_one_relay').attributes['friendly_name'])
 
     async def test_via_device_links_and_unlinks(self):
-        await self.sync(definition(description('fan', definition='hub1'), definition_id='hub1', name='Hub',
-                                   devices=[device('Hub')]))
-        hub = self.device_of('hub1:main')
+        await self.sync(definition(description('fan', definition='hub1', device='hub'), definition_id='hub1', name='Hub',
+                                   devices=[device('Hub', 'hub')]))
+        hub = self.device_of('hub1:hub')
         await self.sync(plug(description('relay'), devices=[device(via={'deviceId': hub.id})]))
         self.assertEqual(hub.id, self.plug_device().via_device_id)
         await self.sync(plug(description('relay'), devices=[device(via=None)]))

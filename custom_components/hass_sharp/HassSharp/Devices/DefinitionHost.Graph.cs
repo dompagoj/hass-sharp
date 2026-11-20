@@ -4,13 +4,14 @@ using System.Text.Json.Nodes;
 namespace HassSharp;
 
 /// <summary>
-/// The part of <see cref="DefinitionHost"/> only a definition built from nodes uses: its entities, created from the
-/// document, its When started flow and its Entity nodes' flows, and what its graph's runs do to it
+/// The part of <see cref="DefinitionHost"/> that prepares a definition from its graph and runs what the graph does: the
+/// entities its Entity nodes describe, the classes of its C# entity and C# device nodes, the states a revision takes over
+/// from the one it replaces, its When started flow, its Entity nodes' flows, and what its graph's runs do to it
 /// (<see cref="IDefinitionRuntime"/>).
 /// </summary>
 internal sealed partial class DefinitionHost
 {
-    /// <summary>How long a command waits for the flow of a definition built from nodes that handles it; settable for tests.</summary>
+    /// <summary>How long a command waits for the Entity node's flow that handles it; settable for tests.</summary>
     internal static TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(30);
     /// <summary>How long a run of a state flow may take before the host warns that it has not finished; settable for tests.</summary>
     internal static TimeSpan SlowStateWarning { get; set; } = TimeSpan.FromSeconds(30);
@@ -42,7 +43,7 @@ internal sealed partial class DefinitionHost
     readonly HashSet<(string Entity, string State)> own = [];
 
     /// <summary>
-    /// A definition built from nodes: creates the entities its document describes, then sets up its C# nodes' classes
+    /// Prepares the definition: creates the entities its Entity nodes describe, then sets up its C# nodes' classes
     /// (<see cref="SetUpComponents"/>) and checks that every entity has a unique id of its own, then runs its When started flow, if it
     /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
     /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
@@ -51,10 +52,10 @@ internal sealed partial class DefinitionHost
     /// showed (<see cref="EntityStateStore"/>), less each it refuses. The When started flow may still set another. Each
     /// frame flow is what a request for its camera's picture runs first (<see cref="RunFrame"/>).
     /// </summary>
-    async Task<SharpEntity[]> PrepareGraph(JsonArray described)
+    async Task<SharpEntity[]> PrepareGraph()
     {
         graphSettings = GraphSettings(definition.Settings);
-        var hubs = described.OfType<JsonObject>().Select(entity => SharpDomains.Create(VisualNodeCatalog.Text(entity, "domain"), entity)).ToArray();
+        var hubs = definition.Entities.OfType<JsonObject>().Select(entity => SharpDomains.Create(VisualNodeCatalog.Text(entity, "domain"), entity)).ToArray();
         CheckKeys(hubs);
         var all = hubs;
         if (definition.Components.Count > 0)

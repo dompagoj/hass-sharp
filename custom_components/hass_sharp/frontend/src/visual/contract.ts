@@ -242,7 +242,7 @@ export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot 
 export const isRoot = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog) => node.kind === 'trigger' || nodeSpec(node.kind, catalog)?.root === true
 /** `entity` for a graph with an object `definition` (an entity definition's logic), else `automation`. */
 export const graphDocument = (graph: unknown): GraphDocument => record(graph) && record(graph.definition) ? 'entity' : 'automation'
-/** The types a graph definition's setting can have, and so the setting's value in its graph. */
+/** The types a definition's setting can have, and so the setting's value in its graph. */
 export const settingTypes = ['string', 'number', 'boolean']
 /** The well-formed entries (an object with a text `key`) of one list of the graph's lifted definition, the first of each key. */
 function definitionItems(catalog: VisualCatalogSnapshot, list: 'entities' | 'settings'): Record<string, unknown>[] {

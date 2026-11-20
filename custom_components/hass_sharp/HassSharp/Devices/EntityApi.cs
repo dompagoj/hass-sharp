@@ -267,7 +267,7 @@ public partial class HassSharpManager
         catch { return error.GetType().Name; }
     }
 
-    /// <summary>A graph definition's problems as its load error and startup log line give them: its errors only, each after the id of its node.</summary>
+    /// <summary>A definition's problems as its load error and startup log line give them: its errors only, each after the id of its node.</summary>
     static string[] GraphProblems(IEnumerable<VisualDiagnostic> diagnostics) =>
         [.. diagnostics.Where(d => d.Severity >= 3).Select(d => d.NodeId is { } node ? $"{node}: {d.Message}" : d.Message)];
 
@@ -374,7 +374,7 @@ public partial class HassSharpManager
     }
 
     /// <summary>
-    /// Runs a graph definition's Trigger step now, as Run now runs an automation's (<see cref="DispatchVisual"/>): through
+    /// Runs a definition's Trigger step now, as Run now runs an automation's (<see cref="DispatchVisual"/>): through
     /// the same manual path, so the run is recorded with its trace whatever the step's history setting. Only a Trigger
     /// that permits manual runs, of a definition that is on and runs its saved revision.
     /// </summary>
@@ -388,7 +388,7 @@ public partial class HassSharpManager
         if (!json["currentRevisionActive"]!.GetValue<bool>() || json["status"]!.GetValue<string>() != "running")
             throw new InvalidOperationException("The saved revision of this entity definition is not running: "
                 + (_loadErrors.TryGetValue(EntityRuntimePath(document.Id), out var error) ? error : RunningHost(document.Id) is { Status: "failed", Error: { } failure } ? failure : "it has not started"));
-        var node = (document.Logic.Graph?["nodes"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(n => VisualNodeCatalog.Text(n, "id") == triggerId) ?? throw new ArgumentException("Trigger not found");
+        var node = (document.Logic.Graph!["nodes"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(n => VisualNodeCatalog.Text(n, "id") == triggerId) ?? throw new ArgumentException("Trigger not found");
         if (VisualNodeCatalog.Text(node, "kind") != "trigger")
             throw new ArgumentException($"Only a Trigger step can be run by hand; {VisualGraphValidator.Words.StepName(node, VisualNodeCatalog.Spec(node, snapshot))} is not one");
         if (!(node["config"]?["manual"] is JsonValue manual && manual.TryGetValue<bool>(out var allowed) ? allowed : true)) throw new InvalidOperationException("Trigger does not permit manual execution");

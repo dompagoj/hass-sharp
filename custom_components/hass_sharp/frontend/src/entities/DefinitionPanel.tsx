@@ -31,7 +31,7 @@ export interface DefinitionPanelProps {
 
 /**
  * The definition form, where the inspector shows an overview with no step selected: the settings of an entity
- * definition built from steps, whose entities are its Entity nodes and whose devices are its Device nodes. It edits
+ * definition, whose entities are its Entity nodes and whose devices are its Device nodes. It edits
  * `graph.definition` through `commit` only, so undo, unsaved changes, drafts and conflicts cover it as they cover the
  * steps. The problems about no step are shown here: a setting's on its row, the rest above the form.
  */

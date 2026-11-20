@@ -248,9 +248,10 @@ function entitiesFixture(generation: () => string) {
   }
   /**
    * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: logic that is not
-   * a graph, a request that lists entities, a request with a device, a graph with no Entity node, and each Entity node's
-   * options, whose problems are on it, about `option:<option>`. Logic that is not a graph, or else a request that lists
-   * entities, or else one that gives a device, gets that refusal alone (beside its name's): nothing else of it is checked.
+   * a graph, a request that lists entities, a request with a device, graph logic with no graph, a graph with no Entity
+   * node, and each Entity node's options, whose problems are on it, about `option:<option>`. Logic that is not a graph,
+   * or else a request that lists entities, or else one that gives a device, gets that refusal alone (beside its name's):
+   * nothing else of it is checked.
    */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
@@ -260,6 +261,8 @@ function entitiesFixture(generation: () => string) {
     if (body.logic?.kind !== 'graph') return [...problems, problem('definition.logic', 'A definition is built from nodes: logic is {kind: "graph", graph}. Write C# in a C# entity or C# device node')]
     if (listed !== undefined) return [...problems, problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities')]
     if (!empty((body as { device?: unknown }).device)) return [...problems, problem('definition.deviceNotAllowed', "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", 'device')]
+    // As DefinitionDocument.Check: graph logic with no graph (null or left out) is told to give one.
+    if (body.logic.graph == null) problems.push(problem('definition.graph', 'Give the definition a graph: its logic is a graph of nodes, and none was given'))
     const nodes = declaredEntities(body.logic.graph)
     // A graph whose nodes are not a list is the validator's to tell (graph.shape), as the server has it.
     if (!nodes.length && Array.isArray((body.logic.graph as { nodes?: unknown } | undefined)?.nodes)) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
@@ -409,7 +412,7 @@ function entitiesFixture(generation: () => string) {
    * them): its Device nodes' and C# devices'.
    */
   const summary = (document: EntityDocument) => {
-    const { source: _source, sourceMap: _sourceMap, device: _device, devices, ...rest } = answered(document)
+    const { source: _source, sourceMap: _sourceMap, devices, ...rest } = answered(document)
     return { ...rest, devices: devices?.length ?? 0 }
   }
   const sorted = () => [...documents.values()].sort((a, b) => (a.id < b.id ? -1 : 1))

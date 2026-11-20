@@ -233,7 +233,7 @@ static class EntityGraphGeneratorTests
             [Setting] public int Count { get; set; }
             [Setting(Minimum = 1, Maximum = 100)] public int Percent { get; set; } = 1;
             [Setting] public Speed Mode { get; set; }
-            [Setting] public int Interval { get; set; } = 10;
+            [Setting("Poll interval")] public int Interval { get; set; } = 10;
         }
         """;
 
@@ -299,7 +299,8 @@ static class EntityGraphGeneratorTests
     /// <summary>
     /// Each pin's value, typed or from the Setting wired to it, is checked against the code's setting: a fraction in an
     /// integer, a number outside the range, a text that is no member of the enum, a wired Setting's value alike; each is
-    /// <c>setting.value</c> on its pin, <c>{Label} takes {Phrase}</c>, and the value is never quoted.
+    /// <c>setting.value</c> on its pin, <c>{Label} takes {Phrase}</c> (the setting's label, not its key), and the value is
+    /// never quoted.
     /// </summary>
     static void ASettingValueMustFit()
     {
@@ -314,7 +315,8 @@ static class EntityGraphGeneratorTests
         Check(Said("Count") == "Count takes a whole number", "a fraction in an integer: " + Said("Count"));
         Check(Said("Percent") == "Percent takes a whole number from 1 to 100", "a number outside the range: " + Said("Percent"));
         Check(Said("Mode") == "Mode takes one of Slow, Medium", "a text that is no member of the enum: " + Said("Mode"));
-        Check(Said("Interval") == "Interval takes a whole number", "a wired Setting's fraction in an integer, on the pin: " + Said("Interval"));
+        // A setting whose label is not its key is named by its label.
+        Check(Said("Interval") == "Poll interval takes a whole number", "a wired Setting's fraction in an integer, on the pin, by its label: " + Said("Interval"));
         Check(!preview.Diagnostics.Any(d => d.Message.Contains("1.5", StringComparison.Ordinal) || d.Message.Contains("200", StringComparison.Ordinal) || d.Message.Contains("Fast", StringComparison.Ordinal)),
             "no message quotes a value: " + Shown(preview.Diagnostics));
         // Values that fit are no problem, typed or wired; an unset pin and a Setting without a value neither.
