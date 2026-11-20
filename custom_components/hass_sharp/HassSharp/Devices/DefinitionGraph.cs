@@ -30,18 +30,17 @@ internal sealed record HubFlow(string NodeId, string Port, string Method, string
 
 /// <summary>
 /// Between a stored entity definition and the graph its nodes are checked, generated and run as: the stored graph never
-/// has a <c>definition</c>; the document's settings, and whether it has a device, are composed into one for the
-/// validator and the generator, and taken out again before the graph is stored. Its entities are its Entity nodes.
+/// has a <c>definition</c>; the document's settings are composed into one for the validator and the generator, and
+/// taken out again before the graph is stored. Its entities are its Entity nodes, and its devices its Device nodes.
 /// </summary>
 internal static class DefinitionGraph
 {
     /// <summary>
     /// A copy of the definition's graph with <c>definition</c> = <c>{settings}</c>: each setting's key and type only. A
     /// setting's value, label and secret flag never reach the graph (nor the source it embeds in): a value may be secret,
-    /// and changing one must not change the source. A definition with a device has an empty <c>device</c> object too,
-    /// which only says it has one (its entities then need no names). Its entities are the graph's Entity nodes, as
-    /// <see cref="VisualNodeCatalog.WithGraphTypes"/> derives them. Any <c>definition</c> already in the graph is replaced.
-    /// Without a graph, the definition alone.
+    /// and changing one must not change the source. Its entities are the graph's Entity nodes, as
+    /// <see cref="VisualNodeCatalog.WithGraphTypes"/> derives them, and an entity needs no name only when a Device node
+    /// is wired to it. Any <c>definition</c> already in the graph is replaced. Without a graph, the definition alone.
     /// </summary>
     internal static JsonObject Compose(DefinitionBody body)
     {
@@ -50,7 +49,6 @@ internal static class DefinitionGraph
         {
             ["settings"] = new JsonArray((body.Settings ?? []).Select(s => (JsonNode)new JsonObject { ["key"] = s?.Key, ["type"] = s?.Type }).ToArray()),
         };
-        if (body.Device != null) definition["device"] = new JsonObject();
         graph["definition"] = definition;
         return graph;
     }

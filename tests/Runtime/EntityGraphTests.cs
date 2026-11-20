@@ -34,10 +34,10 @@ static class EntityGraphTests
             (nameof(ACommandWhoseFlowIsCancelledSaysWhy), ACommandWhoseFlowIsCancelledSaysWhy),
             (nameof(SetupRunsBeforeTheSyncAndItsFailureFailsTheSave), SetupRunsBeforeTheSyncAndItsFailureFailsTheSave),
             (nameof(ASetupThatDoesNotFinishFailsTheSave), ASetupThatDoesNotFinishFailsTheSave),
-            (nameof(ADeviceDefinitionGroupsItsEntities), ADeviceDefinitionGroupsItsEntities),
+            (nameof(ADeviceNodeGroupsItsEntities), ADeviceNodeGroupsItsEntities),
             (nameof(TwoDevicesAndAStandaloneEntityReachHomeAssistant), TwoDevicesAndAStandaloneEntityReachHomeAssistant),
             (nameof(TheDevicesAreListedAfterTheDeviceTheyArePartOf), TheDevicesAreListedAfterTheDeviceTheyArePartOf),
-            (nameof(ARequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHas), ARequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHas),
+            (nameof(AClassRequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHasAndAGraphsIsRefused), AClassRequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHasAndAGraphsIsRefused),
             (nameof(SettingsReachTheGraph), SettingsReachTheGraph),
             (nameof(ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds), ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds),
             (nameof(DisableEnableAndDelete), DisableEnableAndDelete),
@@ -643,7 +643,7 @@ static class EntityGraphTests
     /// A definition whose Device node <c>plug</c> has its three entities wired to it registers them under it, each
     /// described as the document says, one of them without a name of its own: the device is the Device node's.
     /// </summary>
-    static async Task ADeviceDefinitionGroupsItsEntities()
+    static async Task ADeviceNodeGroupsItsEntities()
     {
         await using var rig = await Rig.Start("device");
         var graph = Graph("Plug",
@@ -745,30 +745,34 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A request's device carries none of what only a Device node has, its key, name and Part of another of its devices:
-    /// they are left out where the request is read, for a graph and a class, and nothing is refused.
+    /// A class request's device carries none of what only a Device node has, its key, name and Part of another of its
+    /// devices: they are left out where the request is read, and nothing is refused. A graph request's device is refused,
+    /// and with device null it saves and Home Assistant gets no device for it.
     /// </summary>
-    static async Task ARequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHas()
+    static async Task AClassRequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHasAndAGraphsIsRefused()
     {
         await using var rig = await Rig.Start("request-device");
         var graph = Relay();
         graph["device"] = JsonSerializer.SerializeToNode(new { key = "x", name = "y", model = "P1", via = new { device = "z" } });
+        var refused = await rig.Request(new { operation = "save", id = "relay", expectedRevision = 0, definition = graph });
+        Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Single() is { } problem
+            && problem["code"]!.GetValue<string>() == "definition.deviceNotAllowed" && problem["inputId"]!.GetValue<string>() == "device"
+            && problem["message"]!.GetValue<string>() == EntityStoreTests.DeviceNotAllowed, "the graph definition with a device is refused: " + refused.ToJsonString());
+        Check(!File.Exists(StoredFile(rig, "relay")) && rig.Home.Syncs("relay").Length == 0, "nothing is stored or synced");
+        graph["device"] = null;
         var saved = await rig.Save("relay", graph);
-        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "the graph definition saves and runs: " + saved.ToJsonString());
-        var expected = JsonNode.Parse("""{"manufacturer":null,"model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}""");
-        var stored = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "relay")))!["device"];
-        Check(JsonNode.DeepEquals(stored, expected) && JsonNode.DeepEquals((await rig.Read("relay"))["device"], expected), "the graph's device as stored: " + stored?.ToJsonString());
+        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "with device null it saves and runs: " + saved.ToJsonString());
+        Check(JsonNode.Parse(File.ReadAllText(StoredFile(rig, "relay")))!["device"] == null && (await rig.Read("relay"))["device"] == null, "its device is stored and read as null");
         var sync = JsonNode.Parse(rig.Home.Syncs("relay").Single())!;
-        Check(sync["devices"]!.ToJsonString() == """[{"key":"main","name":"Relay","manufacturer":null,"model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}]""",
-            "the graph's device is main, named after the definition: " + sync.ToJsonString());
+        Check(sync["devices"] is JsonArray { Count: 0 } && sync["entities"]!.AsArray().All(e => e!["device"] == null), "Home Assistant gets no device for it: " + sync.ToJsonString());
 
         Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
         var plug = JsonSerializer.SerializeToNode(SecretPlugDefinition())!.AsObject();
         plug["device"] = JsonSerializer.SerializeToNode(new { key = "x", name = "y", via = new { device = "z", deviceId = "abc" } });
         saved = await rig.Save("plug", plug);
         Check(saved["active"]!.GetValue<bool>(), "the class definition saves and runs: " + saved.ToJsonString());
-        expected = JsonNode.Parse("""{"manufacturer":null,"model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":null,"deviceId":"abc"}}""");
-        stored = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "plug")))!["device"];
+        var expected = JsonNode.Parse("""{"manufacturer":null,"model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":null,"deviceId":"abc"}}""");
+        var stored = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "plug")))!["device"];
         Check(JsonNode.DeepEquals(stored, expected) && JsonNode.DeepEquals((await rig.Read("plug"))["device"], expected), "the class's device as stored: " + stored?.ToJsonString());
         sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!;
         Check(sync["devices"]![0]!["name"]!.GetValue<string>() == "Plug" && sync["devices"]![0]!["via"]!.ToJsonString() == """{"deviceId":"abc"}""",
@@ -1154,7 +1158,8 @@ static class EntityGraphTests
         await rig.Flush();
         Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
         // The read answer's entities are for reading: saved back with them, it is refused in words; without them, as the
-        // editor sends it, it answers the same entities.
+        // editor sends it, it answers the same entities. Its device is null, which a graph's request may send.
+        Check(read.ContainsKey("device") && read["device"] == null, "a graph definition's read answer has device null: " + read.ToJsonString());
         var back = new JsonObject
         {
             ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
@@ -1467,7 +1472,8 @@ static class EntityGraphTests
         await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0,
             definition = SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" }) });
         await rig.Save("level", Level(Offset(4), Token("graph-hunter2")));
-        // The definition members of an answer that a save takes, as the answer has them (its entities are for reading only).
+        // The definition members of an answer that a save takes, as the answer has them (its entities are for reading only):
+        // a class's device, and a graph's device of null.
         static JsonObject Back(JsonObject answer) => new()
         {
             ["name"] = answer["name"]!.DeepClone(), ["device"] = answer["device"]?.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(),

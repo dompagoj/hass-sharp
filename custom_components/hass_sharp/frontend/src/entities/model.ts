@@ -53,14 +53,14 @@ export interface DefinitionSetting {
   keep?: boolean
 }
 /**
- * The device this definition's device is connected through: another definition's (`{definition}`), or a Home Assistant
- * device (`{deviceId}`). An answer also carries the other member as null.
+ * The device a class definition's device is connected through: another class definition's (`{definition}`), or a Home
+ * Assistant device (`{deviceId}`). An answer also carries the other member as null.
  */
 export interface DefinitionVia {
   definition?: string | null
   deviceId?: string | null
 }
-/** What Home Assistant's device page shows; each null for none (or the class's own). */
+/** What Home Assistant's device page shows for a class definition; each null for none (or the class's own). */
 export interface DefinitionDevice {
   manufacturer?: string | null
   model?: string | null
@@ -73,7 +73,10 @@ export interface DefinitionDevice {
 }
 /** Where the behaviour comes from; an answer also carries the other kind's member as null. */
 export type DefinitionLogic = { kind: 'graph'; graph: Graph; type?: null } | { kind: 'class'; type: string; graph?: null }
-/** A definition as the user writes it: the `definition` of `preview` and `save`. */
+/**
+ * A definition as the user writes it: the `definition` of `preview` and `save`. Only a class definition has a `device`:
+ * a graph's devices are its Device nodes, and the server refuses a graph request whose device is not null.
+ */
 export interface DefinitionBody {
   name: string
   device?: DefinitionDevice | null
@@ -111,6 +114,7 @@ export interface EntityDocument extends DefinitionBody {
   version: 1 | 2 | 3
   id: string
   revision: number
+  /** A class definition's device details; null for none, and always for a graph. */
   device: DefinitionDevice | null
   settings: DefinitionSetting[]
   /**
@@ -137,8 +141,11 @@ export interface EntityDocument extends DefinitionBody {
   /** A graph's Trigger steps, in the graph's order; none for a class. Python adds it to every list, read and save answer. */
   triggers?: DefinitionTrigger[]
 }
-/** A `list` entry: the document without its generated source. */
-export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap'>
+/**
+ * A `list` entry: the document without its generated source, and with how many devices it makes in Home Assistant in
+ * place of its device: a graph's Device nodes; for a class, 1 when it gives device details or its class is a device, else 0.
+ */
+export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap' | 'device' | 'devices'> & { devices: number }
 /** An entry of the entities page's list (`list` with `view: 'home'`): a summary and how it has been running. */
 export type HomeDefinition = DefinitionSummary & Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc'>
 /** A setting a class declares, as the `types` answer gives it. */
@@ -167,12 +174,11 @@ export interface EntityType {
 }
 
 /**
- * The definition an editor graph carries in `graph.definition`: every member of its settings and its device. The
- * validator reads the settings' keys and types, and ignores the rest. Its entities are its Entity nodes.
+ * The definition an editor graph carries in `graph.definition`: every member of its settings. The validator reads the
+ * settings' keys and types, and ignores the rest. Its entities are its Entity nodes, and its devices its Device nodes.
  */
 export interface EditorDefinition {
   settings: DefinitionSetting[]
-  device: DefinitionDevice | null
 }
 
 /** What an entity's key looks like (`^[a-z][a-z0-9_]{0,39}$`). A setting's key only has to be non-blank and unique (ruling R15). */
@@ -184,14 +190,11 @@ const editorDefinition = (graph: Graph) => graph.definition as unknown as Editor
  * The graph the visual editor edits for a graph definition: its logic graph named after the definition, with the whole
  * definition under `definition`, so the editor's dirty tracking, undo, drafts and conflicts cover all of it. Class
  * definitions are edited by a form, from the body itself. The entities and devices a read answer lists are its Entity
- * and Device nodes' (edited on the nodes), so they are not carried.
+ * and Device nodes' (edited on the nodes), so they are not carried; nor is its device, which is null.
  */
 export function editorGraph(body: DefinitionBody): Graph {
   if (body.logic.kind !== 'graph') throw new Error('A class definition has no editor graph; edit its body')
-  const definition: EditorDefinition = {
-    settings: structuredClone(body.settings ?? []),
-    device: structuredClone(body.device ?? null),
-  }
+  const definition: EditorDefinition = { settings: structuredClone(body.settings ?? []) }
   return { ...structuredClone(body.logic.graph), name: body.name, definition: definition as unknown as GraphDefinition }
 }
 
@@ -218,33 +221,35 @@ const settingToSend = (setting: DefinitionSetting): DefinitionSetting => {
 /**
  * The body an editor graph stands for, for `preview` and `save`: the name from the graph, the logic graph without its
  * definition. It has no `entities`: they are the graph's Entity nodes, and the server refuses a list of them. Nor has it
- * `devices`: they are the graph's Device nodes (the server ignores a list of them).
+ * a `device` or `devices`: its devices are the graph's Device nodes (the server refuses a device, and ignores a list).
  */
 export function definitionBody(graph: Graph): DefinitionBody {
   if (!record(graph.definition)) throw new Error('This graph has no definition: it is not an entity definition’s')
   const { definition, ...logic } = graph
-  const { settings, device } = definition as unknown as EditorDefinition
+  const { settings } = definition as unknown as EditorDefinition
   return {
     name: graph.name,
-    device: structuredClone(device ?? null),
     settings: (settings ?? []).map(setting => settingToSend(structuredClone(setting))),
     logic: { kind: 'graph', graph: structuredClone(logic) },
   }
 }
 
-/** The graph a browser draft keeps: every secret setting without its value (`hasValue` as stored). Never changes its argument. */
+/**
+ * The graph a browser draft keeps: every secret setting without its value (`hasValue` as stored), and of the definition
+ * nothing else (not a device an earlier build's draft kept). Never changes its argument.
+ */
 export function draftGraph(graph: Graph): Graph {
   if (!record(graph.definition)) return { ...graph }
   const definition = editorDefinition(graph)
   const settings = (definition.settings ?? []).map(setting => (setting.secret ? { ...setting, value: null } : setting))
-  return { ...graph, definition: { ...definition, settings } as unknown as GraphDefinition }
+  return { ...graph, definition: { settings } as unknown as GraphDefinition }
 }
 
 export { entityKey }
 
 /**
- * A new graph definition: no device, no settings, and a graph whose one step is an Entity node, a binary sensor named
- * after the definition (no name when that is blank) and keyed by that name.
+ * A new graph definition: no settings, and a graph whose one step is an Entity node, a binary sensor named after the
+ * definition (no name when that is blank) and keyed by that name. It has no device: its devices are Device nodes.
  */
 export function newGraphDefinition(name: string): DefinitionBody {
   // The shape `createGraph` starts an automation with; its one step a new Entity node.
@@ -252,7 +257,7 @@ export function newGraphDefinition(name: string): DefinitionBody {
   const [node] = graph.nodes
   const { name: _typeLabel, ...config } = node.config
   const starter = { ...node, config: { ...config, key: entityKey(name), domain: 'binary_sensor', ...(name.trim() ? { name } : {}) } }
-  return { name, device: null, settings: [], logic: { kind: 'graph', graph: { ...graph, nodes: [starter] } } }
+  return { name, settings: [], logic: { kind: 'graph', graph: { ...graph, nodes: [starter] } } }
 }
 
 /**

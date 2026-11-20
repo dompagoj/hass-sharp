@@ -96,7 +96,7 @@ const pickEntity = async (root: Element, entityId: string) => {
 const deselect = (root: Element) => {
   const id = inspector(root).querySelector('.hs-insp-node')?.getAttribute('data-node-id')
   if (id) press(root.querySelector(`.solid-flow__node[data-id="${id}"]`)!, 'Escape')
-  expect(inspector(root).querySelector('section[aria-label="Device"]')).not.toBeNull()
+  expect(inspector(root).querySelector('section[aria-label="Settings"]')).not.toBeNull()
 }
 const saves = (fixture: ReturnType<typeof visualFixture>) => fixture.entities.requests.filter(r => r.operation === 'save')
 
@@ -109,7 +109,7 @@ const expectClean = (root: Element) => {
 
 /** The phase 2 example of the derived motion sensor (code map, section 3), its entity the starter's Entity node. */
 const motionExample: DefinitionBody = {
-  name: 'Any motion', device: null, settings: [],
+  name: 'Any motion', settings: [],
   logic: { kind: 'graph', graph: { version: 5, name: 'Any motion',
     nodes: [
       { id: 's', kind: 'entity', config: { key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {}, history: {}, arguments: { is_on: { kind: 'unset' } } } },
@@ -178,7 +178,7 @@ it('builds the derived motion sensor from a new definition through the page, and
   expect(nameInput(again.root).value).toBe('Any motion')
   const { definition, ...logic } = json(again.root)
   // The editor lists no entity: the node declares it.
-  expect(definition).toEqual({ settings: [], device: null })
+  expect(definition).toEqual({ settings: [] })
   expect(logic.nodes.map((n: any) => n.id)).toEqual(sentGraph.nodes.map((n: any) => n.id))
   expect(logic.edges).toEqual(sentGraph.edges)
   expect(again.root.querySelector('[aria-label="Entities"]')).toBeNull()
@@ -343,7 +343,6 @@ it('builds a polled plug: a time-pattern trigger sets its power, its relay\'s tw
 /** The plug, saved at revision 1 and running: a secret password, and a relay and a power sensor, each an Entity node. */
 const plugBody = (): DefinitionBody => ({
   name: 'Plug',
-  device: { manufacturer: 'Acme', model: 'P1' },
   settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: 'stored-secret' }],
   logic: { kind: 'graph', graph: { version: 5, name: 'Plug', edges: [], nodes: [
     { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Relay' }, position: { x: 60, y: 100 } },
@@ -443,7 +442,7 @@ it('deletes a saved definition after a confirmation that says its entities leave
   const remove = button(inspector(root), 'Delete entity definition')
   remove.click()
   const dialog = document.querySelector<HTMLDialogElement>('dialog[open]')!
-  expect(dialog.textContent).toContain('Plug and its entities are removed from Home Assistant, with their device if it has one. This cannot be undone.')
+  expect(dialog.textContent).toContain('Plug and its entities are removed from Home Assistant, with their devices. This cannot be undone.')
   button(dialog, 'Delete').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities'))
   // The lists read again after it (Part of's among them).
@@ -535,14 +534,15 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
   const sheet = inspector(root)
   expect(sheet.dataset.open).toBe('false')
   expect(sheet.dataset.peek).toBe('true')
-  const peek = button(root, 'Edit Device and settings')
+  const peek = button(root, 'Edit Settings')
   // Its icon is the adapter's: an entity definition's.
   expect(peek.querySelector('.hs-insp-peek__icon')!.innerHTML).toContain(`d="${icons.entity[0]}"`)
   expect(peek.getAttribute('aria-expanded')).toBe('false')
   peek.click()
   await vi.waitFor(() => expect(sheet.dataset.open).toBe('true'))
   expect(sheet.dataset.peek).toBeUndefined()
-  expect(sheet.querySelector('section[aria-label="Device"]')).not.toBeNull()
+  expect(sheet.querySelector('section[aria-label="Settings"]')).not.toBeNull()
+  expect(sheet.querySelector('section[aria-label="Device"]')).toBeNull()
   expect(sheet.querySelector('[aria-label="Entities"]')).toBeNull()
   // Focus moves into the sheet; Close puts it back as its bar.
   await vi.waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true))
@@ -575,7 +575,7 @@ it('starts a new definition named from the address, with an Entity node, a binar
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   expect(nameInput(root).value).toBe('Hall motion')
   const graph = json(root)
-  expect(graph.definition).toEqual({ settings: [], device: null })
+  expect(graph.definition).toEqual({ settings: [] })
   expect(graph.nodes.map((n: any) => [n.kind, n.config.key, n.config.domain, n.config.name])).toEqual([['entity', 'hall_motion', 'binary_sensor', 'Hall motion']])
   expect(root.querySelector('section[aria-label="Entity definition editor"]')).not.toBeNull()
   expect(button(root, 'Back to entities')).toBeDefined()
@@ -605,10 +605,14 @@ it('starts a new definition named from the address, with an Entity node, a binar
     + 'A step that returns what it was given, such as a custom step or a service response, can still show it.')
   // The ten types, how a camera shows a frame, and what HTTP requests, downloads and restored state do.
   const help = document.querySelector('dialog[open]')!.textContent!
-  // Each entity is an Entity node, and the panel with no step selected has the device and the settings.
+  // Each entity is an Entity node, each device a Device node wired to its entities, and the panel with no step selected has the settings.
   expect(help).toContain('Each entity is an Entity node on the canvas: add one from the step library, and select it to edit its key, type and options in the panel on the right. '
-    + 'The definition\'s device and settings are in that panel when no step is selected; on a phone, tap "Device and settings" at the bottom.')
+    + 'To group entities as a device, add a Device node and connect its Entities pin to each entity\'s Device pin. '
+    + 'The definition\'s settings are in that panel when no step is selected; on a phone, tap "Settings" at the bottom.')
   expect(help).not.toContain('Entities, device and settings')
+  expect(help).not.toContain('Device and settings')
+  expect(help).toContain('The entities wired to a Device node share its device page, named as the node is; any other is an entity on its own.')
+  expect(help).not.toContain('named after the entity definition')
   // Which entities a state follows (Visual/StateDependencies.cs): those chosen in the steps it reads, not any value wired in.
   expect(help).toContain('An Entity node\'s inputs are its state: wire values into them, and the state is worked out again whenever an entity chosen in a step it reads, such as Has state or Current state, changes (not one read by a step such as Read entity).')
   expect(help).toContain('Each of its commands, such as Turn on, is an output: the steps connected to it run when Home Assistant asks the entity to do that')
@@ -645,10 +649,10 @@ const onDevice = { device: { kind: 'unset' } }
 /**
  * The device definition (`tests/Runtime/EntityGraphTests.cs`, A device definition groups its entities), its three
  * entities Entity nodes on the Device node plug: the power's and the online's state given on the node, the relay's two
- * commands each setting it. The definition sends no device of its own (null, as the page sends it).
+ * commands each setting it. The definition sends no device of its own: its device is its Device node.
  */
 const plugExample: DefinitionBody = {
-  name: 'Plug', device: null, settings: [],
+  name: 'Plug', settings: [],
   logic: { kind: 'graph', graph: { version: 5, name: 'Plug',
     nodes: [
       exampleNode('p', { key: 'power', domain: 'sensor', name: 'Power', deviceClass: 'power', options: { unit: 'W', stateClass: 'measurement' }, arguments: { value: { kind: 'literal', type: 'number', value: 42 }, ...onDevice } }),
@@ -790,23 +794,6 @@ it('gives a new definition the next free id when its id was taken elsewhere befo
   expect(document.querySelector('dialog[open]')).toBeNull()
   await vi.waitFor(() => expect(chipTip(root)).toBe('Saved revision 1'))
   expect(fixture.entities.documents.get('hall_motion')!.revision).toBe(1)
-})
-
-it('turns the device back on as it was, its parent too, after a step was selected in between', async () => {
-  const body = plugBody()
-  body.device = { manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } }
-  const { root } = await openPlug(fixture => fixture.entities.seed('plug', body))
-  // As read: the store answers every member of the device, those not set as null.
-  const before = json(root).definition.device
-  expect(before).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } })
-  control(inspector(root).querySelector('section[aria-label="Device"]')!, 'device').click()
-  expect(json(root).definition.device).toBeNull()
-  // A step selected (the form goes), then nothing (it is back).
-  press(root.querySelector('.solid-flow__node[data-id="relay"]')!)
-  await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
-  deselect(root)
-  control(inspector(root).querySelector('section[aria-label="Device"]')!, 'device').click()
-  expect(json(root).definition.device).toEqual(before)
 })
 
 /** The plug with three secrets saved: Password, Token and API key. */
@@ -1683,89 +1670,6 @@ it('describes the Trigger step for a definition in the step library and the insp
   expect(help).toContain('Part of')
 })
 
-// ---- Part of: the device a definition's device is connected through.
-const device = (id: string, name: string, area_id: string | null = null) => ({ id, name, area_id })
-/** The registry with a device for the plug's relay, and two Home Assistant devices, one of them in an area. */
-const devicesRegistry = () => ({
-  ...registry,
-  entities: [...registry.entities, { ...registryEntity('switch.plug_relay', 'Relay'), device_id: 'plug-device' as string | null }],
-  areas: [{ area_id: 'loft', name: 'Loft', floor_id: null }],
-  devices: [device('zigbee', 'Zigbee coordinator'), device('plug-device', 'Plug'), device('attic', 'Attic router', 'loft')],
-})
-const partOf = (root: Element) => control(root.querySelector('section[aria-label="Device"]')!, 'via') as HTMLSelectElement
-const shownChoices = (select: HTMLSelectElement) => [...select.options].map(o => o.textContent)
-
-it('makes the device part of another definition that is a device, or of a Home Assistant device, and shows it again when opened', async () => {
-  const seeds = (f: Fixture) => {
-    f.entities.seed('hub', { ...newGraphDefinition('Hub'), device: { manufacturer: 'Acme' } })
-    f.entities.seed('lonely', newGraphDefinition('Lonely sensor'))
-    f.entities.seed('bridge', { ...newGraphDefinition('Bridge'), device: {} })
-  }
-  const { root, fixture } = await openPlug(seeds, undefined, devicesRegistry())
-  await vi.waitFor(() => expect(shownChoices(partOf(root))).toEqual(['Nothing', 'Bridge', 'Hub', 'A Home Assistant device…']))
-  expect(partOf(root).value).toBe('')
-  choose(partOf(root), 'definition:hub')
-  expect(json(root).definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub' } })
-  expect(json(root).definition.device.via).toEqual({ definition: 'hub' })
-  // A device definition saved since the list was read (well within its 30 s) is offered once a save makes the lists stale.
-  fixture.entities.seed('router', { ...newGraphDefinition('Router'), device: {} })
-  button(root, 'Save').click()
-  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub' } }))
-  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
-  await vi.waitFor(() => expect(shownChoices(partOf(root))).toEqual(['Nothing', 'Bridge', 'Hub', 'Router', 'A Home Assistant device…']))
-  dispose!(); document.body.innerHTML = ''
-  const again = await openPlug(undefined, fixture, devicesRegistry())
-  await vi.waitFor(() => expect(partOf(again.root).value).toBe('definition:hub'))
-  expect(partOf(again.root).selectedOptions[0].textContent).toBe('Hub')
-  // A Home Assistant device: the device picker, by name, without the plug's own device. Until one is picked the
-  // device is still part of Hub, and the form says so; the focus stays on Part of, and Tab goes on to the picker.
-  partOf(again.root).focus()
-  choose(partOf(again.root), 'device')
-  const picker = () => again.root.querySelector<HTMLInputElement>('section[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
-  await vi.waitFor(() => expect(picker()).not.toBeNull())
-  expect(document.activeElement).toBe(partOf(again.root))
-  const focusable = [...again.root.querySelectorAll<HTMLElement>('section[aria-label="Device"] :is(input, select, textarea, button)')]
-  expect(focusable[focusable.indexOf(partOf(again.root)) + 1]).toBe(picker())
-  expect(json(again.root).definition.device.via).toEqual({ definition: 'hub' })
-  expect(again.root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
-  picker().click()
-  const options = () => [...again.root.querySelectorAll<HTMLElement>('section[aria-label="Device"] [role="option"]')]
-  expect(options().map(o => o.querySelector('span')!.textContent)).toEqual(['Attic router', 'Zigbee coordinator'])
-  // Each with its area, as the device picker of a step shows it.
-  expect(options().map(o => o.querySelector('small')?.textContent ?? null)).toEqual(['Loft', null])
-  options()[1].click()
-  expect(json(again.root).definition.device.via).toEqual({ deviceId: 'zigbee' })
-  expect(partOf(again.root).value).toBe('device')
-  expect(again.root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')).toBeNull()
-  button(again.root, 'Save').click()
-  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device.via).toEqual({ deviceId: 'zigbee' }))
-  await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
-  dispose!(); document.body.innerHTML = ''
-  const third = await openPlug(undefined, fixture, devicesRegistry())
-  await vi.waitFor(() => expect(partOf(third.root).value).toBe('device'))
-  await vi.waitFor(() => expect(third.root.querySelector<HTMLInputElement>('section[aria-label="Device"] input[aria-label="Home Assistant device"]')!.value).toBe('Zigbee coordinator'))
-  // Nothing: the device is part of nothing, the other details as they were.
-  choose(partOf(third.root), '')
-  expect(json(third.root).definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1' })
-  expect(json(third.root).definition.device).not.toHaveProperty('via')
-  expect(third.root.querySelector('section[aria-label="Device"] input[aria-label="Home Assistant device"]')).toBeNull()
-  expectClean(third.root)
-})
-
-it('shows a parent definition that no longer exists as such, which can be cleared', async () => {
-  const body = plugBody()
-  body.device = { manufacturer: 'Acme', via: { definition: 'gone', deviceId: null } }
-  const { root } = await openPlug(f => f.entities.seed('plug', body), undefined, devicesRegistry())
-  await vi.waitFor(() => expect(partOf(root).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
-  expect(partOf(root).value).toBe('definition:gone')
-  choose(partOf(root), '')
-  expect(json(root).definition.device).toMatchObject({ manufacturer: 'Acme' })
-  expect(json(root).definition.device).not.toHaveProperty('via')
-  expect(shownChoices(partOf(root))).toEqual(['Nothing', 'A Home Assistant device…'])
-  undo(root)
-  expect(json(root).definition.device.via).toEqual({ definition: 'gone', deviceId: null })
-})
-
 it('stops reading a definition that does not start, then says it is not running, and a save reads it again', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   const { root, fixture } = await openPlug(f => { f.entities.controls.activation = 'setup'; f.entities.seed('plug', pollingPlug()) })
@@ -1831,23 +1735,6 @@ it('reads the definition again when it was switched elsewhere, so its switch say
   await vi.advanceTimersByTimeAsync(2000)
   await vi.waitFor(() => expect(page.root.querySelector('.hs-save-chip')!.getAttribute('title')).toBe('Saved revision 2'))
   expect(page.root.querySelector<HTMLInputElement>('input[aria-label="Plug on"]')!.checked).toBe(true)
-})
-
-it("names a parent as it is called, until a device is picked, and a parent that is gone as such", async () => {
-  const pending = (root: Element) => root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')?.textContent
-  const body = plugBody()
-  body.device = { via: { definition: 'room' } }
-  const { root } = await openPlug(f => { f.entities.seed('room', { ...newGraphDefinition('A Room Hub'), device: {} }); f.entities.seed('plug', body) }, undefined, devicesRegistry())
-  await vi.waitFor(() => expect(partOf(root).selectedOptions[0]?.textContent).toBe('A Room Hub'))
-  choose(partOf(root), 'device')
-  await vi.waitFor(() => expect(pending(root)).toBe('Still part of A Room Hub until you pick a device.'))
-  dispose!(); document.body.innerHTML = ''
-  const gone = plugBody()
-  gone.device = { via: { definition: 'gone' } }
-  const again = await openPlug(f => f.entities.seed('plug', gone), undefined, devicesRegistry())
-  await vi.waitFor(() => expect(partOf(again.root).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
-  choose(partOf(again.root), 'device')
-  await vi.waitFor(() => expect(pending(again.root)).toBe('Still part of a definition that no longer exists until you pick a device.'))
 })
 
 it('reads a definition again each time it is switched on, after an earlier switch used up its reads', async () => {

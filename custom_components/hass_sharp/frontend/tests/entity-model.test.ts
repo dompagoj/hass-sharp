@@ -16,7 +16,7 @@ const withoutDefinition = ({ definition: _definition, ...graph }: any) => graph 
 /** The derived motion sensor: the shared fixture's graph, whose Entity node `s` declares it, so the body lists no entity. */
 const motion = (): DefinitionBody => {
   const graph = fixtureGraph('entity graph: derived binary sensor')
-  return { name: graph.name, device: null, settings: [], logic: { kind: 'graph', graph: withoutDefinition(graph) } }
+  return { name: graph.name, settings: [], logic: { kind: 'graph', graph: withoutDefinition(graph) } }
 }
 /** The plug's three Entity nodes (its power reading set by a typed value) and Turn on of the relay → Set state. */
 const plugGraph = (): Graph => ({
@@ -29,10 +29,9 @@ const plugGraph = (): Graph => ({
   ],
   edges: [{ id: 'relay:command:turn_on->set_on', source: 'relay', target: 'set_on', port: 'command:turn_on' }],
 })
-/** The plug device, as the panel sends it: a device, settings of every kind (a secret typed in), three Entity nodes. */
+/** The plug, as the panel sends it: settings of every kind (a secret typed in) and three Entity nodes. */
 const plug = (): DefinitionBody => ({
   name: 'Plug',
-  device: { manufacturer: 'Acme', model: 'P1', swVersion: null, hwVersion: null, configurationUrl: null, suggestedArea: 'Kitchen', via: null },
   settings: [
     { key: 'offset', value: 4, label: 'Offset', type: 'number' },
     { key: 'name', value: '', type: 'string' },
@@ -53,17 +52,17 @@ describe('editor graph', () => {
     for (const body of [motion(), plug()]) {
       const graph = editorGraph(body)
       expect(graph.name).toBe(body.name)
-      // Its entities are its Entity nodes: the definition carries its settings and device only.
-      expect(graph.definition).toEqual({ settings: body.settings, device: body.device })
+      // Its entities are its Entity nodes and its devices its Device nodes: the definition carries its settings only.
+      expect(graph.definition).toEqual({ settings: body.settings })
       expect(definitionBody(graph)).toEqual(body)
     }
   })
   it('the body sent to the server has no entities, and the editor ignores the answer\'s', () => {
     const graph = editorGraph(newGraphDefinition('Front door'))
     expect(definitionBody(graph)).not.toHaveProperty('entities')
-    expect(graph.definition).toEqual({ settings: [], device: null })
+    expect(graph.definition).toEqual({ settings: [] })
     const answered = { ...definitionBody(graph), entities: [{ key: 'front_door', domain: 'binary_sensor' }] }
-    expect(editorGraph(answered as never).definition).toEqual({ settings: [], device: null })
+    expect(editorGraph(answered as never).definition).toEqual({ settings: [] })
     // Nor does any other definition send one, whatever its read answer listed.
     for (const body of [motion(), plug()]) {
       expect(definitionBody(editorGraph(body))).not.toHaveProperty('entities')
@@ -77,7 +76,7 @@ describe('editor graph', () => {
         entities: [{ key: 'door', domain: 'binary_sensor', name: 'Door', device: 'plug' }],
       }
       const graph = editorGraph(answered as never)
-      expect(graph.definition).toEqual({ settings: body.settings, device: body.device })
+      expect(graph.definition).toEqual({ settings: body.settings })
       expect(graph).not.toHaveProperty('devices')
       expect(graph.nodes).toEqual(body.logic.kind === 'graph' ? body.logic.graph.nodes : [])
       const sent = definitionBody(graph)
@@ -86,13 +85,18 @@ describe('editor graph', () => {
       expect(sent).toEqual(body)
     }
   })
-  it('keeps a stored via untouched', () => {
-    const body = plug()
-    body.device = { ...body.device!, via: { definition: 'hub', deviceId: null } }
-    expect(definitionBody(editorGraph(body))).toEqual(body)
-    const external = plug()
-    external.device = { manufacturer: 'Acme', via: { definition: null, deviceId: 'f00d' } }
-    expect(definitionBody(editorGraph(external)).device).toEqual({ manufacturer: 'Acme', via: { definition: null, deviceId: 'f00d' } })
+  it('a new definition has no device, and the body sent has none: its devices are its Device nodes', () => {
+    const fresh = newGraphDefinition('Front door')
+    expect(fresh).not.toHaveProperty('device')
+    expect(editorGraph(fresh).definition).toEqual({ settings: [] })
+    expect(definitionBody(editorGraph(fresh))).not.toHaveProperty('device')
+    // A read answer's device of null, or one an earlier build stored, is not carried along.
+    for (const device of [null, { manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } }]) {
+      const graph = editorGraph({ ...plug(), device } as never)
+      expect(graph.definition).toEqual({ settings: plug().settings })
+      expect(definitionBody(graph)).not.toHaveProperty('device')
+      expect(definitionBody(graph)).toEqual(plug())
+    }
   })
   it('never sends the definition inside the logic graph', () => {
     const body = definitionBody(editorGraph(plug()))
@@ -127,10 +131,9 @@ describe('editor graph', () => {
     expect(() => definitionBody(plugGraph())).toThrow(/definition/)
   })
 
-  // Decision 1: the device sits in graph.definition.device; the validator reads the settings, and of the device
-  // only whether there is one (its entities then need no names), so a fixture's device is given with every member, and
-  // none is given for a fixture without one (whose entities then need names: the `entity.name` cases).
-  describe('validates as the shared fixture expects, with every member of the definition in it and the device when the fixture has one', () => {
+  // The validator reads the definition's settings; its devices are its Device nodes, and an entity needs no name only
+  // when one is wired to it.
+  describe('validates as the shared fixture expects, with every member of the definition in it', () => {
     function patched(patch: Record<string, unknown>): contract.VisualCatalogSnapshot {
       const merge = (target: Record<string, unknown>, source: Record<string, unknown>) => {
         for (const [key, value] of Object.entries(source)) {
@@ -152,7 +155,6 @@ describe('editor graph', () => {
       const graph = structuredClone(fixture.graph)
       const body: DefinitionBody = {
         name: graph.name,
-        device: graph.definition.device && typeof graph.definition.device === 'object' ? { manufacturer: 'Acme', model: 'P1', swVersion: '1.2', hwVersion: null, configurationUrl: 'http://10.0.0.5', suggestedArea: 'Kitchen', via: { definition: 'hub', deviceId: null } } : null,
         settings: graph.definition.settings.map((s: any, i: number) => i % 2
           ? { ...s, value: null, label: `Setting ${s.key}`, secret: true, hasValue: true }
           : { ...s, value: s.type === 'number' ? 4 : s.type === 'boolean' ? true : 'text', label: `Setting ${s.key}` }),
@@ -221,7 +223,7 @@ describe('secret settings', () => {
 describe('a new graph definition', () => {
   it('has one Entity node, a binary sensor named after it, and no device, settings or other step', () => {
     expect(newGraphDefinition('Any motion')).toEqual({
-      name: 'Any motion', device: null, settings: [],
+      name: 'Any motion', settings: [],
       logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [], nodes: [{
         id: 'entity-1', kind: 'entity', position: { x: 60, y: 100 },
         config: { key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {}, history: {}, arguments: {} },

@@ -156,7 +156,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # A model sends a Custom C# node's code; preview and save work its pins out from it.
         self.assertFalse((await self.call('preview',{'graph':graph})).error)
         self.service.visual.assert_awaited_with({'operation':'preview','graph':graph,'deriveSignatures':True},is_admin=True)
-        await self.call('save',{'id':'x','expectedRevision':0,'graph':graph})
+        # A save answers as the server's save does (the setUp's answer is a list's), so its document is read without an error.
+        self.service.visual.return_value={'version':1,'ok':True,'result':{'id':'x','saved':True,'document':{'id':'x','revision':1,'graph':graph},'active':True,'activationError':None}}
+        self.assertFalse((await self.call('save',{'id':'x','expectedRevision':0,'graph':graph})).error)
         self.service.visual.assert_awaited_with({'operation':'save','id':'x','expectedRevision':0,'graph':graph,'deriveSignatures':True},is_admin=True)
         # Removed features (usings, helper members, variables, exposed values) reach the backend validator, whose answer
         # says what to do instead; the tool schema does not refuse them first.
@@ -497,7 +499,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             {'id':'relay','kind':'entity','config':{'key':'relay','domain':'switch','name':'Relay'},'size':{'width':220,'height':112}},
             {'id':'power','kind':'entity','config':{'key':'power','domain':'sensor','name':'Power'}},
             {'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'x'*5000}}}],'edges':[]}
-        return {'version':3,'id':'porch','revision':4,'name':'Porch plug','device':{'model':'Plug'},
+        return {'version':3,'id':'porch','revision':4,'name':'Porch plug','device':None,
                 'settings':[{'key':'address','label':'Address','type':'string','value':'http://plug'},{'key':'token','label':'Token','type':'string','value':None,'secret':True,'hasValue':True}],
                 'entities':[{'key':'relay','domain':'switch','name':'Relay','device':None},{'key':'power','domain':'sensor','name':'Power','device':None}],
                 'devices':[],
@@ -587,19 +589,17 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             activationError='Setup failed: no address',logic={'kind':'class','type':'library:plug:NodeLib.SmartPlug','graph':None},
             registeredEntities=[{'uniqueId':'plug:relay','entityId':'switch.relay','domain':'switch','name':'Relay','disabled':False}])
         setup=self.entity_document(id='slow',status='setup',registeredEntities=[])
-        # A class's kind comes from the types answer: entities_list asks for it beside list when it lists a class.
-        types_answer={'version':1,'ok':True,'result':{'types':[{'id':'library:plug:NodeLib.SmartPlug','kind':'entity','domain':'switch'}],'generation':'g'}}
-        async def entities(request,is_admin):
-            return types_answer if request['operation']=='types' else {'version':1,'ok':True,'result':[document,klass,setup]}
-        self.service.entities=AsyncMock(side_effect=entities)
+        # The list answers how many devices each definition makes (EntityApi's DeviceCount), which the summary passes on.
+        document['devices'],klass['devices'],setup['devices']=1,0,0
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[document,klass,setup]})
         result=(await self.call('entities_list',{})).data['result']
-        self.assertEqual([c.args[0] for c in self.service.entities.await_args_list],[{'operation':'list'},{'operation':'types'}])
+        self.assertEqual([c.args[0] for c in self.service.entities.await_args_list],[{'operation':'list'}])
         trigger={'triggerId':'poll','label':'Every minute','type':'ha','config':{'type':'ha','trigger':{'trigger':'time_pattern','minutes':'/1'}},'manual':True}
-        self.assertEqual(result[0],{'id':'porch','name':'Porch plug','revision':4,'enabled':True,'status':'running','activationError':None,'logic':'graph','device':True,
+        self.assertEqual(result[0],{'id':'porch','name':'Porch plug','revision':4,'enabled':True,'status':'running','activationError':None,'logic':'graph','devices':1,
             'entities':[{'key':'relay','domain':'switch','name':'Relay','entityId':'switch.porch_plug_relay'},{'key':'power','domain':'sensor','name':'Power','entityId':None}],
             'triggers':[{**trigger,'runnable':True}]})
         self.assertEqual(result[1],{'id':'plug','name':'Smart plug','revision':4,'enabled':True,'status':'failed','activationError':'Setup failed: no address',
-            'logic':'library:plug:NodeLib.SmartPlug','device':False,'entities':[{'key':'relay','domain':'switch','name':'Relay','entityId':'switch.relay'}],'triggers':[]})
+            'logic':'library:plug:NodeLib.SmartPlug','devices':0,'entities':[{'key':'relay','domain':'switch','name':'Relay','entityId':'switch.relay'}],'triggers':[]})
         # A Trigger is runnable only while its definition runs.
         self.assertEqual(result[2]['triggers'],[{**trigger,'runnable':False}])
         text=json.dumps(result)
@@ -618,52 +618,30 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([d['id'] for d in listed['result']],['motion'])
         description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
         self.assertIn('unreadable [{id, reason, deletable}]',description)
-        self.assertIn("removed by hand from Home Assistant's .storage/hass_sharp folder",description)
+        self.assertIn("removed by hand from Home Assistant's .storage/hass_sharp/entities folder",description)
         self.assertIn('entities_delete with expectedRevision 0',description)
 
-    async def test_entities_list_says_whether_a_definition_makes_a_device(self):
-        # As the panel's device form has it: the document gives device details, or its class is a SharpDevice.
+    async def test_entities_list_says_how_many_devices_a_definition_makes(self):
+        # The server counts them (a graph's Device nodes; a class's 1 when it gives device details or its class is a
+        # SharpDevice): the summary passes the count on, with no request of its own, and no device of the definition's.
         device_class={'kind':'class','type':'library:example_plug:NodeLib.SmartPlug','graph':None}
-        entity_class={'kind':'class','type':'library:example_plug:NodeLib.Lamp','graph':None}
-        gone_class={'kind':'class','type':'library:old:NodeLib.Gone','graph':None}
-        documents=[self.entity_document(id='plug',device=None,entities=[],logic=device_class),
-                   self.entity_document(id='lamp',device=None,entities=[],logic=entity_class),
-                   self.entity_document(id='grouped_lamp',device={'model':'Lamp'},entities=[],logic=entity_class),
-                   self.entity_document(id='porch'),
-                   self.entity_document(id='motion',device=None),
-                   self.entity_document(id='gone',device=None,entities=[],logic=gone_class),
-                   self.entity_document(id='gone_grouped',device={'model':'Old'},entities=[],logic=gone_class)]
-        types_answer={'version':1,'ok':True,'result':{'generation':'g','types':[
-            {'id':'library:example_plug:NodeLib.SmartPlug','kind':'device','domain':None},{'id':'library:example_plug:NodeLib.Lamp','kind':'entity','domain':'light'}]}}
-        async def entities(request,is_admin):
-            return types_answer if request['operation']=='types' else {'version':1,'ok':True,'result':documents}
-        self.service.entities=AsyncMock(side_effect=entities)
+        documents=[self.entity_document(id='hall',devices=2),self.entity_document(id='motion',devices=0),
+                   self.entity_document(id='plug',entities=[],logic=device_class,devices=1),
+                   self.entity_document(id='lamp',device={'model':'Lamp'},entities=[],logic=device_class,devices=1)]
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':documents})
         result=(await self.call('entities_list',{})).data['result']
-        self.assertEqual({d['id']:d['device'] for d in result},
-                         {'plug':True,'lamp':False,'grouped_lamp':True,'porch':True,'motion':False,'gone':False,'gone_grouped':True})
-        # Graph definitions alone need no types request; a types request that fails leaves each class to its details.
-        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(id='motion',device=None)]})
-        self.assertFalse((await self.call('entities_list',{})).data['result'][0]['device'])
+        self.assertEqual({d['id']:d['devices'] for d in result},{'hall':2,'motion':0,'plug':1,'lamp':1})
+        self.assertFalse([d for d in result if 'device' in d])
         self.service.entities.assert_awaited_once_with({'operation':'list'},is_admin=True)
-        async def broken(request,is_admin):
-            if request['operation']=='types': return {'version':1,'ok':False,'error':{'code':'storage','detail':'x'}}
-            return {'version':1,'ok':True,'result':documents[:1]}
-        self.service.entities=AsyncMock(side_effect=broken)
-        listed=(await self.call('entities_list',{})).data
-        self.assertTrue(listed['ok']); self.assertFalse(listed['result'][0]['device'])
+        # A list of devices (as a read answer has a graph's) counts as many; none at all is 0.
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(devices=[{'key':'a'},{'key':'b'}]),
+                                                                                      {**self.entity_document(id='bare'),'devices':None}]})
+        self.assertEqual([d['devices'] for d in (await self.call('entities_list',{})).data['result']],[2,0])
         description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
-        self.assertIn('SharpDevice',description)
-        # A types request that raises is a failed one too: the list is answered, and one warning says why, quoting no setting.
-        async def raising(request,is_admin):
-            # Its message holds a setting's value, so that the warning is seen to name the failure's type only.
-            if request['operation']=='types': raise RuntimeError('http://plug')
-            return {'version':1,'ok':True,'result':documents[:1]}
-        self.service.entities=AsyncMock(side_effect=raising)
-        with self.assertLogs('custom_components.HassSharp',level='WARNING') as logged:
-            listed=(await self.call('entities_list',{})).data
-        self.assertTrue(listed['ok'],listed); self.assertFalse(listed['result'][0]['device'])
-        self.assertEqual(len(logged.records),1)
-        self.assertIn('types',logged.output[0]); self.assertNotIn('http://plug',logged.output[0])
+        self.assertIn('devices (how many Home Assistant devices it makes: for a graph definition, its Device nodes',description)
+        self.assertIn('1 when it gives device details or its class derives from SharpDevice, else 0',description)
+        self.assertNotIn('device (for a class definition',description)
+        self.assertFalse(hasattr(self.adapter,'class_kinds'))
 
     async def test_entities_read_and_save_answer_documents_without_node_sizes_or_secret_values(self):
         document=self.entity_document()
@@ -783,6 +761,32 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('{name, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
         self.assertIn('The definition you send is {name, settings?, logic}',self.adapter.SEMANTICS['definitions'])
 
+    async def test_a_graph_definition_that_sends_a_device_gets_the_servers_sentence(self):
+        # A graph's devices are its Device nodes: a graph definition sent with a device still reaches the server, whose
+        # refusal says so in words, rather than a schema error about the key. null, as a read answer has it, is no device.
+        sentence="Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin"
+        refused={'version':1,'ok':False,'error':{'code':'validation','detail':{'valid':False,'source':'','diagnostics':[
+            {'severity':3,'code':'definition.deviceNotAllowed','nodeId':None,'inputId':'device','message':sentence}]}}}
+        for device in ({},{'model':'Plug','via':{'definition':'hub'}}):
+            for name,args in (('entities_preview',{}),('entities_save',{'id':'porch','expectedRevision':0})):
+                with self.subTest(name=name,device=device):
+                    self.service.entities.reset_mock()
+                    self.service.entities.return_value=refused
+                    definition={**self.DEFINITION,'device':device}
+                    result=await self.call(name,{**args,'definition':definition})
+                    self.assertTrue(result.error)
+                    self.assertEqual(result.data['error']['detail']['diagnostics'][0]['message'],sentence)
+                    self.assertEqual(self.service.entities.await_args.args[0]['definition'],definition)
+        self.service.entities.reset_mock()
+        self.service.entities.return_value={'version':1,'ok':True,'result':{'valid':True,'diagnostics':[]}}
+        self.assertFalse((await self.call('entities_preview',{'definition':{**self.DEFINITION,'device':None}})).error)
+        # device is a class definition's only: the definition's own parts leave it out, a graph never holds it, and a
+        # document with it at its top is still taken for a definition.
+        self.assertNotIn('device',self.adapter.DEFINITION_PARTS)
+        self.assertIn('device',self.adapter.DEFINITION_MARKERS)
+        self.assertIn('device',self.adapter.GRAPH_MISPLACED)
+        self.assertIn('as is one sent with a device that is not null (definition.deviceNotAllowed',self.adapter.SEMANTICS['definitions'])
+
     async def test_a_definition_sent_back_with_its_devices_reaches_the_server(self):
         # A read answer lists the devices its Device nodes declare, and each entity's device: a definition sent back with
         # them is no schema error. They reach the server as sent, which ignores them (a graph's devices are its Device
@@ -896,8 +900,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_preview',{'definition':{'name':'Motion','entities':entities,'logic':{'kind':'graph','graph':{**self.GRAPH,'entities':entities,'settings':address}}}},
              ['remove entities, which an entities_read answer adds; entities_preview takes only the definition','remove its entities and settings','Put its settings at the top of the definition'],
              ['Put its entities','from entities_read','http://plug']),
-            # The top's device is null (none), so the graph's goes there.
-            ('entities_save',save(in_logic({**self.GRAPH,'device':{}})),['remove its device','Put its device at the top of the definition'],['entities_read']),
+            # A device in the graph is removed, and said to be a Device node: never moved to the top, where only a class's goes.
+            ('entities_save',save(in_logic({**self.GRAPH,'device':{}})),
+             ["remove its device, and add a Device node for each device instead, connecting its Entities pin to each entity's Device pin"],['Put its','entities_read']),
             ('entities_save',save(in_logic({**self.GRAPH,'logic':{}})),['remove its logic'],['entities_read','at the top']),
             # 7. Rows 3 and 4 together: both sentences, in that order.
             ('entities_save',save({'name':'Porch','graph':automation,'id':'porch','revision':3}),['the graph goes inside logic','remove id, revision'],['for an automation']),
@@ -997,7 +1002,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 automation_like=not marked and (flat or isinstance(d.get('graph'),dict) and 'name' not in d),
                 definition_like='definition' not in d and any(k in d for k in ('entities','settings','device','logic')),
                 stored=[k for k in self.adapter.STORED_DOCUMENT_KEYS if k in d and not (k=='version' and flat)],
-                movable=[k for k in ('settings','device') if any(k in g for g in graphs) and d.get(k) in (None,[])],
+                movable=[k for k in ('settings',) if any(k in g for g in graphs) and d.get(k) in (None,[])],
                 loose_graph=('graph' in d or flat) and not (isinstance(logic,dict) and logic.get('graph') is not None),
                 clean_entity=not inner and 'definition' not in d and 'graph' not in d and not flat and not (isinstance(logic,dict) and logic.get('kind') not in ('graph','class')))
         order=('takes a','In a definition,','Send as definition only','holds only version, name, nodes and edges','Put its','copied from','logic.kind is')
@@ -1030,8 +1035,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 and 'holds only version, name, nodes and edges' in hint and 'remove its definition' in hint,
                 # 5. entities_read as where entities and settings come from: only for a trace graph.
                 not from_read or traced,
-                # 6. "at the top of the definition": every setting or device the graphs have that the top has not (null and [] hold
-                # nothing), and only those.
+                # 6. "at the top of the definition": every setting the graphs have that the top has not (null and [] hold nothing),
+                # and only those; a device is never moved there.
                 sorted(moved)==sorted(f.movable if analysed and not traced else []) and len(moved)==len(set(moved)),
                 # 7. A stored document: the keys to remove, and, to a save, that id, expectedRevision and enabled are arguments of
                 # their own; a preview takes none of them, so it is told that it takes only the definition.
@@ -1058,7 +1063,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 all(('add an Entity node for each entity instead' in s)==bool(re.search(r'remove its (\w+ and )*entities',s)) for s in sentences)
                 and 'entities' not in moved,
                 # 14. A list of entities at the top of a definition: removed, and said to be Entity nodes.
-                ("a graph definition's entities are its Entity nodes" in hint)==bool(analysed and 'entities' in f.stored)]
+                ("a graph definition's entities are its Entity nodes" in hint)==bool(analysed and 'entities' in f.stored),
+                # 15. A device written into a graph is removed, and said to be a Device node instead; never moved.
+                all(('add a Device node for each device instead' in s)==bool(re.search(r'remove its (\w+ and )*device\b',s)) for s in sentences)
+                and 'device' not in moved]
             return [number for number,kept in enumerate(rules,1) if not kept]
         failures,per_rule,checked=[],{},0
         for document in documents():

@@ -7,7 +7,7 @@ namespace HassSharp;
 
 /// <summary>What a definition previews to: whether it can be saved, its problems, the source it generates and its class.</summary>
 /// <param name="Valid">True when no diagnostic is an error.</param>
-/// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input; for an Entity node's option, that node and <c>option:&lt;option&gt;</c> as its input; for a graph request that lists entities, <c>entities</c> as its input.</param>
+/// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input; for an Entity node's option, that node and <c>option:&lt;option&gt;</c> as its input; for a graph request that lists entities, <c>entities</c> as its input, and for one that gives a device, <c>device</c>.</param>
 /// <param name="Source">The generated source; empty when the definition is not valid.</param>
 /// <param name="Type">The class it creates; null when the type is not one the libraries declare, and for graph logic.</param>
 public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagnostics, string Source, EntityTypeDescriptor? Type)
@@ -18,8 +18,9 @@ public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagno
     /// </summary>
     public List<VisualSourceMap> SourceMap { get; init; } = [];
     /// <summary>
-    /// For a graph, the graph as previewed, with its definition (its settings, and whether it has a device) composed into
-    /// it (<see cref="DefinitionGraph.Compose"/>); its entities are its Entity nodes. Null for a class, or a document with problems.
+    /// For a graph, the graph as previewed, with its definition (its settings) composed into it
+    /// (<see cref="DefinitionGraph.Compose"/>); its entities are its Entity nodes and its devices its Device nodes. Null
+    /// for a class, or a document with problems.
     /// </summary>
     [JsonIgnore] public JsonObject? Graph { get; init; }
     /// <summary>For a valid graph, the pruned catalog its source embeds (the run snapshot's catalog); null otherwise.</summary>
@@ -53,11 +54,18 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         if (kind is not ("class" or "graph")) Error("definition.logic", "Logic is a graph or a class");
         // For a class an empty array is the same as none: a client may always send the field. A graph's entities are its
         // Entity nodes: a request that lists them at all, even as an empty list, is told so, with nothing else of it
-        // checked (its name aside), since what else is wrong is likely the list form's.
+        // checked (its name aside), since what else is wrong is likely the list form's. Its devices are its Device nodes:
+        // a request that gives one of its own, even an empty one, is told so alike (null is none, as a read answer has
+        // it); one that lists entities as well is told of those alone.
         if (kind == "class" && body.Entities is { Count: > 0 }) Error("definition.entitiesNotAllowed", "A class definition's entities come from its code");
         if (kind == "graph" && body.Entities != null)
         {
             Error("definition.entitiesNotAllowed", "Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each", "entities");
+            return new(false, errors, "", null);
+        }
+        if (kind == "graph" && body.Device != null)
+        {
+            Error("definition.deviceNotAllowed", "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", "device");
             return new(false, errors, "", null);
         }
         if (kind == "graph") DefinitionDocument.Check(body, snapshot.Root, Error);

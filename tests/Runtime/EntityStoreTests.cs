@@ -117,7 +117,11 @@ static class EntityStoreTests
             (nameof(OptionProblemsNameTheirOption), () => OptionProblemsNameTheirOption(snapshot)),
             (nameof(ANodesOptionProblemIsOnItsNode), () => ANodesOptionProblemIsOnItsNode(snapshot)),
             (nameof(AnEntityNodesFieldsAreOfTheirType), () => AnEntityNodesFieldsAreOfTheirType(snapshot)),
-            (nameof(ADeviceMarksTheGraph), ADeviceMarksTheGraph),
+            (nameof(ComposeGivesNoDeviceMarker), ComposeGivesNoDeviceMarker),
+            (nameof(AGraphRequestWithADeviceIsRefused), () => AGraphRequestWithADeviceIsRefused(snapshot)),
+            (nameof(AClassRequestKeepsItsDevice), () => AClassRequestKeepsItsDevice(snapshot)),
+            (nameof(AGraphDocumentsStoredDeviceIsNotRead), () => AGraphDocumentsStoredDeviceIsNotRead(snapshot)),
+            (nameof(TheListCountsADefinitionsDevices), () => TheListCountsADefinitionsDevices(snapshot)),
             (nameof(ValidDocumentsAreValidDefinitions), () => ValidDocumentsAreValidDefinitions(snapshot)),
             (nameof(RemovingAnEntityStillNamedByANodeIsRefused), () => RemovingAnEntityStillNamedByANodeIsRefused(snapshot)),
             (nameof(PreviewReturnsTheGraphsWarnings), () => PreviewReturnsTheGraphsWarnings(snapshot)),
@@ -370,7 +374,7 @@ static class EntityStoreTests
         }
     }
 
-    /// <summary>The composed definition is the settings (and a device marker): its entities are the graph's Entity nodes.</summary>
+    /// <summary>The composed definition is the settings: its entities are the graph's Entity nodes.</summary>
     static void ComposeGivesNoEntities()
     {
         var composed = DefinitionGraph.Compose(GraphBody(MotionGraph(), null, [Typed("host", "string")]));
@@ -570,7 +574,7 @@ static class EntityStoreTests
         Only(Settings([Typed("offset", "number"), Typed("", "number")]), "definition.settingKey", null);
         Only(Settings([Typed("offset", "number"), Typed(" ", "number")]), "definition.settingKey", null);
         Only(Settings([Typed("offset", "number"), null!]), "definition.settingKey", null);
-        Check(!generator.Preview(Body(kind: "graph", type: null), snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
+        Check(!generator.Preview(Body(kind: "graph", type: null) with { Device = null }, snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
         Console.WriteLine("PASS entity store: each problem of a graph definition's document gives its code, at the Entity node option or setting it names");
 
         // The document's problems come first: the graph is not checked against a definition that would only repeat them.
@@ -659,19 +663,126 @@ static class EntityStoreTests
         Console.WriteLine("PASS entity store: a problem with an Entity node's option is on its node, reported with the graph's own");
     }
 
-    /// <summary>The graph composed for a definition with a device marks it with an empty <c>device</c>, so that its entities need no names of their own.</summary>
-    static void ADeviceMarksTheGraph()
+    internal const string DeviceNotAllowed = "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin";
+
+    /// <summary>
+    /// The graph composed for a definition is its settings alone, with or without a device: no marker names its entities,
+    /// whose names depend on the wire into their Device pin alone.
+    /// </summary>
+    static void ComposeGivesNoDeviceMarker()
     {
-        var body = GraphBody(MotionGraph(), null);
-        Check(DefinitionGraph.Compose(body)["definition"] is JsonObject without && !without.ContainsKey("device"), "without a device, the definition has no device key");
-        var device = body with { Device = new DefinitionDevice("Acme", "Motion", null, null, null, null, null) };
-        Check(DefinitionGraph.Compose(device)["definition"]?["device"] is JsonObject { Count: 0 }, "with one, its device is an empty object: " + DefinitionGraph.Compose(device)["definition"]?.ToJsonString());
-        var nameless = new JsonObject { ["id"] = "door", ["kind"] = "entity", ["config"] = new JsonObject { ["key"] = "door", ["domain"] = "binary_sensor", ["name"] = "" } };
-        var generator = new DefinitionGenerator();
-        Check(generator.Preview(GraphBody(Graph("Door", [nameless]), null), VisualCatalogSnapshot.BuiltIn).Diagnostics.Any(d => d is { Code: "entity.name", NodeId: "door", InputId: "name" }), "an entity of no device needs a name");
-        Check(generator.Preview(GraphBody(Graph("Door", [(JsonObject)nameless.DeepClone()]), null) with { Device = new DefinitionDevice(null, null, null, null, null, null, null) }, VisualCatalogSnapshot.BuiltIn)
-            is { Valid: true } valid && !valid.Diagnostics.Any(d => d.Code == "entity.name"), "an entity of a device needs none");
-        Console.WriteLine("PASS entity store: a definition's device is marked on its composed graph, and an entity of one needs no name");
+        var body = GraphBody(MotionGraph(), null, [Typed("host", "string")]);
+        foreach (var (what, given) in new[] { ("without a device", body), ("with one", body with { Device = new DefinitionDevice("Acme", "Motion", null, null, null, null, null) }) })
+            Check(DefinitionGraph.Compose(given)["definition"] is JsonObject definition && definition.Select(m => m.Key).SequenceEqual(["settings"]),
+                $"{what}, the definition has settings only: " + DefinitionGraph.Compose(given)["definition"]?.ToJsonString());
+        Console.WriteLine("PASS entity store: a definition's composed graph carries its settings and no device marker");
+    }
+
+    /// <summary>
+    /// A graph request whose <c>device</c> is not null is refused with one problem about <c>device</c>, alone after the
+    /// name's, by the preview and by the save, which writes nothing; <c>device: null</c> is accepted. A request that also
+    /// lists entities is told about those alone.
+    /// </summary>
+    static void AGraphRequestWithADeviceIsRefused(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("graph-device");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            foreach (var (what, given) in new (string, DefinitionDevice)[] { ("a device with a model", new(null, "x", null, null, null, null, null)), ("an empty device", new(null, null, null, null, null, null, null)) })
+            {
+                var body = Motion() with { Device = given };
+                var preview = new DefinitionGenerator().Preview(body, snapshot);
+                Check(!preview.Valid && preview.Source == "" && preview.Diagnostics.Count == 1, $"{what}: one problem: " + Codes(preview));
+                Check(preview.Diagnostics[0] is { Severity: 3, NodeId: null, InputId: "device", Code: "definition.deviceNotAllowed" } && preview.Diagnostics[0].Message == DeviceNotAllowed,
+                    $"{what}: the refusal of a device: " + Codes(preview));
+                var refused = Throws<DefinitionValidationException>(() => store.Save("motion", body, 0, snapshot, "g1"), $"saving {what}");
+                Check(refused.Preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.Message}").SequenceEqual([$"definition.deviceNotAllowed device {DeviceNotAllowed}"]),
+                    $"{what}: the save answers the same one problem: " + Codes(refused.Preview));
+                Check(store.Read("motion") == null, $"{what}: nothing is written");
+            }
+            // As a read answer has it: device null, which is accepted and ignored.
+            var request = JsonNode.Parse(JsonSerializer.Serialize(Motion(), VisualStore.Json))!.AsObject();
+            Check(request.ContainsKey("device") && request["device"] == null, "the request sends device null: " + request.ToJsonString());
+            Check(new DefinitionGenerator().Preview(request.Deserialize<DefinitionBody>(VisualStore.Json)!, snapshot).Valid && store.Save("motion", Motion(), 0, snapshot, "g1").Device == null,
+                "device null is accepted, and nothing is stored for it");
+            // The refusal alone: a graph with no Entity node and a repeated setting is not checked further; the name's comes first.
+            var device = new DefinitionDevice("Acme", null, null, null, null, null, null);
+            var bare = new DefinitionGenerator().Preview(GraphBody(Graph("Empty", []), null, [Typed("host", "string"), Typed("host", "string")]) with { Device = device }, snapshot);
+            Check(bare.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.deviceNotAllowed"]), "a graph with a device gets the refusal alone: " + Codes(bare));
+            var unnamed = new DefinitionGenerator().Preview(GraphBody(Graph("Empty", []), null) with { Name = "", Device = device }, snapshot);
+            Check(unnamed.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.deviceNotAllowed"]), "beside its name's problem: " + Codes(unnamed));
+            // With entities listed too: those come first, and alone.
+            var both = new DefinitionGenerator().Preview(GraphBody(MotionGraph(), []) with { Device = device }, snapshot);
+            Check(both.Diagnostics.Select(d => $"{d.Code} {d.InputId}").SequenceEqual(["definition.entitiesNotAllowed entities"]), "a listed graph with a device is told of its entities alone: " + Codes(both));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>A class request keeps its device: it previews, is saved with it and reads back with it.</summary>
+    static void AClassRequestKeepsItsDevice(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("class-device");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            Check(new DefinitionGenerator().Preview(Body(), snapshot) is { Valid: true } preview && preview.Diagnostics.Count == 0, "a class definition with a device previews");
+            store.Save("plug", Body(), 0, snapshot, "g1");
+            Check(store.Read("plug")!.Device is { Manufacturer: "Shelly", Model: "Plug S", SuggestedArea: "Kitchen" }, "and is saved with it: " + JsonSerializer.Serialize(store.Read("plug")!.Device, VisualStore.Json));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// A graph document an earlier build of this phase saved with a device of its own is read without it: its read
+    /// answer's device is null, and its body regenerates the source it was saved with.
+    /// </summary>
+    static void AGraphDocumentsStoredDeviceIsNotRead(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("stored-device");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            var saved = store.Save("motion", Motion(), 0, snapshot, "g1");
+            var json = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!.AsObject();
+            json["device"] = JsonNode.Parse("""{"manufacturer":"Acme","model":"Motion","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}""");
+            File.WriteAllText(store.FilePath("motion"), json.ToJsonString(VisualStore.Json));
+            var read = store.Read("motion")!;
+            Check(read.Device == null && read.Body.Device == null && JsonSerializer.SerializeToNode(read, VisualStore.Json)!["device"] == null, "its device is not read");
+            Check(new DefinitionGenerator().Preview(read.Body, snapshot) is { Valid: true } preview && preview.Source == saved.Source, "its body regenerates its source");
+            Check(store.List().Single().Device == null, "nor listed");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// The list's count of a definition's devices: a graph's, the devices its Device nodes declare; a class's, 1 when it
+    /// gives device details or its class derives from SharpDevice, else 0 (also for a class the libraries no longer have).
+    /// </summary>
+    static void TheListCountsADefinitionsDevices(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("device-count");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            var two = PlugGraph();
+            two["nodes"]!.AsArray().Add(N("hub", "device", new JsonObject { ["key"] = "hub", ["name"] = "Hub" }));
+            two["edges"]!.AsArray().Add(D("hub", "bare", "device", "entities"));
+            var bare = new DefinitionDevice(null, null, null, null, null, null, null);
+            foreach (var (id, body, count) in new (string, DefinitionBody, int)[] {
+                ("motion", Motion(), 0), ("plug", GraphBody(PlugGraph(), null, name: "Plug"), 1), ("two", GraphBody(two, null, name: "Two"), 2),
+                ("shelly", Body() with { Device = null }, 1), ("shelly_details", Body(), 1),
+                ("relay", Body(type: "library:shelly:NodeLib.Relay") with { Device = null }, 0), ("relay_details", Body(type: "library:shelly:NodeLib.Relay") with { Device = bare }, 1) })
+            {
+                var document = store.Save(id, body, 0, snapshot, "g1");
+                Check(HassSharpManager.DeviceCount(document, snapshot) == count, $"{id}: {count} devices, not {HassSharpManager.DeviceCount(document, snapshot)}");
+            }
+            // A class no library offers any more: its device details alone say.
+            var gone = VisualCatalogSnapshot.BuiltIn;
+            Check(HassSharpManager.DeviceCount(store.Read("shelly")!, gone) == 0 && HassSharpManager.DeviceCount(store.Read("shelly_details")!, gone) == 1,
+                "a class the libraries no longer have makes a device when it gives device details");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
     /// <summary>

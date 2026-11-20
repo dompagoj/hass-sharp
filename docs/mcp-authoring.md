@@ -239,19 +239,19 @@ envelope; validation, conflicts and revisions work as above.
    options, minimum?, maximum?}]}` (`minimum` and `maximum` only when the setting has
    them). A class is written with `library_save`.
 3. `entities_list({})` summarises every definition without its graph: `{id, name,
-   revision, enabled, status, activationError, logic, device, entities:[{key,
+   revision, enabled, status, activationError, logic, devices, entities:[{key,
    domain, name, entityId}], triggers:[{triggerId, label?, type, config, manual,
    runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`;
-   `logic` is `"graph"` or the class's type id; `device`, for a class definition,
-   whether it makes a device: it gives device details, or its class derives from
-   `SharpDevice` (for a class no node library offers any more, whether it gives
-   device details). A graph definition's devices are its Device nodes, which
-   `entities_read` lists under `devices`. Beside the
+   `logic` is `"graph"` or the class's type id; `devices` is how many Home
+   Assistant devices it makes: for a graph definition its Device nodes, which
+   `entities_read` lists under `devices`; for a class definition 1 when it gives
+   device details or its class derives from `SharpDevice` (for a class no node
+   library offers any more, when it gives device details), else 0. Beside the
    result, `unreadable: [{id, reason, deletable}]` names each definition file that
    cannot be read; one that is `deletable` only `entities_delete` with
    `expectedRevision` 0 removes (see step 6), and one that is not (its file name is
    not a definition id, or it could not be opened) is removed by hand from Home
-   Assistant's `.storage/hass_sharp` folder.
+   Assistant's `.storage/hass_sharp/entities` folder.
    `entities_read({id})` returns one complete document, with its `revision`,
    `source`, `automationId` and `registeredEntities`, and, for a graph, `devices`,
    the devices its Device nodes declare, and `entities`, the entities its Entity
@@ -261,7 +261,9 @@ envelope; validation, conflicts and revisions work as above.
    `settings` and `logic`, and a class definition's `device`.
 4. `entities_preview({definition})` validates and compiles a definition without
    creating anything: a graph definition is `{name, settings?, logic}` with `logic`
-   `{kind:"graph", graph}`, its devices Device nodes in the graph; a class
+   `{kind:"graph", graph}`, its devices Device nodes in the graph (one sent with a
+   `device` that is not null is refused with `definition.deviceNotAllowed`, which says
+   to use Device nodes); a class
    definition is `{name, device?, settings?, logic}` with `logic`
    `{kind:"class", type}`. It returns `valid`,
    `diagnostics` and, for a graph, `graph` with each Custom C# step's pins worked
@@ -355,7 +357,7 @@ The relay of the example *Plug over HTTP* and the edges of its two commands:
 ```json
 {
   "nodes": [
-    {"id": "relay", "kind": "entity", "config": {"key": "relay", "domain": "switch", "name": "Relay", "deviceClass": "outlet"}, "position": {"x": 60, "y": 640}}
+    {"id": "relay", "kind": "entity", "config": {"key": "relay", "domain": "switch", "name": "Relay", "deviceClass": "outlet", "arguments": {"device": {"kind": "unset"}}}, "position": {"x": 60, "y": 640}}
   ],
   "edges": [
     {"id": "relay:command:turn_on:switch_on", "source": "relay", "target": "switch_on", "port": "command:turn_on"},
@@ -391,8 +393,8 @@ a definition can trip:
   another Device node>"}` (`device.via`); a key no Device node has, and a circle of
   devices each part of the next, are errors (`device.viaUnknown`,
   `device.viaCycle`).
-- `configurationUrl` starts with `http://`, `https://` or `homeassistant://`
-  (`device.configurationUrl`). A Device node no entity is wired to is a warning
+- `configurationUrl` starts with `http://`, `https://` or `homeassistant://`,
+  followed by an address, as Home Assistant requires (`device.configurationUrl`). A Device node no entity is wired to is a warning
   (`device.empty`).
 
 The device of the example *Plug over HTTP*, and the wires that put its relay and

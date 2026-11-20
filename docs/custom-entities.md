@@ -262,8 +262,8 @@ A device groups entities on one device page in Home Assistant. Each device is a
   entities is a warning. The wire carries no value: it is not part of the entity's
   state, and a Device node is never part of the run order.
 - **Manufacturer**, **Model**, **Software version**, **Hardware version**,
-  **Configuration URL** (it starts with `http://`, `https://` or
-  `homeassistant://`) and **Suggested area** (the area Home Assistant puts the device
+  **Configuration URL** (`http://`, `https://` or `homeassistant://` followed by an
+  address, such as `http://192.168.1.20`, as Home Assistant requires) and **Suggested area** (the area Home Assistant puts the device
   in when it first adds it) are shown on the device's page. Each can be left out.
 - **Part of** says which device this one is connected through, such as a hub:
   Nothing, **Another device of this definition** (another Device node, chosen by its
@@ -661,7 +661,12 @@ of a class are not recorded: a class has no steps to trace.
 - While a save replaces a running definition, a command answers "The entity is not
   running".
 - Each card on the **Entities** page, and the editor's top bar, has an on/off
-  switch. A definition that is on starts again whenever Home Assistant starts.
+  switch. A card says how many devices its definition makes: **Device** for one,
+  **2 devices** and so on for more, nothing for none.
+- A definition built with steps is not a device itself: its devices are its Device
+  nodes. One sent with a device, through MCP or the panel's API, is refused with
+  "Devices are Device nodes in the graph now: leave device out, add a Device node and
+  connect its Entities pin to each entity's Device pin". A definition that is on starts again whenever Home Assistant starts.
 - Turned off, the definition's entities stay in Home Assistant as unavailable. A
   definition saved off (a copy, or a new one saved with `enabled: false` through
   MCP) creates its entities the first time it is turned on.
@@ -756,7 +761,7 @@ name the command pin under `port`:
 ```json
 {
   "nodes": [
-    {"id": "relay", "kind": "entity", "config": {"key": "relay", "domain": "switch", "name": "Relay", "deviceClass": "outlet"}, "position": {"x": 60, "y": 640}}
+    {"id": "relay", "kind": "entity", "config": {"key": "relay", "domain": "switch", "name": "Relay", "deviceClass": "outlet", "arguments": {"device": {"kind": "unset"}}}, "position": {"x": 60, "y": 640}}
   ],
   "edges": [
     {"id": "relay:command:turn_on:switch_on", "source": "relay", "target": "switch_on", "port": "command:turn_on"},
@@ -771,7 +776,9 @@ A command's values are the node's data outputs `command:<command>:<value>`, such
 [Devices](#devices). A graph definition it sends is `{name, settings, logic}`: it
 carries no `entities` list (one that does, even an empty one, is refused with
 "Entities are Entity nodes in the graph now: leave entities out and add one Entity
-node for each"), and `devices` sent back with it are ignored. A definition it reads
+node for each"), nor a `device` (one that is not null is refused with "Devices are
+Device nodes in the graph now: leave device out, add a Device node and connect its
+Entities pin to each entity's Device pin"), and `devices` sent back with it are ignored. A definition it reads
 lists them under `entities` and `devices`, for reading only. A secret typed into a
 conversation reaches the assistant's provider: enter secrets in the panel instead.
 See [MCP authoring](mcp-authoring.md).

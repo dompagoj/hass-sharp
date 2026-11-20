@@ -2,16 +2,15 @@ import { createEffect, createSignal, createUniqueId, For, on, Show, useContext }
 import { QueryClientContext, useQuery } from '@tanstack/solid-query'
 import { HassCtx } from '../context'
 import { useLoadedRegistry } from '../registry'
-import type { VisualGraph } from '../visual/graph'
 import { SearchSelect, type SearchOption } from '../visual/widgets/SearchSelect'
-import { definitionsQueryKey, entityApi, entityTypesQueryKey } from './api'
-import { definitionOf, setDevice, withDetail, withVia } from './definitionEdits'
+import { definitionsQueryKey, entityApi } from './api'
+import { withDetail, withVia } from './definitionEdits'
 import { SelectField, SwitchField, TextField, type Choice } from './formFields'
-import type { DefinitionDevice, DefinitionSummary, DefinitionVia, EntityType } from './model'
+import type { DefinitionDevice, DefinitionSummary, DefinitionVia } from './model'
 
 /**
  * The details of a device Home Assistant's device page shows, by member, with their labels, hints and input types: one
- * list for a definition's device (this form, the class page) and a Device node's right panel.
+ * list for a class definition's device (the class page) and a Device node's right panel.
  */
 export const deviceFields: { member: Exclude<keyof DefinitionDevice, 'via'>; label: string; hint?: string; type?: string }[] = [
   { member: 'manufacturer', label: 'Manufacturer' },
@@ -23,10 +22,9 @@ export const deviceFields: { member: Exclude<keyof DefinitionDevice, 'via'>; lab
 ]
 
 /**
- * What the editor remembers of a device turned off, so that turning it on again brings it back as it was, `via` too.
- * It outlives the form (which goes whenever a step is selected) for as long as the editor edits one definition: the
- * entity adapter keeps one per editor. `id` is the saved definition's (undefined before its first save); a device
- * remembered for one definition is not offered to another.
+ * What the class page remembers of a device turned off, so that turning it on again brings it back as it was, `via`
+ * too, for as long as it edits one definition. `id` is the saved definition's (undefined before its first save); a
+ * device remembered for one definition is not offered to another.
  */
 export interface DeviceMemory {
   recall(id: string | undefined): DefinitionDevice | undefined
@@ -41,58 +39,30 @@ export function deviceMemory(): DeviceMemory {
   }
 }
 
-/**
- * The Device section: whether the entities are grouped as one device, what its page in Home Assistant shows, and what
- * it is part of (`via`). The device is named after the entity definition. Turned on again, the device is the one
- * turned off while this editor was open (`memory`), else the saved definition's (`saved`), else a device with no
- * details.
- */
-export function DeviceForm(props: {
-  graph: VisualGraph
-  commit(graph: VisualGraph): void
-  memory: DeviceMemory
-  /** The saved definition's id (undefined before its first save) and device. */
-  savedId?: string
-  savedDevice?: DefinitionDevice | null
-  /** The entity ids Home Assistant gave the saved definition's entities: their device is its own. */
-  ownEntityIds?: readonly string[]
-}) {
-  return (
-    <DeviceSection device={definitionOf(props.graph).device} onChange={device => props.commit(setDevice(props.graph, device))} memory={props.memory}
-      savedId={props.savedId} savedDevice={props.savedDevice} parent={{ ownEntityIds: props.ownEntityIds ?? [] }} />
-  )
-}
-
 const deviceChoice = 'device'
 const definitionChoice = (id: string) => `definition:${id}`
 const byName = (a: DefinitionSummary, b: DefinitionSummary) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
 
 /**
- * The entity definitions and the classes, read for Part of: undefined until read, and always outside the app's
- * providers (a bare form in a test has none).
+ * The entity definitions, read for Part of: undefined until read, and always outside the app's providers (a bare form
+ * in a test has none). Each counts the devices it makes (`devices`), its class's own included.
  */
 function parentSources() {
   const hass = useContext(HassCtx)
-  if (!hass || !useContext(QueryClientContext)) return { definitions: () => undefined, types: () => undefined }
+  if (!hass || !useContext(QueryClientContext)) return { definitions: () => undefined }
   const api = entityApi(hass)
   // Under the lists' key, which every save, delete and switch makes stale: a device definition saved since is offered.
   const definitions = useQuery(() => ({ queryKey: [...definitionsQueryKey, 'parents'], queryFn: () => api.list(), staleTime: 30_000 }))
-  const classes = () => (definitions.data ?? []).some(d => d.logic.kind === 'class')
-  // Only for a definition built from a class: whether it is a device is its class's.
-  const types = useQuery(() => ({ queryKey: [...entityTypesQueryKey], queryFn: () => api.types(), staleTime: 0, enabled: classes() }))
-  return {
-    definitions: (): DefinitionSummary[] | undefined => (definitions.isSuccess && (!classes() || !types.isPending) ? definitions.data : undefined),
-    types: (): EntityType[] => types.data?.types ?? [],
-  }
+  return { definitions: (): DefinitionSummary[] | undefined => (definitions.isSuccess ? definitions.data : undefined) }
 }
 
-/** What a device is part of: another definition's device, a Home Assistant device, or another Device node of its definition, by key. */
+/** What a device is part of: another class definition's device, a Home Assistant device, or another Device node of its definition, by key. */
 export interface PartOfVia { definition?: string | null; deviceId?: string | null; device?: string | null }
 
 /**
- * The parents Part of offers between Nothing and "A Home Assistant device…". A definition's device form offers each
- * other definition that is a device as a choice of its own; a Device node offers one choice, "Another device of this
- * definition", whose devices are then picked from a list under it (`list`).
+ * The parents Part of offers between Nothing and "A Home Assistant device…". A class definition's device form offers
+ * each other class definition that is a device as a choice of its own; a Device node offers one choice, "Another device
+ * of this definition", whose devices are then picked from a list under it (`list`).
  */
 export interface PartOfParents {
   choices(): Choice[]
@@ -118,7 +88,7 @@ export interface PartOfParents {
  * Part of: the device a device is connected through, such as a hub. Nothing; one of `parents`; or a Home Assistant
  * device, chosen with the device picker, by name, without the devices this definition's own entities are on
  * (`ownEntityIds`). A choice with a list of its own does not change Part of until something is picked from that list,
- * and says what the device is part of until then. One control for the definition's device and a Device node.
+ * and says what the device is part of until then. One control for a class definition's device and a Device node.
  */
 export function PartOf(props: { via: PartOfVia | null; onChange(via: PartOfVia | null): void; ownEntityIds: readonly string[]; parents: PartOfParents; errors?: string[] }) {
   const registry = useLoadedRegistry()
@@ -176,15 +146,15 @@ export function PartOf(props: { via: PartOfVia | null; onChange(via: PartOfVia |
 }
 
 /**
- * Part of a definition's device: another entity definition that is a device, by name (never this one), or a Home
- * Assistant device. A definition named that is gone, or no longer a device, is said so and can be cleared. The server
- * takes any of them and leaves out a parent Home Assistant does not have.
+ * Part of a class definition's device: another class definition that is a device, by name (never this one), or a Home
+ * Assistant device. A definition built from nodes is no device itself (its devices are its Device nodes), so it is not
+ * offered. A definition named that is gone, or is not a device, is said so and can be cleared. The server takes any of
+ * them and leaves out a parent Home Assistant does not have.
  */
 function DeviceParent(props: { device: DefinitionDevice | null; onChange(device: DefinitionDevice): void; ownId?: string; ownEntityIds: readonly string[] }) {
   const sources = parentSources()
   const named = (via: PartOfVia | null) => via?.definition ?? undefined
-  const isDevice = (d: DefinitionSummary) =>
-    d.device != null || (d.logic.kind === 'class' && sources.types()?.find(t => t.id === d.logic.type)?.kind === 'device')
+  const isDevice = (d: DefinitionSummary) => d.logic.kind === 'class' && d.devices > 0
   const parents = () => (sources.definitions() ?? []).filter(d => d.id !== props.ownId && isDevice(d)).sort(byName)
   /** A named definition not offered, as a choice's label or within a sentence: its id before the list is read. */
   const unlisted = (id: string, inSentence = false) => {
@@ -214,22 +184,22 @@ function DeviceParent(props: { device: DefinitionDevice | null; onChange(device:
 }
 
 /**
- * {@link DeviceForm} over a device itself, for a form that does not edit a graph (a class definition's page).
- * `fixed`: the device always exists (a device class's own, whose details these fields override), so there is no
- * switch, and an empty field says what it falls back to. `toggle`: the switch's label and hint (default: a graph's
- * entities).
+ * The Device section of a class definition's page: what its device's page in Home Assistant shows, and what it is part
+ * of (`via`). The device is named after the entity definition. `fixed`: the device always exists (a device class's own,
+ * whose details these fields override), so there is no switch, and an empty field says what it falls back to.
+ * `toggle`: the switch that makes the entity a device, with its label and hint; turned on again, the device is the one
+ * turned off while the page was open (`memory`), else the saved definition's (`savedDevice`), else one with no details.
  */
 export function DeviceSection(props: {
   device: DefinitionDevice | null
   onChange(device: DefinitionDevice | null): void
   memory?: DeviceMemory
+  /** The saved definition's id (undefined before its first save) and device. */
   savedId?: string
   savedDevice?: DefinitionDevice | null
-  fixed?: { hint: string; placeholder: string }
-  toggle?: { label: string; hint: string }
   /** Offer Part of; `ownEntityIds` are the entity ids of the saved definition's entities, whose device is its own. */
   parent?: { ownEntityIds: readonly string[] }
-}) {
+} & ({ fixed: { hint: string; placeholder: string }; toggle?: never } | { toggle: { label: string; hint: string }; fixed?: never })) {
   const device = () => props.device
   const detail = (member: keyof DefinitionDevice) => { const value = device()?.[member]; return typeof value === 'string' ? value : '' }
   const toggle = (on: boolean) => {
@@ -241,8 +211,7 @@ export function DeviceSection(props: {
     <section class="hs-def-section" aria-label="Device">
       <h2 class="hs-insp-heading">Device</h2>
       <Show when={props.fixed} fallback={
-        <SwitchField name="device" label={props.toggle?.label ?? 'Group these entities as a device'} checked={!!device()} onChange={toggle}
-          hint={props.toggle?.hint ?? 'Home Assistant shows them together on one device page, named after this entity definition.'} />
+        <SwitchField name="device" label={props.toggle!.label} checked={!!device()} onChange={toggle} hint={props.toggle!.hint} />
       }>
         {fixed => <p class="hs-field-hint">{fixed().hint}</p>}
       </Show>

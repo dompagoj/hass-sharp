@@ -88,13 +88,13 @@ class AuthoringService:
         (`preview_request`), then `native_triggers` validates the graph's Home Assistant triggers, whose diagnostics
         follow the preview's (an error as severity 3). Returns the answer to give, which is the preview, a refusal of
         .NET's, or a save refused in the `validation` form before .NET stores anything; None when the save may go on.
-        A definition refused for listing `entities` (`definition.entitiesNotAllowed`) has nothing else checked, its
-        triggers included."""
+        A definition refused for listing `entities` (`definition.entitiesNotAllowed`), or a graph's for sending a device
+        (`definition.deviceNotAllowed`), has nothing else checked, its triggers included."""
         preview = await self._request(method, preview_request, is_admin=True)
         if not preview.get("ok"):
             return preview
         nodes = graph.get("nodes")
-        listed = any(isinstance(d, dict) and d.get("code") == "definition.entitiesNotAllowed" for d in preview["result"].get("diagnostics", []))
+        listed = any(isinstance(d, dict) and d.get("code") in ("definition.entitiesNotAllowed", "definition.deviceNotAllowed") for d in preview["result"].get("diagnostics", []))
         if not listed and isinstance(nodes, list) and all(isinstance(n, dict) and isinstance(n.get("config", {}), dict) for n in nodes):
             diagnostics = await native_triggers.async_validate_graph_triggers(self.hass, graph)
             preview["result"]["diagnostics"].extend({**d, "severity": 3 if d.get("severity") == "error" else d.get("severity")} for d in diagnostics)

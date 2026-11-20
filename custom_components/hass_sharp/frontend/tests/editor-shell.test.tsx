@@ -999,7 +999,7 @@ function mountDefinition(graph: VisualGraph) {
 }
 /** A definition with the Entity node Lamp (key lamp) and a Set state step that sets it on Turn on; `more` adds steps. */
 function lampDefinition(more: (graph: VisualGraph) => VisualGraph = graph => graph): VisualGraph {
-  let graph: VisualGraph = { version: 5, name: 'Lights', nodes: [], edges: [], definition: { settings: [], device: null } as never }
+  let graph: VisualGraph = { version: 5, name: 'Lights', nodes: [], edges: [], definition: { settings: [] } as never }
   graph = addNode(graph, 'entity', 'lamp')
   graph = updateNode(graph, 'lamp', { config: { ...graph.nodes[0].config, key: 'lamp', domain: 'light', name: 'Lamp' }, position: { x: 60, y: 100 } })
   graph = addNode(graph, 'set_entity_state', 'set')

@@ -246,12 +246,12 @@ function rekey(node: GraphNode, config: GraphNode['config'], keys: NonNullable<R
  * device, is kept as it was.
  */
 function rekeyDevice(node: GraphNode, config: GraphNode['config'], keys: NonNullable<ReturnType<typeof deviceKeys>>, catalog: VisualCatalogSnapshot): GraphNode['config'] {
-  // A Device node without a key is given none, but may still be part of a copied device.
   if (!declares(node, catalog, 'device')) return config
   const own = keys.byNode.get(node.id), via = config.via
   const parent = record(via) && typeof via.device === 'string' ? keys.byKey.get(via.device) : undefined
   return {
     ...config,
+    // A Device node without a key is given none, but may still be part of a copied device.
     ...(own !== undefined ? { key: own } : {}),
     ...(parent !== undefined && record(via) ? { via: { ...via, device: parent } } : {}),
   }

@@ -57,6 +57,15 @@ public partial class HassSharpManager
     }
 
     /// <summary>
+    /// How many devices the definition makes in Home Assistant, as the list answers it in place of its device: a graph's
+    /// are those its Device nodes declare (<see cref="EntityDefinitionDocument.Devices"/>); a class makes one when it gives
+    /// device details or, by <paramref name="libraries"/>, its class is a <see cref="SharpDevice"/>, else none.
+    /// </summary>
+    internal static int DeviceCount(EntityDefinitionDocument document, VisualCatalogSnapshot libraries) =>
+        document.Logic.Kind == "graph" ? document.Devices?.Count ?? 0
+            : document.Device != null || document.Logic.Type is { } type && libraries.EntityTypes.TryGetValue(type, out var described) && described.Kind == "device" ? 1 : 0;
+
+    /// <summary>
     /// The definition's source compiled, with what its host and its runs need. A class: its <c>SharpDefinition</c> factory
     /// and setting values. A graph: its generated class, which its host runs alongside the entities the document describes,
     /// with the run metadata an automation's graph has (its id, revision, graph, embedded catalog and one entry per root).
@@ -94,7 +103,8 @@ public partial class HassSharpManager
         script.VisualTriggers = triggers;
         script.VisualGraph = graph.ToJsonString();
         script.VisualCatalog = catalog;
-        script.Definition = new(document.Id, document.Name, document.Device, document.Settings)
+        // A graph's devices are its Device nodes alone: it is no device itself.
+        script.Definition = new(document.Id, document.Name, null, document.Settings)
             { Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots };
         return script;
     }
@@ -293,9 +303,10 @@ public partial class HassSharpManager
     /// it, <c>hasValue</c> and no value, is kept alike; with a value, the value wins (<see cref="DefinitionSetting.HasValue"/>).
     /// An <c>entities</c> key given as null is an empty list: a graph's is refused whatever it holds, and a class's is none.
     /// A <c>devices</c> key, as a read answer has it, is no member of a body and is ignored: a graph's devices are its
-    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>). The <c>device</c> is the
+    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>). The <c>device</c> is a class
     /// definition's own, which has none of what only a Device node has: a key, a name (the definition's) and Part of
-    /// another device of the definition are left out, and a Part of with nothing else is none.
+    /// another device of the definition are left out, and a Part of with nothing else is none. A graph's, when not null,
+    /// is refused by the preview (<c>definition.deviceNotAllowed</c>); null is none.
     /// </summary>
     static DefinitionBody DefinitionBody(JsonObject request)
     {
@@ -434,9 +445,10 @@ public partial class HassSharpManager
                         graph = body.Logic is { Kind: "graph", Graph: { } derived } ? DefinitionGraph.Decompose(preview.Graph ?? derived) : null }
                     : PreviewJson(preview);
             }
-            // Listing omits the generated source and its map; "read" returns them. The entities page's list (view "home")
-            // adds how each definition has been running, as the automations page's does. Beside the result, unreadable
-            // names each definition file that cannot be read, with why, so that it can be deleted (at revision 0).
+            // Listing omits the generated source and its map; "read" returns them. In place of its device, it counts the
+            // devices the definition makes (DeviceCount). The entities page's list (view "home") adds how each definition
+            // has been running, as the automations page's does. Beside the result, unreadable names each definition file
+            // that cannot be read, with why, so that it can be deleted (at revision 0).
             else if (operation == "list")
             {
                 var view = ApiRequest.OptionalString(request, "view");
@@ -446,7 +458,8 @@ public partial class HassSharpManager
                 var listed = store.List(unreadable: unreadable).Select(document =>
                 {
                     var json = EntityJson(document, snapshot);
-                    json.Remove("source"); json.Remove("sourceMap");
+                    json.Remove("source"); json.Remove("sourceMap"); json.Remove("device");
+                    json["devices"] = DeviceCount(document, snapshot);
                     return json;
                 }).ToArray();
                 if (today != null) WithRecentRuns(listed, today.Value);

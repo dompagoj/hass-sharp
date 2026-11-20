@@ -7,7 +7,7 @@ import { useHass } from '../context'
 import { definitionsQueryKey, entityApi, entityError } from './api'
 
 /**
- * Delete at the bottom of a saved definition's form. It asks first, saying that its entities (and its device) go from
+ * Delete at the bottom of a saved definition's form. It asks first, saying that its entities (and their devices) go from
  * Home Assistant; then it deletes the saved revision and goes to the entities page. Not while there are unsaved
  * changes, a save, or a conflict to settle (`blocked`); `hint` says why, when the person can do something about it.
  */
@@ -53,7 +53,7 @@ export function DeleteDefinitionDialog(props: { open: boolean; name: string; del
       <Button disabled={props.deleting} onClick={() => props.onCancel()}>Cancel</Button>
       <Button variant="danger" busy={props.deleting} onClick={() => props.onConfirm()}>Delete</Button>
     </>}>
-      <p>{props.name} and its entities are removed from Home Assistant, with their device if it has one. This cannot be undone.</p>
+      <p>{props.name} and its entities are removed from Home Assistant, with their devices. This cannot be undone.</p>
       <Show when={props.error}>{message => <div class="hs-error" role="alert">{message()}</div>}</Show>
     </Dialog>
   )

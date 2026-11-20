@@ -172,7 +172,8 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *
  * The document checks are the real ones a test meets most (codes of `DefinitionDocument`/`DefinitionGenerator`): a name
  * of 1–120 characters (`definition.name`), no list of entities (`definition.entitiesNotAllowed`: a graph's at all, even
- * empty or null, a class's when it lists one) and, for a graph, at least one Entity node (`definition.entitiesRequired`),
+ * empty or null, a class's when it lists one), no device for a graph (`definition.deviceNotAllowed`: one that is not
+ * null) and, for a graph, at least one Entity node (`definition.entitiesRequired`),
  * each with options as `DefinitionDocument.Options` checks them (`definition.entityOption`, on the node: one its domain
  * has, of its type, not an empty list, a number Home Assistant takes and within its rule's range, a pattern that is a
  * regular expression, every option the domain needs, a min below the max); with any of them the seeded diagnostics are
@@ -239,9 +240,9 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   }
   /**
    * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a request that
-   * lists entities (a graph's at all, a class's when it lists one), a graph with no Entity node, and each Entity node's
-   * options, whose problems are on it, about `option:<option>`. A graph request that lists entities gets that refusal
-   * alone (beside its name's): nothing else of it is checked.
+   * lists entities (a graph's at all, a class's when it lists one), a graph request with a device, a graph with no
+   * Entity node, and each Entity node's options, whose problems are on it, about `option:<option>`. A graph request that
+   * lists entities, or else gives a device, gets that refusal alone (beside its name's): nothing else of it is checked.
    */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
@@ -251,6 +252,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     if (body.logic?.kind === 'class' && Array.isArray(listed) && listed.length) problems.push(problem('definition.entitiesNotAllowed', "A class definition's entities come from its code"))
     if (body.logic?.kind !== 'graph') return problems
     if (listed !== undefined) return [...problems, problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities')]
+    if (!empty(body.device)) return [...problems, problem('definition.deviceNotAllowed', "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", 'device')]
     const nodes = declaredEntities(body.logic.graph)
     // A graph whose nodes are not a list is the validator's to tell (graph.shape), as the server has it.
     if (!nodes.length && Array.isArray((body.logic.graph as { nodes?: unknown } | undefined)?.nodes)) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
@@ -403,7 +405,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       const secret = setting.secret === true || (kept && old?.secret === true)
       return { key: setting.key, value, ...(empty(setting.label) ? {} : { label: setting.label }), ...(empty(setting.type) ? {} : { type: setting.type }), ...(secret ? { secret } : {}) }
     })
-    const d = body.device
+    // A graph's device is refused before this; a class's is stored with every member.
+    const d = graph ? null : body.device
     const { definition: _definition, ...logicGraph } = (body.logic.kind === 'graph' ? body.logic.graph : {}) as Record<string, unknown>
     return {
       version: 3, id, revision, name: body.name,
@@ -435,7 +438,16 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const entries = [...(registry.get(document.id) ?? published.get(document.id) ?? [])].sort((a, b) => (a.uniqueId < b.uniqueId ? -1 : a.uniqueId > b.uniqueId ? 1 : 0))
     return structuredClone({ ...document, settings, registeredEntities: entries, triggers: triggersOf(document) })
   }
-  const summary = (document: EntityDocument) => { const { source: _source, sourceMap: _sourceMap, ...rest } = answered(document); return rest }
+  /**
+   * The document as the list answers it: without its source, and its device counted instead (as `EntityApi` lists it): a
+   * graph's devices are its Device nodes'; a class makes one when it gives device details or its class is a device.
+   */
+  const summary = (document: EntityDocument) => {
+    const { source: _source, sourceMap: _sourceMap, device, ...rest } = answered(document)
+    const devices = document.logic.kind === 'graph' ? document.devices?.length ?? 0
+      : device || types.find(t => t.id === document.logic.type)?.kind === 'device' ? 1 : 0
+    return { ...rest, devices }
+  }
   const sorted = () => [...documents.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
   /** A refusal, thrown by the field readers and answered by `callWS`. */
   class Refused { constructor(readonly answer: unknown) {} }

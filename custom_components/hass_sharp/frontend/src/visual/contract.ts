@@ -11,10 +11,10 @@ export interface DataEdge { id: string; kind: 'data'; source: string; target: st
 export type GraphEdge = ExecutionEdge | DataEdge
 /**
  * What an entity definition's graph is checked against, composed from the definition's settings (never stored in the
- * graph): each setting by its key and type (`string`, `number` or `boolean`), and its device when it has one. Its
- * entities are its Entity nodes.
+ * graph): each setting by its key and type (`string`, `number` or `boolean`). Its entities are its Entity nodes, and its
+ * devices its Device nodes.
  */
-export interface GraphDefinition { settings: { key: string; type: string }[]; device?: unknown }
+export interface GraphDefinition { settings: { key: string; type: string }[] }
 /**
  * The definition a catalog carries for an entity definition's graph (`withGraphTypes`, `definitionCatalog`): the
  * graph's, with the entities its Entity nodes declare, each by its key and domain (a key of the catalog's `entityDomains`)
@@ -1116,7 +1116,7 @@ export const words = {
   /** A Device node on a circle of Part of. */
   viaCycle: (name: string) => `${name} ends up being part of itself: change what one of these devices is part of`,
   /** A Device node's configuration URL that Home Assistant would refuse. */
-  configurationUrl: (name: string) => `The configuration URL of ${name} must start with http://, https:// or homeassistant://`,
+  configurationUrl: (name: string) => `The configuration URL of ${name} must start with http://, https:// or homeassistant://, followed by an address`,
   /** A Device node no entity is wired to. */
   deviceEmpty: (name: string) => `${name} has no entities: connect its Entities pin to an entity's Device pin`,
   /** An Entity node given some of its state values (by their labels, joined) and not one its type needs. */
@@ -1231,6 +1231,21 @@ export type DiagnosticCode = typeof diagnosticCodes[number]
 export const blockingDiagnostic = (d: { code?: string }) => d.code !== undefined && (d.code.startsWith('cycle.') || d.code.startsWith('scope.'))
 /** What a Device node's configuration URL may start with: what Home Assistant takes. */
 const configurationUrlSchemes = ['http://', 'https://', 'homeassistant://']
+/**
+ * What follows the scheme of a configuration URL Home Assistant takes, as its URL parser reads it: an address up to the
+ * first `/`, `?` or `#`, of what it is after any `user@`: a host, not empty (in brackets, or with no `:`, `@`, bracket or
+ * backslash), and then a port of up to five digits, or none. Mirrors `VisualGraphValidator` `ConfigurationUrlAddress`.
+ */
+const configurationUrlAddress = /^(?:[^/?#]*@)?(?:\[[^[\]/?#@]+\]|[^/?#@:[\]\\]+)(?::([0-9]{0,5}))?(?:[/?#]|$)/
+/**
+ * Whether Home Assistant takes `url` as a device's configuration URL: a scheme it takes, then an address, its port, if
+ * any, at most 65535. Mirrors `VisualGraphValidator` `ConfigurationUrlTaken`.
+ */
+function configurationUrlTaken(url: string): boolean {
+  const scheme = configurationUrlSchemes.find(s => url.startsWith(s))
+  const address = scheme === undefined ? null : configurationUrlAddress.exec(url.slice(scheme.length))
+  return address !== null && (!address[1] || Number(address[1]) <= 65535)
+}
 /**
  * Whether a Device node's Part of, an object, is of its shape: `{deviceId}` (a Home Assistant device) or `{device}` (the
  * key of another Device node), that one member, a text that is not blank once trimmed. Mirrors `VisualGraphValidator` `ViaShaped`.
@@ -1365,8 +1380,6 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const document = graphDocument(graph), entityGraph = document === 'entity'
   if ((!graph.nodes.length && document === 'automation') || overLimit(catalog, graph)) { error(null, words.graphLimit(document), undefined, undefined, 'graph.limit'); return analysis(false) }
   // Only an object definition makes an entity graph; any other value of the key is ignored, as it always was.
-  // Whether the definition has a device (its `device` is an object), which names its entities.
-  let hasDevice = false
   if (entityGraph) checkDefinition(graph.definition)
   // The types of the graph's Custom C# nodes join the catalog's; they are compared by their entries alone. Only once
   // the graph's shape and size are known: nothing is resolved for a graph answered with graph.limit.
@@ -1624,7 +1637,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         else if (!declaredDomain(node, catalog)) error(node.id, words.notAnEntityType(domain), 'domain', undefined, 'definition.entityDomain')
       }
       const name = typed('name')
-      if (name !== undefined && !name.replace(blankEnds, '') && !hasDevice && !onDevice(node)) error(node.id, words.entityNameMissing, 'name', undefined, 'entity.name')
+      if (name !== undefined && !name.replace(blankEnds, '') && !onDevice(node)) error(node.id, words.entityNameMissing, 'name', undefined, 'entity.name')
       const state = declaredDomain(node, catalog)?.state
       // Its Device input is no state value: a wire into it neither counts as one given nor asks for the others.
       const values = Object.entries(stateInputs(node, catalog)), given = values.filter(([port]) => supplied(node, port))
@@ -1656,7 +1669,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (name !== undefined && !name.replace(blankEnds, '')) error(node.id, words.deviceNameMissing, 'name', undefined, 'device.name')
       if (record(node.config.via) && !viaShaped(node.config.via)) error(node.id, words.viaShape, 'via', undefined, 'device.via')
       const url = typed('configurationUrl')
-      if (Object.hasOwn(node.config, 'configurationUrl') && url !== undefined && !configurationUrlSchemes.some(s => url.startsWith(s)))
+      if (Object.hasOwn(node.config, 'configurationUrl') && url !== undefined && !configurationUrlTaken(url))
         error(node.id, words.configurationUrl(words.stepName(node, catalog)), 'configurationUrl', undefined, 'device.configurationUrl')
     }
     if (entityGraph && node.kind === 'setting' && typeof node.config.key === 'string' && !definitionItems(catalog, 'settings').some(s => s.key === node.config.key))
@@ -1793,11 +1806,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   return analysis(true)
   /**
    * The definition a graph carries: an object with a list of settings, each with a text key and type, each of a type a
-   * setting can have, and no key twice. Its entities are the graph's Entity nodes: a list of them it has is ignored. Its
-   * `device`, an object when it has one, is read too (`hasDevice`). Mirrors `VisualGraphValidator` `Definition`.
+   * setting can have, and no key twice. Its entities are the graph's Entity nodes, and its devices its Device nodes: a
+   * list of entities, or a device, it has is ignored. Mirrors `VisualGraphValidator` `Definition`.
    */
   function checkDefinition(definition: unknown) {
-    hasDevice = record(definition) && record(definition.device)
     const settings = record(definition) ? definition.settings : undefined
     if (!Array.isArray(settings) || !settings.every(s => record(s) && typeof s.key === 'string' && typeof s.type === 'string')) { error(null, words.definitionUnreadable, undefined, undefined, 'definition.invalid'); return }
     const seen = new Set<string>(), repeated = new Set<string>()
@@ -2048,8 +2060,11 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // warning names the cost, and the wire is allowed. An Entity node given one of its state values asks for the others
   // its type needs: they can only be connected one at a time. A Device node left with no entities by the Device wire this
   // one replaces is only a warning about that device, as an unused value node is. Nothing else a Device node says (its key,
-  // name, Part of, configuration URL) changes with a wire, so it is never new.
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
+  // name, Part of, configuration URL) changes with a wire, so it is never new. An entity left with no device by that
+  // wire, and so in need of a name, is not the new wire's problem either: a wire the Device pin takes comes from a
+  // Device node, so the entity is left with none only by one refused for its type, which is refused for that alone (as
+  // the connection index says).
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && e.code !== 'entity.name' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)

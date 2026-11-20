@@ -7,6 +7,7 @@ import { Inspector } from '../src/visual/Inspector'
 import { addGraphNode, connectData, nodeCatalog, validateGraph, withFirstStateValue, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { graphTypes } from '../src/visual/connectionIndex'
 import { connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
+import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { icons, nodeIdentity } from '../src/visual/icons'
 import { chooseEntity } from '../src/entities/NodePickers'
 import { refitNotice, retypeNode } from '../src/entities/refit'
@@ -610,6 +611,21 @@ describe('devices in the right panel', () => {
     expect(field(unsaved.el, 'key').textContent).toContain('Another one already has this key; give each a key of its own.')
     typeInto(control(unsaved.el, 'Key'), 'Hall Plug')
     expect(unsaved.history.graph()).toBe(before)
+  })
+
+  it('a pasted copy of a saved device has a key of its own, which can change', () => {
+    const graph = devices()
+    const pasted = pasteSteps(graph, copySteps(graph, ['plug'])!, nodeCatalog, { offset: { x: 40, y: 40 } })
+    if ('error' in pasted) throw new Error(pasted.error)
+    const copy = pasted.ids[0]
+    expect(configOf(pasted.graph, copy).key).toBe('plug_2')
+    const { el, node } = mount(pasted.graph, copy, nodeCatalog, { saved: { keys: [], entityIds: {}, deviceKeys: ['plug'] } })
+    const key = control(el, 'Key')
+    expect(key.value).toBe('plug_2')
+    expect(key.readOnly).toBe(false)
+    expect(field(el, 'key').textContent).not.toContain('cannot change.')
+    typeInto(key, 'desk_plug')
+    expect(node().config.key).toBe('desk_plug')
   })
 
   it('a Device node\'s problems go to their field', () => {

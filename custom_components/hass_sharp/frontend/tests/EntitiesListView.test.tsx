@@ -30,6 +30,11 @@ const cameraType: FixtureEntityType = {
   ],
   entities: [{ key: 'stream', domain: 'camera', name: 'Driveway' }],
 }
+/** An entity class: a definition of it makes a device only when it gives device details. */
+const relayType: FixtureEntityType = {
+  id: 'library:cams:NodeLib.Relay', sourceId: 'cams', typeExpression: 'global::NodeLib.Relay', kind: 'entity', domain: 'switch',
+  title: 'Relay', description: null, settings: [], entities: [{ key: 'relay', domain: 'switch', name: 'Relay' }],
+}
 
 /**
  * The list at `/entities` over a new in-memory backend. `hold` delays the replies to these operations until released;
@@ -37,7 +42,7 @@ const cameraType: FixtureEntityType = {
  */
 function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string }; failTypes?: boolean } = {}) {
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
-  const fixture = visualFixture({ entityTypes: [cameraType] })
+  const fixture = visualFixture({ entityTypes: [cameraType, relayType] })
   options.prepare?.(fixture)
   const held: (() => void)[] = []
   const release = () => held.splice(0).forEach(go => go())
@@ -68,15 +73,22 @@ function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void;
   return { root, fixture, history, release, subscriptions, subscribeMessage, control }
 }
 
-/** A graph definition's logic: an Entity node for each of `entities` (its config the entity), and no other step. */
-const graph = (name: string, entities: Record<string, unknown>[] = []) => ({ kind: 'graph' as const, graph: { version: 5, name, edges: [],
-  nodes: entities.map((entity, i) => ({ id: `entity-${i + 1}`, kind: 'entity', config: entity, position: { x: 60, y: 200 * i } })) } })
-/** The plug: a device of four entities, each an Entity node, with a secret and a plain setting. */
+/**
+ * A graph definition's logic: an Entity node for each of `entities` (its config the entity), and a Device node for each
+ * of `devices`, keyed so, with every entity wired to the first; no other step.
+ */
+const graph = (name: string, entities: Record<string, unknown>[] = [], devices: string[] = []) => ({ kind: 'graph' as const, graph: { version: 5, name,
+  nodes: [
+    ...entities.map((entity, i) => ({ id: `entity-${i + 1}`, kind: 'entity', config: entity, position: { x: 60, y: 200 * i } })),
+    ...devices.map((key, i) => ({ id: `device-${key}`, kind: 'device', config: { key, name: `${name} ${key}`, manufacturer: 'Acme', model: 'P1' }, position: { x: -240, y: 200 * i } })),
+  ],
+  edges: devices.length ? entities.map((_, i) => ({ id: `device-${devices[0]}.entities:entity-${i + 1}.device`, kind: 'data', source: `device-${devices[0]}`, sourcePort: 'entities', target: `entity-${i + 1}`, targetPort: 'device' })) : [] } })
+/** The plug: a device (a Device node) of four entities, each an Entity node, with a secret and a plain setting. */
 const plug: DefinitionBody = {
-  name: 'Plug', device: { manufacturer: 'Acme', model: 'P1' },
+  name: 'Plug',
   settings: [{ key: 'token', type: 'string', label: 'Token', secret: true, value: 'hunter2' }, { key: 'room', type: 'string', label: 'Room', value: 'plainly-visible-value' }],
   logic: graph('Plug', [{ key: 'power', domain: 'sensor', name: 'Power' }, { key: 'relay', domain: 'switch', name: 'Relay' }, { key: 'online', domain: 'binary_sensor' },
-    { key: 'boost', domain: 'switch', name: 'Boost', enabledByDefault: false }]),
+    { key: 'boost', domain: 'switch', name: 'Boost', enabledByDefault: false }], ['plug']),
 }
 const camera: DefinitionBody = {
   name: 'Driveway', settings: [{ key: 'Host', value: '10.0.0.9' }, { key: 'Password', value: 'camera-secret' }], logic: { kind: 'class', type: cameraType.id },
@@ -105,6 +117,7 @@ function three(fixture: Fixture) {
 }
 
 const card = (root: Element, id: string) => root.querySelector<HTMLElement>(`[data-definition="${id}"]`)!
+const chip = (element: Element) => element.querySelector('.hs-ent-card__device')?.textContent ?? null
 const cards = (root: Element) => [...root.querySelectorAll<HTMLElement>('[data-definition]')].map(c => c.dataset.definition)
 const rows = (element: Element) => [...element.querySelectorAll('.hs-ent-row')].map(row => [
   row.querySelector('.hs-ent-row__name')?.textContent, row.querySelector('.hs-ent-row__type')?.textContent,
@@ -167,7 +180,8 @@ it('shows each definition: its name, how it works, its device, its status, its e
   expect(cameraCard.classList.contains('hs-home-card--attention')).toBe(true)
   expect(status(cameraCard)).toBe('Failed')
   expect(error(cameraCard)).toBe('Could not reach the camera')
-  expect(cameraCard.querySelector('.hs-ent-card__device')).toBeNull()
+  // Its class is a device class: it makes one device.
+  expect(cameraCard.querySelector('.hs-ent-card__device')?.textContent).toBe('Device')
   // Enabled first; a registry entry without a name goes by its key.
   expect(rows(cameraCard)).toEqual([
     ['Driveway', 'Camera', 'camera.driveway', '—'],
@@ -393,7 +407,7 @@ it('deletes after the confirmation, moving focus to the next card, and recovers 
   menu(root, 'Plug', 'Delete')
   const dialog = await vi.waitFor(() => { const found = root.querySelector('dialog[open]'); expect(found).not.toBeNull(); return found! })
   expect(dialog.textContent).toContain('Delete this entity definition?')
-  expect(dialog.textContent).toContain('Plug and its entities are removed from Home Assistant, with their device if it has one. This cannot be undone.')
+  expect(dialog.textContent).toContain('Plug and its entities are removed from Home Assistant, with their devices. This cannot be undone.')
   button(dialog, 'Cancel').click()
   await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
   expect(requests(fixture, 'delete')).toEqual([])
@@ -539,11 +553,32 @@ it('offers no Delete for a file a delete cannot remove, and says to remove it by
   const hall = root.querySelector<HTMLElement>('[data-unreadable="Hall"]')!
   expect(hall.querySelector('.hs-ent-unreadable__reason')?.textContent).toBe('Invalid definition ID')
   expect(hall.querySelector('button')).toBeNull()
-  expect(hall.textContent).toContain('Remove this file from Home Assistant\'s .storage/hass_sharp folder by hand.')
+  expect(hall.textContent).toContain('Remove this file from Home Assistant\'s .storage/hass_sharp/entities folder by hand.')
   // One whose content is the problem can be deleted, as before.
   const broken = root.querySelector<HTMLElement>('[data-unreadable="broken"]')!
   expect(broken.querySelector('button[aria-label="Delete broken"]')).not.toBeNull()
   expect(broken.textContent).not.toContain('by hand')
+})
+
+it('says how many devices a definition makes: Device for one, the count for more, nothing for none', async () => {
+  const { root, fixture } = setup({ prepare: f => {
+    f.entities.seed('hall', { name: 'Hall', settings: [], logic: graph('Hall', [{ key: 'lamp', domain: 'switch', name: 'Lamp' }], ['plug', 'hub']) })
+    f.entities.seed('desk', { name: 'Desk', settings: [], logic: graph('Desk', [{ key: 'fan', domain: 'switch', name: 'Fan' }], ['desk']) })
+    f.entities.seed('porch', porch)
+    // A class of a device class with no device details; one of an entity class with them, and one without.
+    f.entities.seed('camera', camera)
+    f.entities.seed('relay', { name: 'Relay', device: { manufacturer: 'Acme' }, settings: [], logic: { kind: 'class', type: relayType.id } })
+    f.entities.seed('bare', { name: 'Bare relay', settings: [], logic: { kind: 'class', type: relayType.id } })
+  } })
+  await loaded(root)
+  expect(cards(root)).toEqual(['bare', 'desk', 'camera', 'hall', 'porch', 'relay'])
+  expect(Object.fromEntries(cards(root).map(id => [id, chip(card(root, id!))]))).toEqual({
+    hall: '2 devices', desk: 'Device', porch: null, camera: 'Device', relay: 'Device', bare: null,
+  })
+  // The list answers the count, and no device of its own.
+  const listed = (await fixture.callWS({ type: 'hass_sharp/entities', request: { operation: 'list' } }) as any).result as any[]
+  expect(Object.fromEntries(listed.map(d => [d.id, d.devices]))).toEqual({ bare: 0, camera: 1, desk: 1, hall: 2, porch: 0, relay: 1 })
+  expect(listed.some(d => Object.hasOwn(d, 'device'))).toBe(false)
 })
 
 it('lists a file that cannot be read beside the cards of the readable definitions', async () => {

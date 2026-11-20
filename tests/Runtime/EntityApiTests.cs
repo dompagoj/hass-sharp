@@ -102,14 +102,36 @@ static class EntityApiTests
             Check(save["error"]?["code"]?.GetValue<string>() == "validation" && save["error"]!["detail"]!["diagnostics"]!.AsArray().Single()!["message"]!.GetValue<string>() == listed,
                 $"a save with entities {entities}: " + save.ToJsonString());
         }
-        var saved = await Entity(new { operation = "save", id = "door", expectedRevision = 0, definition = Door() });
+        // A graph definition is no device: one sent with a device is refused alike, about device; null is accepted.
+        const string device = "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin";
+        foreach (var given in new[] { """{"model":"x"}""", "{}" })
+        {
+            var definition = Door();
+            definition["device"] = JsonNode.Parse(given);
+            var preview = (await Entity(new { operation = "preview", definition }))["result"]!;
+            var problems = preview["diagnostics"]!.AsArray().Select(d => $"{d!["code"]} {d["inputId"]} {d["message"]}").ToArray();
+            Check(!preview["valid"]!.GetValue<bool>() && problems.SequenceEqual([$"definition.deviceNotAllowed device {device}"]), $"a preview with device {given}: " + preview.ToJsonString());
+            var save = await Entity(new { operation = "save", id = "door", expectedRevision = 0, definition });
+            Check(save["error"]?["code"]?.GetValue<string>() == "validation" && save["error"]!["detail"]!["diagnostics"]!.AsArray().Single()!["message"]!.GetValue<string>() == device,
+                $"a save with device {given}: " + save.ToJsonString());
+        }
+        var withNull = Door();
+        withNull["device"] = null;
+        Check((await Entity(new { operation = "preview", definition = withNull }))["result"]!["valid"]!.GetValue<bool>(), "device null is accepted");
+        var saved = await Entity(new { operation = "save", id = "door", expectedRevision = 0, definition = withNull });
         Check(saved["ok"]!.GetValue<bool>(), "without the key it saves: " + saved.ToJsonString());
-        // The read and list answers carry its devices (none: it has no Device node) and the device each entity is on.
+        // The read answer carries its devices (none: it has no Device node), a device of null, and the device each entity
+        // is on; the list counts its devices instead.
         var current = (await Entity(new { operation = "read", id = "door" }))["result"]!;
         var summary = (await Entity(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "door")!;
+        var homeListed = (await Entity(new { operation = "list", view = "home" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "door")!;
+        Check(current["devices"] is JsonArray { Count: 0 } && current.AsObject().TryGetPropertyValue("device", out var own) && own == null, "the read answer lists no devices and has device null: " + current.ToJsonString());
+        foreach (var (what, answered) in new[] { ("list", summary), ("home list", homeListed) })
+            Check(answered["devices"]!.GetValueKind() == JsonValueKind.Number && answered["devices"]!.GetValue<int>() == 0 && !answered.AsObject().ContainsKey("device"),
+                $"its {what} answer counts no devices and has no device: " + answered.ToJsonString());
         foreach (var (what, given) in new[] { ("read", current), ("list", summary) })
-            Check(given["version"]!.GetValue<int>() == 3 && given["devices"] is JsonArray { Count: 0 } && given["entities"]![0]!.AsObject().TryGetPropertyValue("device", out var on) && on == null,
-                $"its {what} answer is version 3, lists no devices, and its entity is on none: " + given.ToJsonString());
+            Check(given["version"]!.GetValue<int>() == 3 && given["entities"]![0]!.AsObject().TryGetPropertyValue("device", out var on) && on == null,
+                $"its {what} answer is version 3, and its entity is on none: " + given.ToJsonString());
 
         // A phase 2 build's graph document is version 2.
         var path = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "door.json");
@@ -447,6 +469,9 @@ static class EntityApiTests
             && listed.Single(d => d["id"]!.GetValue<string>() == "stubborn")["activationError"]?.GetValue<string>().Contains("the plug refused to start") == true
             && listed.All(d => !d.ContainsKey("source") && !d.ContainsKey("sourceMap") && d.ContainsKey("status") && d.ContainsKey("liveEntities")),
             "list: " + string.Join(", ", listed.Select(d => d.ToJsonString())));
+        // Each makes one device, its class being a SharpDevice: the list counts it instead of answering a device.
+        Check(listed.All(d => d["devices"]?.GetValueKind() == JsonValueKind.Number && d["devices"]!.GetValue<int>() == 1 && !d.ContainsKey("device")),
+            "a class definition's device is counted: " + string.Join(", ", listed.Select(d => d.ToJsonString())));
         var read = await Ok(new { operation = "read", id = "plug1" });
         Check(read["source"]!.GetValue<string>().Contains("new global::NodeLib.FakePlug()") && read.ContainsKey("sourceMap") && read["settings"]![0]!["value"]!.GetValue<string>() == "10.0.0.11",
             "read has the source: " + read.ToJsonString());

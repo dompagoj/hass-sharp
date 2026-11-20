@@ -8,7 +8,6 @@ import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
 import { icons } from '../visual/icons'
 import { copyNotice, entityRemoval, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
-import { deviceMemory } from './DeviceForm'
 import { EntityHelp } from './EntityHelp'
 import { definitionBody, definitionId, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
 
@@ -34,7 +33,7 @@ export const entityTexts: EditorTexts = {
   conflictElsewhere: 'It was saved again somewhere else while you had unsaved changes here. Saving a node library does this to every entity definition that uses it.',
   conflictDraft: time => `Your unsaved changes from ${time} were made before this entity definition was saved again somewhere else.`,
   copyNoun: 'a new entity definition',
-  overviewPeek: 'Device and settings',
+  overviewPeek: 'Settings',
   runsNone: 'Runs appear here when one of its entities is commanded, when it starts, or when a trigger with run history fires.',
   runRevision: 'Revision',
   traceBack: 'Back to the entity definition’s runs',
@@ -81,8 +80,6 @@ export function entityAdapter(
   options: { handed?(id: string): EntityDocument | undefined } = {},
 ): EditorAdapter<EntityEditorDocument> {
   const api = entityApi(hass)
-  // A device turned off, for as long as this editor is open: the form goes whenever a step is selected.
-  const memory = deviceMemory()
   return {
     document: 'entity',
     read: async id => {
@@ -111,7 +108,7 @@ export function entityAdapter(
     queryKeys: [definitionsQueryKey],
     texts: entityTexts,
     runGroup: context => createComponent(DefinitionRunNow, { context }),
-    overview: context => createComponent(DefinitionOverview, { context, memory }),
+    overview: context => createComponent(DefinitionOverview, { context }),
     // An Entity node's key is fixed once saved; the line under it gives the entity id Home Assistant gave it. So is a
     // Device node's: the saved devices are the Device nodes of the graph as last read or saved.
     savedEntities: context => {

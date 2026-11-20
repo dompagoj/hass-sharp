@@ -36796,6 +36796,14 @@
       "name": "Not cameras",
       "nodes": [
         {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
           "id": "lens",
           "kind": "entity",
           "config": {
@@ -36855,6 +36863,14 @@
       ],
       "edges": [
         {
+          "id": "plug.entities:door.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
           "id": "lens:frame:snap",
           "source": "lens",
           "target": "snap",
@@ -36890,8 +36906,7 @@
         }
       ],
       "definition": {
-        "settings": [],
-        "device": {}
+        "settings": []
       }
     },
     "valid": false,
@@ -37847,31 +37862,6 @@
     "codes": [
       "entity.name"
     ]
-  },
-  {
-    "name": "an entity of a device needs no name",
-    "graph": {
-      "version": 5,
-      "name": "Door",
-      "nodes": [
-        {
-          "id": "door",
-          "kind": "entity",
-          "config": {
-            "key": "door",
-            "domain": "binary_sensor",
-            "name": ""
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": true,
-    "noDiagnostics": true
   },
   {
     "name": "a light with a brightness needs to know whether it is on",
@@ -40389,11 +40379,275 @@
     "inputId": "configurationUrl",
     "contains": "configuration URL of Hall plug",
     "messages": [
-      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://"
+      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
     ],
     "codes": [
       "device.configurationUrl"
     ]
+  },
+  {
+    "name": "a Device node's configuration URL with no address after http:// is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "configurationUrl": "http://"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "configurationUrl",
+    "messages": [
+      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
+    ],
+    "codes": [
+      "device.configurationUrl"
+    ]
+  },
+  {
+    "name": "a Device node's configuration URL with no address after homeassistant:// is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "configurationUrl": "homeassistant://"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "configurationUrl",
+    "messages": [
+      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
+    ],
+    "codes": [
+      "device.configurationUrl"
+    ]
+  },
+  {
+    "name": "a Device node's configuration URL with a port but no host is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "configurationUrl": "http://:8080/status"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "configurationUrl",
+    "messages": [
+      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
+    ],
+    "codes": [
+      "device.configurationUrl"
+    ]
+  },
+  {
+    "name": "a Device node's configuration URL with a port Home Assistant cannot read is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "configurationUrl": "http://plug.local:99999/status"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "configurationUrl",
+    "messages": [
+      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
+    ],
+    "codes": [
+      "device.configurationUrl"
+    ]
+  },
+  {
+    "name": "a Device node's configuration URL with an address is valid, also a Home Assistant page",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "configurationUrl": "http://10.0.0.5:8080/status"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "configurationUrl": "homeassistant://config/integrations"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
   },
   {
     "name": "a device with no entities is warned about",

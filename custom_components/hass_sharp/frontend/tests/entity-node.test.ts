@@ -42,7 +42,7 @@ it('the editor lists no entity of a read answer: its entities are its nodes\'', 
   const node = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor' }).nodes[0]
   const body = { name: 'Nodes', device: null, settings: [], entities: [{ key: 'door', domain: 'binary_sensor' }, { key: 'old', domain: 'switch' }], logic: { kind: 'graph', graph: { version: 5, name: 'Nodes', nodes: [node], edges: [] } } }
   const graph = editorGraph(body as never)
-  expect(graph.definition).toEqual({ settings: [], device: null })
+  expect(graph.definition).toEqual({ settings: [] })
   expect(withGraphTypes(nodeCatalog, graph).definition!.entities.map(e => e.key)).toEqual(['door'])
 })
 
@@ -268,6 +268,29 @@ it('wiring an entity to a device takes away its need for a name', () => {
   expect(validateGraph(disconnectData(moved, 'relay', 'device')).filter(d => d.nodeId === 'relay')).toEqual([nameless])
 })
 
+it('a wire refused for its type onto a nameless entity\'s wired Device pin is refused for that alone', () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'binary_sensor', name: '' })
+  graph = add(graph, 'camera_snapshot', 'snap', { entity: lit('entity_id:camera', 'camera.front') })
+  graph = connectData(graph, 'plug', 'entities', 'relay', 'device')
+  expect(validateGraph(graph).filter(d => d.nodeId === 'relay' || d.nodeId === 'plug')).toEqual([])
+  // An image is no device. Dropped on the Device pin, the wire would also leave the entity with no device, and so in
+  // need of a name; that is not the wire's to report, as its device's having no entities is not.
+  const typeOnly = 'Device accepts Device, not Image'
+  expect(dataConnectionError(graph, 'snap', 'image', 'relay', 'device', nodeCatalog, { quick: true })).toBe(typeOnly)
+  expect(dataConnectionError(graph, 'snap', 'image', 'relay', 'device', nodeCatalog)).toBe(typeOnly)
+  expect(() => connectData(graph, 'snap', 'image', 'relay', 'device')).toThrow(new Error(typeOnly))
+  // The mirror: another Device node's Entities pin on the already wired pin replaces the wire, and both accept it.
+  const desk = add(graph, 'device', 'desk', { key: 'desk', name: 'Desk' })
+  expect(dataConnectionError(desk, 'desk', 'entities', 'relay', 'device', nodeCatalog, { quick: true })).toBeUndefined()
+  expect(dataConnectionError(desk, 'desk', 'entities', 'relay', 'device', nodeCatalog)).toBeUndefined()
+  const moved = connectData(desk, 'desk', 'entities', 'relay', 'device')
+  // Still one device for the entity: the new wire took the old one's place.
+  expect(moved.edges.filter(e => e.kind === 'data' && e.target === 'relay' && e.targetPort === 'device').map(e => e.kind === 'data' && e.source)).toEqual(['desk'])
+  expect(deviceNodeOf(moved, 'relay')).toBe('desk')
+  expect(validateGraph(moved).filter(d => d.nodeId === 'relay' || d.nodeId === 'desk')).toEqual([])
+})
+
 it('a definition\'s devices are its Device nodes, and an entity is on the one wired to it', () => {
   let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug', model: 'P1' })
   graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
@@ -396,7 +419,7 @@ it('a pasted copy of an Entity node whose key is 40 characters long gets a valid
 it('a new definition starts with one Entity node that follows its name until it is saved', () => {
   const graph = editorGraph(newGraphDefinition('Front door'))
   expect(graph.nodes.map(n => [n.kind, n.config.key, n.config.name])).toEqual([['entity', 'front_door', 'Front door']])
-  expect(graph.definition).toEqual({ settings: [], device: null })
+  expect(graph.definition).toEqual({ settings: [] })
   const renamed = renameDefinition(graph, 'Back door', false)
   expect(renamed.nodes[0].config).toMatchObject({ key: 'back_door', name: 'Back door' })
   expect(renameDefinition(graph, 'Back door', true).nodes[0].config.key).toBe('front_door')

@@ -4,8 +4,9 @@ import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
 
 /**
- * The definition form's changes to an editor graph's `definition` (its settings and device), each a new graph: one undo
- * step when committed. Nothing here changes its argument. Its entities are its Entity nodes, edited on the canvas.
+ * The definition form's changes to an editor graph's `definition` (its settings), each a new graph: one undo step when
+ * committed. Nothing here changes its argument. Its entities and devices are its Entity and Device nodes, edited on the
+ * canvas. The device helpers below are the class editor's, whose definition has a device of its own.
  */
 
 /** The rule an entity's key follows, as the form says it. */
@@ -14,13 +15,14 @@ export const keyRule = 'Lower-case letters, digits and underscores, starting wit
 export const settingKeyRule = "Any text that is not blank and not another setting's key."
 const takenKey = 'Another one already has this key; give each a key of its own.'
 
-/** The definition the graph carries; no settings and no device when it has none. */
+/** The definition the graph carries: its settings, none when it has none. */
 export function definitionOf(graph: VisualGraph): EditorDefinition {
   const definition = (graph.definition ?? {}) as unknown as Partial<EditorDefinition>
-  return { settings: definition.settings ?? [], device: definition.device ?? null }
+  return { settings: definition.settings ?? [] }
 }
+/** The graph with its definition changed: its settings, and nothing else it carried (such as an earlier build's device). */
 const withDefinition = (graph: VisualGraph, change: Partial<EditorDefinition>): VisualGraph =>
-  ({ ...graph, definition: { ...definitionOf(graph), ...(graph.definition ?? {}), ...change } as unknown as GraphDefinition })
+  ({ ...graph, definition: { ...definitionOf(graph), ...change } as unknown as GraphDefinition })
 
 export { freeKey }
 
@@ -271,7 +273,7 @@ export function copyNotice(copied: VisualGraph): string | undefined {
   return `The copy has no saved value for ${list}. Type ${names.length === 1 ? 'it' : 'them'} again.`
 }
 
-// ---- Device
+// ---- A class definition's device
 
 /** A device's details with `member` set to `value`, or left out when it is blank; its parent (`via`) stays as it is. */
 export function withDetail(device: DefinitionDevice | null, member: keyof DefinitionDevice, value: string): DefinitionDevice {
@@ -287,10 +289,6 @@ export function withVia(device: DefinitionDevice | null, via: DefinitionVia | nu
   else delete next.via
   return next
 }
-/** The device's details with `member` set, or left out when `value` is empty; the device's parent (`via`) stays as it is. */
-export const updateDevice = (graph: VisualGraph, member: keyof DefinitionDevice, value: string): VisualGraph =>
-  withDefinition(graph, { device: withDetail(definitionOf(graph).device, member, value) })
-export const setDevice = (graph: VisualGraph, device: DefinitionDevice | null): VisualGraph => withDefinition(graph, { device })
 
 // ---- Problems
 

@@ -24,7 +24,7 @@ request failed; check integration logs".
 | Operation | Request fields | Result |
 |---|---|---|
 | types | none | `{types,generation}`: the classes the saved libraries offer, sorted by id |
-| list | view?: `"home"`, todayUtc? | Document array without `source` and `sourceMap`; `home` adds `recentRuns` (at most 10, newest last), `runsToday`, `failedLastDay` and `lastRunUtc` to each |
+| list | view?: `"home"`, todayUtc? | Document array without `source`, `sourceMap` and `device`, with `devices` a count (a graph's Device nodes; a class's 1 when it gives device details or its class is a `SharpDevice`, else 0); `home` adds `recentRuns` (at most 10, newest last), `runsToday`, `failedLastDay` and `lastRunUtc` to each |
 | read | id | Complete document |
 | preview | definition, deriveSignatures? | `{valid,diagnostics,source,sourceMap}`, and `graph` when `deriveSignatures` is true |
 | save | id, expectedRevision, definition, enabled?, deriveSignatures? | `{id,saved:true,document,active,activationError,diagnostics?}` |
@@ -75,7 +75,8 @@ definition envelope"), `storage` (the file could not be read or written) and
   `config` `{key, name, manufacturer?, model?, swVersion?, hwVersion?,
   configurationUrl?, suggestedArea?, via?}`. `key` follows the entity key rule and is
   unique among the devices (device and entity keys are apart); `name` is required;
-  `configurationUrl` starts with `http://`, `https://` or `homeassistant://`; `via`
+  `configurationUrl` is one Home Assistant takes: `http://`, `https://` or
+  `homeassistant://` followed by a host, with a port, if any, of at most 65535; `via`
   is `{deviceId:"<Home Assistant device id>"}` or `{device:"<key of another Device
   node>"}`, and a key no Device node has or a circle is refused. An entity is on a
   device when a data edge goes from the Device node's `entities` output to the
@@ -92,6 +93,14 @@ definition envelope"), `storage` (the file could not be read or written) and
   Entity nodes and Home Assistant triggers are not checked. A class
   definition may send an empty list; one that lists an entity is refused with "A
   class definition's entities come from its code".
+- `device` is a class definition's only: a graph definition is not a device, and
+  its devices are its Device nodes. A graph request whose `device` is not null is
+  refused with that one problem, `definition.deviceNotAllowed` on input `device`:
+  "Devices are Device nodes in the graph now: leave device out, add a Device node
+  and connect its Entities pin to each entity's Device pin", after the name check
+  and with nothing else checked (one with `entities` too is refused for `entities`
+  alone). `device: null`, as a read answer has it, is no device. A graph document
+  stored with a device is read without it.
 - `device`, for a class definition: null for the class's own (a `SharpDevice`
   class always makes its device, a class of one entity then has none), or
   `{manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
@@ -128,7 +137,7 @@ definition envelope"). Such a definition can only be deleted, with
 `expectedRevision` 0, when it is `deletable`: its file name is a definition id and
 the file could be opened, only its content is wrong. One that is not (a file named
 `Hall.json`, or one the process may not read) cannot be deleted through the API:
-remove it from Home Assistant's `.storage/hass_sharp` folder by hand. Until it is, the entities it made stay in Home Assistant as
+remove it from Home Assistant's `.storage/hass_sharp/entities` folder by hand. Until it is, the entities it made stay in Home Assistant as
 unavailable (startup keeps its id, so they are not pruned), and a node library save,
 which checks every definition, is refused with `Cannot read entity definition
 <path>: <reason>`. The **Entities** page lists it apart, with its id and its
@@ -138,7 +147,9 @@ reason, and with **Delete** when it is `deletable`; one that is not has no
 Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID:
 new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a
 key makes a new entity. A Device node's device is `<definition id>:<device key>`
-in Home Assistant (a class definition's device is `<definition id>:main`), so
+in Home Assistant (a class definition's device is `<definition id>:main`; a graph
+definition has no such device, and one an earlier build made is removed at the next
+sync), so
 changing a device key makes a new device, and an entity moved to another device
 keeps its registry entry, entity id and history. Creation uses expectedRevision 0; updates and deletes need the
 stored revision, and expectedRevision 0 deletes a corrupt file. `enabled` may be

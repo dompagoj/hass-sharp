@@ -1133,7 +1133,12 @@
                   "key": "relay",
                   "domain": "switch",
                   "name": "Relay",
-                  "deviceClass": "outlet"
+                  "deviceClass": "outlet",
+                  "arguments": {
+                    "device": {
+                      "kind": "unset"
+                    }
+                  }
                 },
                 "position": {
                   "x": 60,
@@ -1151,6 +1156,11 @@
                   "options": {
                     "unit": "W",
                     "stateClass": "measurement"
+                  },
+                  "arguments": {
+                    "device": {
+                      "kind": "unset"
+                    }
                   }
                 },
                 "position": {

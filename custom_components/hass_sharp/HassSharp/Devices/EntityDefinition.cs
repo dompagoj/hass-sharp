@@ -69,12 +69,13 @@ public sealed record DefinitionSetting(string Key, JsonNode? Value)
 /// <param name="Kind"><c>class</c> (a class the node libraries declare) or <c>graph</c> (a graph of nodes).</param>
 /// <param name="Type">For a class, its <see cref="EntityTypeDescriptor.Id"/>, such as <c>library:shelly:NodeLib.ShellyPlug</c>.</param>
 /// <param name="Graph">For a graph, the graph, never with a <c>definition</c>: that is composed from the document's
-/// settings and device (<see cref="DefinitionGraph.Compose"/>). Its entities are its Entity nodes.</param>
+/// settings (<see cref="DefinitionGraph.Compose"/>). Its entities are its Entity nodes, and its devices its Device nodes.</param>
 public sealed record DefinitionLogic(string Kind, string? Type, JsonObject? Graph);
 
 /// <summary>A definition as the user writes it: what is saved, before the store adds its id, revision and source.</summary>
-/// <param name="Name">What the definition and its device are called; up to 120 characters.</param>
-/// <param name="Device">What the device page shows; null for the class's own.</param>
+/// <param name="Name">What the definition, and a class definition's device, are called; up to 120 characters.</param>
+/// <param name="Device">For a class, what the device page shows; null for the class's own. A graph has none: its devices
+/// are its Device nodes, and a request that gives one that is not null is refused (<c>definition.deviceNotAllowed</c>).</param>
 /// <param name="Settings">Values for the class's settings, one not given keeping the class default; or a graph's settings.</param>
 /// <param name="Entities">A request gives none: a graph definition's entities are its Entity nodes, and a request that
 /// lists them, even as an empty list, is refused (<c>definition.entitiesNotAllowed</c>); a class definition's come from its
@@ -89,7 +90,8 @@ public sealed record DefinitionBody(string Name, DefinitionDevice? Device, List<
 /// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 3; a class definition an earlier build saved is 1 or 2.
 /// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, each with the key of the device it is
 /// on (<c>device</c>, null for none), and <see cref="Devices"/> the devices its Device nodes declare
-/// (<see cref="DefinitionGraph.Devices"/>); both for reading only. A class document has no devices, and writes none.
+/// (<see cref="DefinitionGraph.Devices"/>); both for reading only. A class document has no devices, and writes none. A
+/// graph document's <see cref="Device"/> is null: one an earlier build of this phase stored is not read.
 /// </summary>
 public sealed record EntityDefinitionDocument(int Version, string Id, long Revision, string Name, DefinitionDevice? Device,
     List<DefinitionSetting> Settings, JsonArray? Entities,
@@ -125,7 +127,7 @@ public sealed class DefinitionValidationException(DefinitionPreview preview) : E
 /// A definition file that cannot be read, as a list names it: its id, why (for one an earlier development build saved,
 /// <see cref="EntityDefinitionStore.EarlierBuild"/>) and whether a delete at revision 0 can remove it
 /// (<paramref name="Deletable"/>: its name is a definition id and it could be opened, only its content is wrong). One that
-/// is not deletable is removed by hand, from Home Assistant's <c>.storage/hass_sharp</c> folder.
+/// is not deletable is removed by hand, from Home Assistant's <c>.storage/hass_sharp/entities</c> folder.
 /// </summary>
 public sealed record UnreadableDefinition(string Id, string Reason, bool Deletable);
 
@@ -171,7 +173,9 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             var document = JsonSerializer.Deserialize<EntityDefinitionDocument>(File.ReadAllText(path), VisualStore.Json);
             if (document is { Version: < Version, Logic.Kind: "graph" }) throw new JsonException(EarlierBuild);
             if (!Complete(document, id)) throw new JsonException("Invalid entity definition envelope");
-            return document;
+            // A graph's devices are its Device nodes: a device of its own, which an earlier build of this phase stored, is
+            // not read, so that it still loads and regenerates as it was saved.
+            return document is { Logic.Kind: "graph", Device: not null } ? document with { Device = null } : document;
         }
     }
 

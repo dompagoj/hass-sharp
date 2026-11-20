@@ -201,7 +201,7 @@ export function DefinitionCard(props: {
             <span class="hs-ent-card__logic" classList={{ 'hs-ent-card__logic--missing': !graph() && props.classTitle === null }}
               title={unnamed() ? classNameFailed : undefined}>{logic()}</span>
             <Show when={unnamed()}><small class="hs-ent-card__hint">{classNameFailed}</small></Show>
-            <Show when={props.item.device}><span class="hs-home-chip hs-ent-card__device">Device</span></Show>
+            <Show when={props.item.devices > 0}><span class="hs-home-chip hs-ent-card__device">{props.item.devices === 1 ? 'Device' : `${props.item.devices} devices`}</span></Show>
           </p>
           <p class={`hs-ent-card__status hs-ent-card__status--${status().tone}`}>{status().label}</p>
           <Show when={status().error}>

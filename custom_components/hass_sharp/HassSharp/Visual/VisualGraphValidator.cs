@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using static HassSharp.VisualNodeCatalog;
@@ -455,7 +456,7 @@ public static class VisualGraphValidator
         /// <summary>A Device node on a circle of Part of.</summary>
         internal static string ViaCycle(string name) => $"{name} ends up being part of itself: change what one of these devices is part of";
         /// <summary>A Device node's configuration URL that Home Assistant would refuse.</summary>
-        internal static string ConfigurationUrl(string name) => $"The configuration URL of {name} must start with http://, https:// or homeassistant://";
+        internal static string ConfigurationUrl(string name) => $"The configuration URL of {name} must start with http://, https:// or homeassistant://, followed by an address";
         /// <summary>A Device node no entity is wired to.</summary>
         internal static string DeviceEmpty(string name) => $"{name} has no entities: connect its Entities pin to an entity's Device pin";
         /// <summary>An Entity node given some of its state values (by their labels, joined) and not one its type needs.</summary>
@@ -689,8 +690,6 @@ public static class VisualGraphValidator
         string document = "automation";
         bool EntityGraph => document == "entity";
         static bool IsText(JsonNode? value) => value is JsonValue v && v.TryGetValue<string>(out _);
-        /// <summary>Whether the definition has a device (<c>definition.device</c> is an object), which names its entities.</summary>
-        bool device;
         /// <summary>
         /// Whether an Entity node is on a Device node: the wire into its Device pin (the one it reads) comes from one. As
         /// <see cref="VisualNodeCatalog.DeviceOf"/> derives it from the graph.
@@ -698,6 +697,21 @@ public static class VisualGraphValidator
         bool OnDevice(JsonObject hub) => incoming.TryGetValue((Id(hub), "device"), out var wire) && Declares(Spec(nodes[Text(wire, "source")]), "device");
         /// <summary>What a Device node's configuration URL may start with: what Home Assistant takes.</summary>
         static readonly string[] ConfigurationUrlSchemes = ["http://", "https://", "homeassistant://"];
+        /// <summary>
+        /// What follows the scheme of a configuration URL Home Assistant takes, as its URL parser reads it: an address up to
+        /// the first <c>/</c>, <c>?</c> or <c>#</c>, of what it is after any <c>user@</c>: a host, not empty (in brackets,
+        /// or with no <c>:</c>, <c>@</c>, bracket or backslash), and then a port of up to five digits, or none.
+        /// </summary>
+        static readonly Regex ConfigurationUrlAddress = new(@"^(?:[^/?#]*@)?(?:\[[^\[\]/?#@]+\]|[^/?#@:\[\]\\]+)(?::(?<port>[0-9]{0,5}))?(?:[/?#]|$)", RegexOptions.CultureInvariant);
+        /// <summary>
+        /// Whether Home Assistant takes <paramref name="url"/> as a device's configuration URL: it starts with a scheme of
+        /// <see cref="ConfigurationUrlSchemes"/> and has an address after it (<see cref="ConfigurationUrlAddress"/>), its
+        /// port, if any, at most 65535.
+        /// </summary>
+        static bool ConfigurationUrlTaken(string url) =>
+            ConfigurationUrlSchemes.FirstOrDefault(s => url.StartsWith(s, StringComparison.Ordinal)) is { } scheme
+            && ConfigurationUrlAddress.Match(url[scheme.Length..]) is { Success: true } address
+            && (address.Groups["port"].Value is not { Length: > 0 } port || int.Parse(port, CultureInfo.InvariantCulture) <= 65535);
         /// <summary>
         /// Whether a Device node's Part of, an object, is of its shape: <c>{deviceId}</c> (a Home Assistant device) or
         /// <c>{device}</c> (the key of another Device node), that one member, a text that is not blank once trimmed.
@@ -708,12 +722,11 @@ public static class VisualGraphValidator
         static string? ViaDevice(JsonNode? via) => via is JsonObject o && ViaShaped(o) && o["device"] is JsonValue v && v.TryGetValue<string>(out var key) ? key : null;
         /// <summary>
         /// The definition a graph carries: an object with a list of settings, each with a text key and type, each of a type a
-        /// setting can have, and no key twice. Its entities are the graph's Entity nodes: a list of them it has is ignored. Its
-        /// <c>device</c>, an object when it has one, is read too (<see cref="device"/>).
+        /// setting can have, and no key twice. Its entities are the graph's Entity nodes, and its devices its Device nodes:
+        /// a list of entities, or a device, it has is ignored.
         /// </summary>
         void Definition(JsonNode? definition)
         {
-            device = definition is JsonObject { } given && given["device"] is JsonObject;
             if (definition is not JsonObject d || d["settings"] is not JsonArray settings || !settings.All(s => s is JsonObject o && IsText(o["key"]) && IsText(o["type"])))
             { Error(null, Words.DefinitionUnreadable, code: "definition.invalid"); return; }
             var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
@@ -1051,8 +1064,8 @@ public static class VisualGraphValidator
             // A text setting of an Entity or a Device node: "" when left out, null when it is not text (the config rule's below).
             string? TextSetting(string field) => !cfg.ContainsKey(field) ? "" : cfg[field] is JsonValue v && v.TryGetValue<string>(out var typed) ? typed : null;
             // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless it is on a device
-            // (a Device node wired to it, or the definition's device), and none of its state values or each one its type
-            // needs. A field that is not text is the config rule's below.
+            // (a Device node wired to it), and none of its state values or each one its type needs. A field that is not
+            // text is the config rule's below.
             if (EntityGraph && Declares(spec, "entity"))
             {
                 if (TextSetting("key") is { } key)
@@ -1062,7 +1075,7 @@ public static class VisualGraphValidator
                 if (TextSetting("domain") is { } domain && cfg.ContainsKey("domain"))
                     if (Words.Trimmed(domain).Length == 0) Error(id, $"{ConfigLabel(spec["config"]?["domain"], "domain")} is required", "domain");
                     else if (DeclaredDomain(node, Root) == null) Error(id, Words.NotAnEntityType(domain), "domain", code: "definition.entityDomain");
-                if (TextSetting("name") is { } name && Words.Trimmed(name).Length == 0 && !device && !OnDevice(node)) Error(id, Words.EntityNameMissing, "name", code: "entity.name");
+                if (TextSetting("name") is { } name && Words.Trimmed(name).Length == 0 && !OnDevice(node)) Error(id, Words.EntityNameMissing, "name", code: "entity.name");
                 // Its Device input is no state value: a wire into it neither counts as one given nor asks for the others.
                 if (DeclaredDomain(node, Root)?["state"] is JsonObject state && StateInputs(node, Root).ToList() is var values && values.Where(p => Supplied(node, p.Key)).ToList() is { Count: > 0 } given)
                     foreach (var (port, input) in values)
@@ -1086,7 +1099,7 @@ public static class VisualGraphValidator
                     else if (!Match(key, Words.EntityKeyPattern)) Error(id, Words.DeviceKey(key), "key", code: "definition.deviceKey");
                 if (TextSetting("name") is { } name && Words.Trimmed(name).Length == 0) Error(id, Words.DeviceNameMissing, "name", code: "device.name");
                 if (cfg["via"] is JsonObject via && !ViaShaped(via)) Error(id, Words.ViaShape, "via", code: "device.via");
-                if (cfg.ContainsKey("configurationUrl") && TextSetting("configurationUrl") is { } url && !ConfigurationUrlSchemes.Any(s => url.StartsWith(s, StringComparison.Ordinal)))
+                if (cfg.ContainsKey("configurationUrl") && TextSetting("configurationUrl") is { } url && !ConfigurationUrlTaken(url))
                     Error(id, Words.ConfigurationUrl(Words.StepName(node, spec)), "configurationUrl", code: "device.configurationUrl");
             }
             if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))

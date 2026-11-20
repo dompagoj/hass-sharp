@@ -218,8 +218,19 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         # .NET refuses a graph definition sent with entities and checks nothing else; its triggers are not checked either.
         listed = {'code': 'definition.entitiesNotAllowed', 'nodeId': None, 'inputId': 'entities', 'severity': 3,
                   'message': 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each'}
+        await self.refused_alone(listed, {**definition(nodes=[trigger('poll', {'trigger': 'state'})]), 'entities': []})
+
+    async def test_a_graph_request_sending_a_device_has_nothing_else_checked(self):
+        # The same for a graph definition sent with a device: its devices are Device nodes.
+        sent = {'code': 'definition.deviceNotAllowed', 'nodeId': None, 'inputId': 'device', 'severity': 3,
+                'message': "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its "
+                           "Entities pin to each entity's Device pin"}
+        await self.refused_alone(sent, {**definition(nodes=[trigger('poll', {'trigger': 'state'})]), 'device': {'model': 'Plug'}})
+
+    async def refused_alone(self, listed, body):
+        """A preview and a save of `body`, which .NET refuses with `listed` alone: answered as .NET answered, with no
+        trigger checked, and the save never stored."""
         self.preview = {'valid': False, 'diagnostics': [listed], 'source': '', 'sourceMap': []}
-        body = {**definition(nodes=[trigger('poll', {'trigger': 'state'})]), 'entities': []}
         answer = await self.send({'operation': 'preview', 'definition': body})
         self.assertEqual(answer, {'version': 1, 'ok': True, 'result': {'valid': False, 'diagnostics': [listed], 'source': '', 'sourceMap': []}})
         self.assertEqual(self.validated, [])

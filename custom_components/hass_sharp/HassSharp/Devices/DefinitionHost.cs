@@ -8,9 +8,10 @@ namespace HassSharp;
 
 /// <summary>An entity definition as its compiled script runs it: what the stored document says besides its code.</summary>
 /// <param name="Id">The definition's id; each entity's unique id is <c>&lt;Id&gt;:&lt;key&gt;</c>.</param>
-/// <param name="Name">What the definition and its device are called.</param>
-/// <param name="Device">What the device page shows, each field in place of the class's own; null for the class's own. Home
-/// Assistant gets it as the device <c>main</c>, named after the definition (for a graph, until requests no longer send one).</param>
+/// <param name="Name">What the definition, and a class definition's device, are called.</param>
+/// <param name="Device">For a class, what the device page shows, each field in place of the class's own; null for the
+/// class's own. Home Assistant gets it as the device <c>main</c>, named after the definition. Null for a graph, whose
+/// devices are its Device nodes (<see cref="Devices"/>).</param>
 /// <param name="Settings">For a class, values for its <c>[Setting]</c> properties, a null value keeping the class default; for a
 /// graph, its settings, which its Setting nodes read.</param>
 public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice? Device, IReadOnlyList<DefinitionSetting> Settings)
@@ -912,15 +913,15 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
     }
 
-    /// <summary>The key of the device the definition itself is, as Home Assistant gets it (see <see cref="Devices"/>).</summary>
+    /// <summary>The key of the device a class definition itself is, as Home Assistant gets it (see <see cref="Devices"/>).</summary>
     internal const string MainDevice = "main";
 
     /// <summary>
     /// The devices Home Assistant gets for the definition, each after the one it is part of (<see cref="InOrder"/>): a
-    /// graph's Device nodes, then the definition's own device, keyed <see cref="MainDevice"/> and named after the definition.
-    /// That one is a class's device, each field replaced by the document's when it gives one; for a class's entity or a
-    /// graph, the document's device alone (a graph's until requests no longer send one); none when there is neither. A
-    /// Device node keyed <c>main</c> beside the document's device is the first of that key, so the document's is left out.
+    /// graph's Device nodes; a class definition's own device, keyed <see cref="MainDevice"/> and named after the
+    /// definition. That one is a class's device, each field replaced by the document's when it gives one; for a class's
+    /// entity, the document's device alone; none when there is neither. A graph has no device of its own
+    /// (<see cref="CompiledDefinition.Device"/> is null), so its Device nodes are all it gets, one keyed <c>main</c> too.
     /// </summary>
     List<DefinitionDevice> Devices()
     {
@@ -934,8 +935,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     /// <summary>
     /// The key of the device <paramref name="entity"/> is on, among <paramref name="keys"/>, or null for none: a graph's
-    /// entity is on the device its description names; one that names none, and every entity of a class, is on the
-    /// definition's own device when it has one (<see cref="MainDevice"/>), else on none.
+    /// entity is on the device its description names, else on none; every entity of a class is on the definition's own
+    /// device when it has one (<see cref="MainDevice"/>), else on none.
     /// </summary>
     string? DeviceOf(SharpEntity entity, IReadOnlySet<string> keys)
     {
@@ -969,7 +970,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     /// <summary>
     /// A device as Home Assistant gets it: its key, name and every field, null where it has none, and what it is part of:
-    /// another device of <paramref name="keys"/> (<c>{device}</c>), another definition (<c>{definition}</c>, whose device
+    /// another device of <paramref name="keys"/> (<c>{device}</c>), another class definition (<c>{definition}</c>, whose device
     /// is its <see cref="MainDevice"/>) or a Home Assistant device (<c>{deviceId}</c>); null for none, for itself or for a
     /// key of no device of the definition.
     /// </summary>

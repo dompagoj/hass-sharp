@@ -42,9 +42,11 @@ const thermometerType: FixtureEntityType = {
 const plug = (settings: DefinitionBody['settings'], name = 'Plug', type = plugType.id): DefinitionBody => ({ name, settings, logic: { kind: 'class', type } })
 
 type Fixture = ReturnType<typeof visualFixture>
-function setup(path: string, prepare?: (fixture: Fixture) => void, fixture: Fixture = visualFixture({ entityTypes: [plugType, thermometerType] })) {
+/** Home Assistant's registry as `hass_sharp/get_entities` answers it: none of anything unless given. */
+const noRegistry = { entities: [], areas: [], devices: [], floors: [], labels: [] }
+function setup(path: string, prepare?: (fixture: Fixture) => void, fixture: Fixture = visualFixture({ entityTypes: [plugType, thermometerType] }), registry: unknown = noRegistry) {
   prepare?.(fixture)
-  const callWS = (message: any) => (message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: [], areas: [], devices: [], floors: [], labels: [] }) : fixture.callWS(message))
+  const callWS = (message: any) => (message.type === 'hass_sharp/get_entities' ? Promise.resolve(structuredClone(registry)) : fixture.callWS(message))
   const hass = { ...fixture, callWS, user: { is_admin: true, id: 'u1' } }
   const root = document.createElement('div')
   root.className = 'hs-app'
@@ -1030,11 +1032,16 @@ it('shows a camera it made as Ready or Unavailable, never its access token, its 
 it("makes a class definition's device part of another definition, saved with its other details, and shows one that is gone", async () => {
   const { root, fixture } = setup('/entities/plug', f => {
     f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { model: 'S2' } })
-    f.entities.seed('hub', { name: 'Hub', device: {}, settings: [], logic: { kind: 'graph', graph: { version: 5, name: 'Hub', edges: [],
-      nodes: [{ id: 'hub', kind: 'entity', config: { key: 'hub', domain: 'binary_sensor', name: 'Hub' }, position: { x: 60, y: 100 } }] } } })
+    // An entity class grouped as a device is one.
+    f.entities.seed('hub', { ...thermometer({ manufacturer: 'Acme' }), name: 'Hub' })
     f.entities.seed('thermo', thermometer(null))
     // A device class with no details stored is a device all the same.
     f.entities.seed('bridge', plug([], 'Bridge'))
+    // A definition built from nodes is no device itself, even with a Device node: its devices are its nodes'.
+    f.entities.seed('nodes', { name: 'Nodes', settings: [], logic: { kind: 'graph', graph: { version: 5, name: 'Nodes',
+      edges: [{ id: 'room.entities:hub.device', kind: 'data', source: 'room', sourcePort: 'entities', target: 'hub', targetPort: 'device' }],
+      nodes: [{ id: 'hub', kind: 'entity', config: { key: 'hub', domain: 'binary_sensor', name: 'Hub' }, position: { x: 60, y: 100 } },
+        { id: 'room', kind: 'device', config: { key: 'room', name: 'Room' }, position: { x: -200, y: 100 } }] } } })
   })
   const view = await ready(root)
   const partOf = () => view.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
@@ -1056,6 +1063,75 @@ it("makes a class definition's device part of another definition, saved with its
   save(again.root).click()
   await vi.waitFor(() => expect(saves(fixture)).toHaveLength(2))
   expect(saves(fixture)[1].definition.device).toEqual({ model: 'S2' })
+})
+
+/** The registry with a device for the plug's relay, and two Home Assistant devices, one of them in an area. */
+const devicesRegistry = () => {
+  const entity = (entity_id: string, name: string, device_id: string | null) => ({
+    entity_id, name, domain: entity_id.split('.')[0], area_id: null, device_id, device_class: null, supported_features: null, unit: null, icon: null, disabled: false, state_options: null,
+  })
+  const device = (id: string, name: string, area_id: string | null = null) => ({ id, name, area_id })
+  return {
+    ...noRegistry, entities: [entity('switch.plug_relay', 'Relay', 'plug-device')], areas: [{ area_id: 'loft', name: 'Loft', floor_id: null }],
+    devices: [device('zigbee', 'Zigbee coordinator'), device('plug-device', 'Plug'), device('attic', 'Attic router', 'loft')],
+  }
+}
+
+it("makes a class definition's device part of a Home Assistant device, and offers a device definition saved since once a save makes the lists stale", async () => {
+  const partOf = (root: Element) => root.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  const shown = (root: Element) => [...partOf(root).options].map(o => o.textContent)
+  const { root, fixture } = setup('/entities/plug', f => {
+    f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { model: 'S2' } })
+    f.entities.seed('hub', plug([], 'Hub'))
+  }, undefined, devicesRegistry())
+  const view = await ready(root)
+  await vi.waitFor(() => expect(shown(view)).toEqual(['Nothing', 'Hub', 'A Home Assistant device…']))
+  choose(partOf(view), 'definition:hub')
+  // A device definition saved since the list was read (well within its 30 s) is offered once a save makes the lists stale.
+  fixture.entities.seed('router', plug([], 'Router'))
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toEqual({ model: 'S2', via: { definition: 'hub' } }))
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  await vi.waitFor(() => expect(shown(view)).toEqual(['Nothing', 'Hub', 'Router', 'A Home Assistant device…']))
+  // A Home Assistant device: the device picker, by name, without the plug's own device, each with its area. Until one
+  // is picked the device is still part of Hub, and the form says so.
+  choose(partOf(view), 'device')
+  const picker = () => view.querySelector<HTMLInputElement>('section[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
+  await vi.waitFor(() => expect(picker()).not.toBeNull())
+  expect(view.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
+  picker().click()
+  const options = () => [...view.querySelectorAll<HTMLElement>('section[aria-label="Device"] [role="option"]')]
+  await vi.waitFor(() => expect(options().map(o => o.querySelector('span')!.textContent)).toEqual(['Attic router', 'Zigbee coordinator']))
+  expect(options().map(o => o.querySelector('small')?.textContent ?? null)).toEqual(['Loft', null])
+  options()[1].click()
+  expect(partOf(view).value).toBe('device')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toEqual({ model: 'S2', via: { deviceId: 'zigbee' } }))
+  await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
+  // Opened again, it shows that device.
+  dispose!(); document.body.innerHTML = ''
+  const again = await ready(setup('/entities/plug', undefined, fixture, devicesRegistry()).root)
+  await vi.waitFor(() => expect(partOf(again).value).toBe('device'))
+  await vi.waitFor(() => expect(again.querySelector<HTMLInputElement>('section[aria-label="Device"] input[aria-label="Home Assistant device"]')!.value).toBe('Zigbee coordinator'))
+})
+
+it('names a parent definition as it is called, until a Home Assistant device is picked, and a parent that is gone as such', async () => {
+  const pending = (root: Element) => root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')?.textContent
+  const partOf = (root: Element) => root.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  const { root, fixture } = setup('/entities/plug', f => {
+    f.entities.seed('room', plug([], 'A Room Hub'))
+    f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { via: { definition: 'room' } } })
+  })
+  const view = await ready(root)
+  await vi.waitFor(() => expect(partOf(view).selectedOptions[0]?.textContent).toBe('A Room Hub'))
+  choose(partOf(view), 'device')
+  await vi.waitFor(() => expect(pending(view)).toBe('Still part of A Room Hub until you pick a device.'))
+  dispose!(); document.body.innerHTML = ''
+  fixture.entities.documents.delete('room')
+  const again = await ready(setup('/entities/plug', undefined, fixture).root)
+  await vi.waitFor(() => expect(partOf(again).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
+  choose(partOf(again), 'device')
+  await vi.waitFor(() => expect(pending(again)).toBe('Still part of a definition that no longer exists until you pick a device.'))
 })
 
 it('offers Part of to a single entity grouped as a device, and drops a device class whose only detail was its parent', async () => {

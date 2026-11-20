@@ -278,6 +278,14 @@ describe('the in-memory entities backend', () => {
     expect(await codes(listed([{ key: 'Door', domain: 'binary_sensor' }]))).toEqual(['definition.entitiesNotAllowed'])
     expect(await codes(listed(null))).toEqual(['definition.entitiesNotAllowed'])
     expect((await api.preview(listed([]))).diagnostics).toEqual([{ nodeId: null, message: 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', severity: 3, startLine: null, startColumn: null, inputId: 'entities', portId: null, code: 'definition.entitiesNotAllowed' }])
+    // The same for a graph request that gives a device, even one with no details: its devices are Device nodes. null is
+    // none, and one with entities too is refused for its entities alone.
+    const given = (device: unknown) => ({ ...body(), device } as unknown as DefinitionBody)
+    expect(await codes({ ...given({}), logic: bare.logic })).toEqual(['definition.deviceNotAllowed'])
+    expect(await codes({ ...given({ model: 'P1' }), name: '' })).toEqual(['definition.name', 'definition.deviceNotAllowed'])
+    expect(await codes({ ...listed([]), device: { model: 'P1' } } as DefinitionBody)).toEqual(['definition.entitiesNotAllowed'])
+    expect(await codes(given(null))).toEqual([undefined])
+    expect((await api.preview(given({}))).diagnostics).toEqual([{ nodeId: null, message: "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", severity: 3, startLine: null, startColumn: null, inputId: 'device', portId: null, code: 'definition.deviceNotAllowed' }])
     // With no document problem, the seeded graph diagnostics.
     expect(await api.preview(body())).toMatchObject({ valid: false, diagnostics: [{ message: 'On is required' }] })
     expect(await codes(newGraphDefinition('x'.repeat(120)))).toEqual([undefined])

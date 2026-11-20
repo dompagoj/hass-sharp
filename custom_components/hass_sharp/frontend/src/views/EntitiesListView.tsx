@@ -251,7 +251,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
                     <span class="hs-ent-unreadable__reason">{item.reason}</span>
                   </span>
                   {/* A file whose name is not a definition id, or that could not be opened, cannot be deleted here. */}
-                  <Show when={item.deletable} fallback={<span class="hs-ent-unreadable__by-hand">Remove this file from Home Assistant's .storage/hass_sharp folder by hand.</span>}>
+                  <Show when={item.deletable} fallback={<span class="hs-ent-unreadable__by-hand">Remove this file from Home Assistant's .storage/hass_sharp/entities folder by hand.</span>}>
                     <Show when={admin()}>
                       <Button variant="danger" disabled={deleting()} aria-label={`Delete ${item.id}`} onClick={() => askDelete({ id: item.id, name: item.id, revision: 0 })}>Delete</Button>
                     </Show>

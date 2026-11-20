@@ -2,9 +2,11 @@
 
 Runs without Home Assistant: the modules are read as source, not imported. For every domain of the catalog there is a
 platform module that attaches itself under that domain and is in PLATFORMS, in the catalog's order; the commands it
-sends are exactly the domain's commands, and every data value it sends is one the command names.
+sends are exactly the domain's commands, and every data value it sends is one the command names. With Home Assistant,
+also that the validators' fixture refuses a Device node's configuration URL exactly when its device registry would.
 """
 import ast
+import importlib.util
 import json
 import os
 import pathlib
@@ -71,6 +73,39 @@ class EntityContractTest(unittest.TestCase):
                 required = {n for n, value in spec.get('data', {}).items() if value.get('required') is not False}
                 with self.subTest(f'{domain}.{command}'):
                     self.assertLessEqual(required, sent(domain).get(command, set()))
+
+
+# Home Assistant's own check of a device's configuration URL; run these inside the HA container or a venv with it.
+@unittest.skipIf(importlib.util.find_spec('homeassistant') is None,
+                 'Home Assistant is not installed; run these inside the Home Assistant container')
+class ConfigurationUrlTests(unittest.TestCase):
+    """The validators refuse a Device node's configuration URL exactly when Home Assistant's device registry would."""
+
+    def test_the_fixture_cases_refuse_what_home_assistant_refuses(self):
+        from homeassistant.helpers import device_registry
+
+        # As _validate_device_info_fields checks a configuration_url given as text: its scheme one of
+        # CONFIGURATION_URL_SCHEMES and a host, parsed by _cached_parse_url (which raises for an address it cannot read).
+        def taken(url):
+            try:
+                parsed = device_registry._cached_parse_url(url)
+            except ValueError:
+                return False
+            return parsed.scheme in device_registry.CONFIGURATION_URL_SCHEMES and bool(parsed.host)
+
+        cases = json.loads((ROOT / 'tests/fixtures/visual-graph-validation.json').read_text())
+        checked = 0
+        for case in cases:
+            urls = [node['config']['configurationUrl'] for node in case['graph'].get('nodes', [])
+                    if isinstance(node, dict) and node.get('kind') == 'device' and isinstance(node.get('config'), dict)
+                    and isinstance(node['config'].get('configurationUrl'), str)]
+            refused = 'device.configurationUrl' in case.get('codes', [])
+            # A case refuses one URL alone, or none of them.
+            for url in urls:
+                with self.subTest(case=case['name'], url=url):
+                    self.assertEqual(taken(url), not refused)
+                    checked += 1
+        self.assertGreaterEqual(checked, 8)
 
 
 if __name__ == '__main__':

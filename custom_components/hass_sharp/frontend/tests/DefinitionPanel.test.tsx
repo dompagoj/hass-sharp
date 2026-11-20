@@ -1,22 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
-import { DefinitionPanel, deviceMemory, type DefinitionLiveEntity, type DeviceMemory } from '../src/entities/DefinitionPanel'
-import { definitionBody, draftGraph, editorGraph, newGraphDefinition, type DefinitionBody, type DefinitionDevice, type EditorDefinition } from '../src/entities/model'
+import { DefinitionPanel } from '../src/entities/DefinitionPanel'
+import { definitionBody, draftGraph, editorGraph, type DefinitionBody, type EditorDefinition } from '../src/entities/model'
 import type { VisualDiagnostic } from '../src/visual/api'
 import { addGraphNode, nodeCatalog } from '../src/visual/contract'
 import { createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 
 // The definition form edits `graph.definition` through `commit`, one undo step per change, as the inspector's fields
-// change a step: the device and the settings of an entity definition built from steps, whose entities are its Entity
-// nodes (edited in their own section, tests/entity-node-config.test.tsx).
+// change a step: the settings of an entity definition built from steps, whose entities are its Entity nodes and whose
+// devices are its Device nodes (each edited in its own section, tests/entity-node-config.test.tsx).
 let dispose: (() => void) | undefined
 afterEach(() => { dispose?.(); dispose = undefined; document.body.innerHTML = '' })
 
 const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
 const plug = (): DefinitionBody => ({
   name: 'Plug',
-  device: { manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } },
   settings: [
     { key: 'host', label: 'Address', type: 'string', value: '10.0.0.7' },
     { key: 'password', label: 'Password', type: 'string', secret: true, value: null, hasValue: true },
@@ -28,11 +27,8 @@ const plug = (): DefinitionBody => ({
 })
 const definition = (graph: VisualGraph) => graph.definition as unknown as EditorDefinition
 
-/** The form on `graph`. `device`: what the editor remembers of a device turned off, and the saved document's device. */
-function mount(graph: VisualGraph, options: {
-  diagnostics?: VisualDiagnostic[]; liveEntities?: DefinitionLiveEntity[]
-  memory?: DeviceMemory; savedDevice?: DefinitionDevice | null
-} = {}) {
+/** The form on `graph`. */
+function mount(graph: VisualGraph, options: { diagnostics?: VisualDiagnostic[] } = {}) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
@@ -42,8 +38,7 @@ function mount(graph: VisualGraph, options: {
   const notices: string[] = []
   dispose = render(() => (
     <DefinitionPanel graph={history.graph()} catalog={nodeCatalog} diagnostics={diagnostics()} commit={history.commit}
-      liveEntities={options.liveEntities} onNotice={text => notices.push(text)} deviceMemory={options.memory} savedDevice={options.savedDevice}
-      located={located()} />
+      onNotice={text => notices.push(text)} located={located()} />
   ), el)
   return { el, history, notices, setDiagnostics, setLocated, graph: () => history.graph() }
 }
@@ -73,11 +68,14 @@ const problem = (code: string, message: string, inputId: string | null, nodeId: 
   ({ nodeId, inputId, portId: null, code, message, severity: 3, startLine: null, startColumn: null })
 
 describe('the overview', () => {
-  it('has the device and the settings, and no Entities section: its entities are its Entity nodes', () => {
+  it('has the settings alone, and no Device or Entities section: its devices and entities are its Device and Entity nodes', () => {
     const { el } = mount(editorGraph(plug()))
     const headings = [...el.querySelectorAll('h2, h3, h4, legend, [role="heading"]')].map(h => h.textContent?.trim())
-    expect(el.querySelector('[aria-label="Device"]')).not.toBeNull()
     expect(el.querySelector('[aria-label="Settings"]')).not.toBeNull()
+    expect(el.querySelector('[aria-label="Device"]')).toBeNull()
+    expect(headings).not.toContain('Device')
+    expect(el.textContent).not.toContain('Group these entities as a device')
+    expect(el.querySelector('[data-field="device"], [data-field="manufacturer"], [data-field="via"]')).toBeNull()
     expect(el.querySelector('[aria-label="Entities"]')).toBeNull()
     expect(headings).not.toContain('Entities')
     expect([...el.querySelectorAll('button')].map(b => b.textContent?.trim())).not.toContain('Add entity')
@@ -115,59 +113,6 @@ describe('the overview', () => {
     expect(top.textContent).toBe('Give the definition a name of up to 120 characters')
     expect(el.textContent).not.toContain('Unit of Power takes a text')
     expect(el.textContent).not.toContain('Give the entity a name')
-  })
-})
-
-describe('the device', () => {
-  it('groups the entities as a device with its details, and keeps its parent when turned off and on', () => {
-    const { el, graph, history } = mount(editorGraph(plug()))
-    const on = control(el.querySelector('[aria-label="Device"]')!, 'device')
-    expect(on.checked).toBe(true)
-    expect(on.getAttribute('aria-describedby')).toBeTruthy()
-    const device = el.querySelector('[aria-label="Device"]')!
-    type(control(device, 'swVersion'), '1.2')
-    type(control(device, 'suggestedArea'), 'Kitchen')
-    type(control(device, 'model'), '')
-    expect(definition(graph()).device).toEqual({ manufacturer: 'Acme', swVersion: '1.2', suggestedArea: 'Kitchen', via: { definition: 'hub', deviceId: null } })
-    toggle(on)
-    expect(definition(graph()).device).toBeNull()
-    expect(device.querySelector('[data-field="manufacturer"]')).toBeNull()
-    toggle(on)
-    expect(definition(graph()).device).toEqual({ manufacturer: 'Acme', swVersion: '1.2', suggestedArea: 'Kitchen', via: { definition: 'hub', deviceId: null } })
-    history.undo(); history.undo()
-    expect(definition(graph()).device?.model).toBeUndefined()
-    history.undo()
-    expect(definition(graph()).device?.model).toBe('P1')
-  })
-
-  it('remembers the device turned off for the editor, past the form being shown again, and else turns the saved one back on', () => {
-    const memory = deviceMemory()
-    const first = mount(editorGraph(plug()), { memory })
-    toggle(control(first.el.querySelector('[aria-label="Device"]')!, 'device'))
-    const off = first.graph()
-    expect(definition(off).device).toBeNull()
-    // A step selected: the form goes; nothing selected: it is back, on the same graph.
-    dispose!(); document.body.innerHTML = ''
-    const again = mount(off, { memory })
-    toggle(control(again.el.querySelector('[aria-label="Device"]')!, 'device'))
-    expect(definition(again.graph()).device).toEqual({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } })
-    // Nothing remembered (a draft restored with the device off): the saved document's device.
-    dispose!(); document.body.innerHTML = ''
-    const saved: DefinitionDevice = { manufacturer: 'Acme', model: 'P2', via: { definition: 'hub', deviceId: null } }
-    const restored = mount(off, { memory: deviceMemory(), savedDevice: saved })
-    toggle(control(restored.el.querySelector('[aria-label="Device"]')!, 'device'))
-    expect(definition(restored.graph()).device).toEqual(saved)
-  })
-
-  it('starts a device of a definition that had none with no details', () => {
-    const { el, graph } = mount(editorGraph(newGraphDefinition('Any motion')))
-    const device = el.querySelector('[aria-label="Device"]')!
-    expect(device.querySelector('[data-field="manufacturer"]')).toBeNull()
-    toggle(control(device, 'device'))
-    expect(definition(graph()).device).toEqual({})
-    for (const field of ['manufacturer', 'model', 'swVersion', 'hwVersion', 'configurationUrl', 'suggestedArea']) expect(control(device, field), field).not.toBeNull()
-    type(control(device, 'manufacturer'), ' Acme ')
-    expect(definition(graph()).device).toEqual({ manufacturer: 'Acme' })
   })
 })
 
