@@ -10,18 +10,6 @@ using HassSharp;
 /// </summary>
 static class EntityStoreTests
 {
-    const string Plug = "library:shelly:NodeLib.ShellyPlug";
-    // The setting types the shelly library does not have, one with a label of its own.
-    const string Heater = """
-        public class Heater : SharpSwitch
-        {
-            public Heater() : base("heater") { }
-            [Setting] public bool Eco { get; set; }
-            [Setting("Target temperature")] public double Target { get; set; }
-            [Setting] public long Energy { get; set; }
-        }
-        """;
-
     static void Check(bool value, string message) { if (!value) throw new Exception(message); }
 
     static T Throws<T>(Action action, string what) where T : Exception
@@ -32,27 +20,15 @@ static class EntityStoreTests
         throw new Exception($"{what}: did not throw {typeof(T).Name}");
     }
 
-    static DefinitionBody Body(string name = "Kitchen plug", string? type = Plug, List<DefinitionSetting>? settings = null,
-        JsonArray? entities = null, string kind = "class") =>
-        new(name, new DefinitionDevice("Shelly", "Plug S", null, null, null, "Kitchen", null), settings, entities, new DefinitionLogic(kind, type, null));
-
-    static DefinitionSetting Setting(string key, string? json) => new(key, json == null ? null : JsonNode.Parse(json));
-
     static string Codes(DefinitionPreview preview) => string.Join(" | ", preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.Message}"));
 
     [RuntimeSuite("--entity-store", Order = 12)]
     public static Task Run()
     {
         var compiler = new NodeLibraryCompiler(new DiagnosticsProvider());
-        var library = compiler.Preview([new NodeLibrarySource("shelly", EntityTypeTests.Shelly, 1)]);
-        Check(library.Valid, "the shelly library compiles");
-        var broken = compiler.Preview([new NodeLibrarySource("broken", EntityTypeTests.Broken, 1)]);
-        Check(!broken.Valid, "the broken library has errors");
-        var heater = compiler.Preview([new NodeLibrarySource("heater", Heater, 1)]);
-        Check(heater.Valid, "the heater library compiles");
+        var library = compiler.Preview([new NodeLibrarySource("maths", Maths, 1)]);
+        Check(library.Valid, "the maths library compiles");
         Store(library.Snapshot);
-        Diagnostics(library.Snapshot, broken.Snapshot, heater.Snapshot);
-        ClassDefinitionFilesAreUnchanged(library.Snapshot);
         Graphs(compiler, library.Snapshot);
         return Task.CompletedTask;
     }
@@ -76,7 +52,7 @@ static class EntityStoreTests
     static DefinitionSetting Typed(string key, string? type, string? json = null, string? label = null, bool secret = false) =>
         new(key, json == null ? null : JsonNode.Parse(json)) { Type = type, Label = label, Secret = secret };
     static DefinitionBody GraphBody(JsonObject? graph, JsonArray? entities, List<DefinitionSetting>? settings = null, string name = "Any motion") =>
-        new(name, null, settings, entities, new DefinitionLogic("graph", null, graph));
+        new(name, null, settings, entities, new DefinitionLogic("graph", graph));
 
     /// <summary>
     /// The acceptance graph: a binary sensor that is on while either of two motion sensors is (the shared fixture's case),
@@ -114,6 +90,7 @@ static class EntityStoreTests
             (nameof(ComposeAndDecomposeAreInverse), ComposeAndDecomposeAreInverse),
             (nameof(ComposeCarriesNoSettingValuesOrSecrets), () => ComposeCarriesNoSettingValuesOrSecrets(snapshot)),
             (nameof(GraphDocumentChecks), () => GraphDocumentChecks(snapshot)),
+            (nameof(TheDocumentsOwnProblemsComeAlone), () => TheDocumentsOwnProblemsComeAlone(compiler, snapshot)),
             (nameof(OptionProblemsNameTheirOption), () => OptionProblemsNameTheirOption(snapshot)),
             (nameof(ANodesOptionProblemIsOnItsNode), () => ANodesOptionProblemIsOnItsNode(snapshot)),
             (nameof(AnEntityNodesFieldsAreOfTheirType), () => AnEntityNodesFieldsAreOfTheirType(snapshot)),
@@ -132,7 +109,6 @@ static class EntityStoreTests
             (nameof(ASaveWritesVersionThreeWithTheDerivedDevices), () => ASaveWritesVersionThreeWithTheDerivedDevices(snapshot)),
             (nameof(AnOlderGraphDocumentSaysToBuildItAgain), () => AnOlderGraphDocumentSaysToBuildItAgain(snapshot)),
             (nameof(AVersionTwoGraphDocumentSaysToBuildItAgain), () => AVersionTwoGraphDocumentSaysToBuildItAgain(snapshot)),
-            (nameof(AnOlderClassDocumentStillLoads), () => AnOlderClassDocumentStillLoads(snapshot)),
             (nameof(ARequestThatSendsDevicesBackIsAccepted), () => ARequestThatSendsDevicesBackIsAccepted(snapshot)),
             (nameof(TheDerivedListsHoldTheCSharpNodes), () => TheDerivedListsHoldTheCSharpNodes(snapshot)),
             (nameof(ComposeGivesNoEntities), ComposeGivesNoEntities) })
@@ -241,10 +217,6 @@ static class EntityStoreTests
                 "the body of a stored graph has neither: a regeneration composes from the graph alone");
             Check(JsonNode.DeepEquals(store.Save("motion", Motion(), 0, snapshot, "g1").Devices, new JsonArray()) && JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!["devices"] is JsonArray { Count: 0 },
                 "a graph without Device nodes lists none");
-            store.Save("lamp", Body(), 0, snapshot, "g1");
-            var lamp = JsonNode.Parse(File.ReadAllText(store.FilePath("lamp")))!.AsObject();
-            Check(lamp["version"]!.GetValue<int>() == 3 && !lamp.ContainsKey("devices") && store.Read("lamp")!.Devices == null, "a class definition is saved at version 3 too, with no devices: " + lamp.ToJsonString());
-            Check(store.Read("lamp")!.Body.Entities == null, "a class definition's body has its own, none here");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -260,7 +232,7 @@ static class EntityStoreTests
         {
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
             store.Save("motion", Motion(), 0, snapshot, "g1");
-            store.Save("lamp", Body(), 0, snapshot, "g1");
+            store.Save("lamp", GraphBody(PlugGraph(), null, name: "Lamp"), 0, snapshot, "g1");
             // As a phase 2 build wrote it: version 2, without devices.
             var json = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!.AsObject();
             json["version"] = 2; json.Remove("devices");
@@ -365,7 +337,7 @@ static class EntityStoreTests
             var refused = Throws<DefinitionValidationException>(() => store.Save("hall", request.Deserialize<DefinitionBody>(VisualStore.Json)!, 2, snapshot, "g1"), "saving the entities back");
             Check(refused.Preview.Diagnostics.Select(d => $"{d.Code} {d.InputId}").SequenceEqual(["definition.entitiesNotAllowed entities"]), "the entities sent back are refused: " + Codes(refused.Preview));
             Check(store.Read("hall")!.Revision == 2, "and nothing is written");
-            Check(HassSharpManager.DeviceCount(again, snapshot) == 2, "the list counts the Device node and the C# device");
+            Check(HassSharpManager.DeviceCount(again) == 2, "the list counts the Device node and the C# device");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -389,7 +361,7 @@ static class EntityStoreTests
         {
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
             store.Save("motion", Motion(), 0, snapshot, "g1");
-            store.Save("plug", Body(), 0, snapshot, "g1");
+            store.Save("plug", GraphBody(PlugGraph(), null, name: "Plug"), 0, snapshot, "g1");
             Downgrade(store, "motion", 1);
             Check(store.List().Select(d => d.Id).SequenceEqual(["plug"]), "List skips it: " + string.Join(", ", store.List().Select(d => d.Id)));
             Check(Throws<JsonException>(() => store.Read("motion"), "reading it").Message == EarlierBuild, "reading it says why");
@@ -406,27 +378,6 @@ static class EntityStoreTests
             Check(Throws<JsonException>(() => store.Read("listed"), "reading a listed one").Message == EarlierBuild, "a version 1 graph document that lists its entities says the same");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-    }
-
-    /// <summary>A version 1 or 2 class document, whose document is the same as a version 3 one, is read and listed as it is.</summary>
-    static void AnOlderClassDocumentStillLoads(VisualCatalogSnapshot snapshot)
-    {
-        foreach (var version in (int[])[1, 2])
-        {
-            var directory = TempDirectory("older-class");
-            try
-            {
-                var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-                var saved = store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
-                Downgrade(store, "plug", version);
-                Check(store.Read("plug") is { Revision: 1, Logic: { Kind: "class", Type: Plug } } read && read.Version == version && read.Source == saved.Source && read.Settings[0].Value!.GetValue<string>() == "10.0.0.5",
-                    $"version {version}: it reads back as it was");
-                Check(store.List().Select(d => d.Id).SequenceEqual(["plug"]), $"version {version}: it is listed");
-                Check(new DefinitionGenerator().Preview(store.Read("plug")!.Body, snapshot) is { Valid: true } preview && preview.Source == saved.Source, $"version {version}: it regenerates its source");
-                Check(store.Save("plug", store.Read("plug")!.Body, 1, snapshot, "g1").Version == 3, $"version {version}: saved again, it is version 3");
-            }
-            finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-        }
     }
 
     /// <summary>The composed definition is the settings: its entities are the graph's Entity nodes.</summary>
@@ -449,10 +400,10 @@ static class EntityStoreTests
             Check(saved.Revision == 1 && saved.Source.Contains("public class VisualAutomation : global::HassSharp.Automation", StringComparison.Ordinal)
                 && saved.SourceMap.Any(m => m.NodeId == "s"), "the acceptance definition is saved at revision 1 with the graph's source: " + saved.Source.Length);
             var read = store.Read("motion")!;
-            Check(read is { Revision: 1, Logic.Kind: "graph", Logic.Type: null } && read.Logic.Graph is { } stored && !stored.ContainsKey("definition")
+            Check(read is { Revision: 1, Logic.Kind: "graph" } && read.Logic.Graph is { } stored && !stored.ContainsKey("definition")
                 && stored["comment"]?.GetValue<string>() == "kept as written" && read.Source == saved.Source, "the stored graph has no definition and keeps its unknown keys: " + read.Logic.Graph?.ToJsonString());
             Check(read.Logic.Graph!["nodes"]!.AsArray().All(n => n!["position"] is JsonObject), "the store fills the graph's layout as an automation's");
-            Check(JsonNode.DeepEquals(read.Entities, MotionEntities()) && read.Settings.Count == 0 && read.Device == null, "the entities read back as its Entity node declares them: " + read.Entities?.ToJsonString());
+            Check(JsonNode.DeepEquals(read.Entities, MotionEntities()) && read.Settings.Count == 0 && !JsonSerializer.SerializeToNode(read, VisualStore.Json)!.AsObject().ContainsKey("device"), "the entities read back as its Entity node declares them: " + read.Entities?.ToJsonString());
             var file = File.ReadAllText(store.FilePath("motion"));
             Check(!file.Contains("\"definition\"", StringComparison.Ordinal), "the file holds no composed definition: " + file);
             // The source embeds the graph with its definition composed from the document.
@@ -536,7 +487,7 @@ static class EntityStoreTests
         Check(generator.Preview(Level(Settings("\"hunter2\"", "\"2.5\"", "string")), snapshot) is { Valid: true } retyped && retyped.Source != preview.Source, "changing a setting's type changes the source");
         Check(generator.Preview(Level([.. Settings("\"hunter2\"", "2.5"), Typed("extra", "boolean")]), snapshot).Source != preview.Source, "adding a setting changes the source");
         Check(generator.Preview(Level([Typed("password", "string", "\"hunter2\""), Typed("shift", "number")]) with
-            { Logic = new("graph", null, Graph("Level", [N("k", "setting", new { key = "shift" }), Hub("s", "level", "sensor", new JsonObject { ["name"] = "Level", ["options"] = new JsonObject { ["unit"] = "W" } })], D("k", "s", "value"))) }, snapshot) is { Valid: true } renamed
+            { Logic = new("graph", Graph("Level", [N("k", "setting", new { key = "shift" }), Hub("s", "level", "sensor", new JsonObject { ["name"] = "Level", ["options"] = new JsonObject { ["unit"] = "W" } })], D("k", "s", "value"))) }, snapshot) is { Valid: true } renamed
             && renamed.Source != preview.Source, "renaming a setting changes the source");
         Check(generator.Preview(Level(Settings("\"hunter2\"", "2.5"), new { name = "Power level", options = new { unit = "W" } }), snapshot).Source != preview.Source,
             "changing an entity's name changes the source");
@@ -629,7 +580,7 @@ static class EntityStoreTests
         Only(Settings([Typed("offset", "number"), Typed("", "number")]), "definition.settingKey", null);
         Only(Settings([Typed("offset", "number"), Typed(" ", "number")]), "definition.settingKey", null);
         Only(Settings([Typed("offset", "number"), null!]), "definition.settingKey", null);
-        Check(!generator.Preview(Body(kind: "graph", type: null) with { Device = null }, snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
+        Check(!generator.Preview(GraphBody(null, null), snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
         Console.WriteLine("PASS entity store: each problem of a graph definition's document gives its code, at the Entity node option or setting it names");
 
         // The document's problems come first: the graph is not checked against a definition that would only repeat them.
@@ -759,7 +710,8 @@ static class EntityStoreTests
             // As a read answer has it: device null, which is accepted and ignored.
             var request = JsonNode.Parse(JsonSerializer.Serialize(Motion(), VisualStore.Json))!.AsObject();
             Check(request.ContainsKey("device") && request["device"] == null, "the request sends device null: " + request.ToJsonString());
-            Check(new DefinitionGenerator().Preview(request.Deserialize<DefinitionBody>(VisualStore.Json)!, snapshot).Valid && store.Save("motion", Motion(), 0, snapshot, "g1").Device == null,
+            Check(new DefinitionGenerator().Preview(request.Deserialize<DefinitionBody>(VisualStore.Json)!, snapshot).Valid && store.Save("motion", Motion(), 0, snapshot, "g1") is { } stored
+                && !JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!.AsObject().ContainsKey("device") && !JsonSerializer.SerializeToNode(stored, VisualStore.Json)!.AsObject().ContainsKey("device"),
                 "device null is accepted, and nothing is stored for it");
             // The refusal alone: a graph with no Entity node and a repeated setting is not checked further; the name's comes first.
             var device = new DefinitionDevice("Acme", null, null, null, null, null, null);
@@ -775,8 +727,8 @@ static class EntityStoreTests
     }
 
     /// <summary>
-    /// A graph document an earlier build of this phase saved with a device of its own is read without it: its read
-    /// answer's device is null, and its body regenerates the source it was saved with.
+    /// A graph document an earlier build of this phase saved with a device of its own is read without it: the document
+    /// it reads as has no device, nor its body, and its body regenerates the source it was saved with.
     /// </summary>
     static void AGraphDocumentsStoredDeviceIsNotRead(VisualCatalogSnapshot snapshot)
     {
@@ -789,16 +741,15 @@ static class EntityStoreTests
             json["device"] = JsonNode.Parse("""{"manufacturer":"Acme","model":"Motion","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}""");
             File.WriteAllText(store.FilePath("motion"), json.ToJsonString(VisualStore.Json));
             var read = store.Read("motion")!;
-            Check(read.Device == null && read.Body.Device == null && JsonSerializer.SerializeToNode(read, VisualStore.Json)!["device"] == null, "its device is not read");
+            Check(read.Body.Device == null && !JsonSerializer.SerializeToNode(read, VisualStore.Json)!.AsObject().ContainsKey("device"), "its device is not read");
             Check(new DefinitionGenerator().Preview(read.Body, snapshot) is { Valid: true } preview && preview.Source == saved.Source, "its body regenerates its source");
-            Check(store.List().Single().Device == null, "nor listed");
+            Check(!JsonSerializer.SerializeToNode(store.List().Single(), VisualStore.Json)!.AsObject().ContainsKey("device"), "nor listed");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
     /// <summary>
-    /// The list's count of a definition's devices: a graph's, the devices its Device nodes declare; a class's, 1 when it
-    /// gives device details or its class derives from SharpDevice, else 0 (also for a class the libraries no longer have).
+    /// The list's count of a definition's devices: the devices its Device nodes and C# devices declare.
     /// </summary>
     static void TheListCountsADefinitionsDevices(VisualCatalogSnapshot snapshot)
     {
@@ -809,19 +760,13 @@ static class EntityStoreTests
             var two = PlugGraph();
             two["nodes"]!.AsArray().Add(N("hub", "device", new JsonObject { ["key"] = "hub", ["name"] = "Hub" }));
             two["edges"]!.AsArray().Add(D("hub", "bare", "device", "entities"));
-            var bare = new DefinitionDevice(null, null, null, null, null, null, null);
             foreach (var (id, body, count) in new (string, DefinitionBody, int)[] {
-                ("motion", Motion(), 0), ("plug", GraphBody(PlugGraph(), null, name: "Plug"), 1), ("two", GraphBody(two, null, name: "Two"), 2),
-                ("shelly", Body() with { Device = null }, 1), ("shelly_details", Body(), 1),
-                ("relay", Body(type: "library:shelly:NodeLib.Relay") with { Device = null }, 0), ("relay_details", Body(type: "library:shelly:NodeLib.Relay") with { Device = bare }, 1) })
+                ("motion", Motion(), 0), ("plug", GraphBody(PlugGraph(), null, name: "Plug"), 1), ("two", GraphBody(two, null, name: "Two"), 2) })
             {
                 var document = store.Save(id, body, 0, snapshot, "g1");
-                Check(HassSharpManager.DeviceCount(document, snapshot) == count, $"{id}: {count} devices, not {HassSharpManager.DeviceCount(document, snapshot)}");
+                Check(HassSharpManager.DeviceCount(document) == count, $"{id}: {count} devices, not {HassSharpManager.DeviceCount(document)}");
+                Check(HassSharpManager.DeviceCount(store.Read(id)!) == count, $"{id} read back: {count} devices");
             }
-            // A class no library offers any more: its device details alone say.
-            var gone = VisualCatalogSnapshot.BuiltIn;
-            Check(HassSharpManager.DeviceCount(store.Read("shelly")!, gone) == 0 && HassSharpManager.DeviceCount(store.Read("shelly_details")!, gone) == 1,
-                "a class the libraries no longer have makes a device when it gives device details");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
@@ -1004,42 +949,37 @@ static class EntityStoreTests
     }
 
     /// <summary>
-    /// A class definition's stored file, byte for byte apart from its save time, as phase 1 wrote it but for its version, 3: it lists no devices, its settings have
-    /// no label, type or secret, and a label, type or secret a client sends with them is not stored.
+    /// A definition's own problems, those of no node: a name of 1 to 120 characters; logic that is a graph, one of any other
+    /// kind (a class among them) or none being told it is built from nodes; and libraries with errors. Each comes alone but for the name's, which is said first.
     /// </summary>
-    static void ClassDefinitionFilesAreUnchanged(VisualCatalogSnapshot snapshot)
+    static void TheDocumentsOwnProblemsComeAlone(NodeLibraryCompiler compiler, VisualCatalogSnapshot snapshot)
     {
-        var directory = Path.Combine(Path.GetTempPath(), "entity-store-class-" + Guid.NewGuid());
-        try
+        var generator = new DefinitionGenerator();
+        string Codes(DefinitionPreview preview) => string.Join(" | ", preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.NodeId} {d.Message}"));
+        void Only(DefinitionBody body, VisualCatalogSnapshot catalog, params string[] problems)
         {
-            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            var settings = (List<DefinitionSetting>)[Setting("Host", "\"10.0.0.5\""), Setting("Token", null)];
-            var source = string.Join('\n',
-                "// HassSharp entity definition",
-                "public static class SharpDefinition { public static object Create() => new global::NodeLib.ShellyPlug(); }",
-                "// NodeLibrarySource \"shelly\" revision 1",
-                NodeLibraryCompiler.WrapSource(EntityTypeTests.Shelly)) + "\n";
-            string Expected(string id) => "{\"version\":3,\"id\":\"" + id + "\",\"revision\":1,\"name\":\"Kitchen plug\","
-                + "\"device\":{\"manufacturer\":\"Shelly\",\"model\":\"Plug S\",\"swVersion\":null,\"hwVersion\":null,\"configurationUrl\":null,\"suggestedArea\":\"Kitchen\",\"via\":null},"
-                + "\"settings\":[{\"key\":\"Host\",\"value\":\"10.0.0.5\"},{\"key\":\"Token\",\"value\":null}],\"entities\":null,"
-                + "\"logic\":{\"kind\":\"class\",\"type\":\"" + Plug + "\",\"graph\":null},"
-                + "\"source\":" + JsonSerializer.Serialize(source, VisualStore.Json) + ","
-                + "\"sourceMap\":[{\"nodeId\":\"$library:shelly\",\"startLine\":4,\"endLine\":" + (source.Split('\n').Length - 1) + "}],"
-                + "\"enabled\":true,\"savedUtc\":\"SAVED\",\"catalogGeneration\":\"g1\"}";
-            string Stored(string id)
-            {
-                var json = JsonNode.Parse(File.ReadAllText(store.FilePath(id)))!.AsObject();
-                Check(json["savedUtc"] is JsonValue, $"{id} has a save time");
-                json["savedUtc"] = "SAVED";
-                return json.ToJsonString(VisualStore.Json);
-            }
-            store.Save("plug9", Body(settings: settings), 0, snapshot, "g1");
-            Check(Stored("plug9") == Expected("plug9"), "a class definition's file is as phase 1 wrote it, at version 3 (no devices, no key or name on its device):\n" + Stored("plug9") + "\n" + Expected("plug9"));
-            Check(File.ReadAllText(store.FilePath("plug9")).Replace(JsonNode.Parse(File.ReadAllText(store.FilePath("plug9")))!["savedUtc"]!.ToJsonString(), "\"SAVED\"") == Expected("plug9"),
-                "the file's own bytes match too");
-            Console.WriteLine("PASS entity store: a class definition's stored file is byte-identical to phase 1's apart from its save time");
+            var preview = generator.Preview(body, catalog);
+            Check(!preview.Valid && preview.Source == "" && preview.SourceMap.Count == 0 && preview.Diagnostics.All(d => d is { Severity: 3, NodeId: null, InputId: null })
+                && preview.Diagnostics.Select(d => $"{d.Code} {d.Message}").SequenceEqual(problems), $"expected {string.Join(" | ", problems)}: " + Codes(preview));
         }
-        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+        const string name = "definition.name Give the definition a name of up to 120 characters";
+        const string logic = "definition.logic A definition is built from nodes: logic is {kind: \"graph\", graph}. Write C# in a C# entity or C# device node";
+        Only(Motion() with { Name = "" }, snapshot, name);
+        Only(Motion() with { Name = " " }, snapshot, name);
+        Only(Motion() with { Name = new string('x', 121) }, snapshot, name);
+        Check(generator.Preview(Motion() with { Name = new string('x', 120) }, snapshot).Valid, "a name of 120 characters is accepted");
+        foreach (var other in new DefinitionLogic?[] { new("class", null), new("class", MotionGraph()), new("script", MotionGraph()), new("Graph", MotionGraph()), null })
+        {
+            Only(Motion() with { Logic = other! }, snapshot, logic);
+            Only(Motion() with { Name = "", Logic = other! }, snapshot, name, logic);
+            // A class request's entities or device are not looked at: it is told it is built from nodes, alone.
+            Only(Motion() with { Logic = other!, Entities = [], Device = new DefinitionDevice("Acme", null, null, null, null, null, null) }, snapshot, logic);
+        }
+        var broken = compiler.Preview([new NodeLibrarySource("broken", "public class Broken { int x = ; }", 1)]);
+        Check(!broken.Valid, "the broken library has errors");
+        Only(Motion(), broken.Snapshot, "definition.library The node libraries have errors; fix them first");
+        Only(Motion() with { Name = "" }, broken.Snapshot, name, "definition.library The node libraries have errors; fix them first");
+        Console.WriteLine("PASS entity store: a definition's name, logic that is no graph, and libraries with errors are its own problems, each alone but for the name's");
     }
 
     /// <summary>
@@ -1064,7 +1004,7 @@ static class EntityStoreTests
             Check(saved.Revision == 1 && saved.Source == expected, "a new definition is saved at revision 1 with the exact source:\n" + saved.Source);
             Check(File.Exists(store.FilePath("level1")) && store.Read("level1") is { Revision: 1, Name: "Kitchen level", Enabled: true, CatalogGeneration: "g1" } read
                 && read.Source == expected && read.Settings.Count == 3 && read.Settings[1].Value!.GetValue<string>() == "10.0.0.5"
-                && read.Device == null && read.Logic is { Kind: "graph", Type: null, Graph: not null } && read.SavedUtc != null,
+                && read.Logic is { Kind: "graph", Graph: not null } && read.SavedUtc != null,
                 "the saved document reads back with its body");
             Check(saved.SourceMap.SequenceEqual(preview.SourceMap) && saved.SourceMap.Any(m => m.NodeId == "s"), "the source map is the generator's, with the Entity node's lines: " + string.Join(", ", saved.SourceMap));
             var json = File.ReadAllText(store.FilePath("level1"));
@@ -1129,90 +1069,5 @@ static class EntityStoreTests
             Console.WriteLine("PASS entity store: an invalid definition throws its preview and stores nothing");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-    }
-
-    static void Diagnostics(VisualCatalogSnapshot snapshot, VisualCatalogSnapshot broken, VisualCatalogSnapshot heater)
-    {
-        var generator = new DefinitionGenerator();
-        DefinitionPreview Only(DefinitionBody body, VisualCatalogSnapshot catalog, string code, string message, string? input = null)
-        {
-            var preview = generator.Preview(body, catalog);
-            Check(!preview.Valid && preview.Source == "" && preview.Diagnostics.Count == 1, $"{code}: exactly one diagnostic: " + Codes(preview));
-            var diagnostic = preview.Diagnostics[0];
-            Check(diagnostic is { Severity: 3, NodeId: null } && diagnostic.Code == code && diagnostic.Message == message && diagnostic.InputId == input,
-                $"{code}: {Codes(preview)}");
-            return preview;
-        }
-
-        var valid = generator.Preview(Body(settings: [Setting("Channel", "-4"), Setting("Mode", "\"Eco\""), Setting("Token", null)]), snapshot);
-        Check(valid.Valid && valid.Diagnostics.Count == 0 && valid.Type?.Id == Plug && valid.Source.Length > 0, "a valid definition: " + Codes(valid));
-        Check(generator.Preview(Body(entities: []), snapshot).Valid, "an empty entities array counts as none");
-        Console.WriteLine("PASS entity definitions: a valid definition previews with its type, and an empty entities array is none");
-
-        Only(Body(name: ""), snapshot, "definition.name", "Give the definition a name of up to 120 characters");
-        Only(Body(name: new string('x', 121)), snapshot, "definition.name", "Give the definition a name of up to 120 characters");
-        Check(generator.Preview(Body(name: new string('x', 120)), snapshot).Valid, "a name of 120 characters is accepted");
-        Only(Body(kind: "script"), snapshot, "definition.logic", "Logic is a graph or a class");
-        Only(Body(entities: [new JsonObject { ["key"] = "relay" }]), snapshot, "definition.entitiesNotAllowed", "A class definition's entities come from its code");
-        Only(Body(type: "library:broken:NodeLib.Odd"), broken, "definition.library", "The node libraries have errors; fix them first");
-        Only(Body(type: "library:shelly:NodeLib.Nope"), snapshot, "definition.unknownType", "No entity class library:shelly:NodeLib.Nope in the node libraries");
-        Only(Body(type: null), snapshot, "definition.unknownType", "No entity class was given: choose the class the definition creates");
-        Only(Body(type: " "), snapshot, "definition.unknownType", "No entity class was given: choose the class the definition creates");
-        Only(Body(settings: [Setting("Port", "80")]), snapshot, "definition.unknownSetting", "Shelly plug has no setting Port", "Port");
-        Only(Body(settings: [Setting("Host", "\"a\""), Setting("Host", "\"b\"")]), snapshot, "definition.duplicateSetting", "Host is set twice", "Host");
-        Console.WriteLine("PASS entity definitions: each problem gives its code and message");
-
-        // Channel is an int: a whole number outside its range would save, then fail when the definition runs.
-        foreach (var value in new[] { "3.5", "1e40", "\"x\"", "true", "9223372036854775808", "2147483648", "-2147483649", "3000000000" })
-            Only(Body(settings: [Setting("Channel", value)]), snapshot, "definition.settingType", "Channel takes a whole number from -2147483648 to 2147483647", "Channel");
-        foreach (var value in new[] { "2147483647", "-2147483648", "0" })
-            Check(generator.Preview(Body(settings: [Setting("Channel", value)]), snapshot).Valid, $"{value} fits an int");
-        const string HeaterType = "library:heater:NodeLib.Heater";
-        // Energy is a long: any whole number a long holds.
-        foreach (var value in new[] { "9223372036854775807", "-9223372036854775808", "3000000000" })
-            Check(generator.Preview(Body(type: HeaterType, settings: [Setting("Energy", value)]), heater).Valid, $"{value} fits a long");
-        foreach (var value in new[] { "9223372036854775808", "1.5" })
-            Only(Body(type: HeaterType, settings: [Setting("Energy", value)]), heater, "definition.settingType", "Energy takes a whole number", "Energy");
-        Only(Body(settings: [Setting("Mode", "\"Turbo\"")]), snapshot, "definition.settingType", "Mode takes one of Eco, Boost", "Mode");
-        Only(Body(settings: [Setting("Mode", "1")]), snapshot, "definition.settingType", "Mode takes one of Eco, Boost", "Mode");
-        Only(Body(settings: [Setting("Host", "5")]), snapshot, "definition.settingType", "Host takes a text", "Host");
-        Only(Body(type: HeaterType, settings: [Setting("Eco", "\"yes\"")]), heater, "definition.settingType", "Eco takes true or false", "Eco");
-        Only(Body(type: HeaterType, settings: [Setting("Target", "\"20\"")]), heater, "definition.settingType", "Target temperature takes a number", "Target");
-        Check(generator.Preview(Body(type: HeaterType, settings: [Setting("Eco", "false"), Setting("Target", "1e40")]), heater).Valid, "a boolean and a number that fit");
-        Console.WriteLine("PASS entity definitions: a value that does not fit its setting is reported at the setting");
-
-        // A setting that declares a range takes only a value within it, said by its label and the range.
-        var ranged = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("ranged", EntityTypeTests.Ranged, 1)]).Snapshot;
-        const string PollerType = "library:ranged:NodeLib.Poller";
-        foreach (var value in new[] { "0", "3601", "-5", "1.5" })
-            Only(Body(type: PollerType, settings: [Setting("Interval", value)]), ranged, "definition.settingType", "Poll interval takes a whole number from 1 to 3600", "Interval");
-        Only(Body(type: PollerType, settings: [Setting("Gain", "0.25")]), ranged, "definition.settingType", "Gain takes a number of at least 0.5", "Gain");
-        Only(Body(type: PollerType, settings: [Setting("Count", "11")]), ranged, "definition.settingType", "Count takes a whole number of at most 10", "Count");
-        Only(Body(type: PollerType, settings: [Setting("Plain", "2147483648")]), ranged, "definition.settingType", "Plain takes a whole number from -2147483648 to 2147483647", "Plain");
-        foreach (var (key, value) in new[] { ("Interval", "1"), ("Interval", "3600"), ("Gain", "0.5"), ("Gain", "1e40"), ("Count", "10"), ("Count", "-9223372036854775808"), ("Plain", "-2147483648") })
-            Check(generator.Preview(Body(type: PollerType, settings: [Setting(key, value)]), ranged).Valid, $"{key} {value} is within its range");
-        // An int's range given on one side only says that side, not the int's own bound on the other.
-        var oneSided = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("sided", """
-            public class Sided : SharpDevice
-            {
-                [Setting(Minimum = 1)] public int Retries { get; set; } = 3;
-                [Setting(Maximum = 60)] public int Delay { get; set; }
-            }
-            """, 1)]).Snapshot;
-        Only(Body(type: "library:sided:NodeLib.Sided", settings: [Setting("Retries", "0")]), oneSided, "definition.settingType", "Retries takes a whole number of at least 1", "Retries");
-        Only(Body(type: "library:sided:NodeLib.Sided", settings: [Setting("Delay", "61")]), oneSided, "definition.settingType", "Delay takes a whole number of at most 60", "Delay");
-        Only(Body(type: "library:sided:NodeLib.Sided", settings: [Setting("Retries", "2147483648")]), oneSided, "definition.settingType", "Retries takes a whole number of at least 1", "Retries");
-        Console.WriteLine("PASS entity definitions: a value outside its setting's range is refused naming the setting's label and the range");
-
-        foreach (var key in new[] { "Host", "Token", "Channel", "Mode" })
-            Check(generator.Preview(Body(settings: [Setting(key, null)]), snapshot).Valid, $"a null {key} leaves the class default");
-        Console.WriteLine("PASS entity definitions: a null value is always accepted");
-
-        var many = generator.Preview(Body(name: "", settings: [Setting("Port", "1"), Setting("Channel", "3.5"), Setting("Channel", "1")]), snapshot);
-        Check(many.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.unknownSetting", "definition.settingType", "definition.duplicateSetting"]),
-            "every problem is reported, in the table's order: " + Codes(many));
-        var unknown = generator.Preview(Body(type: "library:shelly:NodeLib.Nope", settings: [Setting("Port", "1")]), snapshot);
-        Check(unknown.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.unknownType"]), "no setting problems against an unknown type: " + Codes(unknown));
-        Console.WriteLine("PASS entity definitions: one preview reports every problem, but no setting problems for an unknown type");
     }
 }

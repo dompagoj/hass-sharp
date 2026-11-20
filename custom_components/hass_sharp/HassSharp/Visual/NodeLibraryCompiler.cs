@@ -533,7 +533,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             customs.Add(new(custom.NodeId, signature == null ? null : descriptor, signature, own.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)).ToImmutableArray(), customErrors[custom.NodeId].ToImmutableArray()));
         }
         var classes = new EntityClasses(frameworkAssembly, (location, message) => Report(location, message), cancellationToken);
-        var entityTypes = EntityTypes(classes, compilation, trees);
+        CheckLibrarySettings(classes, compilation, trees);
         foreach (var (tree, custom) in customTrees.Where(pair => pair.Value.IsClass))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -545,7 +545,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             customs.Add(new(custom.NodeId, null, described?.Signature, [], problems.ToImmutableArray()) { TypeExpression = described?.TypeExpression });
         }
         foreach (var (id, symbol) in unlistedBuiltIn) typeSymbols.TryAdd(id, symbol);
-        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs, entityTypes);
+        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }
 
@@ -717,32 +717,25 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal const string SettingRangeWholeMessage = "A whole-number setting's Minimum and Maximum are whole numbers";
 
     /// <summary>
-    /// The custom device and entity classes the libraries declare: each public, concrete, non-generic top-level class of a
-    /// library source that derives <see cref="SharpDevice"/>, or a typed entity base (the domain), and has a public
-    /// parameterless constructor. The <c>[Setting]</c> properties of every library class deriving
-    /// <see cref="SharpComponent"/> are checked once, listed or not: one a setting cannot be is reported and left out.
+    /// Checks the <c>[Setting]</c> properties of every class of a library source that derives <see cref="SharpComponent"/>,
+    /// once, before any C# node's code reads them: one a setting cannot be is reported where it is written, in the library,
+    /// and left out (a C# node's class that derives the library's class then has no such setting).
     /// </summary>
-    static List<EntityTypeDescriptor> EntityTypes(EntityClasses read, CSharpCompilation compilation, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees)
+    static void CheckLibrarySettings(EntityClasses read, CSharpCompilation compilation, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees)
     {
-        NodeLibrarySource? Source(INamedTypeSymbol type) => type.DeclaringSyntaxReferences.Select(r => trees.GetValueOrDefault(r.SyntaxTree)).FirstOrDefault(s => s != null);
+        bool InLibrary(INamedTypeSymbol type) => type.DeclaringSyntaxReferences.Any(r => trees.ContainsKey(r.SyntaxTree));
         static IEnumerable<INamedTypeSymbol> All(INamespaceOrTypeSymbol space) => space.GetTypeMembers().SelectMany(t => All(t).Prepend(t))
             .Concat(space is INamespaceSymbol ns ? ns.GetNamespaceMembers().SelectMany(All) : Enumerable.Empty<INamedTypeSymbol>());
-        var classes = All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && read.Derives(t, read.Component) && Source(t) != null).ToArray();
-        read.CheckSettings(classes);
-        var listed = new List<EntityTypeDescriptor>();
-        foreach (var type in classes)
-            if (DescribeEntityType(type, "library:" + Source(type)!.Id + ":" + type.ToDisplayString(), Source(type)!.Id, read) is { } described) listed.Add(described);
-        return listed;
+        read.CheckSettings(All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && read.Derives(t, read.Component) && InLibrary(t)).ToArray());
     }
 
     /// <summary>
-    /// A custom device or entity class as the class kind and the C# entity and C# device nodes describe it: its kind,
-    /// domain, title (a <c>[Node]</c> on the class, which makes no step, else its name in words), summary, and settings (a
-    /// base class's first; one declared again in a derived class keeps its place), as <paramref name="read"/> has read
-    /// them. Null for a class a definition cannot create (<see cref="EntityClasses.Creatable"/>) or that is neither a
+    /// A custom device or entity class as the C# entity and C# device nodes describe it: its domain, title (a
+    /// <c>[Node]</c> on the class, which makes no step, else its name in words), summary, and settings (a base class's
+    /// first; one declared again in a derived class keeps its place), as <paramref name="read"/> has read them. Null for a class a definition cannot create (<see cref="EntityClasses.Creatable"/>) or that is neither a
     /// device nor an entity of a domain.
     /// </summary>
-    static EntityTypeDescriptor? DescribeEntityType(INamedTypeSymbol type, string id, string sourceId, EntityClasses read)
+    static EntityTypeDescriptor? DescribeEntityType(INamedTypeSymbol type, EntityClasses read)
     {
         if (!EntityClasses.Creatable(type) || read.Kind(type) is not { } kind) return null;
         var settings = new List<EntitySettingDescriptor>();
@@ -754,11 +747,11 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
         var summary = DocText(Documentation(type, read.CancellationToken)?.Element("summary"));
         var title = type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, read.Node))?.ConstructorArguments.FirstOrDefault().Value as string;
-        return new(id, sourceId, TypeIdentity(type), kind.Kind, kind.Domain, string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]);
+        return new(kind.Domain, string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]);
     }
 
     /// <summary>
-    /// What one compile reads of the classes deriving <see cref="SharpComponent"/>, for the class kind's library scan and
+    /// What one compile reads of the classes deriving <see cref="SharpComponent"/>, for the libraries' settings check and
     /// for each C# entity and C# device node: the settings each class declares itself (checked once, each problem reported
     /// where the property is written), whether a definition can create a class, and its kind and domain.
     /// </summary>
@@ -882,7 +875,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             foreach (var meant in candidates.Any(t => !t.IsAbstract) ? candidates.Where(t => !t.IsAbstract) : candidates) report(At(meant), UncreatableMessage(meant.Name));
         else if (creatable.Length == 0 && !(entity && devices.Length > 0))
             report(root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>().FirstOrDefault()?.Identifier.GetLocation() ?? root.GetLocation(), entity ? NoEntityClassMessage : NoDeviceClassMessage);
-        if (creatable.Length != 1 || DescribeEntityType(creatable[0], custom.NodeId, custom.NodeId, read) is not { } described) return null;
+        if (creatable.Length != 1 || DescribeEntityType(creatable[0], read) is not { } described) return null;
         var type = creatable[0];
         // A setting is written where its property is; one a base class in a library declares, at the class.
         Location SettingAt(string key) => BaseTypes(type).Prepend(type).SelectMany(t => t.GetMembers(key).OfType<IPropertySymbol>())

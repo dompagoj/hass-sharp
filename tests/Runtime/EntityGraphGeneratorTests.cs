@@ -131,6 +131,7 @@ static class EntityGraphGeneratorTests
             (nameof(AStaleSignatureIsToldSo), () => { AStaleSignatureIsToldSo(); return Task.CompletedTask; }),
             (nameof(ASettingValueMustFit), () => { ASettingValueMustFit(); return Task.CompletedTask; }),
             (nameof(AOneSidedRangeSaysItsSide), () => { AOneSidedRangeSaysItsSide(); return Task.CompletedTask; }),
+            (nameof(AWholeNumberOfItsTypesOwnRangeSaysNoRange), () => { AWholeNumberOfItsTypesOwnRangeSaysNoRange(); return Task.CompletedTask; }),
             (nameof(ComponentsResolveTheirSettings), () => { ComponentsResolveTheirSettings(); return Task.CompletedTask; }),
             (nameof(ASecretIsNotInTheSource), () => { ASecretIsNotInTheSource(); return Task.CompletedTask; }),
             (nameof(DerivingDropsWhatTheCodeNoLongerHas), () => { DerivingDropsWhatTheCodeNoLongerHas(); return Task.CompletedTask; }),
@@ -158,7 +159,7 @@ static class EntityGraphGeneratorTests
     }
     /// <summary>A graph definition named Hall of the nodes and wires (no definition in the graph: the generator composes it), with these settings.</summary>
     static DefinitionBody Body(JsonObject[] nodes, JsonObject[] edges, params DefinitionSetting[] settings) =>
-        new("Hall", null, [.. settings], null, new DefinitionLogic("graph", null, new JsonObject { ["version"] = 5, ["name"] = "Hall", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) }));
+        new("Hall", null, [.. settings], null, new DefinitionLogic("graph", new JsonObject { ["version"] = 5, ["name"] = "Hall", ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) }));
     static DefinitionSetting Setting(string key, string type, JsonNode? value, bool secret = false) => new(key, value) { Label = key, Type = type, Secret = secret };
     static DefinitionPreview Previewed(DefinitionBody body) => new DefinitionGenerator(Diagnostics).Preview(body, BuiltIn);
     static string Shown(IEnumerable<VisualDiagnostic> diagnostics) => string.Join(" | ", diagnostics.Select(d => $"{d.Code}@{d.NodeId}:{d.InputId}:{d.Severity} {d.Message}"));
@@ -310,10 +311,10 @@ static class EntityGraphGeneratorTests
         var values = preview.Diagnostics.Where(d => d.Code == "setting.value").ToArray();
         Check(!preview.Valid && preview.Source == "" && values.Length == 4 && values.All(d => d is { NodeId: "fan", Severity: 3 }), "four values do not fit: " + Shown(preview.Diagnostics));
         string Said(string pin) => values.SingleOrDefault(d => d.InputId == pin)?.Message ?? "(none)";
-        Check(Said("Count") == "Count takes a whole number from -2147483648 to 2147483647", "a fraction in an integer: " + Said("Count"));
+        Check(Said("Count") == "Count takes a whole number", "a fraction in an integer: " + Said("Count"));
         Check(Said("Percent") == "Percent takes a whole number from 1 to 100", "a number outside the range: " + Said("Percent"));
         Check(Said("Mode") == "Mode takes one of Slow, Medium", "a text that is no member of the enum: " + Said("Mode"));
-        Check(Said("Interval") == "Interval takes a whole number from -2147483648 to 2147483647", "a wired Setting's fraction in an integer, on the pin: " + Said("Interval"));
+        Check(Said("Interval") == "Interval takes a whole number", "a wired Setting's fraction in an integer, on the pin: " + Said("Interval"));
         Check(!preview.Diagnostics.Any(d => d.Message.Contains("1.5", StringComparison.Ordinal) || d.Message.Contains("200", StringComparison.Ordinal) || d.Message.Contains("Fast", StringComparison.Ordinal)),
             "no message quotes a value: " + Shown(preview.Diagnostics));
         // Values that fit are no problem, typed or wired; an unset pin and a Setting without a value neither.
@@ -359,6 +360,36 @@ static class EntityGraphGeneratorTests
         Check(fits.Valid, "values on the bound fit: " + Shown(fits.Diagnostics));
     }
 
+    const string WholeSource = """
+        public class Counter : SharpDevice
+        {
+            [Setting] public int Count { get; set; }
+            [Setting] public long Total { get; set; }
+            [Setting(Minimum = -5, Maximum = 5)] public long Declared { get; set; }
+        }
+        """;
+
+    /// <summary>
+    /// A whole number whose range is its type's own says no range: an int's is <c>a whole number</c>, as a long's (which
+    /// has none) is; one past a long's bound, and a fraction, alike. A range the setting declares is said. A long's
+    /// largest value fits.
+    /// </summary>
+    static void AWholeNumberOfItsTypesOwnRangeSaysNoRange()
+    {
+        static JsonNode Whole(string digits) => JsonNode.Parse("{\"kind\":\"literal\",\"type\":\"number\",\"value\":" + digits + "}")!;
+        string Said(string pin, JsonNode value)
+        {
+            var preview = Previewed(Body([CSharp("csharp_device", "counter", "counter", WholeSource, new JsonObject { [pin] = value })], []));
+            return preview.Diagnostics.SingleOrDefault(d => d.Code == "setting.value" && d.InputId == pin)?.Message ?? "(none)";
+        }
+        Check(Said("Count", Lit("number", 1.5)) == "Count takes a whole number", "an int's own range: " + Said("Count", Lit("number", 1.5)));
+        Check(Said("Count", Lit("number", 2147483648)) == "Count takes a whole number", "an int's own range, a value past it: " + Said("Count", Lit("number", 2147483648)));
+        Check(Said("Total", Lit("number", 1.5)) == "Total takes a whole number", "a long's fraction: " + Said("Total", Lit("number", 1.5)));
+        Check(Said("Total", Whole("9223372036854775808")) == "Total takes a whole number", "a value past a long's bound: " + Said("Total", Whole("9223372036854775808")));
+        Check(Said("Total", Whole("9223372036854775807")) == "(none)", "a long's largest value fits: " + Said("Total", Whole("9223372036854775807")));
+        Check(Said("Declared", Lit("number", 6)) == "Declared takes a whole number from -5 to 5", "a declared range is said: " + Said("Declared", Lit("number", 6)));
+    }
+
     /// <summary>
     /// <see cref="DefinitionGraph.Components"/>: each C# node in node order, with its kind, key, name, Part of, the key
     /// of the Device node a C# entity is wired to, its title, and its pins resolved: a typed value as typed, a wired
@@ -378,7 +409,7 @@ static class EntityGraphGeneratorTests
         static string Of(DefinitionComponent c) => $"{c.NodeId} {c.Kind} {c.Key} {c.Name ?? "-"} {(c.Via == null ? "-" : JsonSerializer.Serialize(c.Via, VisualStore.Json))} {c.Device ?? "-"} {c.Title} "
             + "[" + string.Join(", ", c.Settings.Select(s => s.Key + "=" + s.Value?.ToJsonString())) + "]";
         Same(components.Select(Of).ToList(), [
-            """plug device plug Hall plug {"definition":null,"deviceId":null,"device":"strip"} - Plug [Address="http://192.168.1.50", Interval=30]""",
+            """plug device plug Hall plug {"deviceId":null,"device":"strip"} - Plug [Address="http://192.168.1.50", Interval=30]""",
             """temp entity thermometer - - strip Thermometer [Address="http://192.168.1.60/temperature"]""",
         ], "the components in node order, their settings resolved");
         Check(DefinitionGraph.Components(Body([Lamp()], []).Logic.Graph!, BuiltIn, []).Count == 0, "a graph without C# nodes has no components");
@@ -407,7 +438,7 @@ static class EntityGraphGeneratorTests
         Check(DefinitionGraph.Components(preview.Graph!, BuiltIn, body.Settings!).Single().Settings.Single() is { Key: "Password" } resolved && resolved.Value!.GetValue<string>() == secret,
             "Components resolves it for the run");
         var pin = Previewed(Body([(JsonObject)router.DeepClone(), N("pin", "setting", new { key = "pin" })], [D("pin", "router", "Pin")], Setting("pin", "number", 1234.5, secret: true)));
-        Check(!pin.Valid && pin.Diagnostics.Any(d => d is { Code: "setting.value", NodeId: "router", InputId: "Pin" } && d.Message == "Pin takes a whole number from -2147483648 to 2147483647")
+        Check(!pin.Valid && pin.Diagnostics.Any(d => d is { Code: "setting.value", NodeId: "router", InputId: "Pin" } && d.Message == "Pin takes a whole number")
             && !JsonSerializer.Serialize(pin.Diagnostics).Contains("1234", StringComparison.Ordinal), "a secret's value that does not fit is told, not quoted: " + Shown(pin.Diagnostics));
     }
 
@@ -428,7 +459,7 @@ static class EntityGraphGeneratorTests
         temp["config"]!["signature"]!["title"] = "An old title";
         var graph = DefinitionGraph.Compose(Body([N("port", "setting", new { key = "port" }), plug, N("strip", "device", new { key = "strip", name = "Strip" }), temp],
             [D("port", "plug", "Port"), D("strip", "temp", "device", "entities")], Setting("port", "number", 80)));
-        Check(Previewed(new("Hall", null, [Setting("port", "number", 80)], null, new("graph", null, DefinitionGraph.Decompose(graph)))).Diagnostics.Any(d => d.Code == "csharp.signature" && d.NodeId == "plug"),
+        Check(Previewed(new("Hall", null, [Setting("port", "number", 80)], null, new("graph", DefinitionGraph.Decompose(graph)))).Diagnostics.Any(d => d.Code == "csharp.signature" && d.NodeId == "plug"),
             "without deriving, the plug's signature is out of date");
         var derived = new VisualGenerator(Diagnostics).DeriveSignatures(graph, BuiltIn, out var removed);
         Same(removed.Select(d => $"{d.NodeId}:{d.InputId}:{d.Severity} {d.Message}").ToList(), [
@@ -442,7 +473,7 @@ static class EntityGraphGeneratorTests
         Same(edges, ["strip>temp.device"], "the wire into Port is gone, the C# entity's Device wire kept");
         Check(derived["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "temp")!["config"]!["signature"]!["title"]!.GetValue<string>() == "Thermometer", "the C# entity's signature is written from its code too");
         Check(JsonNode.DeepEquals(graph["nodes"]![1]!["config"]!["signature"]!["settings"]!.AsArray().Count, 3), "the graph given is not changed");
-        var again = Previewed(new("Hall", null, [Setting("port", "number", 80)], null, new("graph", null, DefinitionGraph.Decompose(derived))));
+        var again = Previewed(new("Hall", null, [Setting("port", "number", 80)], null, new("graph", DefinitionGraph.Decompose(derived))));
         Check(again.Valid && !again.Diagnostics.Any(d => d.Severity == 3), "the derived graph validates: " + Shown(again.Diagnostics));
         // Code that does not compile keeps its signature, and nothing of it is removed.
         var broken = (JsonObject)graph.DeepClone();

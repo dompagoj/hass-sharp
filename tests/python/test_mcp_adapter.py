@@ -502,11 +502,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             {'id':'relay','kind':'entity','config':{'key':'relay','domain':'switch','name':'Relay'},'size':{'width':220,'height':112}},
             {'id':'power','kind':'entity','config':{'key':'power','domain':'sensor','name':'Power'}},
             {'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'x'*5000}}}],'edges':[]}
-        return {'version':3,'id':'porch','revision':4,'name':'Porch plug','device':None,
+        return {'version':3,'id':'porch','revision':4,'name':'Porch plug',
                 'settings':[{'key':'address','label':'Address','type':'string','value':'http://plug'},{'key':'token','label':'Token','type':'string','value':None,'secret':True,'hasValue':True}],
                 'entities':[{'key':'relay','domain':'switch','name':'Relay','device':None},{'key':'power','domain':'sensor','name':'Power','device':None}],
                 'devices':[],
-                'logic':{'kind':'graph','graph':graph,'type':None},'source':'class Porch {}','sourceMap':[],'enabled':True,'savedUtc':'2026-11-19T00:00:00Z',
+                'logic':{'kind':'graph','graph':graph},'source':'class Porch {}','sourceMap':[],'enabled':True,'savedUtc':'2026-11-19T00:00:00Z',
                 'catalogGeneration':'g','automationId':'definition-auto','active':True,'currentRevisionActive':True,'activationError':None,'status':'running',
                 'liveEntities':[],'registeredEntities':[{'uniqueId':'porch:relay','entityId':'switch.porch_plug_relay','domain':'switch','name':None,'disabled':False}],
                 **fields}
@@ -554,8 +554,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(result.error,(name,result.data))
             self.service.entities.assert_awaited_once_with(request,is_admin=True)
         self.service.visual.assert_not_called()
-        # The definition a read answers (its logic's type null, its entities null) goes through the schema as well.
-        self.assertFalse((await self.call('entities_preview',{'definition':{**self.DEFINITION,'logic':{**self.DEFINITION['logic'],'type':None},'entities':None}})).error)
+        # A definition with its entities null goes through the schema as well.
+        self.assertFalse((await self.call('entities_preview',{'definition':{**self.DEFINITION,'entities':None}})).error)
         # The run answer and a refusal come back as the server gave them.
         self.service.entities.return_value={'version':1,'ok':True,'result':{'version':1,'runId':'r9'}}
         self.assertEqual((await self.call('entities_run',{'id':'porch','triggerId':'poll'})).data['result'],{'version':1,'runId':'r9'})
@@ -631,14 +631,14 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         registered=[{'uniqueId':'hall:lamp','entityId':'binary_sensor.lamp','domain':'binary_sensor','name':'Lamp','disabled':False},
                     {'uniqueId':'hall:plug:relay','entityId':'switch.plug_relay','domain':'switch','name':'Relay','disabled':False},
                     {'uniqueId':'hall:temp','entityId':'sensor.hall_temperature','domain':'sensor','name':'Hall temperature','disabled':False}]
-        running=self.entity_document(id='hall',name='Hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph,'type':None},registeredEntities=registered,
+        running=self.entity_document(id='hall',name='Hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph},registeredEntities=registered,
                                      liveEntities=[{'uniqueId':r['uniqueId'],'key':r['uniqueId'].rsplit(':',1)[1],'domain':r['domain'],'name':r['name'],'entityId':r['entityId']} for r in registered])
         # Saved and never run: Home Assistant has none of them, so the C# entity takes its class's title, and the C# device's
         # entities are not known yet.
-        new=self.entity_document(id='new_hall',name='New hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph,'type':None},registeredEntities=[],liveEntities=[],status='off')
+        new=self.entity_document(id='new_hall',name='New hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph},registeredEntities=[],liveEntities=[],status='off')
         # An Entity node keyed plug beside a C# device keyed plug: desk:plug is the hub's entity, desk:plug:relay the device's.
         desk=self.entity_document(id='desk',name='Desk',entities=[{'key':'plug','domain':'binary_sensor','name':'Plug sensor','device':None}],devices=1,
-                                  logic={'kind':'graph','graph':{**graph,'nodes':[{'id':'hub','kind':'entity','config':{'key':'plug','domain':'binary_sensor','name':'Plug sensor'}},plug_node]},'type':None},
+                                  logic={'kind':'graph','graph':{**graph,'nodes':[{'id':'hub','kind':'entity','config':{'key':'plug','domain':'binary_sensor','name':'Plug sensor'}},plug_node]}},
                                   registeredEntities=[{'uniqueId':'desk:plug','entityId':'binary_sensor.plug_sensor','domain':'binary_sensor','name':'Plug sensor','disabled':False},
                                                       {'uniqueId':'desk:plug:relay','entityId':'switch.desk_relay','domain':'switch','name':'Relay','disabled':False}])
         self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[running,new,desk]})

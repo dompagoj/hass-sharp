@@ -75,7 +75,7 @@ static class EntityHostTests
     {
         FilePath = $"entity_{id}.cs", FileName = $"entity_{id}", SourceCode = "", Assembly = typeof(EntityHostTests).Assembly,
         DesignatedRootType = "VisualAutomation",
-        Definition = new(id, name, null, [])
+        Definition = new(id, name, [])
         {
             Entities = [], Devices = devices, Components = [node],
             Create = nodeId => nodeId == node.NodeId ? create() : null,
@@ -208,7 +208,7 @@ static class EntityHostTests
         Reset();
         manager = Manager();
         await Load(manager, Compiled("lamp", "Lamp", Entity("light", "Hall lamp", device: "hall"), () => new HostLamp(),
-            new DefinitionDevice("Ikea", null, null, null, null, "Hall", new DefinitionVia(null, "abc123")) { Key = "hall", Name = "Hall light" }));
+            new DefinitionDevice("Ikea", null, null, null, null, "Hall", new DefinitionVia("abc123")) { Key = "hall", Name = "Hall light" }));
         var synced = JsonNode.Parse(Syncs().Single())!;
         var device = synced["devices"]!.ToJsonString();
         Check(device == """[{"key":"hall","name":"Hall light","manufacturer":"Ikea","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Hall","via":{"deviceId":"abc123"}}]""", "the Device node of a C# entity: " + device);

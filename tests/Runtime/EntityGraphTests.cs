@@ -37,7 +37,6 @@ static class EntityGraphTests
             (nameof(ADeviceNodeGroupsItsEntities), ADeviceNodeGroupsItsEntities),
             (nameof(TwoDevicesAndAStandaloneEntityReachHomeAssistant), TwoDevicesAndAStandaloneEntityReachHomeAssistant),
             (nameof(TheDevicesAreListedAfterTheDeviceTheyArePartOf), TheDevicesAreListedAfterTheDeviceTheyArePartOf),
-            (nameof(AClassRequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHasAndAGraphsIsRefused), AClassRequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHasAndAGraphsIsRefused),
             (nameof(SettingsReachTheGraph), SettingsReachTheGraph),
             (nameof(ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds), ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds),
             (nameof(DisableEnableAndDelete), DisableEnableAndDelete),
@@ -64,7 +63,6 @@ static class EntityGraphTests
             (nameof(SecretSettingsAreMaskedInEveryAnswer), SecretSettingsAreMaskedInEveryAnswer),
             (nameof(ASaveKeepsASecretItWasNotGiven), ASaveKeepsASecretItWasNotGiven),
             (nameof(AnAnswerSavedBackKeepsItsSecrets), AnAnswerSavedBackKeepsItsSecrets),
-            (nameof(AnOlderClassDocumentStillLoadsAndRuns), AnOlderClassDocumentStillLoadsAndRuns),
             (nameof(ThePreviewAcceptsAKeptSecret), ThePreviewAcceptsAKeptSecret),
             (nameof(NoProblemQuotesASecret), NoProblemQuotesASecret),
             (nameof(TheHomeListSummarisesRuns), TheHomeListSummarisesRuns),
@@ -739,7 +737,7 @@ static class EntityGraphTests
     static Task TheDevicesAreListedAfterTheDeviceTheyArePartOf()
     {
         static DefinitionDevice Device(string key, string? partOf = null, string? name = null) =>
-            new(null, null, null, null, null, null, partOf == null ? null : new DefinitionVia(null, null, partOf)) { Key = key, Name = name ?? key };
+            new(null, null, null, null, null, null, partOf == null ? null : new DefinitionVia(null, partOf)) { Key = key, Name = name ?? key };
         static string Keys(IEnumerable<DefinitionDevice> devices) => string.Join(",", devices.Select(d => d.Name));
         var chain = DefinitionHost.InOrder([Device("c", "b"), Device("b", "a"), Device("a"), Device("d")]);
         Check(Keys(chain) == "a,b,c,d", "a chain declared backwards: " + Keys(chain));
@@ -752,45 +750,9 @@ static class EntityGraphTests
         var keys = new HashSet<string>(["a", "x"], StringComparer.Ordinal);
         string Via(DefinitionDevice device) => DefinitionHost.DeviceJson(device, keys)["via"]?.ToJsonString() ?? "null";
         Check(Via(Device("x", "a")) == """{"device":"a"}""" && Via(Device("x", "nowhere")) == "null" && Via(Device("x", "x")) == "null"
-            && Via(new(null, null, null, null, null, null, new DefinitionVia(null, "zigbee")) { Key = "x" }) == """{"deviceId":"zigbee"}"""
-            && Via(new(null, null, null, null, null, null, new DefinitionVia("hub", null)) { Key = "x" }) == """{"definition":"hub"}""",
-            "Part of in the sync: another device of the list, a Home Assistant device or another definition; else none");
+            && Via(new(null, null, null, null, null, null, new DefinitionVia("zigbee")) { Key = "x" }) == """{"deviceId":"zigbee"}""",
+            "Part of in the sync: another device of the list or a Home Assistant device; else none");
         return Task.CompletedTask;
-    }
-
-    /// <summary>
-    /// A class request's device carries none of what only a Device node has, its key, name and Part of another of its
-    /// devices: they are left out where the request is read, and nothing is refused. A graph request's device is refused,
-    /// and with device null it saves and Home Assistant gets no device for it.
-    /// </summary>
-    static async Task AClassRequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHasAndAGraphsIsRefused()
-    {
-        await using var rig = await Rig.Start("request-device");
-        var graph = Relay();
-        graph["device"] = JsonSerializer.SerializeToNode(new { key = "x", name = "y", model = "P1", via = new { device = "z" } });
-        var refused = await rig.Request(new { operation = "save", id = "relay", expectedRevision = 0, definition = graph });
-        Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Single() is { } problem
-            && problem["code"]!.GetValue<string>() == "definition.deviceNotAllowed" && problem["inputId"]!.GetValue<string>() == "device"
-            && problem["message"]!.GetValue<string>() == EntityStoreTests.DeviceNotAllowed, "the graph definition with a device is refused: " + refused.ToJsonString());
-        Check(!File.Exists(StoredFile(rig, "relay")) && rig.Home.Syncs("relay").Length == 0, "nothing is stored or synced");
-        graph["device"] = null;
-        var saved = await rig.Save("relay", graph);
-        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "with device null it saves and runs: " + saved.ToJsonString());
-        Check(JsonNode.Parse(File.ReadAllText(StoredFile(rig, "relay")))!["device"] == null && (await rig.Read("relay"))["device"] == null, "its device is stored and read as null");
-        var sync = JsonNode.Parse(rig.Home.Syncs("relay").Single())!;
-        Check(sync["devices"] is JsonArray { Count: 0 } && sync["entities"]!.AsArray().All(e => e!["device"] == null), "Home Assistant gets no device for it: " + sync.ToJsonString());
-
-        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
-        var plug = JsonSerializer.SerializeToNode(new { name = "Plug", settings = Array.Empty<object>(), logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" } })!.AsObject();
-        plug["device"] = JsonSerializer.SerializeToNode(new { key = "x", name = "y", via = new { device = "z", deviceId = "abc" } });
-        saved = await rig.Save("plug", plug);
-        Check(saved["active"]!.GetValue<bool>(), "the class definition saves and runs: " + saved.ToJsonString());
-        var expected = JsonNode.Parse("""{"manufacturer":null,"model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":null,"deviceId":"abc"}}""");
-        var stored = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "plug")))!["device"];
-        Check(JsonNode.DeepEquals(stored, expected) && JsonNode.DeepEquals((await rig.Read("plug"))["device"], expected), "the class's device as stored: " + stored?.ToJsonString());
-        sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!;
-        Check(sync["devices"]![0]!["name"]!.GetValue<string>() == "Plug" && sync["devices"]![0]!["via"]!.ToJsonString() == """{"deviceId":"abc"}""",
-            "the class's device is named after the definition, part of the Home Assistant device: " + sync.ToJsonString());
     }
 
     /// <summary>A setting's value reaches the graph, also when a save changes only the value, which leaves the generated source as it was.</summary>
@@ -1173,7 +1135,7 @@ static class EntityGraphTests
         Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
         // The read answer's entities are for reading: saved back with them, it is refused in words; without them, as the
         // editor sends it, it answers the same entities. Its device is null, which a graph's request may send.
-        Check(read.ContainsKey("device") && read["device"] == null, "a graph definition's read answer has device null: " + read.ToJsonString());
+        Check(!read.ContainsKey("device") && !read["logic"]!.AsObject().ContainsKey("type"), "a graph definition's read answer has no device and no logic type: " + read.ToJsonString());
         var back = new JsonObject
         {
             ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
@@ -1348,31 +1310,6 @@ static class EntityGraphTests
     /// <summary>A definition's stored file.</summary>
     static string StoredFile(Rig rig, string id) => Path.Combine(rig.Home.Root, ".storage", "hass_sharp", "entities", id + ".json");
 
-    /// <summary>
-    /// A version 1 class document, as an earlier build saved it, still loads: after a restart it is listed and read as it
-    /// is, starts, and Home Assistant gets its entities.
-    /// </summary>
-    static async Task AnOlderClassDocumentStillLoadsAndRuns()
-    {
-        await using var rig = await Rig.Start("older-class");
-        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
-        await rig.Save("plug", JsonSerializer.SerializeToNode(new { name = "Plug", settings = new[] { new { key = "Host", value = "10.0.0.7" } }, logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" } })!.AsObject());
-        var path = StoredFile(rig, "plug");
-        var file = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
-        file["version"] = 1;
-        File.WriteAllText(path, file.ToJsonString());
-        var syncs = rig.Home.Syncs("plug").Length;
-        await rig.Restart();
-        var read = await rig.Read("plug");
-        Check(read["version"]!.GetValue<int>() == 1 && read["logic"]!["kind"]!.GetValue<string>() == "class" && read["revision"]!.GetValue<long>() == 1, "it reads as it was saved: " + read.ToJsonString());
-        var listed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray();
-        Check(listed.Any(d => d!["id"]!.GetValue<string>() == "plug"), "it is listed: " + listed.ToJsonString());
-        await EntityTestHome.Until(() => rig.Home.Syncs("plug").Length > syncs, "the restart syncs it");
-        var sync = JsonNode.Parse(rig.Home.Syncs("plug").Last())!;
-        Check(sync["entities"]!.AsArray().Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["plug:relay"]), "Home Assistant gets its entity: " + sync.ToJsonString());
-        await rig.Until("plug:relay", s => Available(s), "its relay runs");
-    }
-
     /// <summary>A class with a secret setting and one that is not, as a node library declares it.</summary>
     const string SecretLibrary = """
         public class SecretPlug : SharpDevice
@@ -1448,11 +1385,9 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// Save, read and list answer a secret setting without its value, marked secret and saying whether it has one: a
-    /// graph's each that the document marks secret (one an Entity node reads, one wired to a C# device's pin: the
-    /// document's flag masks it, not the pin's); a class definition's that its class marks secret, and every setting of
-    /// one whose class the libraries no longer declare. The other settings keep their values, and the stored files keep
-    /// the secrets.
+    /// Save, read and list answer a secret setting without its value, marked secret and saying whether it has one: each
+    /// that the document marks secret (one an Entity node reads, one wired to a C# device's pin: the document's flag masks
+    /// it, not the pin's). The other settings keep their values, and the stored files keep the secrets.
     /// </summary>
     static async Task SecretSettingsAreMaskedInEveryAnswer()
     {
@@ -1481,40 +1416,6 @@ static class EntityGraphTests
         Check(!rig.Home.Logs().Any(l => l.Contains("hunter2", StringComparison.Ordinal)) && !rig.Home.Syncs("plug").Concat(rig.Home.Syncs("level")).Any(s => s.Contains("hunter2", StringComparison.Ordinal)),
             "a log or a sync has a secret");
 
-        // The class kind, while it is there: a class definition's setting is secret as its class declares it.
-        var classicSaved = await rig.Ok(new { operation = "save", id = "classic", expectedRevision = 0, definition = new
-        {
-            name = "Classic plug", settings = new object[] { new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" } },
-            logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" },
-        } });
-        var classicSettings = new[] { """{"key":"Host","value":"10.0.0.7"}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}""" };
-        var classicRead = await rig.Read("classic");
-        var classicListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "classic")!;
-        Check(Shaped(classicSaved["document"]!, classicSettings) && Shaped(classicRead, classicSettings) && Shaped(classicListed, classicSettings)
-            && !(classicSaved.ToJsonString() + classicRead.ToJsonString() + classicListed.ToJsonString()).Contains("hunter2", StringComparison.Ordinal),
-            "the class's save, read and list answers: " + classicRead["settings"]!.ToJsonString());
-        Check(File.ReadAllText(StoredFile(rig, "classic")).Contains("class-hunter2", StringComparison.Ordinal), "the stored class definition keeps its secret");
-
-        // A class definition whose class the libraries no longer declare: which of its settings are secret is not known, so each is masked.
-        var gone = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "classic")))!.AsObject();
-        gone["id"] = "gone"; gone["logic"]!["type"] = "library:secret:NodeLib.GonePlug"; gone["enabled"] = false;
-        File.WriteAllText(StoredFile(rig, "gone"), gone.ToJsonString());
-        var goneRead = await rig.Read("gone");
-        var goneListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "gone")!;
-        var goneSettings = new[] { """{"key":"Host","value":null,"secret":true,"hasValue":true}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}""" };
-        Check(Shaped(goneRead, goneSettings) && Shaped(goneListed, goneSettings), "a class not declared masks every setting: " + goneRead["settings"]!.ToJsonString() + " / " + goneListed["settings"]!.ToJsonString());
-
-        // A stored setting the class does not declare (renamed while the libraries had errors, or a file edited) may be
-        // secret for all that is known: it is masked, the class's other settings as before.
-        var stray = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "classic")))!.AsObject();
-        stray["settings"]!.AsArray().Add(new JsonObject { ["key"] = "Pin", ["value"] = "stray-hunter2" });
-        File.WriteAllText(StoredFile(rig, "classic"), stray.ToJsonString());
-        var strayRead = await rig.Read("classic");
-        var strayListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "classic")!;
-        string[] straySettings = [.. classicSettings, """{"key":"Pin","value":null,"secret":true,"hasValue":true}"""];
-        Check(Shaped(strayRead, straySettings) && Shaped(strayListed, straySettings) && !(strayRead.ToJsonString() + strayListed.ToJsonString()).Contains("hunter2", StringComparison.Ordinal),
-            "a setting the class does not declare is masked: " + strayRead["settings"]!.ToJsonString() + " / " + strayListed["settings"]!.ToJsonString());
-
         // Two stored settings of a graph with one key (a file edited by hand), one of them secret: the key is secret, so
         // both are masked.
         var twin = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "level")))!.AsObject();
@@ -1532,9 +1433,8 @@ static class EntityGraphTests
     /// A definition read and saved back as answered keeps its secrets: a masked setting sent back with <c>hasValue</c> and
     /// no value keeps the stored value, as <c>keep</c> does. A value given with <c>hasValue</c> replaces it; <c>hasValue</c>
     /// false with no value clears it. A kept secret stays secret, whatever the entry says. While the libraries do not
-    /// compile, a graph's document still says which setting is secret, and a class definition falls back to masking
-    /// every setting; a save of either answer then is refused and writes nothing; once they compile again, the answer
-    /// read before saves back with every value kept.
+    /// compile, the document still says which setting is secret; a save of the answer then is refused and writes nothing;
+    /// once they compile again, the answer read before saves back with every value kept.
     /// </summary>
     static async Task AnAnswerSavedBackKeepsItsSecrets()
     {
@@ -1542,19 +1442,11 @@ static class EntityGraphTests
         Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
         await rig.Save("plug", SecretPlugDefinition(Host("10.0.0.7"), Password("class-hunter2")));
         await rig.Save("level", Level(Offset(4), Token("graph-hunter2")));
-        // The class kind, while it is there: a class definition of the same class.
-        await rig.Ok(new { operation = "save", id = "classic", expectedRevision = 0, definition = new
-        {
-            name = "Classic plug", settings = new object[] { new { key = "Host", value = "10.0.0.9" }, new { key = "Password", value = "classic-hunter2" } },
-            logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" },
-        } });
-        const string classicStored = """[{"key":"Host","value":"10.0.0.9"},{"key":"Password","value":"classic-hunter2"}]""";
-        // The definition members of an answer that a save takes, as the answer has them (its entities are for reading only):
-        // a class's device, and a graph's device of null.
+        // The definition members of an answer that a save takes, as the answer has them (its entities and devices are for
+        // reading only).
         static JsonObject Back(JsonObject answer) => new()
         {
-            ["name"] = answer["name"]!.DeepClone(), ["device"] = answer["device"]?.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(),
-            ["logic"] = answer["logic"]!.DeepClone(),
+            ["name"] = answer["name"]!.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(), ["logic"] = answer["logic"]!.DeepClone(),
         };
         async Task<JsonNode> SaveBack(JsonObject answer, Action<JsonObject>? change = null)
         {
@@ -1597,29 +1489,18 @@ static class EntityGraphTests
         var masked = await rig.Read("plug");
         Check(masked["settings"]!.ToJsonString() == $"[{HostAnswered},{PasswordAnswered}]",
             "with the libraries not compiling the graph's secret setting is masked, the other is not: " + masked["settings"]!.ToJsonString());
-        // A class definition's every setting is masked then, Host too.
-        var classicMasked = await rig.Read("classic");
-        Check(classicMasked["settings"]!.ToJsonString() == """[{"key":"Host","value":null,"secret":true,"hasValue":true},{"key":"Password","value":null,"secret":true,"hasValue":true}]""",
-            "with the libraries not compiling every setting of the class definition is masked: " + classicMasked["settings"]!.ToJsonString());
         var home = (await rig.Request(new { operation = "list", view = "home" }))["result"]!.ToJsonString();
-        Check(!home.Contains("hunter2", StringComparison.Ordinal) && !home.Contains("10.0.0.9", StringComparison.Ordinal), "the home list has a masked value: " + home);
+        Check(!home.Contains("hunter2", StringComparison.Ordinal), "the home list has a masked value: " + home);
         // Saved back then, it is refused (the libraries have errors) and nothing is written.
         var refused = await SaveBack(masked);
         Check(refused["error"]?["code"]?.GetValue<string>() == "validation"
             && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.library")
             && Settings("plug") == plugStored && (await rig.Read("plug"))["revision"]!.GetValue<long>() == 2, "a save while the libraries do not compile: " + refused.ToJsonString());
-        var classicRefused = await SaveBack(classicMasked);
-        Check(classicRefused["error"]?["code"]?.GetValue<string>() == "validation"
-            && classicRefused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.library")
-            && Settings("classic") == classicStored && (await rig.Read("classic"))["revision"]!.GetValue<long>() == 1, "a class save while the libraries do not compile: " + classicRefused.ToJsonString());
         // Once they compile again, the answer read while they did not saves back with every value kept.
         File.WriteAllText(libraryFile, compiling);
         var restored = await SaveBack(masked);
         Check(restored["ok"]!.GetValue<bool>() && Settings("plug") == plugStored && Answered(restored["result"]!["document"]!, "host")["value"]!.GetValue<string>() == "10.0.0.7",
             "the masked answer saves back with its values kept: " + Settings("plug") + " / " + restored.ToJsonString());
-        var classicRestored = await SaveBack(classicMasked);
-        Check(classicRestored["ok"]!.GetValue<bool>() && Settings("classic") == classicStored && Answered(classicRestored["result"]!["document"]!, "Host")["value"]!.GetValue<string>() == "10.0.0.9",
-            "the class's masked answer saves back with every value kept, Host's too: " + Settings("classic") + " / " + classicRestored.ToJsonString());
     }
 
     /// <summary>
@@ -3607,7 +3488,7 @@ static class EntityGraphTests
         compiled.VisualGraph = running.VisualGraph;
         compiled.VisualCatalog = running.VisualCatalog;
         var given = running.Definition!;
-        compiled.Definition = new("dup_twin", "Dup twin", null, given.Settings)
+        compiled.Definition = new("dup_twin", "Dup twin", given.Settings)
             {
                 Entities = given.Entities, Devices = given.Devices, Roots = given.Roots, Components = [.. given.Components.Select(c => c with { Key = "lamp" })],
                 Create = HassSharpManager.NodeClasses(compiled.Assembly),

@@ -141,7 +141,7 @@ static class EntityApiTests
         var current = (await Entity(new { operation = "read", id = "door" }))["result"]!;
         var summary = (await Entity(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "door")!;
         var homeListed = (await Entity(new { operation = "list", view = "home" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "door")!;
-        Check(current["devices"] is JsonArray { Count: 0 } && current.AsObject().TryGetPropertyValue("device", out var own) && own == null, "the read answer lists no devices and has device null: " + current.ToJsonString());
+        Check(current["devices"] is JsonArray { Count: 0 } && !current.AsObject().ContainsKey("device") && !current["logic"]!.AsObject().ContainsKey("type"), "the read answer lists no devices, and has no device and no logic type: " + current.ToJsonString());
         foreach (var (what, answered) in new[] { ("list", summary), ("home list", homeListed) })
             Check(answered["devices"]!.GetValueKind() == JsonValueKind.Number && answered["devices"]!.GetValue<int>() == 0 && !answered.AsObject().ContainsKey("device"),
                 $"its {what} answer counts no devices and has no device: " + answered.ToJsonString());
@@ -152,6 +152,10 @@ static class EntityApiTests
         // A phase 2 build's graph document is version 2.
         var path = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "door.json");
         var file = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        // A version 3 document whose logic is no graph is malformed, as any incomplete document is.
+        var script = file.DeepClone().AsObject();
+        script["id"] = "script"; script["logic"] = new JsonObject { ["kind"] = "script", ["graph"] = null };
+        File.WriteAllText(Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "script.json"), script.ToJsonString());
         file["version"] = 2; file.Remove("devices");
         File.WriteAllText(path, file.ToJsonString());
         var list = (await Entity(new { operation = "list" }))["result"]!.AsArray();
@@ -167,21 +171,22 @@ static class EntityApiTests
         var hall = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "Hall.json");
         File.WriteAllText(hall, """{"version":2}""");
         var answer = await Entity(new { operation = "list" });
-        Check(answer["result"] is JsonArray && !answer["result"]!.AsArray().Any(d => d!["id"]!.GetValue<string>() is "door" or "broken" or "Hall"), "the readable ones are the result: " + answer.ToJsonString());
-        Check(JsonNode.DeepEquals(answer["unreadable"], JsonNode.Parse($$"""[{"id":"Hall","reason":"Invalid definition ID","deletable":false},{"id":"broken","reason":"Invalid entity definition envelope","deletable":true},{"id":"door","reason":"{{earlier}}","deletable":true}]""")),
+        Check(answer["result"] is JsonArray && !answer["result"]!.AsArray().Any(d => d!["id"]!.GetValue<string>() is "door" or "broken" or "Hall" or "script"), "the readable ones are the result: " + answer.ToJsonString());
+        Check(JsonNode.DeepEquals(answer["unreadable"], JsonNode.Parse($$"""[{"id":"Hall","reason":"Invalid definition ID","deletable":false},{"id":"broken","reason":"Invalid entity definition envelope","deletable":true},{"id":"door","reason":"{{earlier}}","deletable":true},{"id":"script","reason":"Invalid entity definition envelope","deletable":true}]""")),
             "the list names each unreadable file with its reason and whether a delete can remove it: " + answer["unreadable"]?.ToJsonString());
         var refused = await Entity(new { operation = "delete", id = "Hall", expectedRevision = 0 });
         Check(refused["ok"]?.GetValue<bool>() == false && File.Exists(hall), "a delete of it is refused, as the list says: " + refused.ToJsonString());
         File.Delete(hall);
         var homeView = await Entity(new { operation = "list", view = "home", todayUtc = "2026-11-20T00:00:00Z" });
-        Check(homeView["unreadable"]!.AsArray().Count == 2, "the entities page's list names them too: " + homeView["unreadable"]?.ToJsonString());
+        Check(homeView["unreadable"]!.AsArray().Count == 3, "the entities page's list names them too: " + homeView["unreadable"]?.ToJsonString());
         var removals = home.Removals().Length;
         var deleted = await Entity(new { operation = "delete", id = "door", expectedRevision = 0 });
         Check(deleted["ok"]!.GetValue<bool>() && !File.Exists(path), "delete at revision 0 removes it: " + deleted.ToJsonString());
         Check(home.Removals().Length == removals + 1 && home.Removals()[^1] == "door", "and its entities from Home Assistant: " + string.Join(", ", home.Removals()));
         await Entity(new { operation = "delete", id = "broken", expectedRevision = 0 });
+        await Entity(new { operation = "delete", id = "script", expectedRevision = 0 });
         var after = await Entity(new { operation = "list" });
-        Check(after["unreadable"] is JsonArray { Count: 0 }, "with both deleted, the list names none: " + after.ToJsonString());
+        Check(after["unreadable"] is JsonArray { Count: 0 }, "with each deleted, the list names none: " + after.ToJsonString());
         Console.WriteLine("PASS entity api: a listed entities key is refused in words, and a version 2 graph document is skipped, listed apart with why, answered with why, and deleted at revision 0 with its entities");
     }
 
@@ -343,7 +348,8 @@ static class EntityApiTests
         static string Status(JsonObject document) => document["status"]!.GetValue<string>();
 
         // An unknown operation is answered as such before any field it might read: with no id, and with an id and no revision.
-        foreach (var operation in new object[] { new { operation = "rename" }, new { operation = "rename", id = "plug" } })
+        // types, which listed the libraries' classes a definition could be, is one.
+        foreach (var operation in new object[] { new { operation = "rename" }, new { operation = "rename", id = "plug" }, new { operation = "types" } })
         {
             var answer = await Entity(operation);
             Check(answer.ToJsonString() == """{"version":1,"ok":false,"error":{"code":"invalid_request","detail":"Unknown entity operation"}}""", "an unknown operation: " + answer.ToJsonString());
@@ -352,6 +358,30 @@ static class EntityApiTests
         var library = JsonNode.Parse(await api.NodeLibraryRequest(JsonSerializer.Serialize(new { operation = "save", id = "shelly", name = "Shelly", expectedRevision = 0, source = Library })))!;
         Check(library["ok"]!.GetValue<bool>() && library["result"]!["saved"]!.GetValue<bool>(), "the library saves: " + library.ToJsonString());
 
+        // A definition is built from nodes: a request whose logic is a class of the library, or of any kind but graph, or
+        // none, is refused in words, by preview and save, beside its name's problem only, and nothing is stored.
+        const string fromNodes = "A definition is built from nodes: logic is {kind: \"graph\", graph}. Write C# in a C# entity or C# device node";
+        foreach (var (what, logic) in new (string, JsonNode?)[] {
+            ("a class", JsonSerializer.SerializeToNode(new { kind = "class", type = "library:shelly:NodeLib.FakePlug" })),
+            ("a class with a graph", JsonSerializer.SerializeToNode(new { kind = "class", type = "library:shelly:NodeLib.FakePlug", graph = Graph("Plug", []) })),
+            ("another kind", JsonSerializer.SerializeToNode(new { kind = "script" })), ("none", null) })
+        {
+            var definition = new JsonObject { ["name"] = "Class plug", ["settings"] = new JsonArray(new JsonObject { ["key"] = "Host", ["value"] = "10.0.0.9" }) };
+            if (logic != null) definition["logic"] = logic;
+            var previewed = await Ok(new { operation = "preview", definition });
+            Check(!previewed["valid"]!.GetValue<bool>() && previewed["source"]!.GetValue<string>() == ""
+                && previewed["diagnostics"]!.ToJsonString() == JsonSerializer.Serialize(new[] { new { nodeId = (string?)null, message = fromNodes, severity = 3, startLine = (int?)null, startColumn = (int?)null, inputId = (string?)null, portId = (string?)null, code = "definition.logic" } }),
+                $"{what}: the preview's one problem: " + previewed.ToJsonString());
+            var declined = await Entity(new { operation = "save", id = "classic", expectedRevision = 0, definition });
+            Check(declined["error"]?["code"]?.GetValue<string>() == "validation" && declined["error"]!["detail"]!["diagnostics"]!.AsArray().Select(d => $"{d!["code"]} {d["message"]}").SequenceEqual([$"definition.logic {fromNodes}"]),
+                $"{what}: the save's one problem: " + declined.ToJsonString());
+            definition["name"] = "";
+            var unnamed = await Ok(new { operation = "preview", definition });
+            Check(unnamed["diagnostics"]!.AsArray().Select(d => d!["code"]!.GetValue<string>()).SequenceEqual(["definition.name", "definition.logic"]), $"{what}: beside its name's problem: " + unnamed.ToJsonString());
+        }
+        Check(!File.Exists(Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "classic.json")) && home.Syncs("classic").Length == 0, "nothing is stored or synced");
+        Console.WriteLine("PASS entity api: a request whose logic is not a graph, a class among them, is refused in words, and nothing is stored");
+
         // A new definition is stored and runs, and Home Assistant hears of its device and entities.
         var saved = await Ok(new { operation = "save", id = "plug1", expectedRevision = 0, definition = Definition("Plug one", "10.0.0.1") });
         var document = saved["document"]!.AsObject();
@@ -359,6 +389,7 @@ static class EntityApiTests
             && saved.ContainsKey("activationError") && saved["activationError"] == null, "a valid definition is saved and active: " + saved.ToJsonString());
         Check(document["revision"]!.GetValue<long>() == 1 && Status(document) == "running" && document["currentRevisionActive"]!.GetValue<bool>()
             && document["activationError"] == null && document["automationId"]!.GetValue<string>().Length > 0, "the saved document runs: " + document.ToJsonString());
+        Check(!document.ContainsKey("device") && !document["logic"]!.AsObject().ContainsKey("type"), "the save answer has no device and no logic type: " + document.ToJsonString());
         var live = document["liveEntities"]!.AsArray();
         Check(live.Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["plug1:plug:relay", "plug1:plug:power"])
             && live[0]!.ToJsonString() == """{"uniqueId":"plug1:plug:relay","key":"relay","domain":"switch","name":null,"entityId":"switch.plug1_relay"}""",

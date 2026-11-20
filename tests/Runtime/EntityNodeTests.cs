@@ -242,11 +242,11 @@ static class EntityNodeTests
         var plug = derived[0].Deserialize<DefinitionDevice>(VisualStore.Json)!;
         var hub = derived[1].Deserialize<DefinitionDevice>(VisualStore.Json)!;
         var second = DefinitionGraph.Devices(odd, catalog)[1].Deserialize<DefinitionDevice>(VisualStore.Json)!;
-        Check(plug is { Key: "plug", Name: "Hall plug", Model: "P1", Via: null } && hub is { Key: "hub", Via: { DeviceId: "zigbee", Device: null, Definition: null } }
+        Check(plug is { Key: "plug", Name: "Hall plug", Model: "P1", Via: null } && hub is { Key: "hub", Via: { DeviceId: "zigbee", Device: null } }
             && second is { Key: "desk", Via: { Device: "desk", DeviceId: null } }, "a listed device reads as a DefinitionDevice with its key, name and Part of");
-        // A class's device, which has no key, name or Part of another device, is written as it was.
-        Check(JsonSerializer.Serialize(new DefinitionDevice("Shelly", null, null, null, null, null, new DefinitionVia("hub", null)), VisualStore.Json)
-            == """{"manufacturer":"Shelly","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":"hub","deviceId":null}}""",
+        // A device with no key, name or Part of another device, as a request may give one, writes none of them.
+        Check(JsonSerializer.Serialize(new DefinitionDevice("Shelly", null, null, null, null, null, new DefinitionVia("hub")), VisualStore.Json)
+            == """{"manufacturer":"Shelly","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"deviceId":"hub"}}""",
             "a device without a key, name or device of this definition writes none of them");
     }
 

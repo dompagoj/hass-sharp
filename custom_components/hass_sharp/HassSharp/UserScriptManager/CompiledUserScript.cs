@@ -17,9 +17,8 @@ public class CompiledUserScript
     /// <summary>Trigger method name to its graph node id, label and automatic run history setting.</summary>
     public IReadOnlyDictionary<string, VisualTrigger>? VisualTriggers { get; set; }
     /// <summary>
-    /// The entity definition the script runs; null for an automation. A class definition's <see cref="DesignatedRootType"/>
-    /// is <c>SharpDefinition</c>; one built from nodes is <c>VisualAutomation</c>, its graph's generated class, with the run
-    /// metadata an automation's graph has.
+    /// The entity definition the script runs; null for an automation. Its <see cref="DesignatedRootType"/> is
+    /// <c>VisualAutomation</c>, its graph's generated class, with the run metadata an automation's graph has.
     /// </summary>
     public CompiledDefinition? Definition { get; set; }
     /// <summary>Graph and pruned catalog JSON stored as the revision's snapshot with its first run.</summary>

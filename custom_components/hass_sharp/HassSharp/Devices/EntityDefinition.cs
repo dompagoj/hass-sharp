@@ -7,17 +7,16 @@ using System.Text.RegularExpressions;
 namespace HassSharp;
 
 /// <summary>
-/// The device a definition's device is connected through, such as a hub: another definition's, a Home Assistant device,
-/// or, for a Device node, another Device node of the same definition.
+/// The device a Device node's device is connected through, such as a hub: a Home Assistant device, or another Device
+/// node of the same definition.
 /// </summary>
-/// <param name="Definition">The id of the definition whose device it is; null for a Home Assistant device.</param>
-/// <param name="DeviceId">The Home Assistant device id; null for a definition's device.</param>
+/// <param name="DeviceId">The Home Assistant device id; null for another Device node's.</param>
 /// <param name="Device">The key of another Device node of the same definition (a Device node's <c>{"device": key}</c>);
 /// null, and not written, otherwise.</param>
-public sealed record DefinitionVia(string? Definition, string? DeviceId,
+public sealed record DefinitionVia(string? DeviceId,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Device = null);
 
-/// <summary>What the device page shows about a definition's device, each null for none (or the class's own).</summary>
+/// <summary>What the device page shows about a definition's device, each null for none.</summary>
 /// <param name="Manufacturer">Who made the device.</param>
 /// <param name="Model">The device's model.</param>
 /// <param name="SwVersion">The version of the device's software.</param>
@@ -28,28 +27,24 @@ public sealed record DefinitionVia(string? Definition, string? DeviceId,
 public sealed record DefinitionDevice(string? Manufacturer, string? Model, string? SwVersion, string? HwVersion,
     string? ConfigurationUrl, string? SuggestedArea, DefinitionVia? Via)
 {
-    /// <summary>A Device node's key, as a graph definition's <c>devices</c> list it; null, and not written, for a class's or a request's device.</summary>
+    /// <summary>A Device node's key, as a definition's <c>devices</c> list it; null, and not written, for a request's device.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Key { get; init; }
     /// <summary>
-    /// A Device node's name, as a graph definition's <c>devices</c> list it; null, and not written, for a class's or a
-    /// request's device, which the definition's name names.
+    /// A Device node's name, as a definition's <c>devices</c> list it; null, and not written, for a request's device.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Name { get; init; }
 }
 
-/// <summary>
-/// A setting of the definition: for a class, a value for one of its <c>[Setting]</c> properties (the class declares the
-/// rest); for a graph, the setting itself, read by the graph's Setting nodes.
-/// </summary>
-/// <param name="Key">The property's name, or the graph setting's key.</param>
-/// <param name="Value">The value as JSON; null leaves the class default, or gives a graph an empty value.</param>
+/// <summary>A setting of the definition, read by the graph's Setting nodes.</summary>
+/// <param name="Key">The setting's key.</param>
+/// <param name="Value">The value as JSON; null gives the graph an empty value.</param>
 public sealed record DefinitionSetting(string Key, JsonNode? Value)
 {
-    /// <summary>A graph setting's name in the panel; null for its key. A class's settings have none (the class names them).</summary>
+    /// <summary>The setting's name in the panel; null for its key.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Label { get; init; }
-    /// <summary>A graph setting's type: <c>string</c>, <c>boolean</c> or <c>number</c>. A class's settings have none (the class types them).</summary>
+    /// <summary>The setting's type: <c>string</c>, <c>boolean</c> or <c>number</c>.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Type { get; init; }
-    /// <summary>A graph setting whose value is shown masked, such as a password. A class's settings have none (the class marks them).</summary>
+    /// <summary>A setting whose value is shown masked, such as a password.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool Secret { get; init; }
     /// <summary>
     /// In a save or preview request only, given without a value: keep the value the stored definition has for this key,
@@ -65,37 +60,35 @@ public sealed record DefinitionSetting(string Key, JsonNode? Value)
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool HasValue { get; init; }
 }
 
-/// <summary>Where a definition's behaviour comes from.</summary>
-/// <param name="Kind"><c>class</c> (a class the node libraries declare) or <c>graph</c> (a graph of nodes).</param>
-/// <param name="Type">For a class, its <see cref="EntityTypeDescriptor.Id"/>, such as <c>library:shelly:NodeLib.ShellyPlug</c>.</param>
-/// <param name="Graph">For a graph, the graph, never with a <c>definition</c>: that is composed from the document's
-/// settings (<see cref="DefinitionGraph.Compose"/>). Its entities are its Entity nodes, and its devices its Device nodes.</param>
-public sealed record DefinitionLogic(string Kind, string? Type, JsonObject? Graph);
+/// <summary>Where a definition's behaviour comes from: a graph of nodes.</summary>
+/// <param name="Kind"><c>graph</c>; a request of any other kind is refused (<c>definition.logic</c>).</param>
+/// <param name="Graph">The graph, never with a <c>definition</c>: that is composed from the document's settings
+/// (<see cref="DefinitionGraph.Compose"/>). Its entities are its Entity nodes, and its devices its Device nodes.</param>
+public sealed record DefinitionLogic(string Kind, JsonObject? Graph);
 
 /// <summary>A definition as the user writes it: what is saved, before the store adds its id, revision and source.</summary>
-/// <param name="Name">What the definition, and a class definition's device, are called; up to 120 characters.</param>
-/// <param name="Device">For a class, what the device page shows; null for the class's own. A graph has none: its devices
-/// are its Device nodes, and a request that gives one that is not null is refused (<c>definition.deviceNotAllowed</c>).</param>
-/// <param name="Settings">Values for the class's settings, one not given keeping the class default; or a graph's settings.</param>
-/// <param name="Entities">A request gives none: a graph definition's entities are its Entity nodes, and a request that
-/// lists them, even as an empty list, is refused (<c>definition.entitiesNotAllowed</c>); a class definition's come from its
-/// code, and an empty list is the same as none. A request's <c>devices</c>, as a read answer has them, is no member: it
-/// is ignored, a graph's devices being its Device nodes.</param>
-/// <param name="Logic">The class or graph that gives it its behaviour.</param>
+/// <param name="Name">What the definition is called; up to 120 characters.</param>
+/// <param name="Device">A request gives none: a definition's devices are its Device nodes, and a request that gives one
+/// that is not null is refused (<c>definition.deviceNotAllowed</c>).</param>
+/// <param name="Settings">The definition's settings.</param>
+/// <param name="Entities">A request gives none: a definition's entities are its Entity nodes, and a request that lists
+/// them, even as an empty list, is refused (<c>definition.entitiesNotAllowed</c>). A request's <c>devices</c>, as a read
+/// answer has them, is no member: it is ignored, a definition's devices being its Device nodes.</param>
+/// <param name="Logic">The graph that gives it its behaviour.</param>
 public sealed record DefinitionBody(string Name, DefinitionDevice? Device, List<DefinitionSetting>? Settings,
     JsonArray? Entities, DefinitionLogic Logic);
 
 /// <summary>
 /// A saved entity definition: its body, with the source generated from it when it was saved, as one JSON file of
-/// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 3; a class definition an earlier build saved is 1 or 2.
-/// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, then each C# entity's
+/// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 3.
+/// <see cref="Entities"/> is the entities its Entity nodes declare, then each C# entity's
 /// (<c>{key, domain, name: null, device, csharp: true}</c>), each with the key of the device it is on (<c>device</c>, null
 /// for none; <see cref="DefinitionGraph.ListedEntities"/>), and <see cref="Devices"/> the devices its Device nodes
 /// declare, then each C# device's (<see cref="DefinitionGraph.Devices"/>); both for reading only. The entities a C# device
-/// adds are in neither: its code adds them as it runs. A class document has no devices, and writes none. A
-/// graph document's <see cref="Device"/> is null: one an earlier build of this phase stored is not read.
+/// adds are in neither: its code adds them as it runs. A device of the definition's own, which an earlier build stored,
+/// is not read.
 /// </summary>
-public sealed record EntityDefinitionDocument(int Version, string Id, long Revision, string Name, DefinitionDevice? Device,
+public sealed record EntityDefinitionDocument(int Version, string Id, long Revision, string Name,
     List<DefinitionSetting> Settings, JsonArray? Entities,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonArray? Devices,
     DefinitionLogic Logic, string Source, List<VisualSourceMap> SourceMap)
@@ -107,10 +100,10 @@ public sealed record EntityDefinitionDocument(int Version, string Id, long Revis
     /// <summary>The library generation <see cref="Source"/> was generated from.</summary>
     public string? CatalogGeneration { get; init; }
     /// <summary>
-    /// The definition as written, to preview or save again; derived, never stored. A graph's has no entities and no
-    /// devices: they are its Entity and Device nodes, so a regeneration composes from the graph alone.
+    /// The definition as written, to preview or save again; derived, never stored. It has no entities and no devices:
+    /// they are its Entity and Device nodes, so a regeneration composes from the graph alone.
     /// </summary>
-    [JsonIgnore] public DefinitionBody Body => new(Name, Device, Settings, Logic?.Kind == "graph" ? null : Entities, Logic!);
+    [JsonIgnore] public DefinitionBody Body => new(Name, null, Settings, null, Logic!);
     /// <summary>
     /// For a graph, the pruned catalog JSON <see cref="Source"/> embeds, for the run snapshot, as the preview that generated
     /// the source gave it; derived, never stored, so null for a document read from its file.
@@ -160,9 +153,10 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
     /// </summary>
     internal const string EarlierBuild = "saved by an earlier development build; delete it and build it again";
 
-    // Version 3; or 1 or 2 for a class definition, whose document is the same in all three.
-    static bool Complete(EntityDefinitionDocument? document, string id) => document != null && (document.Version == Version || document.Version is 1 or 2 && document.Logic?.Kind == "class")
-        && document.Id == id && document.Name != null && document.Settings != null && document.Logic != null && document.Source != null && document.SourceMap != null && document.Revision >= 1;
+    // Version 3, and its logic a graph: a document is a node graph, and one of any other logic is malformed.
+    static bool Complete(EntityDefinitionDocument? document, string id) => document != null && document.Version == Version
+        && document.Id == id && document.Name != null && document.Settings != null && document.Logic is { Kind: "graph", Graph: not null }
+        && document.Source != null && document.SourceMap != null && document.Revision >= 1;
 
     /// <summary>The definition, or null when there is none.</summary>
     /// <exception cref="JsonException">Its file is not a definition, or is a graph definition an earlier build saved (<see cref="EarlierBuild"/>).</exception>
@@ -175,10 +169,9 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             var document = JsonSerializer.Deserialize<EntityDefinitionDocument>(File.ReadAllText(path), VisualStore.Json);
             if (document is { Version: < Version, Logic.Kind: "graph" }) throw new JsonException(EarlierBuild);
             if (!Complete(document, id)) throw new JsonException("Invalid entity definition envelope");
-            // A graph's devices are its Device nodes: a device of its own, which an earlier build of this phase stored, is
-            // not read: the document is answered, listed and sent back without it (EntityStoreTests
-            // AGraphDocumentsStoredDeviceIsNotRead).
-            return document is { Logic.Kind: "graph", Device: not null } ? document with { Device = null } : document;
+            // A definition's devices are its Device nodes: a device of its own, which an earlier build of this phase stored,
+            // is no member of the document, so it is not read (EntityStoreTests AGraphDocumentsStoredDeviceIsNotRead).
+            return document;
         }
     }
 
@@ -262,10 +255,9 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             if (old != null && enabled != null)
                 throw new ArgumentException("enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off");
             body = WithKeptValues(body, old);
-            var graphLogic = body.Logic?.Kind == "graph";
             // A graph is laid out as an automation's is, before it is previewed: the source embeds it. A definition a client
-            // put in it is never trusted. A graph of the wrong shape is the preview's to report, as it is.
-            if (graphLogic && body.Logic!.Graph is { } given)
+            // put in it is never trusted. A graph of the wrong shape, or logic that is not a graph, is the preview's to report.
+            if (body.Logic is { Kind: "graph", Graph: { } given })
             {
                 var graph = DefinitionGraph.Decompose(given);
                 if (graph["nodes"] is JsonArray nodes && nodes.All(n => n is JsonObject)) graph = VisualGraphContract.FillMissingLayout(graph);
@@ -273,18 +265,18 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             }
             preview = generator.Preview(body, catalog);
             if (!preview.Valid) throw new DefinitionValidationException(preview);
-            // The document keeps its own copy of the JSON values, whatever the caller does with the body afterwards. A
-            // class's settings are values only, as they always were; a graph's keep their label, type and secret flag.
-            var settings = (body.Settings ?? []).Select(s => graphLogic ? s with { Value = s.Value?.DeepClone() } : new DefinitionSetting(s.Key, s.Value?.DeepClone())).ToList();
-            // A graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its definition.
-            // A valid preview had logic to preview.
-            var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
-            // A graph's entities and devices are stored as its Entity, C# entity, Device and C# device nodes declare them,
-            // for a read answer and a list; a class has no devices. The host is handed its plain entities from the graph
-            // again (DefinitionGraph.Entities), never these: a C# entity is its class.
-            var entities = graphLogic ? DefinitionGraph.ListedEntities(preview.Graph!, catalog) : (JsonArray?)body.Entities?.DeepClone();
-            var devices = graphLogic ? DefinitionGraph.Devices(preview.Graph!, catalog.Root) : null;
-            var document = new EntityDefinitionDocument(Version, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
+            // The document keeps its own copy of the JSON values, whatever the caller does with the body afterwards, each
+            // setting with its label, type and secret flag.
+            var settings = (body.Settings ?? []).Select(s => s with { Value = s.Value?.DeepClone() }).ToList();
+            // The graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its
+            // definition. A valid preview had a graph to preview.
+            var logic = body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) };
+            // Its entities and devices are stored as its Entity, C# entity, Device and C# device nodes declare them, for a
+            // read answer and a list. The host is handed its plain entities from the graph again (DefinitionGraph.Entities),
+            // never these: a C# entity is its class.
+            var entities = DefinitionGraph.ListedEntities(preview.Graph!, catalog);
+            var devices = DefinitionGraph.Devices(preview.Graph!, catalog.Root);
+            var document = new EntityDefinitionDocument(Version, id, checked(expectedRevision + 1), body.Name, settings,
                 entities, devices, logic, preview.Source, preview.SourceMap)
                 { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow, EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
             Directory.CreateDirectory(directory);
@@ -319,8 +311,8 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
     public EntityDefinitionDocument Rebuilt(EntityDefinitionDocument old, DefinitionPreview preview, string? catalogGeneration)
     {
         if (!preview.Valid) throw new DefinitionValidationException(preview);
-        // A graph is stored as previewed, as a rebuilt automation's is, and without its definition.
-        var logic = old.Logic.Kind == "graph" && preview.Graph != null ? old.Logic with { Graph = DefinitionGraph.Decompose(preview.Graph) } : old.Logic;
+        // The graph is stored as previewed, as a rebuilt automation's is, and without its definition.
+        var logic = preview.Graph != null ? old.Logic with { Graph = DefinitionGraph.Decompose(preview.Graph) } : old.Logic;
         return old with { Revision = checked(old.Revision + 1), Logic = logic, Source = preview.Source, SourceMap = preview.SourceMap, CatalogGeneration = catalogGeneration,
             EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
     }

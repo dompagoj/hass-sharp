@@ -38,15 +38,14 @@ public partial class HassSharpManager
     /// secret setting is answered without its value (<see cref="WithoutSecretValues"/>): every answer of a definition is
     /// built here.
     /// </summary>
-    /// <param name="libraries">The libraries the definition is answered against, which say which of a class's settings are secret.</param>
-    JsonObject EntityJson(EntityDefinitionDocument document, VisualCatalogSnapshot libraries)
+    JsonObject EntityJson(EntityDefinitionDocument document)
     {
         var path = EntityRuntimePath(document.Id);
         var running = _userScriptManager.GetUserScripts().FirstOrDefault(s => s.CompiledScript.FilePath == path && s.Active);
         var host = RunningHost(document.Id);
         var status = host?.Status ?? (document.Enabled && _loadErrors.ContainsKey(path) ? "failed" : "off");
         var json = JsonSerializer.SerializeToNode(document, VisualStore.Json)!.AsObject();
-        WithoutSecretValues(json, document, libraries);
+        WithoutSecretValues(json, document);
         json["automationId"] = _history.Identity(path);
         json["active"] = running != null;
         json["currentRevisionActive"] = running != null && running.CompiledScript.VisualRevision == document.Revision && running.CompiledScript.SourceCode == document.Source && !_loadErrors.ContainsKey(path);
@@ -57,30 +56,18 @@ public partial class HassSharpManager
     }
 
     /// <summary>
-    /// How many devices the definition makes in Home Assistant, as the list answers it in place of its device: a graph's
-    /// are those its Device nodes and C# devices declare (<see cref="EntityDefinitionDocument.Devices"/>); a class makes one when it gives
-    /// device details or, by <paramref name="libraries"/>, its class is a <see cref="SharpDevice"/>, else none.
+    /// How many devices the definition makes in Home Assistant, as the list answers it: those its Device nodes and C#
+    /// devices declare (<see cref="EntityDefinitionDocument.Devices"/>).
     /// </summary>
-    internal static int DeviceCount(EntityDefinitionDocument document, VisualCatalogSnapshot libraries) =>
-        document.Logic.Kind == "graph" ? document.Devices?.Count ?? 0
-            : document.Device != null || document.Logic.Type is { } type && libraries.EntityTypes.TryGetValue(type, out var described) && described.Kind == "device" ? 1 : 0;
+    internal static int DeviceCount(EntityDefinitionDocument document) => document.Devices?.Count ?? 0;
 
     /// <summary>
-    /// The definition's source compiled, with what its host and its runs need. A class: its <c>SharpDefinition</c> factory
-    /// and setting values. A graph: its generated class, which its host runs alongside the entities the document describes,
-    /// with the run metadata an automation's graph has (its id, revision, graph, embedded catalog and one entry per root).
+    /// The definition's source compiled, with what its host and its runs need: its generated class, which its host runs
+    /// alongside the entities the document describes, with the run metadata an automation's graph has (its id, revision,
+    /// graph, embedded catalog and one entry per root).
     /// </summary>
     async Task<CompiledUserScript> CompileDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services)
     {
-        if (document.Logic.Kind != "graph")
-        {
-            var compiled = await _compiler.CompileSingleFile(EntityRuntimePath(document.Id), document.Source, services);
-            compiled.DesignatedRootType = "SharpDefinition";
-            compiled.VisualRevision = document.Revision;
-            compiled.CatalogGeneration = document.CatalogGeneration;
-            compiled.Definition = new(document.Id, document.Name, document.Device, document.Settings);
-            return compiled;
-        }
         // The graph as previewed and stored, with its definition composed into it, as its source embeds it.
         var graph = DefinitionGraph.Compose(document.Body);
         // A document read from its file carries no embedded catalog: it is worked out again from the libraries as saved.
@@ -103,10 +90,10 @@ public partial class HassSharpManager
         script.VisualTriggers = triggers;
         script.VisualGraph = graph.ToJsonString();
         script.VisualCatalog = catalog;
-        // A graph's devices are its Device nodes and its C# devices: it is no device itself. Its C# nodes take their
-        // settings' values here, from the document, which only the host reads (they may be secret).
+        // Its devices are its Device nodes and its C# devices: it is no device itself. Its C# nodes take their settings'
+        // values here, from the document, which only the host reads (they may be secret).
         var components = DefinitionGraph.Components(graph, snapshot, document.Settings);
-        script.Definition = new(document.Id, document.Name, null, document.Settings)
+        script.Definition = new(document.Id, document.Name, document.Settings)
         {
             Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots,
             Components = components, Create = components.Count > 0 ? NodeClasses(script.Assembly) : null,
@@ -163,18 +150,16 @@ public partial class HassSharpManager
     /// </summary>
     /// <param name="services">The typed service calls the request read once, so the compile references them.</param>
     /// <param name="warnings">The save's warnings, such as a command no flow handles; answered as <c>diagnostics</c> when there is any.</param>
-    /// <param name="libraries">The libraries the document is answered against (<see cref="EntityJson"/>); the saved ones when null.</param>
     /// <returns><c>{id, saved, document, active, activationError}</c>, and <c>diagnostics</c> with warnings.</returns>
-    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null, IReadOnlyList<VisualDiagnostic>? warnings = null,
-        VisualCatalogSnapshot? libraries = null)
+    internal async Task<object> ActivateDefinition(EntityDefinitionDocument document, GeneratedServiceCalls? services = null, IReadOnlyList<VisualDiagnostic>? warnings = null)
     {
-        var (json, active, activationError) = await Activate(document, services, libraries ?? SavedLibraries(services).Preview.Snapshot);
+        var (json, active, activationError) = await Activate(document, services);
         return warnings is { Count: > 0 } ? new { id = document.Id, saved = true, document = json, active, activationError, diagnostics = warnings }
             : new { id = document.Id, saved = true, document = json, active, activationError };
     }
 
-    // ActivateDefinition's work: the document as answered against the libraries, whether its revision runs now, and why not.
-    async Task<(JsonObject Json, bool Active, string? ActivationError)> Activate(EntityDefinitionDocument document, GeneratedServiceCalls? services, VisualCatalogSnapshot libraries)
+    // ActivateDefinition's work: the document as answered, whether its revision runs now, and why not.
+    async Task<(JsonObject Json, bool Active, string? ActivationError)> Activate(EntityDefinitionDocument document, GeneratedServiceCalls? services)
     {
         string? activationError = null;
         if (!document.Enabled) await UnloadDefinition(document.Id);
@@ -188,7 +173,7 @@ public partial class HassSharpManager
             // Loaded, so active, but its Start() threw: the answer says why.
             if (activationError == null && RunningHost(document.Id) is { Status: "failed" } failed) activationError = failed.Error;
         }
-        var json = EntityJson(document, libraries);
+        var json = EntityJson(document);
         return (json, json["currentRevisionActive"]!.GetValue<bool>(), activationError);
     }
 
@@ -251,8 +236,8 @@ public partial class HassSharpManager
     /// as an automation's graph does: its errors only, each after the id of its node, and it is tried again on a push of
     /// Home Assistant's services or entity classes only when that can cure it: a problem in a line of code (a Custom C# node
     /// compiled against a service not there yet) or in the node libraries. Code that does not compile reads as each compiler
-    /// error's message, code and node library (<see cref="Located"/>), never the generated file's path. Problems (a class
-    /// definition's too) and compiler errors are listed as an automation's startup line lists them (<see cref="Listed"/>):
+    /// error's message, code and node library (<see cref="Located"/>), never the generated file's path. Problems and
+    /// compiler errors are listed as an automation's startup line lists them (<see cref="Listed"/>):
     /// the first few, each cut short, and how many more, as its <c>activationError</c> and its one warning say them. A
     /// failure that is neither a problem nor a compiler error (its setup failed) reads as the host words a failure
     /// (<see cref="DefinitionHost.Reason"/>), cut short as one problem is (<see cref="Capped"/>): what was thrown, with the
@@ -261,11 +246,10 @@ public partial class HassSharpManager
     void RecordDefinitionLoadError(EntityDefinitionDocument document, Exception error)
     {
         var path = EntityRuntimePath(document.Id);
-        if (document.Logic.Kind != "graph" || error is not DefinitionValidationException { Preview.Diagnostics: var diagnostics })
+        if (error is not DefinitionValidationException { Preview.Diagnostics: var diagnostics })
         {
             RecordLoadError(path, error);
             if (error is CompilationErrorException compilation) _loadErrors[path] = Listed([.. compilation.Errors.Select(e => Located(document, e))]);
-            else if (error is DefinitionValidationException rejected) _loadErrors[path] = Listed([.. rejected.Preview.Diagnostics.Select(d => d.Message)]);
             else _loadErrors[path] = Capped(Reason(error));
             return;
         }
@@ -319,28 +303,16 @@ public partial class HassSharpManager
     /// The request's <c>definition</c>. A setting given <c>keep</c> carries no value (null counts as none): the value is the
     /// stored definition's, which the save puts in (<see cref="DefinitionSetting.Keep"/>). One sent back as an answer masks
     /// it, <c>hasValue</c> and no value, is kept alike; with a value, the value wins (<see cref="DefinitionSetting.HasValue"/>).
-    /// An <c>entities</c> key given as null is an empty list: a graph's is refused whatever it holds, and a class's is none.
-    /// A <c>devices</c> key, as a read answer has it, is no member of a body and is ignored: a graph's devices are its
-    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>). The <c>device</c> is a class
-    /// definition's own, which has none of what only a Device node has: a key, a name (the definition's) and Part of
-    /// another device of the definition are left out, and a Part of with nothing else is none. A graph's, when not null,
-    /// is refused by the preview (<c>definition.deviceNotAllowed</c>); null is none.
+    /// An <c>entities</c> key given as null is an empty list, which the preview refuses whatever it holds. A
+    /// <c>devices</c> key, as a read answer has it, is no member of a body and is ignored: a definition's devices are its
+    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>). A <c>device</c> that is not
+    /// null is refused by the preview (<c>definition.deviceNotAllowed</c>); null is none.
     /// </summary>
     static DefinitionBody DefinitionBody(JsonObject request)
     {
         var definition = ApiRequest.Object(request, "definition");
         var body = definition.Deserialize<DefinitionBody>(VisualStore.Json) ?? throw new ArgumentException("definition is required");
         if (body.Entities == null && definition.ContainsKey("entities")) body = body with { Entities = [] };
-        if (body.Device is { } device)
-            body = body with
-            {
-                Device = device with
-                {
-                    Key = null,
-                    Name = null,
-                    Via = device.Via is { Device: not null } via ? via is { Definition: null, DeviceId: null } ? null : via with { Device = null } : device.Via,
-                },
-            };
         // The value is not quoted: it may be a secret.
         if (body.Settings?.FirstOrDefault(s => s is { Keep: true, Value: { } value } && value.GetValueKind() != JsonValueKind.Null) is { } both)
             throw new ArgumentException($"Setting {both.Key} has both a value and keep; give the value, or keep to leave the saved one as it is");
@@ -390,7 +362,7 @@ public partial class HassSharpManager
     /// The request's definition with each Custom C# step's pins, and each C# entity's and C# device's signature (its
     /// settings), written from its code first when it asks so
     /// (<c>deriveSignatures</c>), as an automation's request does (<see cref="VisualGenerator.DeriveSignatures(JsonObject, VisualCatalogSnapshot, out List{VisualDiagnostic})"/>);
-    /// a class, or a request that does not ask, as it came.
+    /// a request that does not ask, or has no graph, as it came.
     /// </summary>
     /// <param name="removed">What deriving removed (values and wires of pins the code no longer has), one warning each; empty when nothing was derived.</param>
     DefinitionBody DerivedBody(JsonObject request, GeneratedServiceCalls? services, VisualCatalogSnapshot authoring, out List<VisualDiagnostic> removed)
@@ -408,16 +380,15 @@ public partial class HassSharpManager
     /// </summary>
     /// <returns><c>{version, runId}</c> once the run's first record is written.</returns>
     /// <exception cref="ArgumentException">The step is not the definition's, or not a Trigger.</exception>
-    /// <exception cref="InvalidOperationException">The definition is a class, is off, does not run its saved revision, or the Trigger permits no manual runs.</exception>
+    /// <exception cref="InvalidOperationException">The definition is off, does not run its saved revision, or the Trigger permits no manual runs.</exception>
     object DispatchDefinition(EntityDefinitionDocument document, string triggerId, VisualCatalogSnapshot snapshot)
     {
-        if (document.Logic is not { Kind: "graph", Graph: { } graph }) throw new InvalidOperationException("A class definition has no steps to run");
         if (!document.Enabled) throw new InvalidOperationException("The entity definition is off");
-        var json = EntityJson(document, snapshot);
+        var json = EntityJson(document);
         if (!json["currentRevisionActive"]!.GetValue<bool>() || json["status"]!.GetValue<string>() != "running")
             throw new InvalidOperationException("The saved revision of this entity definition is not running: "
                 + (_loadErrors.TryGetValue(EntityRuntimePath(document.Id), out var error) ? error : RunningHost(document.Id) is { Status: "failed", Error: { } failure } ? failure : "it has not started"));
-        var node = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(n => VisualNodeCatalog.Text(n, "id") == triggerId) ?? throw new ArgumentException("Trigger not found");
+        var node = (document.Logic.Graph?["nodes"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(n => VisualNodeCatalog.Text(n, "id") == triggerId) ?? throw new ArgumentException("Trigger not found");
         if (VisualNodeCatalog.Text(node, "kind") != "trigger")
             throw new ArgumentException($"Only a Trigger step can be run by hand; {VisualGraphValidator.Words.StepName(node, VisualNodeCatalog.Spec(node, snapshot))} is not one");
         if (!(node["config"]?["manual"] is JsonValue manual && manual.TryGetValue<bool>(out var allowed) ? allowed : true)) throw new InvalidOperationException("Trigger does not permit manual execution");
@@ -427,8 +398,8 @@ public partial class HassSharpManager
     }
 
     /// <summary>
-    /// The entity definitions' JSON API, answered in the envelope <see cref="VisualRequest"/> uses: <c>types</c>,
-    /// <c>list</c>, <c>read</c>, <c>preview</c>, <c>save</c>, <c>set_enabled</c>, <c>delete</c> and <c>run</c> (a Trigger
+    /// The entity definitions' JSON API, answered in the envelope <see cref="VisualRequest"/> uses: <c>list</c>,
+    /// <c>read</c>, <c>preview</c>, <c>save</c>, <c>set_enabled</c>, <c>delete</c> and <c>run</c> (a Trigger
     /// step, by hand). Saving or turning on a definition runs it; turning it off or deleting it unloads it. Preview and save
     /// take <c>deriveSignatures</c>, as an automation's do: each Custom C# step's pins and each C# node's signature are first written from its code,
     /// what that removed is answered as warnings, and a preview answers the graph with those pins as <c>graph</c>.
@@ -443,7 +414,7 @@ public partial class HassSharpManager
             var request = ApiRequest.Parse(requestJson);
             var operation = ApiRequest.String(request, "operation");
             // Before any field an operation reads: an unknown one is answered as such, not as a field it lacks.
-            if (operation is not ("types" or "list" or "read" or "preview" or "save" or "set_enabled" or "delete" or "run")) throw new ArgumentException("Unknown entity operation");
+            if (operation is not ("list" or "read" or "preview" or "save" or "set_enabled" or "delete" or "run")) throw new ArgumentException("Unknown entity operation");
             object result;
             // A list's definition files that cannot be read, answered beside its result.
             List<UnreadableDefinition>? unreadable = null;
@@ -454,9 +425,7 @@ public partial class HassSharpManager
             // A graph is previewed and saved against the catalog an automation's is: the libraries and Home Assistant's services.
             var authoring = AuthoringSnapshot(snapshot);
             var store = EntityDocumentsWith(services);
-            if (operation == "types")
-                result = new { types = snapshot.EntityTypes.Values.OrderBy(t => t.Id, StringComparer.Ordinal).ToArray(), generation = libraries.Generation };
-            else if (operation == "preview")
+            if (operation == "preview")
             {
                 var body = DerivedBody(request, services, authoring, out var removed);
                 var preview = DefinitionGeneratorWith(services).Preview(body, authoring);
@@ -468,8 +437,8 @@ public partial class HassSharpManager
                         graph = body.Logic is { Kind: "graph", Graph: { } derived } ? DefinitionGraph.Decompose(preview.Graph ?? derived) : null }
                     : PreviewJson(preview);
             }
-            // Listing omits the generated source and its map; "read" returns them. In place of its device, it counts the
-            // devices the definition makes (DeviceCount). The entities page's list (view "home") adds how each definition
+            // Listing omits the generated source and its map; "read" returns them. In place of its devices, it counts
+            // them (DeviceCount). The entities page's list (view "home") adds how each definition
             // has been running, as the automations page's does. Beside the result, unreadable names each definition file
             // that cannot be read, with why, so that it can be deleted (at revision 0).
             else if (operation == "list")
@@ -480,9 +449,9 @@ public partial class HassSharpManager
                 unreadable = [];
                 var listed = store.List(unreadable: unreadable).Select(document =>
                 {
-                    var json = EntityJson(document, snapshot);
-                    json.Remove("source"); json.Remove("sourceMap"); json.Remove("device");
-                    json["devices"] = DeviceCount(document, snapshot);
+                    var json = EntityJson(document);
+                    json.Remove("source"); json.Remove("sourceMap");
+                    json["devices"] = DeviceCount(document);
                     return json;
                 }).ToArray();
                 if (today != null) WithRecentRuns(listed, today.Value);
@@ -491,7 +460,7 @@ public partial class HassSharpManager
             else
             {
                 var id = ApiRequest.String(request, "id");
-                if (operation == "read") result = EntityJson(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"), snapshot);
+                if (operation == "read") result = EntityJson(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"));
                 else if (operation == "run") result = DispatchDefinition(store.Read(id) ?? throw new FileNotFoundException("Entity definition not found"), ApiRequest.String(request, "triggerId"), snapshot);
                 else if (operation == "set_enabled")
                 {
@@ -505,13 +474,13 @@ public partial class HassSharpManager
                         catch (DefinitionValidationException ex) { RecordDefinitionLoadError(document, ex); valid = false; }
                     bool active;
                     string? activationError;
-                    if (!enabled || valid && !EntityJson(document, snapshot)["currentRevisionActive"]!.GetValue<bool>())
-                        (_, active, activationError) = await Activate(document, services, snapshot);
+                    if (!enabled || valid && !EntityJson(document)["currentRevisionActive"]!.GetValue<bool>())
+                        (_, active, activationError) = await Activate(document, services);
                     else
                     {
                         // Not activated: either it is not valid, and its load error says why, or its revision already runs,
                         // when the answer says whether its Start() failed, as a read does.
-                        var json = EntityJson(document, snapshot);
+                        var json = EntityJson(document);
                         active = json["currentRevisionActive"]!.GetValue<bool>();
                         activationError = valid ? (json["status"]!.GetValue<string>() == "failed" ? json["activationError"]?.GetValue<string>() : null)
                             : json["activationError"]?.GetValue<string>();
@@ -529,7 +498,7 @@ public partial class HassSharpManager
                         ForgetRetyped(before, document);
                         // A valid preview's diagnostics are its warnings: advice, which never stops the save or its activation;
                         // so are what deriving removed and a graph's entity ids that Home Assistant does not have (EntityWarnings never throws).
-                        result = await ActivateDefinition(document, services, [.. removed, .. preview.Diagnostics, .. preview.Graph == null ? [] : EntityWarnings(preview.Graph, authoring)], snapshot);
+                        result = await ActivateDefinition(document, services, [.. removed, .. preview.Diagnostics, .. preview.Graph == null ? [] : EntityWarnings(preview.Graph, authoring)]);
                     }
                     else if (operation == "delete")
                     {

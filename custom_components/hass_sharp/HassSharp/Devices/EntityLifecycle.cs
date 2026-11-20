@@ -66,9 +66,8 @@ public partial class HassSharpManager
         var name = $"\"{document.Name}\" ({document.Id})";
         if (error is DefinitionValidationException invalid)
         {
-            // A graph's problems read as its load error does, each after its node; a class's are its messages.
-            var problems = document.Logic.Kind == "graph" ? GraphProblems(invalid.Preview.Diagnostics)
-                : invalid.Preview.Diagnostics.Where(d => d.Severity >= 3).Select(d => d.Message).ToArray();
+            // Its problems read as its load error does, each after its node.
+            var problems = GraphProblems(invalid.Preview.Diagnostics);
             return $"Cannot load entity definition {name}: {(problems.Length == 1 ? "1 problem" : $"{problems.Length} problems")}: {Listed(problems)}";
         }
         if (error is CompilationErrorException compilation)
@@ -195,22 +194,21 @@ public partial class HassSharpManager
     }
 
     /// <summary>Runs each rebuilt definition that is on, in place of the revision running; one that is off stays off.</summary>
-    /// <param name="snapshot">The libraries the definitions were rebuilt with, which say which of a class's settings are secret.</param>
     /// <returns>
     /// Every rebuilt definition's answer, on or off, with <c>enabled</c>: one that is on as <see cref="ActivateDefinition"/>
     /// answers it, one that is off not active and with no error; each a secret setting without its value (<see cref="WithoutSecretValues"/>).
     /// </returns>
-    async Task<List<object>> ReactivateDefinitions(DefinitionRebuild rebuild, VisualCatalogSnapshot snapshot)
+    async Task<List<object>> ReactivateDefinitions(DefinitionRebuild rebuild)
     {
         var answers = new List<object>();
         foreach (var document in rebuild.Rebuilt)
         {
             if (!document.Enabled)
             {
-                answers.Add(new { id = document.Id, saved = true, document = EntityJson(document, snapshot), active = false, activationError = (string?)null, enabled = false });
+                answers.Add(new { id = document.Id, saved = true, document = EntityJson(document), active = false, activationError = (string?)null, enabled = false });
                 continue;
             }
-            var (json, active, activationError) = await Activate(document, null, snapshot);
+            var (json, active, activationError) = await Activate(document, null);
             answers.Add(new { id = document.Id, saved = true, document = json, active, activationError, enabled = true });
         }
         return answers;
@@ -219,20 +217,13 @@ public partial class HassSharpManager
     /// <summary>
     /// Answers each setting of the document that may be secret without its value: <c>value</c> null, <c>secret</c> true
     /// and <c>hasValue</c>, whether one is stored; its other fields as they are. Only a setting known not to be secret
-    /// keeps its value: a graph's setting the document does not mark <c>secret</c>, a class's setting its class declares
-    /// and does not mark secret (<see cref="SettingAttribute.Secret"/>). A class's setting its class does not declare, and
-    /// every one when the libraries do not compile or no longer declare the class, may be secret for all that is known.
-    /// The answers reach clients, the panel and an assistant over MCP, that have no business with them; a save sends such
+    /// keeps its value: one whose key no setting of the document marks <c>secret</c>. The answers reach clients, the panel and an assistant over MCP, that have no business with them; a save sends such
     /// a setting back with <c>keep</c>, or as answered, to leave its value as stored (<see cref="DefinitionSetting.Keep"/>).
     /// </summary>
-    /// <param name="snapshot">The libraries the definition is answered against.</param>
-    static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document, VisualCatalogSnapshot snapshot)
+    static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document)
     {
-        // A graph's key is open only if no setting with it is secret: a file edited by hand may hold a key twice.
-        var open = (document.Logic.Kind == "graph" ? document.Settings.GroupBy(s => s.Key, StringComparer.Ordinal).Where(g => g.All(s => !s.Secret)).Select(g => g.Key)
-            : !snapshot.LibraryDiagnostics.Any(d => d.Severity == 3) && document.Logic.Type is { } type && snapshot.EntityTypes.TryGetValue(type, out var described)
-                ? described.Settings.Where(s => !s.Secret).Select(s => s.Key)
-            : []).ToHashSet(StringComparer.Ordinal);
+        // A key is open only if no setting with it is secret: a file edited by hand may hold a key twice.
+        var open = document.Settings.GroupBy(s => s.Key, StringComparer.Ordinal).Where(g => g.All(s => !s.Secret)).Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
         foreach (var setting in (json["settings"] as JsonArray ?? []).OfType<JsonObject>())
         {
             if (setting["key"] is JsonValue key && key.TryGetValue<string>(out var name) && open.Contains(name)) continue;

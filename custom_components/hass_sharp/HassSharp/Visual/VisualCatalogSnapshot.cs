@@ -77,19 +77,14 @@ public sealed record EntitySettingDescriptor(string Key, string Label, string? D
     public double? Maximum { get; init; }
 }
 /// <summary>
-/// A custom device or entity class a node library declares (deriving <see cref="SharpDevice"/>, or a typed entity base
-/// such as <see cref="SharpSwitch"/>), which a definition can create.
+/// The device or entity class of a C# entity or C# device node's code (deriving <see cref="SharpDevice"/>, or a typed
+/// entity base such as <see cref="SharpSwitch"/>), as its signature describes it.
 /// </summary>
-/// <param name="Id">The type's id: <c>library:&lt;source id&gt;:&lt;namespace-qualified name&gt;</c>, such as <c>library:shelly:NodeLib.ShellyPlug</c>.</param>
-/// <param name="SourceId">The library source that declares it.</param>
-/// <param name="TypeExpression">The class as generated code names it, such as <c>global::NodeLib.ShellyPlug</c>.</param>
-/// <param name="Kind"><c>device</c> or <c>entity</c>.</param>
 /// <param name="Domain">An entity's Home Assistant domain, such as <c>switch</c>; null for a device.</param>
 /// <param name="Title">The class's name.</param>
 /// <param name="Description">The class's summary; null for none.</param>
 /// <param name="Settings">Its settings, those of its base classes first.</param>
-public sealed record EntityTypeDescriptor(string Id, string SourceId, string TypeExpression, string Kind, string? Domain,
-    string Title, string? Description, ImmutableArray<EntitySettingDescriptor> Settings);
+internal sealed record EntityTypeDescriptor(string? Domain, string Title, string? Description, ImmutableArray<EntitySettingDescriptor> Settings);
 
 /// <summary>A coherent catalog/source generation. Mutable JSON is returned only as a defensive copy.</summary>
 public sealed class VisualCatalogSnapshot
@@ -106,19 +101,13 @@ public sealed class VisualCatalogSnapshot
     public ImmutableDictionary<string, CustomNodeDescriptor> Custom { get; private init; } = ImmutableDictionary<string, CustomNodeDescriptor>.Empty;
     /// <summary>Home Assistant service schemas for validation only; never part of <see cref="Root"/> (D2).</summary>
     public ServiceSchemaCatalog? Services { get; private init; }
-    /// <summary>
-    /// The custom device and entity classes the libraries declare, by <see cref="EntityTypeDescriptor.Id"/>; empty for
-    /// <see cref="BuiltIn"/>. Never part of <see cref="Root"/>: automations do not embed them.
-    /// </summary>
-    public ImmutableDictionary<string, EntityTypeDescriptor> EntityTypes { get; private init; } = ImmutableDictionary<string, EntityTypeDescriptor>.Empty;
     public static VisualCatalogSnapshot BuiltIn { get; } = new(VisualNodeCatalog.Root, [], [], [], null);
 
     internal VisualCatalogSnapshot(JsonObject catalog, IEnumerable<NodeLibrarySource> sources,
         IEnumerable<NodeMethodDescriptor> methods, IEnumerable<NodeTypeDescriptor> types, CSharpCompilation? compilation, IEnumerable<NodeLibraryDiagnostic>? libraryDiagnostics = null,
-        IEnumerable<CustomNodeDescriptor>? custom = null, IEnumerable<EntityTypeDescriptor>? entityTypes = null)
+        IEnumerable<CustomNodeDescriptor>? custom = null)
     {
         Custom = (custom ?? []).ToImmutableDictionary(c => c.NodeId, StringComparer.Ordinal);
-        EntityTypes = (entityTypes ?? []).ToImmutableDictionary(t => t.Id, StringComparer.Ordinal);
         this.catalog = (JsonObject)catalog.DeepClone();
         Sources = sources.ToImmutableArray();
         Methods = methods.ToImmutableDictionary(m => m.Kind, StringComparer.Ordinal);
@@ -132,7 +121,6 @@ public sealed class VisualCatalogSnapshot
     {
         catalog = other.catalog; Sources = other.Sources; Methods = other.Methods; Types = other.Types;
         Compilation = other.Compilation; LibraryDiagnostics = other.LibraryDiagnostics; Custom = other.Custom; Services = other.Services;
-        EntityTypes = other.EntityTypes;
     }
     VisualCatalogSnapshot(VisualCatalogSnapshot other, JsonObject root) : this(other) { catalog = root; }
 

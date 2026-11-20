@@ -231,6 +231,13 @@ static class CustomNodeTests
         var plain = ClassCompiled("csharp_device", "public class Box : SharpDevice\n{\n    [Setting] public int Channel { get; set; }\n}");
         Check(plain.Valid && VisualGenerator.SameJson(plain.Signature!["settings"]![0], JsonNode.Parse("""{"key": "Channel", "label": "Channel", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647}""")),
             "an int setting without a range has an int's: " + plain.Signature?.ToJsonString());
+        // A long with a Maximum alone has that side only (a long has no range of its own); an int whose Minimum is NaN, as
+        // none, keeps an int's.
+        var sided = ClassCompiled("csharp_device", "public class Box : SharpDevice\n{\n    [Setting(Maximum = 10)] public long Count { get; set; }\n    [Setting(Minimum = double.NaN)] public int Plain { get; set; }\n}");
+        Check(sided.Valid && VisualGenerator.SameJson(sided.Signature!["settings"], JsonNode.Parse("""
+            [{"key": "Count", "label": "Count", "description": "", "type": "integer", "secret": false, "maximum": 10},
+             {"key": "Plain", "label": "Plain", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647}]
+            """)), "a long's Maximum alone, and an int's NaN Minimum as none: " + Messages(sided.Diagnostics) + " " + sided.Signature?.ToJsonString());
         // A camera is an entity of the camera domain; a device has none, and the entity classes beside it are its own helpers.
         var camera = ClassCompiled("csharp_entity", "public class Doorbell : SharpCamera { }");
         Check(camera.Valid && VisualGenerator.SameJson(camera.Signature, JsonNode.Parse("""{"title": "Doorbell", "description": "", "domain": "camera", "settings": []}""")),
@@ -337,6 +344,7 @@ static class CustomNodeTests
         Refused("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", NodeLibraryCompiler.SettingTypeMessage("DateTime"), 3);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n\n    [Setting] public string X { get; } = \"\";\n}", NodeLibraryCompiler.SettingSetterMessage, 4);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public static string Shared { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Shared"), 3);
+        Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] internal string Hidden { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Hidden"), 3);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Minimum = 1)] public string Host { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingRangeTypeMessage("string"), 3);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Minimum = 5, Maximum = 1)] public int Upside { get; set; }\n}", NodeLibraryCompiler.SettingRangeOrderMessage, 3);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting(Maximum = 2.5)] public long Fraction { get; set; }\n}", NodeLibraryCompiler.SettingRangeWholeMessage, 3);

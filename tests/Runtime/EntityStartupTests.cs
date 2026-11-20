@@ -90,7 +90,7 @@ static class EntityStartupTests
     {
         var located = typeof(HassSharpManager).GetMethod("Located", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static,
             [typeof(EntityDefinitionDocument), typeof(string)])!;
-        var document = new EntityDefinitionDocument(1, "steps", 1, "Steps", null, [], null, null, new DefinitionLogic("graph", null, null), "",
+        var document = new EntityDefinitionDocument(3, "steps", 1, "Steps", [], null, null, new DefinitionLogic("graph", null), "",
             [new VisualSourceMap("n1", 1, 2), new VisualSourceMap("a_step_with_a_long_id", 3, 4), new VisualSourceMap("$library:maths", 5, 6)]);
         string Located(int line) => (string)located.Invoke(null, [document, $"/config/.storage/entity_steps.cs({line},5): error CS0103: The name 'x' does not exist in the current context"])!;
         Check(Located(1) == "The name 'x' does not exist in the current context (CS0103)", "a short step id: " + Located(1));
@@ -286,32 +286,34 @@ static class EntityStartupTests
         var api = new HassSharpManager(home.Root);
         try
         {
-        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-        var record = typeof(HassSharpManager).GetMethod("RecordDefinitionLoadError", flags)!;
-        var warn = typeof(HassSharpManager).GetMethod("WarnCannotStart", flags)!;
-        var loadErrors = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)typeof(HassSharpManager).GetField("_loadErrors", flags)!.GetValue(api)!;
-        // The load error of a graph definition whose source is the library and then a line of its node's (code that, when
-        // given, creates the library's class); and the one warning two loads of it log.
-        string LoadError(string id, string name, string library, string? type)
-        {
-            var source = library + "\npublic static class Make { public static object? Create() => " + (type == null ? "null" : $"new {type}()") + "; }";
-            var lines = library.Split('\n').Length;
-            CompilationErrorException? thrown = null;
-            try { new CodeCompiler(Diagnostics).CompileSingleFile(Storage(home, "entities", $"entity_{id}.cs"), source); }
-            catch (CompilationErrorException error) { thrown = error; }
-            Check(thrown != null && thrown.Errors.All(e => e.Contains(".storage", StringComparison.Ordinal)), $"{id}: the compile does not fail with errors at the file's path");
-            var document = new EntityDefinitionDocument(Version: 1, Id: id, Revision: 1, Name: name, Device: null, Settings: [], Entities: null, Devices: null,
-                Logic: new DefinitionLogic(Kind: "graph", Type: null, Graph: null), Source: source,
-                SourceMap: [new VisualSourceMap("$library:" + id, 1, lines), new VisualSourceMap("plug", lines + 1, lines + 1)]);
-            record.Invoke(api, [document, thrown]);
-            var reason = loadErrors.Single(e => e.Key.EndsWith($"entity_{id}.cs", StringComparison.Ordinal)).Value;
-            var mark = home.Logs(PyLogLevel.Warn).Length;
-            warn.Invoke(api, [document, reason]);
-            warn.Invoke(api, [document, reason]);
-            var warned = home.Logs(PyLogLevel.Warn).Skip(mark).ToArray();
-            Check(warned.SequenceEqual([$"Entity definition \"{name}\" ({id}) cannot start: {reason}"]), $"{id}: one warning: " + string.Join(" | ", warned));
-            return reason;
-        }
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            // Each member is named by reflection: one renamed or gone fails here, in words.
+            var record = typeof(HassSharpManager).GetMethod("RecordDefinitionLoadError", flags) ?? throw new Exception("HassSharpManager has no RecordDefinitionLoadError");
+            var warn = typeof(HassSharpManager).GetMethod("WarnCannotStart", flags) ?? throw new Exception("HassSharpManager has no WarnCannotStart");
+            var loadErrors = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)(typeof(HassSharpManager).GetField("_loadErrors", flags)?.GetValue(api)
+                ?? throw new Exception("HassSharpManager has no _loadErrors"));
+            // The load error of a graph definition whose source is the library and then a line of its node's (code that, when
+            // given, creates the library's class); and the one warning two loads of it log.
+            string LoadError(string id, string name, string library, string? type)
+            {
+                var source = library + "\npublic static class Make { public static object? Create() => " + (type == null ? "null" : $"new {type}()") + "; }";
+                var lines = library.Split('\n').Length;
+                CompilationErrorException? thrown = null;
+                try { new CodeCompiler(Diagnostics).CompileSingleFile(Storage(home, "entities", $"entity_{id}.cs"), source); }
+                catch (CompilationErrorException error) { thrown = error; }
+                Check(thrown != null && thrown.Errors.All(e => e.Contains(".storage", StringComparison.Ordinal)), $"{id}: the compile does not fail with errors at the file's path");
+                var document = new EntityDefinitionDocument(Version: 3, Id: id, Revision: 1, Name: name, Settings: [], Entities: null, Devices: null,
+                    Logic: new DefinitionLogic(Kind: "graph", Graph: null), Source: source,
+                    SourceMap: [new VisualSourceMap("$library:" + id, 1, lines), new VisualSourceMap("plug", lines + 1, lines + 1)]);
+                record.Invoke(api, [document, thrown]);
+                var reason = loadErrors.Single(e => e.Key.EndsWith($"entity_{id}.cs", StringComparison.Ordinal)).Value;
+                var mark = home.Logs(PyLogLevel.Warn).Length;
+                warn.Invoke(api, [document, reason]);
+                warn.Invoke(api, [document, reason]);
+                var warned = home.Logs(PyLogLevel.Warn).Skip(mark).ToArray();
+                Check(warned.SequenceEqual([$"Entity definition \"{name}\" ({id}) cannot start: {reason}"]), $"{id}: one warning: " + string.Join(" | ", warned));
+                return reason;
+            }
 
             var old = LoadError("old", "Old plug", Obsolete, "OldPlug");
             Check(old == "'OldPlug.OldPlug()' is obsolete: 'Use the new plug' (CS0619)", "one compiler error on a node's line, worded: " + old);

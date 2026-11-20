@@ -96,16 +96,15 @@ GRAPH = p.Schema({p.Required("version"): int, p.Required("name"): str, p.Require
                   **{p.Optional(member): object for member in REMOVED_GRAPH_MEMBERS}})
 # An entity definition: strict at its top and in logic, open below (a device or a setting is checked by the server, which
 # says what is wrong in words). Its logic is a graph: a logic of another kind is refused here, and definition_hints says
-# that a definition is built from nodes. A read answers logic's type as null; a save may send it back. A device is passed
-# on too, so that one that is not null is answered with the server's sentence saying to use Device nodes
-# (definition.deviceNotAllowed), not a schema error; null, as a read answer has it, is none.
+# that a definition is built from nodes. A device is passed on too, so that one that is not null is answered with the
+# server's sentence saying to use Device nodes (definition.deviceNotAllowed), not a schema error; null is none.
 # entities is no part of it, but it is passed on: the server answers listed entities, even an empty list, with the
 # sentence that says to use Entity nodes, which is better than a schema error naming the key. devices, which a read
 # answer lists (its Device nodes), is no part of it either: it is passed on and the server ignores it, so a read
 # answer's definition sent back with it still saves.
 DEFINITION = p.Schema({p.Required("name"): str, p.Optional("device"): p.Any(None, OBJECT), p.Optional("settings"): [OBJECT],
                        p.Optional("entities"): p.Any(None, [OBJECT]), p.Optional("devices"): object,
-                       p.Required("logic"): {p.Required("kind"): p.In(["graph"]), p.Required("graph"): GRAPH, p.Optional("type"): None}})
+                       p.Required("logic"): {p.Required("kind"): p.In(["graph"]), p.Required("graph"): GRAPH}})
 DOCUMENT_KIND = {p.Optional("document"): p.In(["automation", "entity"])}
 # What an entities_read answer adds to the definition it was sent (EntityJson and authoring.py), none of which a save takes:
 # its entities and devices too, which are those its Entity and Device nodes declare. A definition sent with

@@ -72,8 +72,8 @@ export interface DefinitionDevice {
   /** Part of: the device it is connected through, if any. */
   via?: DefinitionVia | null
 }
-/** Where the behaviour comes from: a node graph. An answer also carries `type` as null, which nothing reads. */
-export type DefinitionLogic = { kind: 'graph'; graph: Graph; type?: null }
+/** Where the behaviour comes from: a node graph. */
+export type DefinitionLogic = { kind: 'graph'; graph: Graph }
 /**
  * A definition as the user writes it: the `definition` of `preview` and `save`. The editor never sends a `device`: its
  * devices are its Device nodes, and the server refuses a request whose device is not null.
@@ -110,13 +110,11 @@ export interface DefinitionTrigger {
   runnable: boolean
 }
 /** A saved definition as `read` and `save` answer it (`list` without `source` and `sourceMap`). */
-export interface EntityDocument extends DefinitionBody {
-  /** 3; one an earlier development build saved (1 or 2) is unreadable. */
-  version: 1 | 2 | 3
+export interface EntityDocument extends Omit<DefinitionBody, 'device'> {
+  /** 3; one an earlier development build saved is unreadable. */
+  version: 3
   id: string
   revision: number
-  /** Always null in an answer, which nothing reads. */
-  device?: null
   settings: DefinitionSetting[]
   /**
    * The entities its Entity nodes declare, then its C# entities', each with the device it is on, for reading only. The
@@ -147,7 +145,7 @@ export interface EntityDocument extends DefinitionBody {
  * A `list` entry: the document without its generated source, and with how many devices it makes in Home Assistant (its
  * Device nodes and C# devices) in place of the list of them.
  */
-export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap' | 'device' | 'devices'> & { devices: number }
+export type DefinitionSummary = Omit<EntityDocument, 'source' | 'sourceMap' | 'devices'> & { devices: number }
 /** An entry of the entities page's list (`list` with `view: 'home'`): a summary and how it has been running. */
 export type HomeDefinition = DefinitionSummary & Pick<HomeAutomation, 'recentRuns' | 'runsToday' | 'failedLastDay' | 'lastRunUtc'>
 /**

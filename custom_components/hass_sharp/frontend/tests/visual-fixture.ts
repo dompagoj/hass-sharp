@@ -377,12 +377,12 @@ function entitiesFixture(generation: () => string) {
       const secret = setting.secret === true || (kept && old?.secret === true)
       return { key: setting.key, value, ...(empty(setting.label) ? {} : { label: setting.label }), ...(empty(setting.type) ? {} : { type: setting.type }), ...(secret ? { secret } : {}) }
     })
-    // A device is refused before this: the one stored is null.
+    // A device is refused before this: none is stored.
     const { definition: _definition, ...logicGraph } = body.logic.graph as unknown as Record<string, unknown>
     return {
-      version: 3, id, revision, name: body.name, device: null,
+      version: 3, id, revision, name: body.name,
       settings, entities: derivedEntities(body), devices: derivedDevices(body),
-      logic: { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph },
+      logic: { kind: 'graph', graph: structuredClone(logicGraph) as unknown as VisualGraph },
       source: '// HassSharp entity definition (fixture)', sourceMap: [], enabled, savedUtc: new Date().toISOString(), catalogGeneration: generation(),
       ...running(id, body, enabled), registeredEntities: [],
     } as EntityDocument

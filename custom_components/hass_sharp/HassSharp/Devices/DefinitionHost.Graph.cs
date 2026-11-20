@@ -15,7 +15,7 @@ internal sealed partial class DefinitionHost
     /// <summary>How long a run of a state flow may take before the host warns that it has not finished; settable for tests.</summary>
     internal static TimeSpan SlowStateWarning { get; set; } = TimeSpan.FromSeconds(30);
 
-    // A graph's entities by key; empty for a class, and once stopped.
+    // A graph's entities by key; empty once stopped.
     Dictionary<string, SharpEntity> graphEntities = new(StringComparer.Ordinal);
     // The keys of a graph's entities a state flow works out and no run has given a state or availability yet: the host does
     // not publish them as it starts, so their first state is the one worked out, never an empty one before it.
@@ -30,7 +30,7 @@ internal sealed partial class DefinitionHost
     readonly Dictionary<string, (string Reason, Exception Failure)> frameFailures = new(StringComparer.Ordinal);
     // A graph's settings by key, as its Setting nodes read them; read from the definition as it prepares, before any run.
     volatile IReadOnlyDictionary<string, (object? Value, bool Secret)> graphSettings = new Dictionary<string, (object?, bool)>();
-    // The keys of a graph's entities a state flow works out; none for a class.
+    // The keys of a graph's entities a state flow works out.
     readonly HashSet<string> stateKeys = new(definition.Roots?.StateEntities.Values ?? [], StringComparer.Ordinal);
     // The revision preparing to replace this running one, which gets what changes meanwhile when this one stops.
     DefinitionHost? successor;
@@ -118,10 +118,10 @@ internal sealed partial class DefinitionHost
     /// <summary>One C# node of a graph as its host set it up: what its node says, the class it made, and that class's entities.</summary>
     sealed record Part(DefinitionComponent Node, SharpComponent Root, SharpEntity[] Entities);
 
-    // A graph's C# nodes as they were set up, in node order; none for a class, and once stopped.
+    // A graph's C# nodes as they were set up, in node order; none once stopped.
     volatile Part[] parts = [];
     // The node of each class a graph's C# node made, by the class (a C# entity's entity, a C# device), from the moment it
-    // is made: the unique ids of a C# device's entities, restored before its Setup(), depend on it. Empty for a class.
+    // is made: the unique ids of a C# device's entities, restored before its Setup(), depend on it.
     readonly System.Collections.Concurrent.ConcurrentDictionary<SharpComponent, DefinitionComponent> nodes = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>The C# node the entity is of: a C# entity's own, or the C# device's that added it; null for any other.</summary>
@@ -129,11 +129,11 @@ internal sealed partial class DefinitionHost
         nodes.TryGetValue(entity, out var own) ? own : entity.AddedTo is { } device && nodes.TryGetValue(device, out var added) ? added : null;
 
     /// <summary>Whether the host made the entity from one of the graph's Entity nodes, whose flows are its behaviour; a C# node's class is its own.</summary>
-    bool IsHub(SharpEntity entity) => definition.Entities != null && Node(entity) == null;
+    bool IsHub(SharpEntity entity) => Node(entity) == null;
 
     /// <summary>
     /// The graph's C# devices as Home Assistant gets them, in node order: each its node's key, name and Part of, and what
-    /// its class's device page shows, read after its <c>Setup()</c>, null where it sets none (as a class's own device is).
+    /// its class's device page shows, read after its <c>Setup()</c>, null where it sets none.
     /// </summary>
     IEnumerable<DefinitionDevice> ClassDevices() => parts.Where(part => part.Root is SharpDevice).Select(part =>
     {
@@ -143,8 +143,8 @@ internal sealed partial class DefinitionHost
     });
 
     /// <summary>
-    /// Sets up the graph's C# entity and C# device nodes, in node order, each with the class kind's steps
-    /// (<see cref="SetUpClass"/>): creates its class (<see cref="CompiledDefinition.Create"/>), applies its settings,
+    /// Sets up the graph's C# entity and C# device nodes, in node order, each with the same steps
+    /// (<see cref="SetUpComponent"/>): creates its class (<see cref="CompiledDefinition.Create"/>), applies its settings,
     /// gives a C# entity its node's key and, when its code names it none, its class's title if it stands alone (none on a
     /// device, whose name Home Assistant then shows), restores, sets up and seals. Every constructor and <c>Setup()</c> of
     /// them runs within <see cref="SetupTimeout"/> on one clock. A failure fails the definition's start, naming the node:
@@ -162,7 +162,7 @@ internal sealed partial class DefinitionHost
                 var root = await CreateNode(node, who);
                 nodes[root] = node;
                 var standalone = node.Device == null;
-                var all = await SetUpClass(root, who, node.Settings, entity => entity.Adopt(node.Key, standalone ? node.Title : null), named: true);
+                var all = await SetUpComponent(root, who, node.Settings, entity => entity.Adopt(node.Key, standalone ? node.Title : null));
                 made.Add(new(node, root, all));
             }
         }
@@ -250,7 +250,7 @@ internal sealed partial class DefinitionHost
     }
 
     // What the revision of this definition that runs now shows, when this host replaces it: none for a first start, one
-    // turned off, failed or stopping, or a class's. Never throws.
+    // turned off, failed or stopping. Never throws.
     GraphEntityState[] Replaced()
     {
         try
@@ -368,7 +368,7 @@ internal sealed partial class DefinitionHost
     /// <summary>
     /// Runs the graph's command flow for the entity's command and waits for it, no longer than
     /// <see cref="CommandTimeout"/> (the flow may wait on a command to this same entity, which waits behind it); a flow
-    /// still running then is left to finish. The data is checked first, as a class's is (a value the entity does not take
+    /// still running then is left to finish. The data is checked first, as a C# node's is (a value the entity does not take
     /// is refused, and no flow runs), and a value of it Home Assistant did not send is the entity's state value of the
     /// same name when it has one, else its row's default when the entity takes that (<see cref="Filled"/>). Completes
     /// when the flow succeeded or ended at a Stop step; otherwise throws, in words for the person who gave the command: the
@@ -572,10 +572,10 @@ internal sealed partial class DefinitionHost
 
     /// <summary>
     /// Has a request for the picture of the graph's camera <paramref name="entityKey"/> run <paramref name="flow"/> first, as
-    /// a class's <c>Frame()</c> runs (<see cref="CameraImage"/>): one at a time, at most once per the camera's interval and
+    /// a C# node's <c>Frame()</c> runs (<see cref="CameraImage"/>): one at a time, at most once per the camera's interval and
     /// shared by the requests meanwhile, within <see cref="CameraFrames.MakeLimit"/>, cancelled through
     /// <see cref="Stopping"/> and waited for by stopping. The flow shows its frame with <see cref="SetFrame"/>; one that shows
-    /// none keeps the frame shown, and one that throws fails the request as a class's would (the last good frame is still
+    /// none keeps the frame shown, and one that throws fails the request as a C# node's would (the last good frame is still
     /// given for a while). Set as the graph prepares; forgotten once the definition stops.
     /// </summary>
     internal void FrameNeeded(string entityKey, Func<Task> flow)
@@ -681,7 +681,7 @@ internal sealed partial class DefinitionHost
             string reason;
             try { reason = Reason(failure) ?? failure.GetType().Name; } catch { reason = "it failed"; }
             var (flow, kind) = Flow(method, cause);
-            // A failing frame flow fails its camera's frame, which the camera logs once per reason, as a class's Frame().
+            // A failing frame flow fails its camera's frame, which the camera logs once per reason, as a C# node's Frame().
             if (kind == FlowKind.Frame)
             {
                 lock (gate) frameFailures[method] = (reason, failure);

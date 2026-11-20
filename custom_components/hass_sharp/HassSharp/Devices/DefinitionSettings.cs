@@ -38,7 +38,7 @@ internal static class DefinitionSettings
         return null;
     }
 
-    // The range the property's [Setting] declares, as the types answer gives it (an int's own bounds where it declares
+    // The range the property's [Setting] declares, as the node's signature gives it (an int's own bounds where it declares
     // one side only, or one beyond them); null when it declares none.
     static EntitySettingDescriptor? Range(PropertyInfo property)
     {
