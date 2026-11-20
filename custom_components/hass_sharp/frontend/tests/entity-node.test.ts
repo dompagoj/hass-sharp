@@ -5,7 +5,7 @@ import { catalogPalette, connectNodes, dataConnectionError, updateNode, type Vis
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition } from '../src/entities/model'
-import { renameDefinition } from '../src/entities/definitionEdits'
+import { entityRemoval, renameDefinition } from '../src/entities/definitionEdits'
 import { refitNotice, retypeNode } from '../src/entities/refit'
 import { add, empty, lit } from './visual-fixture'
 
@@ -213,6 +213,18 @@ it('a step can be connected to a command, and the card lists each command with i
   // A step order wire names its execution pin as port (sourcePort is a value wire's).
   expect(graph.edges.some(e => e.kind !== 'data' && e.source === 'l' && e.target === 'log' && e.port === 'command:turn_on')).toBe(true)
   expect(rightColumn(graph, 'l')).toEqual(['Turn on', 'Brightness', 'Turn off'])
+  // A command's value says which command it belongs to, to a screen reader; its visible label stays its own.
+  const view = buildNodeView(graph.nodes.find(n => n.id === 'l')!, { graph, catalog: nodeCatalog, diagnostics: [] })
+  const brightness = view.rows.map(r => r.output).find(pin => pin?.id.endsWith('command:turn_on:brightness'))!
+  expect(brightness.label).toBe('Brightness')
+  expect(brightness.name).toMatch(/^Output Turn on: Brightness, /)
+})
+
+it('a camera\'s card shows its frame pin by its label', () => {
+  const graph = add(empty(), 'entity', 'c', { key: 'cam', domain: 'camera', name: 'Door' })
+  expect(rightColumn(graph, 'c')).toEqual(['When a frame is needed'])
+  const view = buildNodeView(graph.nodes[0], { graph, catalog: nodeCatalog, diagnostics: [] })
+  expect(view.rows.find(r => r.output?.id === 'frame')!.output!.name).toBe('When a frame is needed execution output, not connected')
 })
 
 it('a flow is named by node and port, as the server names it', () => {
@@ -300,4 +312,19 @@ it('the old steps are gone from the catalog and the step library', () => {
   const entity = catalogPalette(nodeCatalog, 'entity').filter(item => item.category === 'Entity').map(item => item.kind)
   expect(entity.slice(0, 3)).toEqual(['entity', 'entity_setup', 'set_entity_state'])
   expect(diagnosticCodes).not.toContain('state.duplicate')
+})
+
+it('deleting Entity nodes says how many steps use them, and "these entities" only when more than one is used', () => {
+  // Lamp (lamp) has two Set state steps, Desk (desk) one, Hall (hall) none.
+  let graph = add(add(add(empty(), 'entity', 'l', { key: 'lamp', domain: 'switch', name: 'Lamp' }), 'entity', 'd', { key: 'desk', domain: 'switch', name: 'Desk' }), 'entity', 'h', { key: 'hall', domain: 'switch', name: 'Hall' })
+  graph = add(add(add(graph, 'set_entity_state', 's1', { entity: 'lamp' }), 'set_entity_state', 's2', { entity: 'lamp' }), 'set_entity_state', 's3', { entity: 'desk' })
+  expect(entityRemoval(graph, ['d'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
+  expect(entityRemoval(graph, ['l'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '2 steps use this entity. They will show a problem until you change or remove them.' })
+  // One used among several deleted.
+  expect(entityRemoval(graph, ['d', 'h'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
+  expect(entityRemoval(graph, ['l', 'h'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '2 steps use this entity. They will show a problem until you change or remove them.' })
+  // Both used.
+  expect(entityRemoval(graph, ['l', 'd', 'h'], nodeCatalog)).toEqual({ title: 'Delete these entities?', body: '3 steps use these entities. They will show a problem until you change or remove them.' })
+  expect(entityRemoval(graph, ['l', 'd', 's1', 's2'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
+  expect(entityRemoval(graph, ['h'], nodeCatalog)).toBeUndefined()
 })

@@ -238,7 +238,9 @@ export function TracePage(props: {
   // An entity definition's command run names its entity and command as the run's own graph has them.
   const triggerLine = () => {
     const names = definitionNames(graph(), stored())
-    return [run().actionLabel && runName(run().actionLabel, names), run().trigger && summarizeTrigger(run().trigger!, names)].filter(Boolean).join(' · ')
+    const name = run().actionLabel && runName(run().actionLabel, names), trigger = run().trigger && summarizeTrigger(run().trigger!, names)
+    // A command's trigger reads as the run's own name: it is said once.
+    return [name, trigger !== name && trigger].filter(Boolean).join(' · ')
   }
   const reason = () => (run().error && run().status !== 'Succeeded' ? run().error!.split('\n', 1)[0] : undefined)
   const dropped = () => props.response.trace?.dropped ?? 0

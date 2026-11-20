@@ -427,7 +427,7 @@ it('deletes after the confirmation, moving focus to the next card, and recovers 
   button(alert()!, 'Reload the list').click()
   await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
   await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(reads))
-  await vi.waitFor(() => expect(client.getQueryData<HomeDefinition[]>([...definitionsQueryKey])?.find(d => d.id === 'porch')?.revision).toBe(9))
+  await vi.waitFor(() => expect(client.getQueryData<{ definitions: HomeDefinition[] }>([...definitionsQueryKey])?.definitions.find(d => d.id === 'porch')?.revision).toBe(9))
   menu(root, 'Porch light', 'Delete')
   button(root.querySelector('dialog[open]')!, 'Delete').click()
   await vi.waitFor(() => expect(card(root, 'porch')).toBeNull())
@@ -494,6 +494,43 @@ it('lists a definition file that cannot be read with why, and deletes it at revi
   // The row goes, and with nothing left the page says there is none yet.
   await vi.waitFor(() => expect(root.querySelector('[data-unreadable]')).toBeNull())
   expect(root.querySelector('.hs-home-empty h2')?.textContent).toBe('No entity definitions yet')
+})
+
+it('shows the files that cannot be read again at once on returning to the page, however long it was open', async () => {
+  const holding: string[] = []
+  const { root, history, release } = setup({ hold: holding, prepare: f => { f.entities.unreadable.set('hall', earlier) } })
+  await loaded(root)
+  expect(root.querySelector('[data-unreadable="hall"]')).not.toBeNull()
+  // What the cache collects after its time while the page is open: every entry nothing on the page observes.
+  for (const query of client.getQueryCache().getAll()) if (!query.getObserversCount()) client.getQueryCache().remove(query)
+  history.set({ value: '/elsewhere' })
+  await vi.waitFor(() => expect(root.querySelector('h1')?.textContent).toBe('Elsewhere'))
+  // Back, with the list read again held: the page shows what the cache has, the file included and no empty state.
+  holding.push('list')
+  history.set({ value: '/entities' })
+  await vi.waitFor(() => expect(root.querySelector('#entities-title')).not.toBeNull())
+  expect(root.querySelector('[data-unreadable="hall"]')).not.toBeNull()
+  expect(root.querySelector('.hs-home-empty')).toBeNull()
+  holding.splice(0)
+  release()
+})
+
+it('after deleting a file that cannot be read, focus goes to the next such file, else the previous one', async () => {
+  const { root } = setup({ prepare: f => { three(f); f.entities.unreadable.set('alpha', earlier); f.entities.unreadable.set('beta', earlier); f.entities.unreadable.set('gamma', earlier) } })
+  await loaded(root)
+  await vi.waitFor(() => expect(root.querySelectorAll('[data-unreadable]')).toHaveLength(3))
+  const remove = async (id: string) => {
+    button(root.querySelector(`[data-unreadable="${id}"]`)!, `Delete ${id}`).click()
+    const dialog = await vi.waitFor(() => { const found = root.querySelector('dialog[open]'); expect(found).not.toBeNull(); return found! })
+    button(dialog, 'Delete').click()
+    await vi.waitFor(() => expect(root.querySelector(`[data-unreadable="${id}"]`)).toBeNull())
+  }
+  await remove('beta')
+  await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Delete gamma'))
+  await remove('gamma')
+  await vi.waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Delete alpha'))
+  await remove('alpha')
+  await vi.waitFor(() => expect(document.activeElement?.textContent).toContain('New entity definition'))
 })
 
 it('lists a file that cannot be read beside the cards of the readable definitions', async () => {

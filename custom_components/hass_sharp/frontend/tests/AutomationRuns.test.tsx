@@ -457,7 +457,8 @@ it('labels a definition\'s Command and Setup causes, and words its empty state a
   ]
   const again = setupDefinition(async () => page(runs), { revisionLabel: 'Revision', triggerNames: plugNames, runHref: run => `/entities/${run.visualId}/runs/${run.runId}` })
   await vi.waitFor(() => expect(rows(again.root)).toHaveLength(2))
-  expect(rows(again.root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command · Main relay: Turn on')
+  expect(rows(again.root)[0].querySelector('.hs-run-label')!.textContent).toBe('Main relay: Turn on')
+  expect(rows(again.root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command')
   expect(rows(again.root)[1].querySelector('.hs-run-cause')!.textContent).toBe('Started · Definition started')
   expect(rows(again.root)[0].querySelector('a.hs-run-trace')!.getAttribute('href')).toBe('/entities/plug/runs/run-2')
   toggle(rows(again.root)[0]).click()

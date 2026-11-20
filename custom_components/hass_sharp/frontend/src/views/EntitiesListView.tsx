@@ -40,27 +40,21 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
 
   // ---- The list: one request for every card. Read again (see definitionPollInterval) only while the page is visible.
   const startingSince = new Map<string, number>()
-  // The files the list's last answer could not read, kept beside the cards (the query keeps the cards alone), and in
-  // the cache under a key of their own, so that a page opened again over the cached cards has them too.
-  const unreadableKey = [...definitionsQueryKey, 'unreadable']
-  const [unreadable, setUnreadable] = createSignal(queryClient.getQueryData<UnreadableDefinition[]>(unreadableKey) ?? [])
+  // The cards and the files the list's last answer could not read are one answer, cached together: a page opened
+  // again over the cached cards has the files too.
   const home = useQuery(() => ({
     queryKey: [...definitionsQueryKey],
-    queryFn: async () => {
-      const answer = await api.homePage(startOfToday())
-      queryClient.setQueryData(unreadableKey, answer.unreadable)
-      setUnreadable(answer.unreadable)
-      return answer.definitions
-    },
+    queryFn: () => api.homePage(startOfToday()),
     staleTime: 0,
     refetchInterval: query => {
-      const items = query.state.data ?? [], now = Date.now()
+      const items = query.state.data?.definitions ?? [], now = Date.now()
       noteStarting(startingSince, items, now)
       return definitionPollInterval(items, now, startingSince)
     },
     refetchIntervalInBackground: false,
   }))
-  const items = createMemo(() => [...(home.data ?? [])].sort(byName))
+  const items = createMemo(() => [...(home.data?.definitions ?? [])].sort(byName))
+  const unreadable = (): UnreadableDefinition[] => home.data?.unreadable ?? []
   const byId = createMemo(() => new Map(items().map(item => [item.id, item])))
   const ids = createMemo(() => items().map(item => item.id), undefined, { equals: (a, b) => a.length === b.length && a.every((id, i) => id === b[i]) })
   // One request for the whole page, only when a definition is built from a class.
@@ -89,12 +83,14 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   const clock = setInterval(() => setNow(Date.now()), 30_000)
   onCleanup(() => clearInterval(clock))
 
-  // ---- Focus: after a delete it goes to the next card, else the previous one, else "New entity definition".
+  // ---- Focus: after a delete it goes to the next card, else the previous one, else "New entity definition"; after
+  // deleting a file that cannot be read, to the next such row, else the previous one, else as after a card.
   const focusAfter = (id: string) => {
-    const list = ids(), at = list.indexOf(id)
-    const next = at < 0 ? undefined : list[at + 1] ?? list[at - 1]
-    const card = (cardId: string) => [...page.querySelectorAll<HTMLElement>('[data-definition]')].find(found => found.dataset.definition === cardId)
-    return () => focusSoon(() => (next ? card(next)?.querySelector<HTMLElement>('.hs-home-card__link') : page.querySelector<HTMLElement>('.hs-home-new')), page)
+    const neighbour = (list: string[]) => { const at = list.indexOf(id); return at < 0 ? undefined : list[at + 1] ?? list[at - 1] }
+    const rows = unreadable().map(item => item.id), row = neighbour(rows), next = neighbour(ids())
+    const find = (attribute: string, value: string) => [...page.querySelectorAll<HTMLElement>(`[${attribute}]`)].find(found => found.getAttribute(attribute) === value)
+    return () => focusSoon(() => row !== undefined ? find('data-unreadable', row)?.querySelector<HTMLElement>('button')
+      : next ? find('data-definition', next)?.querySelector<HTMLElement>('.hs-home-card__link') : page.querySelector<HTMLElement>('.hs-home-new'), page)
   }
   const refresh = () => queryClient.invalidateQueries({ queryKey: [...definitionsQueryKey] })
 
@@ -115,7 +111,8 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   // ---- On/off: shown at once (on is "Starting" until the list is read again), put back with a message on failure.
   const [toggling, setToggling] = createSignal<ReadonlySet<string>>(new Set())
   const show = (id: string, change: (item: HomeDefinition) => HomeDefinition) =>
-    queryClient.setQueryData<HomeDefinition[]>([...definitionsQueryKey], list => list?.map(item => (item.id === id ? change(item) : item)))
+    queryClient.setQueryData<{ definitions: HomeDefinition[]; unreadable: UnreadableDefinition[] }>([...definitionsQueryKey],
+      answer => answer && { ...answer, definitions: answer.definitions.map(item => (item.id === id ? change(item) : item)) })
   const toggle = async (item: HomeDefinition, enabled: boolean) => {
     if (toggling().has(item.id)) return
     setToggling(current => new Set(current).add(item.id))

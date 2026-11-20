@@ -62,12 +62,15 @@ export function entityRemoval(graph: Graph, ids: string[], catalog: VisualCatalo
   // A key a node that stays still declares leaves no step without it.
   const staying = new Set(declared.filter(d => !deleted.has(d.nodeId)).map(d => d.entity.key))
   const keys = new Set(going.map(d => d.entity.key).filter((key): key is string => typeof key === 'string' && key !== '' && !staying.has(key)))
-  const steps = [...keys].reduce((count, key) => count + stepsUsingEntity(graph, key, deleted).length, 0)
+  const counts = [...keys].map(key => stepsUsingEntity(graph, key, deleted).length)
+  const steps = counts.reduce((sum, count) => sum + count, 0)
   if (!steps) return
-  const several = going.length > 1
+  // "These entities" only when more than one of them is still used: one used among several deleted is "this entity".
+  const several = counts.filter(count => count > 0).length > 1
+  const them = several ? 'these entities' : 'this entity'
   return {
     title: several ? 'Delete these entities?' : 'Delete this entity?',
-    body: `${steps === 1 ? '1 step uses' : `${steps} steps use`} ${several ? 'these entities' : 'this entity'}. They will show a problem until you change or remove them.`,
+    body: steps === 1 ? `1 step uses ${them}. It will show a problem until you change or remove it.` : `${steps} steps use ${them}. They will show a problem until you change or remove them.`,
   }
 }
 

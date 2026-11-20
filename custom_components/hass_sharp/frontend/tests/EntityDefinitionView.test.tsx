@@ -960,7 +960,9 @@ it('lists the definition\'s runs in its Runs tab: its causes, its entities and c
   const { root, requests } = await openPlugRuns(plugRuns)
   await vi.waitFor(() => expect(runRows(root)).toHaveLength(2))
   expect(requests[0]).toMatchObject({ type: 'hass_sharp/run_history', automationId: 'entity:plug' })
-  expect(runRows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command · Relay: Turn on')
+  // The run is named by its entity and command; its cause does not say that again.
+  expect(runRows(root)[0].querySelector('.hs-run-label')!.textContent).toBe('Relay: Turn on')
+  expect(runRows(root)[0].querySelector('.hs-run-cause')!.textContent).toBe('Command')
   expect(runRows(root)[1].querySelector('.hs-run-cause')!.textContent).toBe('Started · Definition started')
   expect(runRows(root).map(row => row.querySelector('a.hs-run-trace')!.getAttribute('href'))).toEqual(['/entities/plug/runs/run-2', '/entities/plug/runs/run-1'])
   expectClean(root)

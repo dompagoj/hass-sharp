@@ -366,6 +366,47 @@ it('a problem on a field focuses that field', async () => {
   expect(document.activeElement).toBe(control(keyed.root, 'Key'))
 })
 
+it('a problem on a command or a frame pin has no field to go to', () => {
+  const warning = (nodeId: string, portId: string, message: string): VisualDiagnostic =>
+    ({ nodeId, portId, code: null, message, severity: 2, startLine: null, startColumn: null })
+  const unhandled = 'Lamp does nothing on Turn on: connect a step to Turn on'
+  const lit = mount(lamp(), 'l', { diagnostics: [warning('l', 'command:turn_on', unhandled)] })
+  const listed = lit.root.querySelector('.hs-insp-problems')!
+  expect(listed.textContent).toContain(unhandled)
+  expect(listed.querySelector('button.hs-insp-problem__body')).toBeNull()
+  dispose?.()
+  document.body.innerHTML = ''
+
+  const noFrame = 'Door never shows a frame: add a Show frame step for it'
+  const camera = mount(add(empty(), 'entity', 'c', { key: 'door', domain: 'camera', name: 'Door' }), 'c', { diagnostics: [warning('c', 'frame', noFrame)] })
+  const cameraListed = camera.root.querySelector('.hs-insp-problems')!
+  expect(cameraListed.textContent).toContain(noFrame)
+  expect(cameraListed.querySelector('button.hs-insp-problem__body')).toBeNull()
+})
+
+it('a command\'s value in the Outputs list says which command it belongs to', () => {
+  const { root } = mount(lamp(), 'l')
+  const outputs = [...root.querySelectorAll('.hs-insp-output')]
+  const brightness = outputs.find(item => item.querySelector('.hs-insp-output__name')?.textContent === 'Brightness')!
+  expect(brightness).toBeDefined()
+  expect(brightness.getAttribute('aria-label')).toMatch(/^Output Turn on: Brightness, /)
+})
+
+it('the entity name says its problem to a screen reader', () => {
+  const message = 'Name this entity: it has no device, so Home Assistant shows it by its own name'
+  const { root } = mount(lamp({ name: '' }), 'l', { diagnostics: [{ nodeId: 'l', inputId: 'name', code: 'entity.name', message, severity: 3, startLine: null, startColumn: null }] })
+  const name = root.querySelector<HTMLInputElement>('input[aria-label="Entity name"]')!
+  expect(name.getAttribute('aria-invalid')).toBe('true')
+  const described = (name.getAttribute('aria-describedby') ?? '').split(' ').map(id => document.getElementById(id)?.textContent ?? '')
+  expect(described).toContain(message)
+  dispose?.()
+  document.body.innerHTML = ''
+
+  const fine = mount(lamp(), 'l')
+  const plain = fine.root.querySelector<HTMLInputElement>('input[aria-label="Entity name"]')!
+  expect((plain.getAttribute('aria-describedby') ?? '').split(' ')).toHaveLength(1)
+})
+
 it('the entity id line shows once Home Assistant has the entity', () => {
   const none = mount(lamp(), 'l', { saved: { keys: ['lamp'], entityIds: {} } })
   expect(none.root.querySelector('button[aria-label^="Show "]')).toBeNull()

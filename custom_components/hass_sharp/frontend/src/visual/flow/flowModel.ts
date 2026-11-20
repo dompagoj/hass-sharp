@@ -50,6 +50,8 @@ export interface PinView {
   side: 'in' | 'out'
   kind: 'exec' | 'data'
   label: string
+  /** The label as a screen reader says it, when it says more: a command's value names its command ("Turn on: Brightness"). */
+  spoken?: string
   /** Accessible name: side, label, type and state ("Input Brightness, Number, not connected"). */
   name: string
   typeId?: string
@@ -295,12 +297,14 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const outputs: PinView[] = outputSpecs.map(([port, output]) => {
     const connected = outgoing.some(e => e.kind === 'data' && e.sourcePort === port)
     const label = output.label ?? port
+    // A value grouped under an execution pin (an Entity node's command value) says which command it belongs to.
+    const spoken = output.group ? `${execLabel(node, output.group, catalog)}: ${label}` : undefined
     // A Select property node's output has its property's type, and none until one is chosen and found.
     const untyped = !!output.propertyOf && !output.type
     const typeText = untyped ? (text(node.config.property) ? 'Unknown type' : 'No property chosen') : typeLabel(output.type, catalog)
     return {
-      id: dataHandle(port), side: 'out', kind: 'data', label, typeId: untyped ? undefined : output.type, typeName: typeText,
-      name: `Output ${label}, ${typeText}, ${connectedText(connected)}`, color: untyped ? 'var(--hs-muted)' : typeColor(output.type, catalog),
+      id: dataHandle(port), side: 'out', kind: 'data', label, ...(spoken ? { spoken } : {}), typeId: untyped ? undefined : output.type, typeName: typeText,
+      name: `Output ${spoken ?? label}, ${typeText}, ${connectedText(connected)}`, color: untyped ? 'var(--hs-muted)' : typeColor(output.type, catalog),
       list: !untyped && typeIsList(output.type, catalog), connected, error: false, description: output.description,
     }
   })

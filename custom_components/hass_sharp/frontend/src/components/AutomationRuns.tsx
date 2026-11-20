@@ -126,7 +126,11 @@ const RunRow = (props: {
   // The run list can also stand alone, outside the app's routes: a link to a run needs the router.
   const routed = !!useContext(RouterContext)
   const bodyId = createUniqueId()
-  const summary = () => props.run.trigger ? summarizeTrigger(props.run.trigger, props.names) : undefined
+  // A command's trigger reads as the run's own name ("Main relay: Turn on"): it is said once, as the name.
+  const summary = () => {
+    const text = props.run.trigger ? summarizeTrigger(props.run.trigger, props.names) : undefined
+    return text && text !== runLabel(props.run, props.names) ? text : undefined
+  }
   return <li class={`hs-run-row hs-run-row--${props.run.status.toLowerCase()}`}>
     <div class="hs-run-line">
       <button type="button" class="hs-run-toggle" aria-expanded={props.open} aria-controls={props.open ? bodyId : undefined} onClick={() => props.onToggle()}>

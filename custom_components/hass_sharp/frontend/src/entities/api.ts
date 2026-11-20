@@ -90,9 +90,7 @@ export function entityApi(hass: Pick<HomeAssistant, 'callWS'>) {
     /** The classes the node libraries declare, by id. */
     types: () => request<{ types: EntityType[]; generation: string }>('types'),
     list: () => request<DefinitionSummary[]>('list'),
-    /** The entities page's list; `todayUtc` is the start of the viewer's day, for `runsToday`. */
-    home: (todayUtc: string) => request<HomeDefinition[]>('list', { view: 'home', todayUtc }),
-    /** The entities page's list as `home` gives it, and the definition files that cannot be read. */
+    /** The entities page's list, and the definition files that cannot be read; `todayUtc` is the start of the viewer's day, for `runsToday`. */
     homePage: async (todayUtc: string) => {
       const answer = await answered<HomeDefinition[]>('list', { view: 'home', todayUtc })
       return { definitions: answer.result, unreadable: answer.unreadable ?? [] }

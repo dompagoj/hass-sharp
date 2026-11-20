@@ -196,7 +196,8 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   overview?(context: EditorContext<D>): JSX.Element
   /**
    * The saved document's entities as Home Assistant has them, for the inspector of a step that declares one (an
-   * entity definition's Entity node): undefined before the first save, and for a document without entities.
+   * entity definition's Entity node): undefined before the first save; empty lists for a saved document with no
+   * entities. An adapter of a document that has none (automations) leaves it out.
    */
   savedEntities?(context: EditorContext<D>): SavedEntities | undefined
   /** The icon of the bar that opens the overview where the inspector is a sheet (with `texts.overviewPeek`). */

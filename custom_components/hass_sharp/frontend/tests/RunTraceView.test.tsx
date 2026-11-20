@@ -712,7 +712,7 @@ it('shows a definition\'s run on its own graph, its entity steps by name, and go
   expect(card(root, 'relay').querySelector('.hs-card__trace-word')!.textContent).not.toBe('Not reached')
   expect(card(root, 'power').querySelector('.hs-card__trace-word')!.textContent).toBe('Not reached')
   expect(root.querySelector('.solid-flow__edge[data-id="relay:command:turn_on->set"]')!.outerHTML).toContain('hs-wire--travelled')
-  expect(root.querySelector('.hs-trace-strip')!.textContent).toContain('Main relay: Turn on · Main relay: Turn on')
+  expect(root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('Main relay: Turn on')
   expect(root.querySelector<HTMLAnchorElement>('a.hs-trace-open')!.getAttribute('href')).toBe('/entities/plug')
   await vi.waitFor(() => expect(fixture.entities.requests.some(r => r.operation === 'read' && r.id === 'plug')).toBe(true))
   expect(callWS.mock.calls.some(([message]) => message.type === 'hass_sharp/visual')).toBe(false)
@@ -730,7 +730,7 @@ it('titles a definition\'s run by its root step when it carries that step\'s gen
   const { root } = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'relay', cause: 'Command', actionLabel: turnOn(), trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
   // An Entity node's flow is named by the entity and the flow.
-  expect(root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('Main relay: Turn on · Main relay: Turn on')
+  expect(root.querySelector('.hs-trace-strip__trigger')!.textContent).toBe('Main relay: Turn on')
   dispose?.(); document.body.innerHTML = ''
   // A root that is not in the run's graph keeps the name recorded.
   const second = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'gone', cause: 'Command', actionLabel: 'Run_676F6E65', trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))

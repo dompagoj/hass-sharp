@@ -1028,7 +1028,7 @@ it('deleting an Entity node that steps use asks first', async () => {
   key(canvas, 'Delete')
   await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
   expect(dialog(host)!.textContent).toContain('Delete this entity?')
-  expect(dialog(host)!.textContent).toContain('1 step uses this entity. They will show a problem until you change or remove them.')
+  expect(dialog(host)!.textContent).toContain('1 step uses this entity. It will show a problem until you change or remove it.')
   expect(button(dialog(host)!, 'Delete')).toBeDefined()
   // Cancel deletes nothing, and focus goes back to where it was.
   button(dialog(host)!, 'Cancel').click()
@@ -1093,7 +1093,7 @@ it('the right panel\'s Delete asks the same question', async () => {
   remove()
   await vi.waitFor(() => expect(dialog(host)).not.toBeNull())
   expect(dialog(host)!.textContent).toContain('Delete this entity?')
-  expect(dialog(host)!.textContent).toContain('1 step uses this entity. They will show a problem until you change or remove them.')
+  expect(dialog(host)!.textContent).toContain('1 step uses this entity. It will show a problem until you change or remove it.')
   key(dialog(host)!, 'Escape')
   expect(dialog(host)).toBeNull()
   expect(cards(host)).toContain('Lamp')

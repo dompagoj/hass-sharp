@@ -14,16 +14,17 @@ import { RemoveWire } from './RemoveWire'
 import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
 import { entityStateContext } from './entityStateContext'
-import { customSignature, graphDocument, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { customSignature, executionPorts, graphDocument, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { stepDescription, updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
-import { DraftField } from './widgets/common'
+import { describedBy, DraftField } from './widgets/common'
 import { numberMessage, parseNumber, useDecimalSeparator } from './widgets/number'
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
 import type { SavedEntities } from './adapter'
 import { stateValueRow, stepInputRows, stepPickers, type StepPickerContext } from '../entities/NodePickers'
+import { FieldErrors } from '../entities/formFields'
 
 type Options = { coalesce?: string }
 const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((v, i) => v === b[i])
@@ -69,7 +70,7 @@ export interface NodeConfigProps {
 export function NodeConfig(props: NodeConfigProps) {
   let root!: HTMLDivElement
   let title!: HTMLInputElement
-  const descriptionId = createUniqueId()
+  const descriptionId = createUniqueId(), nameErrorsId = `${descriptionId}-name-errors`
   const spec = createMemo(() => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind] : undefined))
   const view = createMemo(() => buildNodeView(props.node, { graph: props.graph, catalog: props.catalog, diagnostics: props.diagnostics ?? [] }))
   const inputs = createMemo(() => new Map(view().rows.flatMap(row => (row.input ? [[row.input.port, row.input] as const] : []))))
@@ -154,7 +155,7 @@ export function NodeConfig(props: NodeConfigProps) {
   const rowFor = (port: string) => {
     const row = own(stepInputRows, kind())
     if (!row || !Object.hasOwn(row, port)) {
-      // A State's or Set state's value, as its entity's type has it: ready to fill, or said to be optional.
+      // A Set state's value, as its entity's type has it: ready to fill, set to true by Set value, or said to be kept when left empty.
       const state = createMemo(() => stateValueRow(props.node, port, types(), props.graph))
       return { get ready() { return state()?.ready }, get description() { return state()?.description }, get setValue() { return state()?.setValue } }
     }
@@ -255,7 +256,8 @@ export function NodeConfig(props: NodeConfigProps) {
       <header class="hs-insp-head" classList={{ 'hs-insp-head--trigger': kind() === 'trigger' }}>
         <span class="hs-insp-head__icon" title={view().identity.label}><Glyph paths={view().identity.icon} /></span>
         <div class="hs-insp-head__titles">
-          <input ref={title} class="hs-insp-title" aria-label={declares() ? 'Entity name' : 'Node label'} aria-describedby={descriptionId}
+          <input ref={title} class="hs-insp-title" aria-label={declares() ? 'Entity name' : 'Node label'}
+            aria-describedby={describedBy(descriptionId, declares() && errorsFor('name').length > 0 && nameErrorsId)}
             data-input-id={declares() ? 'name' : undefined} aria-invalid={(declares() && errorsFor('name').length > 0) || undefined}
             value={declares() ? (typeof props.node.config.name === 'string' ? props.node.config.name : '') : props.node.label ?? ''}
             placeholder={declares() ? 'Not set' : unnamed()} onInput={e => retitle(e.currentTarget.value)}
@@ -264,6 +266,7 @@ export function NodeConfig(props: NodeConfigProps) {
         </div>
         <Menu label="Node actions" items={menu()} />
       </header>
+      <Show when={declares()}><FieldErrors id={nameErrorsId} list={errorsFor('name')} /></Show>
       <div class="hs-insp-desc-row">
         <p id={descriptionId} class="hs-insp-desc" classList={{ 'hs-insp-desc--open': more() }}>{description()}</p>
         <Show when={description().length > 110}>
@@ -276,7 +279,8 @@ export function NodeConfig(props: NodeConfigProps) {
         <ul class="hs-insp-problems" aria-label="Problems">
           <For each={problems()}>
             {problem => {
-              const port = problem.inputId ?? problem.portId ?? undefined
+              // A problem on an execution pin (a command or a frame request of an Entity node) has no field to go to.
+              const port = problem.inputId ?? (problem.portId && !executionPorts(props.node, types()).includes(problem.portId) ? problem.portId : undefined)
               const body = () => <><Glyph paths={problem.severity === 3 ? icons.problem : icons.warning} /><span>{problem.message}</span></>
               return (
                 <li class="hs-insp-problem" classList={{ 'hs-insp-problem--warning': problem.severity !== 3 }}>
@@ -362,7 +366,7 @@ export function NodeConfig(props: NodeConfigProps) {
                 const csharp = () => (pin().typeId ? csharpType(pin().typeId!, types()) : undefined)
                 const csharpIds = () => (pin().typeId ? [pin().typeId!] : [])
                 // The canvas pin's name, with the C# type after the friendly one: "Output Result, True/False, C# type bool, connected".
-                const name = () => [`Output ${pin().label}`, pin().typeName, csharp() && `C# type ${csharp()}`, pin().connected ? 'connected' : 'not connected'].filter(Boolean).join(', ')
+                const name = () => [`Output ${pin().spoken ?? pin().label}`, pin().typeName, csharp() && `C# type ${csharp()}`, pin().connected ? 'connected' : 'not connected'].filter(Boolean).join(', ')
                 return (
                   <Show when={outputs().some(p => p.id === pinId)}>
                     <li class="hs-insp-output" aria-label={name()} aria-describedby={pin().description ? descId : undefined} style={{ '--hs-chip-color': pin().color }}>

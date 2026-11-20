@@ -449,8 +449,8 @@ export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot 
  * id are merged: the first node's entry, with `assignableTo` and `assignableFrom` the union of every node's (in node
  * order). The order of the nodes never changes what is accepted. The catalog itself when there are none, and for a
  * graph past the catalog's limits: the validator answers that graph with `graph.limit` alone, and nothing is merged or
- * resolved for it, whoever asks. An entity graph's `definition` is carried too, its `entities` those the graph gives
- * (its list and its Entity nodes). Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
+ * resolved for it, whoever asks. An entity graph's `definition` is carried too, its `entities` those the graph's Entity
+ * nodes declare (a list on the graph is ignored). Mirrors `VisualNodeCatalog.WithGraphTypes`; both validators compare these types by
  * their entries alone.
  */
 export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
@@ -1217,7 +1217,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   if (Object.hasOwn(value, 'members')) error(null, words.members)
   if (!Array.isArray(value.nodes) || !Array.isArray(value.edges)) { error(null, 'Nodes and edges arrays are required', undefined, undefined, 'graph.shape'); return analysis(false) }
   const graph = value as unknown as Graph
-  // An entity definition's graph may be empty: the definition is saved with its entities before its logic.
+  // An entity definition's graph may be empty here: a definition with no Entity node is refused by the server's
+  // definition check (`definition.entitiesRequired`), not by this validator.
   const document = graphDocument(graph), entityGraph = document === 'entity'
   if ((!graph.nodes.length && document === 'automation') || overLimit(catalog, graph)) { error(null, words.graphLimit(document), undefined, undefined, 'graph.limit'); return analysis(false) }
   // Only an object definition makes an entity graph; any other value of the key is ignored, as it always was.
@@ -1761,9 +1762,8 @@ export function flowPins(nodes: ReadonlyMap<string, GraphNode>, outgoing: Readon
 }
 /** An Entity node's pin as people read it: its command's label, or its type's frame label. */
 function pinLabel(hub: GraphNode, port: string, catalog: VisualCatalogSnapshot): string {
-  if (port.startsWith('command:')) return entityCommandLabel(catalog, text(hub.config.domain), port.slice('command:'.length))
-  const frame = declaredDomain(hub, catalog)?.frame
-  return text(record(frame) ? frame.label : undefined, 'When a frame is needed')
+  return executionLabel(hub, port, catalog)
+    ?? (port.startsWith('command:') ? entityCommandLabel(catalog, text(hub.config.domain), port.slice('command:'.length)) : 'When a frame is needed')
 }
 
 export function fillGraphLayout<T extends { nodes: GraphNode[] }>(graph: T): T {
