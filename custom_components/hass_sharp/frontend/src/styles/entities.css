@@ -99,3 +99,18 @@
 .hs-app .hs-cdef > .hs-topbar { position: sticky; top: 0; z-index: 10; }
 /* An Entity node's entity id, in the inspector's section rather than under a row of the list. */
 .hs-app .hs-entity-node__id { padding: 0; }
+/* The entity help's built-in classes: a name per row, its source below it when open. The code keeps to a bounded box
+   and scrolls inside it, sideways too on a phone, so neither the dialog nor the page does. */
+.hs-app .hs-entity-source { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; margin-top: 8px; }
+.hs-app .hs-entity-source__list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-entity-source__item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
+.hs-app .hs-entity-source__toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--hs-text); font: inherit; text-align: left; cursor: pointer; }
+.hs-app .hs-entity-source__toggle:hover { background: var(--hs-soft); }
+.hs-app .hs-entity-source__toggle .hs-icon { flex: none; width: 16px; height: 16px; color: var(--hs-muted); transition: transform .15s; }
+.hs-app .hs-entity-source__toggle[aria-expanded="true"] .hs-icon { transform: rotate(90deg); }
+.hs-app .hs-entity-source__toggle code { min-width: 0; overflow-wrap: anywhere; color: var(--hs-muted); font-size: 13px; }
+.hs-app .hs-entity-source__toggle code.hs-entity-source__name { color: var(--hs-text); }
+.hs-app .hs-entity-source__shared { margin: 8px 0 0; font-size: 14px; font-weight: 650; }
+.hs-app .hs-entity-source__code { min-width: 0; max-width: 100%; }
+.hs-app .hs-entity-source__code .hs-code-view { min-height: 0; max-height: min(50dvh, 480px); border: 1px solid var(--hs-line); border-radius: 8px; overflow: hidden; }
+.hs-app .hs-dialog .hs-entity-source__code .hs-typedef__plain { max-height: min(50dvh, 480px); }

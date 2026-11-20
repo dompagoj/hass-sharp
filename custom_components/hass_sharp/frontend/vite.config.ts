@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import solidPlugin from 'vite-plugin-solid'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -9,6 +9,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   base: '/hass-sharp-static/',
   plugins: [solidPlugin(), tailwindcss()],
+  // The entity help imports the library's entity classes as text (`src/entities/builtinSource.ts`, `?raw`): the dev
+  // server serves their folder beside the frontend's own, as vitest.config.ts does for the tests. The build reads it anyway.
+  server: { fs: { allow: [searchForWorkspaceRoot(__dirname), resolve(__dirname, '../HassSharp/Devices')] } },
   resolve: {
     alias: [
       {

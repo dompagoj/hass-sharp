@@ -13,8 +13,11 @@ import type { TypeDefinition } from './library-api'
 // page or the panel; later ones show at once.
 const loadView = createLoader(() => import('../components/Editor/CodeView').then(module => module.CodeView))
 
-/** The definition's code, read only: Monaco once loaded (it starts loading here), plain text until then. */
-function DefinitionCode(props: { text: string; name: string }) {
+/**
+ * C# code, read only: Monaco once loaded (it starts loading here), plain text until then. A type's definition here,
+ * and the entity help's built-in classes.
+ */
+export function DefinitionCode(props: { text: string; label: string }) {
   const view = loadView()
   const plain = () => <pre class="hs-typedef__plain"><code>{props.text}</code></pre>
   return (
@@ -24,7 +27,7 @@ function DefinitionCode(props: { text: string; name: string }) {
         {plain()}
       </Show>
     }>
-      {component => <Dynamic component={component()} text={props.text} label={`C# definition of ${props.name}`} />}
+      {component => <Dynamic component={component()} text={props.text} label={props.label} />}
     </Show>
   )
 }
@@ -136,7 +139,7 @@ export function TypeDefinitions(props: TypeDefinitionsProps) {
                   <Show when={props.run && found().origin.nodeId !== undefined}>
                     <p class="hs-typedef__note">From the code this run used.</p>
                   </Show>
-                  <DefinitionCode text={found().text} name={found().name} />
+                  <DefinitionCode text={found().text} label={`C# definition of ${found().name}`} />
                   <Show when={found().truncated}><p class="hs-typedef__note">The definition is longer than 64,000 characters; the rest is not shown.</p></Show>
                 </>
               )}

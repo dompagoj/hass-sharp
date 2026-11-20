@@ -1,4 +1,43 @@
+import { createResource, createSignal, createUniqueId, For, Match, Show, Switch } from 'solid-js'
+import { Icon } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
+import { LoadFailed } from '../components/LazyLoad'
+import { DefinitionCode } from '../visual/typeDefinition'
+import { builtinEntities, sharedClasses, type BuiltinClass } from './builtinEntities'
+
+// The classes' source: a chunk of its own, loaded when the first class is opened, never with the page or the dialog.
+let sourceModule: Promise<typeof import('./builtinSource')> | undefined
+const loadSource = () => sourceModule ??= import('./builtinSource').catch((error: unknown) => { sourceModule = undefined; throw error })
+
+/** A class's source, read only, once its module has loaded. */
+function ClassCode(props: { item: BuiltinClass }) {
+  const [attempt, setAttempt] = createSignal(1)
+  const [text] = createResource(attempt, async () => (await loadSource()).classSource(props.item.className, props.item.files) ?? '')
+  return (
+    <Switch fallback={<p class="hs-muted" role="status">Loading the source…</p>}>
+      <Match when={text.state === 'errored'}><LoadFailed what="source" error={text.error} onRetry={() => setAttempt(n => n + 1)} /></Match>
+      <Match when={text.state === 'ready'}><DefinitionCode text={text()!} label={`C# source of ${props.item.className}`} /></Match>
+    </Switch>
+  )
+}
+
+/** One class of the list: its name, a button that shows and hides its source below it. */
+function ClassItem(props: { item: BuiltinClass; label?: string }) {
+  const [open, setOpen] = createSignal(false)
+  const id = createUniqueId()
+  return (
+    <li class="hs-entity-source__item">
+      <button type="button" class="hs-entity-source__toggle" aria-expanded={open()} aria-controls={open() ? id : undefined} onClick={() => setOpen(!open())}>
+        <Icon name="chevron" />
+        <Show when={props.label} fallback={<code class="hs-entity-source__name">{props.item.className}</code>}>
+          <span class="hs-entity-source__name">{props.label}</span>
+          <code>{props.item.className}</code>
+        </Show>
+      </button>
+      <Show when={open()}><div id={id} class="hs-entity-source__code"><ClassCode item={props.item} /></div></Show>
+    </li>
+  )
+}
 
 /** Help for the entity definition editor, opened from its "⋯" menu. */
 export function EntityHelp(props: { open: boolean; onClose: () => void }) {
@@ -22,6 +61,17 @@ export function EntityHelp(props: { open: boolean; onClose: () => void }) {
       <p>Entities that nothing works out again when the definition starts, such as switches, numbers, selects, texts, lights and covers set by commands, come back with the state they had after Home Assistant restarts or the definition is saved. A light turned on without a brightness keeps its last one, or comes on at full brightness the first time.</p>
       <h3>In Home Assistant</h3>
       <p>Saving creates or updates the entities at once. The entities wired to a Device node share its device page, named as the node is; any other is an entity on its own. With Part of, a device is shown as connected through another device, such as a hub: another Device node of this definition, or one Home Assistant already has. Find them under Settings, Devices &amp; services, Entities, and try their commands there. Turned off, the definition's entities stay in Home Assistant as unavailable; deleting it removes them. A definition saved off, such as a copy, creates its entities the first time it is turned on.</p>
+      <h3>Built-in entities</h3>
+      <p>This is the code HassSharp runs for each type of entity. To make an entity of your own, add a C# entity node, derive its class from one of these and override its methods, such as a switch's TurnOn. Setup, Start, Stop, Every, Track and Services come from the classes under What they share. A member marked internal alone, not protected internal, is the library's own: a node's class cannot override or call it. Select a name to show its code, and select it again to hide it.</p>
+      <div class="hs-entity-source">
+        <ul class="hs-entity-source__list">
+          <For each={builtinEntities}>{entity => <ClassItem item={entity} label={entity.label} />}</For>
+        </ul>
+        <h4 class="hs-entity-source__shared">What they share</h4>
+        <ul class="hs-entity-source__list">
+          <For each={sharedClasses}>{shared => <ClassItem item={shared} />}</For>
+        </ul>
+      </div>
       <h3>Keyboard</h3>
       <p>Ctrl+Z undoes and Ctrl+Y (or Ctrl+Shift+Z) redoes, the form's changes as well as the steps'. A text field takes its change when you leave it or press Enter; Escape puts back what it had.</p>
     </Dialog>

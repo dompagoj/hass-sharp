@@ -423,7 +423,9 @@ An entity or a device can be written in C# as one class, in a node on the canvas
   classes of the [table](#entity-types), such as `SharpSwitch` or `SharpSensor`, which
   is its type. Like an Entity node it has a **Device** pin: connect a Device node's
   **Entities** to it to put it on that device, or leave it unconnected and it stands
-  alone.
+  alone. The entity definition's help lists these classes under **Built-in
+  entities**, with `SharpEntity`, `SharpComponent` and `SharpDevice`, and shows each
+  one's source as HassSharp runs it.
 - A **C# device** node is one device. Its class derives from `SharpDevice` and adds
   its entities itself, so it has no **Entities** pin and no entity is wired to it; its
   inputs are its settings. It has a **Name** and **Part of** as a Device node has.
