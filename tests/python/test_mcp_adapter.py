@@ -402,15 +402,15 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # schema still answers, and the server's catalog itself is left as it was.
         self.service.node_library.side_effect=self.library
         entity_only={kind for kind,node in self.CATALOG['nodes'].items() if 'automation' not in node.get('documents',['automation'])}
-        self.assertEqual(entity_only,{'entity','entity_state','entity_command','entity_setup','set_entity_state','set_entity_available','setting','download_file','camera_snapshot','image_draw_rect','image_draw_text','camera_frame','show_frame'})
+        self.assertEqual(entity_only,{'entity','entity_setup','set_entity_state','set_entity_available','setting','download_file','camera_snapshot','image_draw_rect','image_draw_text','show_frame'})
         capabilities=(await self.call('get_capabilities',{})).data['result']['catalog']
         whole=(await self.call('get_node_schema',{})).data['result']['catalog']
         for catalog in (capabilities,whole):
             self.assertFalse(entity_only&set(catalog['nodes']),sorted(entity_only&set(catalog['nodes'])))
             self.assertIn('entity_is',catalog['nodes']); self.assertIn('entity_current',catalog['nodes']); self.assertIn('trigger',catalog['nodes'])
         self.assertEqual(set(capabilities['nodes']),set(self.CATALOG['nodes'])-entity_only)
-        state=(await self.call('get_node_schema',{'kind':'entity_state'})).data['result']
-        self.assertEqual((state['kind'],state['node']['documents']),('entity_state',['entity']))
+        state=(await self.call('get_node_schema',{'kind':'entity'})).data['result']
+        self.assertEqual((state['kind'],state['node']['documents']),('entity',['entity']))
         self.assertTrue(entity_only<=set(self.CATALOG['nodes']))
 
     async def test_library_preview_leaves_out_entity_only_nodes(self):
@@ -1084,16 +1084,13 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('such as the entity of a Has state or a Current state step, or of a Constant of an entity id type',definitions)
         self.assertNotIn('Entity field step',definitions)
         self.assertIn('own camera (it is refused at once)',definitions)
-        # The State step's own description says the same: an entity chosen in the steps it reads, not one another step reads.
-        state=result['catalog']['nodes']['entity_state']['description']
-        self.assertIn('chosen (not wired)',state); self.assertIn('such as Read entity, is not followed',state)
         self.assertEqual(result['guidance'],self.adapter.PROMPT)
         whole=(await self.call('get_node_schema',{'document':'entity'})).data['result']['catalog']
         self.assertEqual(set(whole['nodes']),set(result['catalog']['nodes']))
         self.assertEqual(set((await self.call('get_node_schema',{'document':'automation'})).data['result']['catalog']['nodes']),set(self.CATALOG['nodes'])-entity_only)
         # The steps whose ports come from the entity's domain carry entityDomains, whatever document says: the Entity node
         # (its state inputs, command and frame outputs) among them.
-        for kind in ('entity','entity_state','set_entity_state','entity_command'):
+        for kind in ('entity','set_entity_state'):
             for args in ({'kind':kind},{'kind':kind,'document':'entity'},{'kind':kind,'document':'automation'}):
                 schema=(await self.call('get_node_schema',args)).data['result']
                 self.assertEqual((schema['kind'],schema['entityDomains']),(kind,self.CATALOG['entityDomains']),args)

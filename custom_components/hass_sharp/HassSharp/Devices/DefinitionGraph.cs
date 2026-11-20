@@ -7,13 +7,13 @@ namespace HassSharp;
 /// A trigger in the graph is not among them: it runs as an automation's does.
 /// </summary>
 /// <param name="Setup">The When started flow's method; null when the graph has none.</param>
-/// <param name="Commands">Each When commanded flow's method, keyed <c>&lt;entity key&gt;:&lt;command&gt;</c>.</param>
-/// <param name="States">Each State's method, in node id order.</param>
+/// <param name="Commands">Each command flow's method, keyed <c>&lt;entity key&gt;:&lt;command&gt;</c>.</param>
+/// <param name="States">Each state flow's method, in node id order.</param>
 internal sealed record DefinitionRoots(string? Setup, IReadOnlyDictionary<string, string> Commands, IReadOnlyList<string> States)
 {
-    /// <summary>The key of the entity each State's method works out the state of, by method.</summary>
+    /// <summary>The key of the entity each state flow's method works out the state of, by method.</summary>
     public IReadOnlyDictionary<string, string> StateEntities { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
-    /// <summary>Each When a frame is needed flow's method, keyed by the key of its camera.</summary>
+    /// <summary>Each frame flow's method, keyed by the key of its camera.</summary>
     public IReadOnlyDictionary<string, string> Frames { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
 }
 
@@ -71,13 +71,12 @@ internal static class DefinitionGraph
     }
 
     /// <summary>
-    /// The methods of the graph's When started, When commanded, State and When a frame is needed roots, and of its Entity
-    /// nodes' flows (<see cref="HubFlows"/>), named as the generator names them. A node's flows come first: its state is a
-    /// State, each command flow is its entity's flow for that command, its frame flow its camera's.
+    /// The methods of the graph's When started step and of its Entity nodes' flows (<see cref="HubFlows"/>), named as the
+    /// generator names them: a node's state flow works out its entity's state, each command flow is its entity's flow for
+    /// that command, its frame flow its camera's.
     /// </summary>
     internal static DefinitionRoots Roots(JsonObject graph, VisualCatalogSnapshot snapshot)
     {
-        string? setup = null;
         var commands = new Dictionary<string, string>(StringComparer.Ordinal);
         var states = new List<string>();
         var stateEntities = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -92,20 +91,8 @@ internal static class DefinitionGraph
                     case "command": commands.TryAdd(flow.Key + ":" + flow.Command, flow.Method); break;
                     case "frame": frames.TryAdd(flow.Key, flow.Method); break;
                 }
-        // A valid graph has one When started, one flow per command and one per camera; the first in id order is kept otherwise.
-        foreach (var node in roots)
-            switch (VisualNodeCatalog.Text(node, "kind"))
-            {
-                case "entity_setup": setup ??= VisualNodeCatalog.EffectiveTriggerMethod(node); break;
-                case "entity_command":
-                    commands.TryAdd(VisualNodeCatalog.Text(node["config"], "entity") + ":" + VisualNodeCatalog.Text(node["config"], "command"), VisualNodeCatalog.EffectiveTriggerMethod(node));
-                    break;
-                case "entity_state":
-                    states.Add(VisualNodeCatalog.EffectiveTriggerMethod(node));
-                    stateEntities[VisualNodeCatalog.EffectiveTriggerMethod(node)] = VisualNodeCatalog.Text(node["config"], "entity");
-                    break;
-                case "camera_frame": frames.TryAdd(VisualNodeCatalog.Text(node["config"], "entity"), VisualNodeCatalog.EffectiveTriggerMethod(node)); break;
-            }
+        // A valid graph has one When started and one Entity node per key; the first in id order is kept otherwise.
+        var setup = roots.Where(n => VisualNodeCatalog.Text(n, "kind") == "entity_setup").Select(VisualNodeCatalog.EffectiveTriggerMethod).FirstOrDefault();
         return new(setup, commands, states) { StateEntities = stateEntities, Frames = frames };
     }
 

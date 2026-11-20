@@ -37,10 +37,10 @@ public static class VisualGraphValidator
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow",
         "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
-        "definition.invalid", "definition.unknownEntity", "definition.unknownCommand", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
+        "definition.invalid", "definition.unknownEntity", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
         "node.document", "node.singleton", "root.incoming",
-        "setting.unknown", "state.duplicate", "command.duplicate", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
-        "http.url", "http.body", "download.checksum", "camera.entity", "camera.duplicate", "camera.no_frame",
+        "setting.unknown", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
+        "http.url", "http.body", "download.checksum", "camera.entity", "camera.no_frame",
     ];
 
     /// <summary>
@@ -409,27 +409,16 @@ public static class VisualGraphValidator
         internal static string RootIncoming(string step) => $"{step} starts a flow of its own, so no step order wire can lead into it; remove this wire";
         /// <summary>A step naming an entity its definition does not have.</summary>
         internal static string UnknownEntity(string key, string label) => Trimmed(key).Length == 0 ? $"Choose one of this definition's entities in {label}" : $"This definition has no entity {Name(key)}; choose one of its entities or add it";
-        /// <summary>A When commanded step naming a command its entity's domain does not have.</summary>
-        internal static string UnknownCommand(string key, string command, IReadOnlyList<string> commands, IReadOnlyList<string> commanded, string label) =>
-            commands.Count == 0 ? $"Entity {Name(key)} takes no commands; choose {Article(commanded.FirstOrDefault() ?? "")} {Or(commanded)} entity instead"
-            : Trimmed(command).Length == 0 ? $"Choose {Or(commands)} in {label}"
-            : $"Entity {Name(key)} has no command {Name(command)}; choose {Or(commands)}";
         /// <summary>A Setting node naming a setting its definition does not have.</summary>
         internal static string UnknownSetting(string key, string label) => Trimmed(key).Length == 0 ? $"Choose one of this definition's settings in {label}" : $"This definition has no setting {Name(key)}; choose one of its settings or add it";
-        /// <summary>A second State step for one entity.</summary>
-        internal static string StateDuplicate(string key, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step; delete this one or choose another entity";
-        /// <summary>A second When commanded step for one entity and command.</summary>
-        internal static string CommandDuplicate(string key, string command, string label) => $"Entity {Name(key)} already has {Article(label)} {label} step for {command}; delete this one or choose another command";
-        /// <summary>An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known.</summary>
+        /// <summary>An entity reader an Entity node's state reads whose entity comes over a wire: what the state watches cannot be known.</summary>
         internal static string DynamicSource(string reader, string state, string input) => $"{reader} gets its entity over a wire, so {state} is not worked out again when that entity changes; choose the entity in {input} instead";
-        /// <summary>A State or Set state step naming an entity whose type has no state, such as a button.</summary>
+        /// <summary>A Set state step naming an entity whose type has no state, such as a button.</summary>
         internal static string Stateless(string type) => $"{Capital(Article(type))} {type.ToLowerInvariant()} has no state to set";
-        /// <summary>A State or Set state step given none of its entity's state values, none of which is required.</summary>
+        /// <summary>A Set state step given none of its entity's state values.</summary>
         internal static string NoValue(string step) => $"{step} needs at least one value";
-        /// <summary>A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one.</summary>
+        /// <summary>A Show frame step naming an entity of the definition that is not a camera, by its name; whether the definition has one.</summary>
         internal static string NotACamera(string name, bool anyCamera) => anyCamera ? $"{Name(name)} is not a camera; choose one of this definition's cameras" : $"{Name(name)} is not a camera; add a camera to this definition first";
-        /// <summary>A second When a frame is needed step for one camera, named by its name.</summary>
-        internal static string FrameDuplicate(string name, string label) => $"{Name(name)} already has {Article(label)} {label} step; delete this one or choose another camera";
         /// <summary>A camera an Entity node declares that no Show frame step shows a frame for, named by its name.</summary>
         internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: add {Article(label)} {label} step for it";
         // An Entity node's entity, named by EntityName.
@@ -609,7 +598,7 @@ public static class VisualGraphValidator
                 else Error(source, "This wire is neither a step order wire nor a value wire", code: "edge.unknownKind");
             }
             Cycles(outgoing.Values.SelectMany(e => e).ToList(), "Execution"); Cycles(data, "Data");
-            // Flows start at the roots: triggers, and an entity graph's State, When commanded and When started. An
+            // Flows start at the roots: triggers, and an entity graph's Entity nodes and When started. An
             // automation needs a trigger; an entity graph needs none (a definition may have no logic yet).
             var roots = nodes.Values.Where(n => IsRoot(n, snapshot)).ToArray();
             if (document == "automation" && !nodes.Values.Any(n => Kind(n) == "trigger")) Error(null, "At least one trigger is required", code: "graph.noTrigger");
@@ -676,10 +665,9 @@ public static class VisualGraphValidator
         IEnumerable<JsonObject> OfKind(string kind) => nodes.Values.Where(n => Kind(n) == kind).OrderBy(Id, StringComparer.Ordinal);
         string KindLabel(string kind) => Text(Root["nodes"]?[kind], "label", Words.KeyWords(kind));
         /// <summary>
-        /// The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
-        /// When commanded per command, a State reading an entity given over a wire, a command no step handles, one When a
-        /// frame is needed per camera, a camera no Show frame step shows a frame for, one Entity node per key, and the
-        /// flows of Entity nodes (<see cref="EntityScopes"/>).
+        /// The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, an Entity node's state
+        /// reading an entity given over a wire, a command no step handles, a camera no Show frame step shows a frame for,
+        /// one Entity node per key, and the flows of Entity nodes (<see cref="EntityScopes"/>).
         /// </summary>
         void GraphRules()
         {
@@ -689,26 +677,18 @@ public static class VisualGraphValidator
                 foreach (var node in Later(OfKind(kind), _ => kind)) Error(Id(node), Words.Singleton(Words.Name(KindLabel(kind))), code: "node.singleton");
             if (!EntityGraph) return;
             static string Choice(JsonObject node, string key) => Text(Config(node), key);
-            var states = OfKind("entity_state").Where(n => DefinitionEntity(Root, Choice(n, "entity")) != null).ToList();
-            foreach (var node in Later(states, n => Choice(n, "entity"))) Error(Id(node), Words.StateDuplicate(Choice(node, "entity"), KindLabel("entity_state")), "entity", code: "state.duplicate");
-            var commands = OfKind("entity_command").Where(n => EntityDomain(Root, Choice(n, "entity"))?["commands"] is JsonObject known && known.ContainsKey(Choice(n, "command"))).ToList();
-            foreach (var node in Later(commands, n => (Choice(n, "entity"), Choice(n, "command"))))
-                Error(Id(node), Words.CommandDuplicate(Choice(node, "entity"), CommandLabel(Choice(node, "entity"), Choice(node, "command")), KindLabel("entity_command")), "command", code: "command.duplicate");
-            // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
-            // A reader is any value node with an input that takes only entity ids (built in, a library's or Custom C#),
-            // warned about for the first such input given over a wire, unless that wire comes from a Constant of an entity
-            // id type, whose entity is followed as chosen (StateDependencies.Of). The warning is the reader's own, on no
-            // input: a wire into it is allowed (connectData), at the cost it names.
-            // An Entity node whose state is worked out (a value of it is given) is such a State.
+            // An Entity node whose state is worked out (a value of it is given) works it out again when an entity it reads
+            // changes; only an entity chosen in a reader can be watched. A reader is any value node with an input that takes
+            // only entity ids (built in, a library's or Custom C#), warned about for the first such input given over a wire,
+            // unless that wire comes from a Constant of an entity id type, whose entity is followed as chosen
+            // (StateDependencies.Of). The warning is the reader's own, on no input: a wire into it is allowed (connectData),
+            // at the cost it names.
             var readers = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var state in nodes.Values.Where(n => Kind(n) == "entity_state" || Declares(Spec(n), "entity") && DataInputs(n).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
+            foreach (var state in nodes.Values.Where(n => Declares(Spec(n), "entity") && DataInputs(n).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
                 foreach (var reader in ValueUpstream(state, nodes, data, Pure))
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
                         errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
-            // One When a frame is needed per camera.
-            var frames = OfKind("camera_frame").Where(n => IsCamera(Choice(n, "entity"))).ToList();
-            foreach (var node in Later(frames, n => Choice(n, "entity"))) Error(Id(node), Words.FrameDuplicate(EntityName(Choice(node, "entity")), KindLabel("camera_frame")), "entity", code: "camera.duplicate");
             // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
             // camera, a Show frame step that names it.
             var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -804,8 +784,6 @@ public static class VisualGraphValidator
         /// <summary>Whether a step's input is given a value: a wire into it, or an operand that is not unset.</summary>
         bool Supplied(JsonObject node, string port) =>
             incoming.ContainsKey((Id(node), port)) || TryGetInputValue(node, port, out var operand) && operand is JsonObject given && Text(given, "kind") != "unset";
-        /// <summary>A command as people know it: its label in the entity's domain, else its key in words.</summary>
-        string CommandLabel(string entity, string command) => Text(EntityDomain(Root, entity)?["commands"]?[command], "label", Words.KeyWords(command));
         void Cycles(List<JsonObject> edges, string label)
         {
             var active = new HashSet<string>(); var done = new HashSet<string>();
@@ -966,25 +944,19 @@ public static class VisualGraphValidator
             if (Text(spec, "dynamicInputs") == "custom" && cfg.ContainsKey("code")) { Error(id, Words.OldCustomCode, "source"); return; }
             // A kind that lists the documents it works in (an entity definition's steps) is refused in any other.
             if (spec["documents"] is JsonArray documents && !Strings(documents).Contains(document)) Error(id, Words.WrongDocument(Words.StepName(node, spec), document), code: "node.document");
-            // An entity graph's steps name its definition's entities, their commands and its settings.
+            // An entity graph's steps name its definition's entities and its settings.
             if (EntityGraph && spec["documents"] is JsonArray && spec["config"]?["entity"] != null && cfg["entity"] is JsonValue ev && ev.TryGetValue<string>(out var entityKey))
             {
                 if (DefinitionEntity(Root, entityKey) == null) Error(id, Words.UnknownEntity(entityKey, ConfigLabel(spec["config"]?["entity"], "entity")), "entity", code: "definition.unknownEntity");
-                // Show frame and When a frame is needed name one of the definition's cameras.
-                else if (kind is "camera_frame" or "show_frame" && !IsCamera(entityKey))
+                // Show frame names one of the definition's cameras.
+                else if (kind == "show_frame" && !IsCamera(entityKey))
                     Error(id, Words.NotACamera(EntityName(entityKey), DefinitionItems(Root, "entities").Any(e => IsCamera(Text(e, "key")))), "entity", code: "camera.entity");
-                else if (kind == "entity_command" && EntityDomain(Root, entityKey) is { } domain && cfg["command"] is JsonValue cv && cv.TryGetValue<string>(out var command) &&
-                    (domain["commands"] as JsonObject ?? []) is var commands && !commands.ContainsKey(command))
-                {
-                    var commanded = (Root["entityDomains"] as JsonObject ?? []).Where(p => p.Value?["commands"] is JsonObject { Count: > 0 }).Select(p => Text(p.Value, "label", Words.DomainWords(p.Key)).ToLowerInvariant()).ToList();
-                    Error(id, Words.UnknownCommand(entityKey, command, commands.Select(c => Text(c.Value, "label", Words.KeyWords(c.Key))).ToList(), commanded, ConfigLabel(spec["config"]?["command"], "command")), "command", code: "definition.unknownCommand");
-                }
             }
-            // A State or Set state needs an entity whose type has a state, and at least one of its values when none is required.
-            if (EntityGraph && kind is "entity_state" or "set_entity_state" && DefinitionEntity(Root, Text(cfg, "entity")) is { } described && EntityDomain(Root, Text(cfg, "entity")) is { } row)
+            // A Set state needs an entity whose type has a state, and at least one of its values.
+            if (EntityGraph && kind == "set_entity_state" && DefinitionEntity(Root, Text(cfg, "entity")) is { } described && EntityDomain(Root, Text(cfg, "entity")) is { } row)
             {
                 if (row["state"] is not JsonObject { Count: > 0 }) Error(id, Words.Stateless(Text(row, "label", Words.DomainWords(Text(described, "domain")))), "entity", code: "entity.stateless");
-                else if (DataInputs(node) is var values && !values.Any(p => Bool(p.Value, "required")) && !values.Any(p => Supplied(node, p.Key)))
+                else if (!DataInputs(node).Any(p => Supplied(node, p.Key)))
                     Error(id, Words.NoValue(KindLabel(kind)), code: "entity.no_value");
             }
             // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's

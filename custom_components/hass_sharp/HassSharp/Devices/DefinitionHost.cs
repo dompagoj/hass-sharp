@@ -18,7 +18,7 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
     internal Func<object>? Factory { get; init; }
     /// <summary>For a definition built from nodes, the document's entity descriptions, which the host creates; null for a class definition.</summary>
     internal JsonArray? Entities { get; init; }
-    /// <summary>For a definition built from nodes, the methods of its graph's When started, When commanded and State roots; null for a class definition.</summary>
+    /// <summary>For a definition built from nodes, the methods of its graph's When started step and of its Entity nodes' flows; null for a class definition.</summary>
     internal DefinitionRoots? Roots { get; init; }
 }
 
@@ -27,7 +27,7 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
 /// tells Home Assistant which entities exist, starts and stops it, and carries its states, timers, tracks and commands.
 /// A definition built from nodes has no user class: the host creates the entities its document describes, its graph's
 /// runs set their states through it (<see cref="IDefinitionRuntime"/>), and it runs the graph's When started flow as it
-/// prepares and a When commanded flow for each command. It owns the definition's HTTP client and downloads, which it ends
+/// prepares and an Entity node's command flow for each command. It owns the definition's HTTP client and downloads, which it ends
 /// once the definition has stopped. It answers Home Assistant's requests for its cameras' pictures, making their frames
 /// (<see cref="CameraImage"/>).
 /// </summary>
@@ -45,7 +45,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     // Guards the status, the start and stop, the timer and track lists, the commands, track callbacks and frames running,
     // the entities whose publish failed, the HTTP client and the downloads, and a graph's entities, their states, those
-    // awaiting their first, the failing States and the frame flows. Never taken while a camera's own lock is wanted:
+    // awaiting their first, the failing state flows and the frame flows. Never taken while a camera's own lock is wanted:
     // CameraFrames calls in here under its lock (Make), not the other way round.
     readonly object gate = new();
     readonly List<Repeating> timers = [];
@@ -814,7 +814,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     /// <summary>
     /// One call of a timer's callback. A poll of a device that does not answer fails on every tick: the first failure
-    /// logs an error naming the definition and the timer, and one for another reason does again, as a State's warning
+    /// logs an error naming the definition and the timer, and one for another reason does again, as a state flow's warning
     /// does; each failure is logged whole at Debug. A call that works after a failure says so, once.
     /// </summary>
     async Task Tick(Repeating repeating, string what, Func<Task> action, CancellationToken token)

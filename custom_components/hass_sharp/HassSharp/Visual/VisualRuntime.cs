@@ -350,7 +350,7 @@ public sealed class VisualRuntime
     }
     JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
-    // A Custom C# node's pins are its signature's; a State's, Set state's or Entity node's its entity's (see EntityInputs); every other node's are its kind's.
+    // A Custom C# node's pins are its signature's; a Set state's or Entity node's its entity's (see EntityInputs); every other node's are its kind's.
     JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Text(Spec(id),"dynamicInputs") is "entity" or "declared"?EntityInputs(id):Spec(id)?["inputs"];
     readonly Dictionary<string,JsonObject> entityInputs=[];
     /// <summary>
@@ -372,24 +372,23 @@ public sealed class VisualRuntime
         scope.CancellationToken.ThrowIfCancellationRequested();
     }
     /// <summary>
-    /// Marks the entity of the State <paramref name="id"/> unavailable after its inputs failed. Should that fail too (a
-    /// definition stopping), the State's own failure stays the run's, as its record and log show; this one is logged.
+    /// Marks the entity of the Entity node <paramref name="id"/> unavailable after its state's inputs failed. Should that
+    /// fail too (a definition stopping), the state's own failure stays the run's, as its record and log show; this one is logged.
     /// </summary>
     void MarkUnavailable(IDefinitionRuntime definition,string key,string id) {
         try {definition.SetAvailable(key,false);}
         catch(Exception error) {try{Logger.Warn($"Run {InvocationContext.Current?.RunId}: {Title(id)} could not mark {key} unavailable: {error.GetType().Name}: {error.Message}");}catch{}}
     }
-    // A When commanded step's outputs are its command's data values, an Entity node's those of each of its commands (see CommandOutputs).
-    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Text(Spec(id),"dynamicOutputs") is "command" or "declared"?CommandOutputs(id):Spec(id)?["outputs"];
+    // An Entity node's outputs are the data values of each of its commands (see CommandOutputs).
+    JsonNode? OutputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["outputs"]:Text(Spec(id),"dynamicOutputs")=="declared"?CommandOutputs(id):Spec(id)?["outputs"];
     readonly Dictionary<string,JsonObject> commandOutputs=[];
     /// <summary>
-    /// The outputs of a When commanded step, as the validators resolve them from the definition the catalog carries; of an
-    /// Entity node, <c>command:&lt;command&gt;:&lt;value&gt;</c> for each value of each command of the type it declares.
+    /// The outputs of an Entity node, as the validators resolve them: <c>command:&lt;command&gt;:&lt;value&gt;</c> for each
+    /// value of each command of the type it declares.
     /// </summary>
     JsonObject CommandOutputs(string id) {
         lock(commandOutputs) {
-            if(!commandOutputs.TryGetValue(id,out var ports))
-                commandOutputs[id]=ports=Text(Spec(id),"dynamicOutputs")=="declared"?VisualNodeCatalog.DataOutputs(nodes[id],catalog):VisualNodeCatalog.CommandOutputs(nodes[id],catalog);
+            if(!commandOutputs.TryGetValue(id,out var ports))commandOutputs[id]=ports=VisualNodeCatalog.DataOutputs(nodes[id],catalog);
             return ports;
         }
     }
@@ -448,7 +447,7 @@ public sealed class VisualRuntime
             object? value;
             // A value that cannot be copied into a loop or branch fails the step that reads it there, named as people see it.
             try {if(!scope.TryGetOutput(source,out value))throw new InvalidOperationException(absentTriggerOutputs.TryGetValue(source,out var reason)
-                ? Text(nodes[source.Item1],"kind") is "entity_command" or "entity" ? AbsentCommandValue(node,source.Item1,source.Item2,reason)
+                ? Text(nodes[source.Item1],"kind")=="entity" ? AbsentCommandValue(node,source.Item1,source.Item2,reason)
                 : $"Input {node}.{port}: trigger output {source.Item1}.{source.Item2} " + (reason==null?"is absent from this invocation's trigger payload.":$"cannot be read from this invocation's trigger payload: {reason}")
                 : HeadBody(source) ? $"{Pin(node,port)} reads the body of {Title(source.Item1)}, which uses HEAD and gets none; choose GET to read it"
                 : $"Input {node}.{port}: producer output {source.Item1}.{source.Item2} has not executed in this invocation/scope.");}
@@ -462,14 +461,14 @@ public sealed class VisualRuntime
     /// <summary>
     /// A step reading a value of its command's data that the command came without, which its entity could not give
     /// either (see <c>DefinitionHost.Filled</c>), in words for the person who gave the command, without ids: "Set state:
-    /// Turn on came without a brightness, and Lamp has none". <paramref name="command"/> is the When commanded step, or the
-    /// Entity node whose output <c>command:&lt;command&gt;:&lt;value&gt;</c> <paramref name="port"/> is.
+    /// Turn on came without a brightness, and Lamp has none". <paramref name="command"/> is the Entity node whose output
+    /// <c>command:&lt;command&gt;:&lt;value&gt;</c> <paramref name="port"/> is.
     /// </summary>
     string AbsentCommandValue(string reader,string command,string port,string? reason) {
-        var node=nodes[command];var cfg=node["config"];var hub=Text(node,"kind")=="entity";
-        var key=EntityKey(command);var given=hub?port.Split(':')[1]:Text(cfg,"command");
-        var row=hub?VisualNodeCatalog.DeclaredDomain(node,catalog):VisualNodeCatalog.EntityDomain(catalog,key);
-        var entity=hub?VisualNodeCatalog.EntityDescription(node):VisualNodeCatalog.DefinitionEntity(catalog,key);
+        var node=nodes[command];
+        var key=EntityKey(command);var given=port.Split(':')[1];
+        var row=VisualNodeCatalog.DeclaredDomain(node,catalog);
+        var entity=VisualNodeCatalog.EntityDescription(node);
         var commandLabel=Text(row?["commands"]?[given],"label",given);
         var value=VisualGraphValidator.Words.PortLabel(CommandOutputs(command)[port],port).ToLowerInvariant();
         var name=Text(entity,"name") is {Length:>0} named?named:key;
@@ -641,8 +640,8 @@ public sealed class VisualRuntime
                 if(Interlocked.Increment(ref steps)>100000)throw new InvalidOperationException($"Node {id}: graph execution limit 100000 steps exceeded.");
                 // An entity node acts on the definition of the run in progress, which only an entity definition's run has.
                 var definition=EntityKinds.Contains(kind)?Definition():null;Dictionary<string,object?>? state=null;HashSet<string>? hidden=null;
-                if(kind=="entity_state" || kind=="entity" && startPort==StateFlow) {
-                    // A State (or an Entity node's state) whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
+                if(kind=="entity" && startPort==StateFlow) {
+                    // An Entity node's state whose inputs cannot be worked out leaves its entity unavailable; a run cancelled meanwhile changes nothing.
                     try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id,out hidden);}
                     catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {MarkUnavailable(definition!,EntityKey(id),id);throw;}
                 }
@@ -678,12 +677,9 @@ public sealed class VisualRuntime
                     case "parallel":await Parallel(id,scope,depth);break;
                     case "repeat":case "while":case "until":case "foreach":await Loop(id,scope,depth);break;
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
-                    // A run already cancelled (superseded or stopped) does not act on its definition.
-                    case "entity_state":ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),state!,hidden!);definition.SetAvailable(Text(cfg,"entity"),true);break;
-                    // When commanded gives its command's data; When started and When a frame is needed only start their flows.
-                    case "entity_command":Command(id,scope);break;
-                    case "entity_setup":case "camera_frame":break;
-                    // An Entity node starts the flow of its run's pin: its state, set as a State's is; a command's or its frame's steps.
+                    // When started only starts its flow.
+                    case "entity_setup":break;
+                    // An Entity node starts the flow of its run's pin: its state, which it sets; a command's or its frame's steps.
                     case "entity":
                         if(EntityFlow(id,scope,definition!,state,hidden) is {} pin){port=pin;next=Next(id,pin);}
                         else next=null;
@@ -857,17 +853,19 @@ public sealed class VisualRuntime
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
-    static readonly HashSet<string> EntityKinds=new(["entity","entity_state","entity_command","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot","camera_frame","show_frame"],StringComparer.Ordinal);
+    static readonly HashSet<string> EntityKinds=new(["entity","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot","show_frame"],StringComparer.Ordinal);
     /// <summary>The port of an Entity node's state flow, which has no pin.</summary>
     const string StateFlow="state";
     /// <summary>The key of the entity a node acts on: an Entity node's own, else the one its <c>entity</c> names.</summary>
     string EntityKey(string id)=>Text(nodes[id]["config"],Text(nodes[id],"kind")=="entity"?"key":"entity");
     /// <summary>
     /// Runs what the Entity node <paramref name="id"/> does at the start of its run's flow (<see cref="startPort"/>): for
-    /// its state, hands <paramref name="state"/> to <paramref name="definition"/> and marks the entity available, as a
-    /// State does (a run already cancelled does neither), and gives null: no step follows. For a command, gives each of
-    /// that command's values from its data as When commanded does (<see cref="Command"/>), and gives the pin, whose steps
-    /// run next; for its frame, the pin alone.
+    /// its state, hands <paramref name="state"/> to <paramref name="definition"/> and marks the entity available (a run
+    /// already cancelled does neither), and gives null: no step follows. For a command, gives each of that command's
+    /// values from its data, read from the run's trigger as a trigger's outputs are (<see cref="TriggerOutput"/>): a value
+    /// the command was not given, and the host could fill neither from the entity's state nor from its row's default, is
+    /// absent, and a step reading it fails in words (<see cref="AbsentCommandValue"/>). Gives the pin, whose steps run
+    /// next; for its frame, the pin alone.
     /// </summary>
     string? EntityFlow(string id,VisualScope scope,IDefinitionRuntime definition,Dictionary<string,object?>? state,HashSet<string>? hidden) {
         var port=startPort??throw new InvalidOperationException($"{Title(id)} runs only as the start of one of its flows");
@@ -882,17 +880,17 @@ public sealed class VisualRuntime
         return port;
     }
     /// <summary>
-    /// The state values a State, Set state step or Entity node hands its definition: one for each of its pins (the state
-    /// keys of its entity's domain) that is required or given a value (<see cref="Supplied"/>; an Entity node's are
-    /// under its <c>arguments</c>), as <see cref="EntityStateValue"/> gives it, so the entity keeps the values it is not
-    /// given; <paramref name="hidden"/> has the pins whose values are secret (<see cref="SecretInput"/>), which the
-    /// definition does not quote.
+    /// The state values a Set state step or Entity node hands its definition: one for each of its pins (the state keys of
+    /// its entity's domain) that is given a value (<see cref="Supplied"/>; an Entity node's are under its
+    /// <c>arguments</c>), as <see cref="EntityStateValue"/> gives it, so the entity keeps the values it is not given;
+    /// <paramref name="hidden"/> has the pins whose values are secret (<see cref="SecretInput"/>), which the definition
+    /// does not quote.
     /// </summary>
     Dictionary<string,object?> EntityValues(VisualScope scope,string id,out HashSet<string> hidden) {
         var values=new Dictionary<string,object?>(StringComparer.Ordinal);hidden=new(StringComparer.Ordinal);
         var cfg=nodes[id]["config"];var stored=Text(Spec(id),"argumentStorage")=="arguments"?cfg?["arguments"] as JsonObject:cfg;
         foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
-            if(!(spec?["required"] is JsonValue r&&r.TryGetValue<bool>(out var required)&&required) && !Supplied(id,port,stored?[port]))continue;
+            if(!Supplied(id,port,stored?[port]))continue;
             var given=Input(scope,id,port);
             values[port]=Guarded(()=>EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,EntityKey(id))),
                 error=>error is InvalidOperationException&&SecretInput(id,port,given),()=>Hidden(id,port));
@@ -930,12 +928,6 @@ public sealed class VisualRuntime
     // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.
     void Trigger(string id,VisualScope scope,JsonObject node) {
         foreach(var (port,spec) in VisualNodeCatalog.TriggerOutputs(node,catalog))TriggerOutput(id,port,spec,scope);
-    }
-    // A When commanded step's outputs are read from the command's data in the run's trigger as a trigger's are: a value
-    // the command was not given (and the host could fill neither from the entity's state nor from its row's default) is
-    // absent, and a step reading it fails in words (AbsentCommandValue).
-    void Command(string id,VisualScope scope) {
-        foreach(var (port,spec) in CommandOutputs(id))TriggerOutput(id,port,spec,scope);
     }
     void TriggerOutput(string id,string port,JsonNode? spec,VisualScope scope) {
         if(trigger.ValueKind==JsonValueKind.Undefined || !TryPointer(trigger,Text(spec,"pointer"),out var value) || value.ValueKind==JsonValueKind.Null) {absentTriggerOutputs[(id,port)]=null;return;}

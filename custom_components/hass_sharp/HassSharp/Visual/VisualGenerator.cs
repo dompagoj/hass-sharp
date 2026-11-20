@@ -32,18 +32,13 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     GeneratedServiceCalls ServiceCalls()=>serviceCalls??diagnostics.ServiceCalls();
     static string Text(JsonNode? n,string key,string fallback="")=>VisualNodeCatalog.Text(n,key,fallback);
     /// <summary>
-    /// The action of each root kind that is not a trigger (a trigger's comes from its config): its mode, whether it runs
-    /// at startup and by hand, and the entities whose changes start it (from the graph, the root's id and the snapshot).
-    /// A State is worked out at startup and again whenever an entity it reads changes, a newer change restarting it; a
-    /// When commanded flow runs each command in turn; When started runs once; When a frame is needed runs when its camera's
-    /// host asks, one frame at a time (the host never asks again while one runs). None is run by hand. An Entity node's
-    /// flows (<see cref="DefinitionGraph.HubFlows"/>) run as these do: its state as a State, a command as When commanded, its frame as When a frame is needed.
+    /// The action of each root kind that is neither a trigger (whose action comes from its config) nor an Entity node
+    /// (whose flows have theirs, <see cref="DefinitionGraph.HubFlows"/>): its mode, whether it runs at startup and by hand,
+    /// and the entities whose changes start it (from the graph, the root's id and the snapshot). When started runs once,
+    /// and not by hand.
     /// </summary>
     static readonly Dictionary<string,(string Mode,bool Startup,bool Manual,Func<JsonObject,string,VisualCatalogSnapshot,IEnumerable<string>> Entities)> RootActions=new(StringComparer.Ordinal) {
-        ["entity_state"]=("Restart",true,false,StateDependencies.Of),
-        ["entity_command"]=("Queued",false,false,(_,_,_)=>[]),
         ["entity_setup"]=("Single",false,false,(_,_,_)=>[]),
-        ["camera_frame"]=("Single",false,false,(_,_,_)=>[]),
     };
     static string Q(string value)=>JsonSerializer.Serialize(value);
     /// <summary>
@@ -341,9 +336,9 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 if(snapshot.Types.TryGetValue(sourceType,out var from)&&snapshot.Types.TryGetValue(target,out var to) && snapshot.Compilation!.ClassifyConversion(from.Symbol,to.Symbol).IsUserDefined)
                     compiledConversions.Add(Text(node,"id"),(ClrExpression(from.Symbol),ClrExpression(to.Symbol)));
             }
-            // Every node that starts a flow of its own, in id order: an automation's triggers, and an entity graph's triggers,
-            // States, When commanded and When started steps alike, each with one action; and its Entity nodes, with one per
-            // flow they start (DefinitionGraph.HubFlows), none for a node with nothing supplied or wired.
+            // Every node that starts a flow of its own, in id order: an automation's triggers, and an entity graph's triggers
+            // and When started step alike, each with one action; and its Entity nodes, with one per flow they start
+            // (DefinitionGraph.HubFlows), none for a node with nothing supplied or wired.
             var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal)
                 .SelectMany(n=>VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n,snapshot),"entity")?DefinitionGraph.HubFlows(n,graph,snapshot).Select(f=>(Node:n,Flow:(HubFlow?)f)):[(n,(HubFlow?)null)]).ToArray();
             var hubFlows=roots.Any(r=>r.Flow!=null);
@@ -358,7 +353,9 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 var (root,hubFlow)=roots[i];current=Text(root,"id");var cfg=root["config"]!;var entities="[]";var schedules="[]";var triggers="[]";
                 string mode;bool startup,manual;
                 if(hubFlow!=null) {
-                    // An Entity node's state is worked out as a State's is; a command runs as When commanded does, a frame as When a frame is needed.
+                    // An Entity node's state is worked out at startup and again whenever an entity it reads changes, a newer
+                    // change restarting it; its commands run each in turn; its frame runs when its camera's host asks, one frame
+                    // at a time (the host never asks again while one runs). None is run by hand.
                     (mode,startup,manual)=hubFlow.Kind switch{"state"=>("Restart",true,false),"command"=>("Queued",false,false),_=>("Single",false,false)};
                     if(hubFlow.Kind=="state")entities=References(StateDependencies.Of(graph,current,snapshot));
                 }

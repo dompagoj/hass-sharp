@@ -7,10 +7,8 @@ import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { nodeCatalog } from '../src/visual/contract'
 import { add, empty } from './visual-fixture'
 
-// State, When commanded and When a frame is needed: entity-only too until Task 12 removes them.
-const oldSteps = ['entity_state', 'entity_command', 'camera_frame']
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
-const entityOnly = ['entity', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'show_frame', ...oldSteps]
+const entityOnly = ['entity', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'show_frame']
 
 let dispose: (() => void) | undefined
 afterEach(() => {

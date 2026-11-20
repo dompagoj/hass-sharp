@@ -21,7 +21,8 @@ static class EntityNodeTests
             (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins),
             (nameof(ACommandEntryThatIsNotAnObjectHasNoValues), ACommandEntryThatIsNotAnObjectHasNoValues),
             (nameof(FlowsAreNamedByNodeAndPort), FlowsAreNamedByNodeAndPort),
-            (nameof(ANodeIsNamedByItsEntity), ANodeIsNamedByItsEntity) })
+            (nameof(ANodeIsNamedByItsEntity), ANodeIsNamedByItsEntity),
+            (nameof(TheOldStepsAreNotKinds), TheOldStepsAreNotKinds) })
         {
             try
             {
@@ -117,5 +118,14 @@ static class EntityNodeTests
         Check(VisualNodeCatalog.FlowMethod(hub, "state") == "Run_6C_7374617465", "a flow's method is the node's and the port's, in hex: " + VisualNodeCatalog.FlowMethod(hub, "state"));
         Check(VisualNodeCatalog.FlowMethod(hub, "command:turn_on") != VisualNodeCatalog.FlowMethod(hub, "command:turn_off"), "each port has its own");
         Check(VisualNodeCatalog.FlowMethod(hub, "state").StartsWith(VisualNodeCatalog.EffectiveTriggerMethod(hub) + "_", StringComparison.Ordinal), "a flow's method starts with its node's");
+    }
+
+    /// <summary>State, When commanded and When a frame is needed are not kinds any more, and their problems are gone with them.</summary>
+    static void TheOldStepsAreNotKinds()
+    {
+        foreach (var kind in new[] { "entity_state", "entity_command", "camera_frame" })
+            Check(VisualNodeCatalog.GetNode(kind) == null, kind + " is not in the catalog");
+        foreach (var code in new[] { "state.duplicate", "command.duplicate", "camera.duplicate" })
+            Check(!VisualGraphValidator.Codes.Contains(code), code + " is not a problem any more");
     }
 }

@@ -34,7 +34,7 @@ public static class VisualNodeCatalog
     static bool Flag(JsonNode? spec, string key) => spec is JsonObject obj && obj[key] is JsonValue v && v.TryGetValue<bool>(out var on) && on;
     /// <summary>
     /// Whether the node starts a flow of its own, from which scopes and reachability start: a trigger, or a kind whose
-    /// entry says <c>"root": true</c> (an entity definition's State, When commanded and When started). Mirrored by
+    /// entry says <c>"root": true</c> (an entity definition's When started and Entity node). Mirrored by
     /// <c>isRoot</c> in <c>contract.ts</c>.
     /// </summary>
     internal static bool IsRoot(JsonObject node, VisualCatalogSnapshot? snapshot) => Text(node, "kind") == "trigger" || Flag(Spec(node, snapshot), "root");
@@ -140,14 +140,14 @@ public static class VisualNodeCatalog
     /// <summary>
     /// Whether an input (as <see cref="DataInputs"/> gives it) takes nothing but entity ids: every one of its types is
     /// <c>entity_id</c> or <c>entity_id:&lt;domain&gt;</c>, built in, a node library's or a Custom C# node's alike. The entity
-    /// chosen in such an input is one a State follows; one given over a wire is not. An input open to every type (a
+    /// chosen in such an input is one an Entity node's state follows; one given over a wire is not. An input open to every type (a
     /// comparison's, an object's field) holds an entity id as a value instead. Mirrored by <c>takesOnlyEntityIds</c> in
     /// <c>contract.ts</c>.
     /// </summary>
     internal static bool TakesOnlyEntityIds(JsonNode? input) => input?["types"] is JsonArray { Count: > 0 } types &&
         types.All(t => t is JsonValue v && v.TryGetValue<string>(out var type) && (type == "entity_id" || type.StartsWith("entity_id:", StringComparison.Ordinal)));
     /// <summary>
-    /// Whether a wire from this node into an entity id input still lets a State follow the entity: a Constant of an
+    /// Whether a wire from this node into an entity id input still lets an Entity node's state follow the entity: a Constant of an
     /// entity id type, whose chosen entity <see cref="StateDependencies.Of"/> counts. Mirrored by <c>followedSource</c> in
     /// <c>contract.ts</c>.
     /// </summary>
@@ -363,7 +363,6 @@ public static class VisualNodeCatalog
         if (Text(spec, "dynamicOutputs") == "loop") foreach (var key in new[] { "carry", "exports" }) foreach (var item in Declarations(node, key))
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = new JsonObject { ["type"] = Text(item, "type"), ["description"] = (key == "carry" ? "Kept between iterations: " : "Available after the loop: ") + Text(item, "name"), ["visibility"] = key == "carry" ? "loop" : "outside" };
         if (Text(spec, "dynamicOutputs") == "trigger") foreach (var (key, value) in TriggerOutputs(node, catalog)) ports[key] = value?.DeepClone();
-        if (Text(spec, "dynamicOutputs") == "command") foreach (var (key, value) in CommandOutputs(node, catalog)) ports[key] = value?.DeepClone();
         if (Text(spec, "dynamicOutputs") == "declared") foreach (var (key, value) in DeclaredOutputs(node, catalog)) ports[key] = value?.DeepClone();
         // An output with "when" exists only while that boolean config is true (D3, D9).
         foreach (var key in ports.Where(p => Text(p.Value, "when") is { Length: > 0 } when && !((node["config"] as JsonObject)?[when] is JsonValue on && on.TryGetValue<bool>(out var enabled) && enabled)).Select(p => p.Key).ToArray())
@@ -422,20 +421,8 @@ public static class VisualNodeCatalog
         return ports;
     }
     /// <summary>
-    /// A When commanded step's outputs: one per data value of its command in the <c>entityDomains</c> row of its entity,
-    /// named as the row names it, of its first type, read from the run's trigger at <c>/data/&lt;name&gt;</c>; none for a
-    /// command without data, an unknown entity or an unknown command. Mirrored by <c>commandOutputs</c> in <c>contract.ts</c>.
-    /// </summary>
-    internal static JsonObject CommandOutputs(JsonObject node, JsonObject catalog)
-    {
-        var ports = new JsonObject();
-        if (EntityDomain(catalog, Text(node["config"], "entity"))?["commands"]?[Text(node["config"], "command")]?["data"] is not JsonObject data) return ports;
-        foreach (var (name, value) in data) ports[name] = CommandValueOutput(name, value);
-        return ports;
-    }
-    /// <summary>
     /// An Entity node's value outputs: for each data value of each command of its type, <c>command:&lt;command&gt;:&lt;value&gt;</c>,
-    /// as a When commanded step gives it (<see cref="CommandValueOutput"/>), grouped under its command's execution pin
+    /// of its first type and read from the run's trigger (<see cref="CommandValueOutput"/>), grouped under its command's execution pin
     /// (<c>group</c>, layout only: it is not a scope). Mirrored by <c>declaredOutputs</c> in <c>contract.ts</c>.
     /// </summary>
     static JsonObject DeclaredOutputs(JsonObject node, JsonObject catalog)
@@ -523,16 +510,14 @@ public static class VisualNodeCatalog
             var port = Input([Text(item, "type")], false, "New value for " + Text(item, "name")); port["label"] = Text(item, "name");
             ports[$"{(key == "carry" ? "carry" : "export")}:{Text(item, "name")}"] = port;
         }
-        // The state values of the domain of the definition's entity config.entity names, each without a default: for a
-        // State, each required unless the domain's row says "required": false; for a Set state, none required (what it is
-        // not given, the entity keeps). An Entity node has those of the type its own config.domain names, none required
-        // as a pin. Mirrored by dataInputs in contract.ts.
+        // The state values, each without a default and none required: a Set state's of the domain of the definition's
+        // entity config.entity names (what it is not given, the entity keeps); an Entity node's of the type its own
+        // config.domain names. Mirrored by dataInputs in contract.ts.
         var stateRow = dynamic switch { "entity" => EntityDomain(snapshot?.Root ?? Root, Text(node["config"], "entity")), "declared" => DeclaredDomain(node, snapshot?.Root ?? Root), _ => null };
         if (stateRow?["state"] is JsonObject state)
             foreach (var (key, value) in state)
             {
-                var required = dynamic == "entity" && Text(node, "kind") != "set_entity_state" && !(value?["required"] is JsonValue r && r.TryGetValue<bool>(out var flag) && !flag);
-                var port = Input(TypeIds(value?["types"]), required, null);
+                var port = Input(TypeIds(value?["types"]), false, null);
                 if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
                 ports[key] = port;
             }

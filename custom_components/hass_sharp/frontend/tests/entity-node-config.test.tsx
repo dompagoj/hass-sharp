@@ -13,9 +13,8 @@ import { refitNotice, retypeNode } from '../src/entities/refit'
 import { HassCtx } from '../src/context'
 import { add, empty, lit } from './visual-fixture'
 
-// The steps of an entity definition name its entities (each an Entity node), their commands and its settings by key;
-// the inspector offers them by name, and a key the definition no longer has stays shown, marked missing. The tests of
-// When commanded, When a frame is needed and State themselves stay until Task 12 removes those steps.
+// The steps of an entity definition name its entities (each an Entity node) and its settings by key; the inspector
+// offers them by name, and a key the definition no longer has stays shown, marked missing.
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
 afterEach(async () => {
@@ -110,11 +109,6 @@ describe('the entity picker', () => {
     expect(node().config.entity).toBe('online')
   })
 
-  it('lists only the entities that take commands for When commanded (the old step, until Task 12)', async () => {
-    const { el } = mount(step(entityGraph(), 'entity_command', 'cmd', {}), 'cmd')
-    expect(texts(await open(el, 'entity'))).toEqual(['Relay · Switch'])
-  })
-
   it('shows a key the definition no longer has as the selected entity, marked missing', async () => {
     const { el, node } = mount(step(entityGraph(), 'set_entity_state', 'set', { entity: 'heater' }), 'set')
     expect(box(el, 'entity').value).toBe('Missing entity: heater')
@@ -131,12 +125,6 @@ describe('the entity picker', () => {
     expect(box(el, 'entity').disabled).toBe(true)
   })
 
-  it('says where to give an entity a type that takes commands when none does (When commanded, until Task 12)', async () => {
-    const { el } = mount(step(entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] }), 'entity_command', 'cmd', {}), 'cmd')
-    expect(field(el, 'entity').textContent).toContain("None of this definition's entities takes commands. Give one a type that does, such as a switch, on its Entity node.")
-    expect(field(el, 'command').textContent).toContain('Give an entity a type that takes commands first.')
-  })
-
   it('marks a type with no state for Set state', async () => {
     const graph = entityGraph({ nodes: [{ key: 'bell', domain: 'button', name: 'Bell' }, { key: 'relay', domain: 'switch', name: 'Relay' }] })
     const { el } = mount(step(graph, 'set_entity_state', 'set', { entity: 'bell' }), 'set')
@@ -145,49 +133,41 @@ describe('the entity picker', () => {
   })
 })
 
-describe('the camera pickers of Show frame and When a frame is needed', () => {
-  // `camera_frame` is the old When a frame is needed, whose picker is tested here until Task 12 removes it.
-  const cameraKinds = ['show_frame', 'camera_frame']
+describe('the camera picker of Show frame', () => {
   const cameras = () => entityGraph({ nodes: [...plug, { key: 'front', domain: 'camera', name: 'Front door' }, { key: 'yard', domain: 'camera' }] })
 
-  it('offer only the definition\'s cameras, by name, and store the chosen key', async () => {
-    for (const kind of cameraKinds) {
-      const { el, node } = mount(step(cameras(), kind, 'cam', {}), 'cam')
-      expect(field(el, 'entity').querySelector('label')?.textContent, kind).toBe('Camera')
-      expect(texts(await open(el, 'entity')), kind).toEqual(['Front door · Camera', 'yard · Camera'])
-      await choose(el, 'entity', 'yard')
-      expect(node().config.entity, kind).toBe('yard')
-      // Only one picker for the camera: the generic text field of its config is not drawn too.
-      expect(el.querySelectorAll('.hs-inspector [data-input-id="entity"]'), kind).toHaveLength(1)
+  it('offers only the definition\'s cameras, by name, and stores the chosen key', async () => {
+    const { el, node } = mount(step(cameras(), 'show_frame', 'cam', {}), 'cam')
+    expect(field(el, 'entity').querySelector('label')?.textContent).toBe('Camera')
+    expect(texts(await open(el, 'entity'))).toEqual(['Front door · Camera', 'yard · Camera'])
+    await choose(el, 'entity', 'yard')
+    expect(node().config.entity).toBe('yard')
+    // Only one picker for the camera: the generic text field of its config is not drawn too.
+    expect(el.querySelectorAll('.hs-inspector [data-input-id="entity"]')).toHaveLength(1)
+  })
+
+  it('says to add a camera first when the definition has none, and is disabled', async () => {
+    for (const graph of [entityGraph(), entityGraph({ nodes: [] })]) {
+      const { el } = mount(step(graph, 'show_frame', 'cam', {}), 'cam')
+      expect(field(el, 'entity').querySelector('.hs-field-hint')?.textContent).toBe('Add a camera to this definition first.')
+      expect(box(el, 'entity').disabled).toBe(true)
       dispose?.(); dispose = undefined; document.body.innerHTML = ''
     }
   })
 
-  it('say to add a camera first when the definition has none, and are disabled', async () => {
-    for (const graph of [entityGraph(), entityGraph({ nodes: [] })])
-      for (const kind of cameraKinds) {
-        const { el } = mount(step(graph, kind, 'cam', {}), 'cam')
-        expect(field(el, 'entity').querySelector('.hs-field-hint')?.textContent, kind).toBe('Add a camera to this definition first.')
-        expect(box(el, 'entity').disabled, kind).toBe(true)
-        dispose?.(); dispose = undefined; document.body.innerHTML = ''
-      }
-  })
-
-  it('show an entity that is not a camera as chosen, marked so', async () => {
+  it('shows an entity that is not a camera as chosen, marked so', async () => {
     const { el } = mount(step(cameras(), 'show_frame', 'cam', { entity: 'relay' }), 'cam')
     expect(box(el, 'entity').value).toBe('Relay')
     expect(texts(await open(el, 'entity'))).toEqual(['Relay · Switch · not a camera', 'Front door · Camera', 'yard · Camera'])
   })
 
-  it('name the definition\'s only camera in a new step, and none when it has several or none', () => {
-    const added = (graph: VisualGraph, kind: string) => addGraphNode(graph, kind, 'new', nodeCatalog).nodes.at(-1)!.config
+  it('names the definition\'s only camera in a new step, and none when it has several or none', () => {
+    const added = (graph: VisualGraph) => addGraphNode(graph, 'show_frame', 'new', nodeCatalog).nodes.at(-1)!.config
     const one = entityGraph({ nodes: [...plug, { key: 'front', domain: 'camera', name: 'Front door' }] })
-    for (const kind of cameraKinds) {
-      expect(added(one, kind).entity, kind).toBe('front')
-      expect(added(cameras(), kind).entity, kind).toBeUndefined()
-      // A definition whose only entity is not a camera: none named.
-      expect(added(entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] }), kind).entity, kind).toBeUndefined()
-    }
+    expect(added(one).entity).toBe('front')
+    expect(added(cameras()).entity).toBeUndefined()
+    // A definition whose only entity is not a camera: none named.
+    expect(added(entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] })).entity).toBeUndefined()
   })
 })
 
@@ -223,91 +203,6 @@ describe('Take a picture', () => {
     const options = () => [...document.querySelectorAll<HTMLElement>('dialog[open] [role="option"]')]
     await vi.waitFor(() => expect(options().length).toBeGreaterThan(0))
     expect(options().map(o => o.textContent)).toEqual([expect.stringContaining('camera.front_door')])
-  })
-})
-
-describe('the command picker of When commanded (the old step, until Task 12)', () => {
-  it('waits for an entity, then offers its commands by label and follows the entity', async () => {
-    const { el, node } = mount(step(entityGraph(), 'entity_command', 'cmd', {}), 'cmd')
-    expect(box(el, 'command').disabled).toBe(true)
-    expect(field(el, 'command').textContent).toContain('Choose an entity first.')
-    await choose(el, 'entity', 'Relay')
-    // Ruling R12: the first command of the entity's type once it has an entity.
-    expect(node().config).toMatchObject({ entity: 'relay', command: 'turn_on' })
-    await vi.waitFor(() => expect(box(el, 'command').disabled).toBe(false))
-    expect(box(el, 'command').getAttribute('aria-label')).toBe('Command')
-    expect(box(el, 'command').value).toBe('Turn on')
-    expect(texts(await open(el, 'command'))).toEqual(['Turn on', 'Turn off'])
-    await choose(el, 'command', 'Turn off')
-    expect(node().config.command).toBe('turn_off')
-  })
-
-  it('keeps a command the new entity also has, and replaces one it does not', () => {
-    let graph = entityGraph({ nodes: [...plug, { key: 'fan', domain: 'switch', name: 'Fan' }] })
-    graph = step(graph, 'entity_command', 'cmd', { entity: 'relay', command: 'turn_off' })
-    graph = chooseEntity(graph, 'cmd', 'fan', nodeCatalog).graph
-    expect(configOf(graph, 'cmd')).toMatchObject({ entity: 'fan', command: 'turn_off' })
-    graph = updateNode(graph, 'cmd', { config: { ...configOf(graph, 'cmd'), command: 'toggle' } })
-    expect(configOf(chooseEntity(graph, 'cmd', 'relay', nodeCatalog).graph, 'cmd')).toMatchObject({ entity: 'relay', command: 'turn_on' })
-  })
-
-  it('names a type and its commands as the catalog labels them, else in words', async () => {
-    // A type the catalog adds: its label and its commands' come from its row, none from a table of the panel's own.
-    const catalog = { ...nodeCatalog, entityDomains: { ...nodeCatalog.entityDomains,
-      fan: { label: 'Ceiling fan', state: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} }, options: {} },
-      air_purifier: { state: {}, commands: { boost: {} }, options: {} } } } as unknown as VisualCatalogSnapshot
-    const graph = entityGraph({ nodes: [{ key: 'blades', domain: 'fan', name: 'Blades' }, { key: 'purifier', domain: 'air_purifier', name: 'Purifier' }] })
-    const { el } = mount(step(graph, 'entity_command', 'cmd', { entity: 'blades', command: 'turn_on' }), 'cmd', catalog)
-    expect(texts(await open(el, 'entity'))).toEqual(['Blades · Ceiling fan', 'Purifier · Air purifier'])
-    await vi.waitFor(() => expect(box(el, 'command').value).toBe('Spin up'))
-    expect(texts(await open(el, 'command'))).toEqual(['Spin up', 'Set speed'])
-  })
-})
-
-describe('the outputs of When commanded follow its command (the old step, until Task 12)', () => {
-  // A lamp's Turn on gives its brightness, wired into a Set state; Turn off, a switch's commands and a number's give none
-  // of that name.
-  const lamp = () => {
-    let graph = entityGraph({ nodes: [...plug, { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } }] })
-    graph = step(graph, 'entity_command', 'cmd', { entity: 'lamp', command: 'turn_on' })
-    graph = step(graph, 'set_entity_state', 'set', { entity: 'lamp' })
-    return { ...graph, edges: [...graph.edges, { id: 'wire', kind: 'data' as const, source: 'cmd', sourcePort: 'brightness', target: 'set', targetPort: 'brightness' }] }
-  }
-  const wires = (graph: VisualGraph) => graph.edges.filter(e => e.kind === 'data').map(e => `${e.source}.${e.sourcePort}`)
-  const notice = 'Removed 1 connection from an output the new command does not have: Brightness.'
-
-  it('removes the wires of an output the command chosen does not have, in the same edit, and says so', async () => {
-    const { el, history, node, notices } = mount(lamp(), 'cmd')
-    await vi.waitFor(() => expect(box(el, 'command').value).toBe('Turn on'))
-    await choose(el, 'command', 'Turn off')
-    expect(node().config.command).toBe('turn_off')
-    expect(wires(history.graph())).toEqual([])
-    expect(notices).toEqual([notice])
-    // One undo step brings back both.
-    history.undo()
-    expect([node().config.command, wires(history.graph())]).toEqual(['turn_on', ['cmd.brightness']])
-  })
-
-  it('removes them when the entity is retyped or another entity is chosen, and keeps a wire the new command has too', () => {
-    const retyped = retypeNode(lamp(), 'lamp', 'switch', nodeCatalog)
-    expect(configOf(retyped.graph, 'cmd')).toMatchObject({ entity: 'lamp', command: 'turn_on' })
-    expect(wires(retyped.graph)).toEqual([])
-    expect(refitNotice(retyped.removed)).toContain(notice.slice(0, -1))
-    const chosen = chooseEntity(lamp(), 'cmd', 'relay', nodeCatalog)
-    expect(wires(chosen.graph)).toEqual([])
-    expect(chosen.notice).toBe(notice)
-    // Another light's Turn on gives a brightness too: its wire stays.
-    const lamps = entityNode(lamp(), { key: 'bulb', domain: 'light', name: 'Bulb', options: { dimmable: true } })
-    const kept = chooseEntity(lamps, 'cmd', 'bulb', nodeCatalog)
-    expect(wires(kept.graph)).toEqual(['cmd.brightness'])
-    expect(kept.notice).toBeUndefined()
-  })
-
-  it('counts the connections it removes', () => {
-    let twice = lamp()
-    twice = step(twice, 'set_entity_state', 'again', { entity: 'lamp' })
-    twice = { ...twice, edges: [...twice.edges, { id: 'wire2', kind: 'data' as const, source: 'cmd', sourcePort: 'brightness', target: 'again', targetPort: 'brightness' }] }
-    expect(chooseEntity(twice, 'cmd', 'relay', nodeCatalog).notice).toBe('Removed 2 connections from outputs the new command does not have: Brightness.')
   })
 })
 
@@ -489,11 +384,6 @@ describe('the state values of Set state', () => {
       document.body.innerHTML = ''
     }
   })
-  it('says a State\'s optional values are optional (the old step, until Task 12)', () => {
-    const { el } = mount(step(things, 'entity_state', 'state', { entity: 'lamp' }), 'state')
-    expect(row(el, 'is_on').unset).toBe(false)
-    expect(row(el, 'brightness')).toEqual({ unset: true, hint: 'Optional.' })
-  })
   it('shows the data of an Entity node\'s commands as its outputs', () => {
     const { el } = mount(things, 'lamp')
     expect([...el.querySelectorAll('.hs-insp-output__name')].map(o => o.textContent)).toEqual(['Brightness'])
@@ -510,23 +400,12 @@ describe('a step added to an entity definition', () => {
     const one = entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] })
     for (const kind of ['set_entity_state', 'set_entity_available']) expect(added(one, kind).entity, kind).toBe('power')
   })
-  it('names the only entity it can name, and that entity\'s first command (When commanded and State, until Task 12)', () => {
-    expect(added(entityGraph(), 'entity_command')).toMatchObject({ entity: 'relay', command: 'turn_on' })
-    expect(added(entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] }), 'entity_state').entity).toBe('power')
-  })
   it('names nothing when it could name several, or none', () => {
     for (const kind of ['set_entity_state', 'set_entity_available']) {
       expect(added(entityGraph(), kind).entity, kind).toBeUndefined()
       expect(added(entityGraph({ nodes: [] }), kind).entity, kind).toBeUndefined()
     }
     expect(added(entityGraph(), 'setting').key).toBeUndefined()
-  })
-  it('names nothing when it could name several, or none (When commanded and State, until Task 12)', () => {
-    expect(added(entityGraph(), 'entity_state').entity).toBeUndefined()
-    const sensors = entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] })
-    expect(added(sensors, 'entity_command')).not.toHaveProperty('entity')
-    expect(added(sensors, 'entity_command')).not.toHaveProperty('command')
-    expect(added(createGraph('Automation'), 'entity_state')).not.toHaveProperty('entity')
   })
   it('names the only setting', () => {
     expect(added(entityGraph({ settings: [{ key: 'host', label: 'Address', type: 'string' }] }), 'setting').key).toBe('host')
@@ -567,4 +446,16 @@ describe('the Entity category', () => {
     expect(tokens).toMatch(/--hs-cat-code: [^;]+;\n\s*--hs-cat-entity: color-mix\(in oklab, #[0-9a-f]{6} var\(--hs-hue-mix\), var\(--hs-text, #202535\)\);/)
     expect(readFileSync('src/styles/flow.css', 'utf8')).toContain('.hs-app .hs-flow .hs-minimap-node--entity { fill: var(--hs-cat-entity); }')
   })
+})
+
+it('opens a step of a kind this version does not have, such as the old State, and names it as unknown', () => {
+  // A graph saved with a State step, which an Entity node replaced: the step is still drawn and selected, and says why.
+  const graph = { ...entityGraph(), nodes: [...entityGraph().nodes, { id: 'old', kind: 'entity_state', config: { entity: 'relay', is_on: lit('boolean', true) } }] }
+  const { el } = mount(graph, 'old')
+  expect(el.querySelector('.hs-insp-node')?.getAttribute('data-node-id')).toBe('old')
+  expect(el.querySelector('.hs-insp-desc')?.textContent).toBe('This kind of step is not available. Its settings are kept.')
+  expect(el.querySelector('.hs-insp-json')?.textContent).toContain('"kind": "entity_state"')
+  // No entity picker is offered for it: the step library's pickers are for the kinds this version has.
+  expect(el.querySelector('.hs-inspector [data-input-id="entity"]')).toBeNull()
+  expect(validateGraph(graph, nodeCatalog).filter(d => d.nodeId === 'old').map(d => d.code)).toContain('node.unknownKind')
 })

@@ -269,19 +269,6 @@ describe('the image type', () => {
     expect(camera.nodes.at(-1)!.config.entity).toBe('annotated')
     expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.entity', 'camera.no_frame']))
   })
-  it('starts a flow with When a frame is needed, a root that records no run by default (the old step, until Task 12)', () => {
-    const { camera_frame: frame } = contract.nodeCatalog.nodes
-    expect(frame).toMatchObject({ category: 'Entity', documents: ['entity'], config: { entity: { type: 'string', required: true } } })
-    expect(frame).toMatchObject({ label: 'When a frame is needed', root: true, execution: ['next'], config: { trackHistory: { default: false } } })
-    expect(frame.inputs).toEqual({})
-    expect(frame.outputs).toEqual({})
-    expect(frame.description).toBe('Run the steps after it when Home Assistant needs a new picture from one of this definition\'s cameras. Nothing runs while nobody is watching.')
-    expect(frame.singleton).toBeUndefined()
-    const camera = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
-    expect(contract.trackHistoryDefault('camera_frame', 'entity', contract.nodeCatalog)).toBe(false)
-    expect(contract.addGraphNode(camera, 'camera_frame', 'n', contract.nodeCatalog).nodes.at(-1)!.config.trackHistory).toBe(false)
-    expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.duplicate']))
-  })
 })
 it('names an Entity node whose command pin runs nothing by its entity\'s name, else its key, on that pin', () => {
   const relay = (name?: string): Graph => {
@@ -568,18 +555,6 @@ it('a new step tracks run history by its document: a trigger of an entity defini
   expect(added(automation, 'trigger')).toEqual(Object.fromEntries(Object.entries(catalog.nodes.trigger.config).filter(([, rule]) => rule.default !== undefined).map(([key, rule]) => [key, rule.default])))
   expect(Object.keys(added(entity, 'trigger'))).toEqual(Object.keys(added(automation, 'trigger')))
 })
-it('a new State records no run, and a new When commanded records its runs (the old steps, until Task 12)', () => {
-  const catalog = contract.nodeCatalog
-  for (const document of ['automation', 'entity'] as const) {
-    expect(contract.trackHistoryDefault('entity_state', document, catalog)).toBe(false)
-    expect(contract.trackHistoryDefault('entity_command', document, catalog)).toBe(true)
-  }
-  const entity = add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
-  const added = (kind: string) => contract.addGraphNode(entity, kind, 'n', catalog).nodes.at(-1)!.config
-  expect(added('entity_state').trackHistory).toBe(false)
-  expect(added('entity_command').trackHistory).toBe(true)
-})
-
 describe('the labels of entity types and commands', () => {
   /** The catalog with a type the real one does not have: a labelled fan with a labelled and an unlabelled command, and a row with no label. */
   const catalog = {

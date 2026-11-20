@@ -1,11 +1,11 @@
-import { dataInputs, dataOutputs, executionLabel, executionPorts, isAssignable, withEntityCommand, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
+import { dataInputs, dataOutputs, executionLabel, executionPorts, isAssignable, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { removeEdge, updateNode, type VisualGraph } from '../visual/graph'
 import { optionFits } from './definitionEdits'
 import { definitionEntityKinds } from './model'
 
 /**
- * Fitting steps to a change of an entity's type, its command or a step's entity: the values, wires and options that no
+ * Fitting steps to a change of an entity's type or a step's entity: the values, wires and options that no
  * longer fit go, and one notice names them. The step pickers (`NodePickers`) and the Entity node's section
  * (`EntityNodeSection`) both use it.
  */
@@ -15,15 +15,13 @@ const nodeSpec = (kind: string, catalog: VisualCatalogSnapshot) => (Object.hasOw
 
 /**
  * What fitting steps to a change removed, by what {@link refitNotice} says of it: the wires that no longer fit
- * (`removed`) and the values (`cleared`), each by its pin's label, and a When commanded's wires out of an output its
- * new command does not have (`unplugged`).
+ * (`removed`) and the values (`cleared`), each by its pin's label.
  */
-export interface Refitted { removed: string[]; cleared: string[]; unplugged: string[] }
-const refitted = (): Refitted => ({ removed: [], cleared: [], unplugged: [] })
+export interface Refitted { removed: string[]; cleared: string[] }
+const refitted = (): Refitted => ({ removed: [], cleared: [] })
 const gather = (into: Refitted, more: Refitted) => {
   into.removed.push(...more.removed)
   into.cleared.push(...more.cleared)
-  into.unplugged.push(...more.unplugged)
 }
 
 /** The options an entity of the type `domain` keeps of `options`: those its type has too, with a value it takes. */
@@ -41,7 +39,7 @@ function refitSteps(graph: VisualGraph, next: VisualGraph, key: string, catalog:
   const before = graphTypes(graph, catalog), after = graphTypes(next, catalog)
   for (const node of graph.nodes) {
     if (!definitionEntityKinds.includes(node.kind) || node.config.entity !== key) continue
-    const fitted = refit(next, node, withEntityCommand(node.kind, { ...node.config }, after), before, after)
+    const fitted = refit(next, node, { ...node.config }, before, after)
     next = fitted.graph
     gather(into, fitted)
   }
@@ -72,26 +70,15 @@ export function retypeNode(graph: VisualGraph, nodeId: string, domain: string, c
 /**
  * `graph` with `node` given `config`, its entity's state inputs as `after` types them where `before` typed them: a
  * literal value or a wire into an input the step no longer has, or one that no longer takes it, is removed (named in
- * `cleared` and `removed`). A When commanded's wires out of an output its new command does not have go too (named in
- * `unplugged`). An Entity node's state values are its inputs, kept under `arguments`, and its type its own; its wires
- * out of a command or value its new type does not have go too (named in `removed`).
+ * `cleared` and `removed`). An Entity node's state values are its inputs, kept under `arguments`, and its type its
+ * own; its wires out of a command or value its new type does not have go too (named in `removed`).
  */
 export function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['config'], before: VisualCatalogSnapshot, after: VisualCatalogSnapshot): Refitted & { graph: VisualGraph } {
   const config = { ...given }
   const spec = nodeSpec(node.kind, after)
-  const { removed, cleared, unplugged } = refitted()
-  if (spec?.dynamicOutputs === 'command') {
-    const had = dataOutputs(node, before), has = dataOutputs({ ...node, config }, after)
-    let next = updateNode(graph, node.id, { config })
-    for (const edge of graph.edges)
-      if (edge.kind === 'data' && edge.source === node.id && Object.hasOwn(had, edge.sourcePort) && !Object.hasOwn(has, edge.sourcePort)) {
-        next = removeEdge(next, edge.id, after)
-        unplugged.push(words.portLabel(had[edge.sourcePort], edge.sourcePort))
-      }
-    return { graph: next, removed, cleared, unplugged }
-  }
+  const { removed, cleared } = refitted()
   const declared = spec?.dynamicInputs === 'declared'
-  if (spec?.dynamicInputs !== 'entity' && !declared) return { graph: updateNode(graph, node.id, { config }), removed, cleared, unplugged }
+  if (spec?.dynamicInputs !== 'entity' && !declared) return { graph: updateNode(graph, node.id, { config }), removed, cleared }
   const changed = { ...node, config }
   const was = dataInputs(node, undefined, before), now = dataInputs(changed, undefined, after)
   const fits = (type: unknown, accepted: string[]) => typeof type === 'string' && accepted.some(t => isAssignable(type, t, after))
@@ -121,7 +108,7 @@ export function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['con
     next = removeEdge(next, edge.id, after)
     removed.push(label(edge.targetPort))
   }
-  if (!declared) return { graph: next, removed, cleared, unplugged }
+  if (!declared) return { graph: next, removed, cleared }
 
   // An Entity node's wires out of a command (a step order wire) or a command's value its new type does not have.
   const hadOutputs = dataOutputs(node, before), hasOutputs = dataOutputs(changed, after)
@@ -137,14 +124,13 @@ export function refit(graph: VisualGraph, node: GraphNode, given: GraphNode['con
     }
     next = removeEdge(next, edge.id, after)
   }
-  return { graph: next, removed, cleared, unplugged }
+  return { graph: next, removed, cleared }
 }
 
 /** What fitting steps removed, in one notice; none when nothing was. */
-export function refitNotice({ removed, cleared, unplugged }: Refitted): string | undefined {
+export function refitNotice({ removed, cleared }: Refitted): string | undefined {
   const list = (names: string[]) => [...new Set(names)].join(', ')
   const notes = [
-    ...(unplugged.length ? [`Removed ${unplugged.length === 1 ? '1 connection from an output' : `${unplugged.length} connections from outputs`} the new command does not have: ${list(unplugged)}`] : []),
     ...(removed.length ? [`Removed ${removed.length} ${removed.length === 1 ? 'connection that no longer fits' : 'connections that no longer fit'}: ${list(removed)}`] : []),
     ...(cleared.length ? [`Cleared ${cleared.length === 1 ? 'a value that no longer fits' : `${cleared.length} values that no longer fit`}: ${list(cleared)}`] : []),
   ]

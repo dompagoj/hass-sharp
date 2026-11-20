@@ -1514,22 +1514,22 @@ static class EntityGraphRuntimeTests
     }
 
     /// <summary>
-    /// A node's roots are its wired flows, before the old kinds': its state when a value is supplied, each command whose
-    /// pin is wired, its frame when wired; each named for the run history. A node with nothing supplied or wired has none.
+    /// A node's roots are its wired flows: its state when a value is supplied, each command whose pin is wired, its frame
+    /// when wired; each named for the run history. A node with nothing supplied or wired has none.
     /// </summary>
     static void TheRootsOfANodeAreItsWiredFlows()
     {
         var door = Hub("door", "door", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", true) }, new JsonObject { ["name"] = "" });
         var relay = Hub("relay", "relay", "switch", more: new JsonObject { ["name"] = "Relay" });
         var cam = Hub("cam", "lens", "camera");
-        var graph = Nodes([door, relay, cam, N("old", "entity_command", new { entity = "other", command = "turn_on" }), Said("x")],
+        var graph = Nodes([door, relay, cam, Said("x")],
             Flow("relay", "command:turn_on", "x"), Flow("relay", "command:turn_off", "x"), Flow("cam", "frame", "x"));
         var roots = DefinitionGraph.Roots(graph, VisualCatalogSnapshot.BuiltIn);
-        Same(roots.States, [VisualNodeCatalog.FlowMethod(door, "state")], "the door's state is a State");
+        Same(roots.States, [VisualNodeCatalog.FlowMethod(door, "state")], "the door's state is a state flow");
         Check(roots.StateEntities[VisualNodeCatalog.FlowMethod(door, "state")] == "door", "of the door");
         Same([.. roots.Commands.Select(p => p.Key + "=" + p.Value)],
-            [$"relay:turn_on={VisualNodeCatalog.FlowMethod(relay, "command:turn_on")}", $"relay:turn_off={VisualNodeCatalog.FlowMethod(relay, "command:turn_off")}", $"other:turn_on={VisualNodeCatalog.EffectiveTriggerMethod(N("old", "entity_command"))}"],
-            "each wired command is a command flow, then the old kind's");
+            [$"relay:turn_on={VisualNodeCatalog.FlowMethod(relay, "command:turn_on")}", $"relay:turn_off={VisualNodeCatalog.FlowMethod(relay, "command:turn_off")}"],
+            "each wired command is a command flow");
         Check(roots.Frames["lens"] == VisualNodeCatalog.FlowMethod(cam, "frame"), "the camera's frame flow");
         var flows = new[] { door, relay, cam }.SelectMany(n => DefinitionGraph.HubFlows(n, graph, VisualCatalogSnapshot.BuiltIn)).ToArray();
         Same([.. flows.Select(f => $"{f.NodeId} {f.Port} {f.Kind} {f.Key} {f.Command ?? "-"} {f.Label} {f.Method}")],

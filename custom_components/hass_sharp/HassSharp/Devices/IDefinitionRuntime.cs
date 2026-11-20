@@ -8,17 +8,17 @@ namespace HassSharp;
 /// <remarks>
 /// <para>
 /// <b>Concurrency.</b> Calls can arrive at the same time: from the parallel branches of one run, from runs of different
-/// roots, and from two runs of one trigger whose mode is Parallel. Two runs of one State never overlap, nor do two of one
-/// When commanded flow or of one When a frame is needed flow: a State restarts (a newer change cancels the run in progress,
-/// and the newer run starts only once that one has ended), a When commanded flow is queued, and a frame flow runs one at a
+/// roots, and from two runs of one trigger whose mode is Parallel. Two runs of one Entity node's state flow never overlap, nor do two of
+/// one of its command flows or of its frame flow: a state flow restarts (a newer change cancels the run in progress,
+/// and the newer run starts only once that one has ended), a command flow is queued, and a frame flow runs one at a
 /// time. They arrive on thread-pool threads, never on Home
 /// Assistant's or Python's. An implementation must be thread-safe. It may not call back into the run in progress nor
 /// wait for a run of its definition from a call: the run is blocked in the call until it returns.
 /// </para>
 /// <para>
-/// <b>A State's run</b> (<c>entity_state</c>):
+/// <b>A state flow's run</b> (an Entity node's state):
 /// <list type="number">
-/// <item>The runtime works out the State's value nodes, which may call <see cref="Setting"/> and <see cref="IsSecret"/>,
+/// <item>The runtime works out the value nodes connected to the node's state values, which may call <see cref="Setting"/> and <see cref="IsSecret"/>,
 /// then reads its inputs.</item>
 /// <item>On success it checks the run's cancellation: a run already cancelled (superseded by a newer one, or stopped) ends
 /// there and calls nothing more. Otherwise it calls <see cref="SetState"/>, then <see cref="SetAvailable"/> with true.
@@ -35,7 +35,7 @@ namespace HassSharp;
 /// </para>
 /// <para>
 /// <b>What remains to the host.</b> Only a run cancelled before its call is kept from calling. A cancellation that arrives
-/// during the call itself, or right after the check, does not stop it; a newer run of the same State starts only after
+/// during the call itself, or right after the check, does not stop it; a newer run of the same state flow starts only after
 /// such a call has returned, but a run of another root may call at any time. Ordering beyond that is the host's and the
 /// runner's job. <see cref="SetAvailable"/> with false can also arrive while the definition is stopping, from a
 /// run whose failure came before its cancellation.
@@ -43,13 +43,13 @@ namespace HassSharp;
 /// <para>
 /// <b>When a call throws</b>, the run fails, recorded as any failed run is:
 /// <list type="bullet">
-/// <item>A throwing <see cref="SetState"/>, from a State or a step, fails the run with that error. The runtime does not mark
-/// the entity unavailable; for a State, the host may once the run has ended (<see cref="DefinitionHost"/> does).</item>
+/// <item>A throwing <see cref="SetState"/>, from a state flow or a step, fails the run with that error. The runtime does not mark
+/// the entity unavailable; for a state flow, the host may once the run has ended (<see cref="DefinitionHost"/> does).</item>
 /// <item>A throwing <see cref="SetAvailable"/> fails the run with its error, with one exception. The call with false that
-/// follows a State's failed inputs does not replace that failure: the run fails with the State's own error, and the
+/// follows a state flow's failed inputs does not replace that failure: the run fails with that flow's own error, and the
 /// error of this call is logged.</item>
 /// <item>A throwing <see cref="Setting"/> or <see cref="IsSecret"/> fails the node reading the setting, which fails the step
-/// that uses it. For a State, that also marks the entity unavailable, as any failure of its inputs does.</item>
+/// that uses it. For a state flow, that also marks the entity unavailable, as any failure of its inputs does.</item>
 /// </list>
 /// </para>
 /// </remarks>

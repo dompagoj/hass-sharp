@@ -169,7 +169,7 @@ export function NodeConfig(props: NodeConfigProps) {
     const id = createUniqueId(), hintId = `${id}-hint`
     const hint = () => (field.rule.description ? hintId : undefined)
     const label = () => (field.rule.label && field.rule.label !== field.name ? field.rule.label : words.key(field.name))
-    // Run history tracking that is not set is what the document does by default (a State of an entity definition is not recorded).
+    // Run history tracking that is not set is what the document does by default (a trigger of an entity definition is not recorded).
     const value = () => field.name === 'trackHistory' ? props.node.config.trackHistory ?? trackHistoryDefault(kind(), graphDocument(props.graph), props.catalog) : props.node.config[field.name]
     const errors = () => errorsFor(field.name)
     const types = () => field.rule.enumSource === 'types' || field.name === 'type' || field.name === 'itemType'

@@ -32965,41 +32965,6 @@
     ]
   },
   {
-    "name": "entity graph: state input left unset",
-    "graph": {
-      "version": 5,
-      "name": "Unset",
-      "nodes": [
-        {
-          "id": "s",
-          "kind": "entity_state",
-          "config": {
-            "entity": "door"
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "s",
-    "inputId": "is_on",
-    "messages": [
-      "On is required"
-    ]
-  },
-  {
     "name": "entity graph: step not reached from a root",
     "graph": {
       "version": 5,
@@ -33588,163 +33553,6 @@
     ]
   },
   {
-    "name": "code definition.unknownCommand: no command chosen",
-    "graph": {
-      "version": 5,
-      "name": "Blank command",
-      "nodes": [
-        {
-          "id": "on",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_off"
-          }
-        },
-        {
-          "id": "c",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": ""
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "relay",
-            "domain": "switch"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "c",
-    "inputId": "command",
-    "messages": [
-      "Choose Turn on or Turn off in Command",
-      "relay does nothing on Turn off: connect a step to Turn off",
-      "relay does nothing on Turn on: connect a step to Turn on"
-    ],
-    "codes": [
-      "command.unhandled",
-      "command.unhandled",
-      "definition.unknownCommand"
-    ]
-  },
-  {
-    "name": "code definition.unknownCommand",
-    "graph": {
-      "version": 5,
-      "name": "Toggle",
-      "nodes": [
-        {
-          "id": "on",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_off"
-          }
-        },
-        {
-          "id": "toggle",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "toggle"
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "relay",
-            "domain": "switch"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "toggle",
-    "inputId": "command",
-    "messages": [
-      "Entity relay has no command toggle; choose Turn on or Turn off",
-      "relay does nothing on Turn off: connect a step to Turn off",
-      "relay does nothing on Turn on: connect a step to Turn on"
-    ],
-    "codes": [
-      "command.unhandled",
-      "command.unhandled",
-      "definition.unknownCommand"
-    ]
-  },
-  {
-    "name": "code definition.unknownCommand: entity that takes no commands",
-    "graph": {
-      "version": 5,
-      "name": "Door",
-      "nodes": [
-        {
-          "id": "c",
-          "kind": "entity_command",
-          "config": {
-            "entity": "door",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "c",
-    "inputId": "command",
-    "messages": [
-      "Entity door takes no commands; choose a switch, button, number, select, text, light or cover entity instead"
-    ],
-    "codes": [
-      "definition.unknownCommand"
-    ]
-  },
-  {
     "name": "code setting.unknown",
     "graph": {
       "version": 5,
@@ -33844,120 +33652,6 @@
     "codes": [
       "pure.unused",
       "setting.unknown"
-    ]
-  },
-  {
-    "name": "code state.duplicate",
-    "graph": {
-      "version": 5,
-      "name": "Twice",
-      "nodes": [
-        {
-          "id": "s2",
-          "kind": "entity_state",
-          "config": {
-            "entity": "door",
-            "is_on": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": false
-            }
-          }
-        },
-        {
-          "id": "s1",
-          "kind": "entity_state",
-          "config": {
-            "entity": "door",
-            "is_on": {
-              "kind": "literal",
-              "type": "boolean",
-              "value": true
-            }
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "s2",
-    "inputId": "entity",
-    "messages": [
-      "Entity door already has a State step; delete this one or choose another entity"
-    ],
-    "codes": [
-      "state.duplicate"
-    ]
-  },
-  {
-    "name": "code command.duplicate",
-    "graph": {
-      "version": 5,
-      "name": "Twice",
-      "nodes": [
-        {
-          "id": "on2",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "on1",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_on"
-          }
-        },
-        {
-          "id": "off",
-          "kind": "entity_command",
-          "config": {
-            "entity": "relay",
-            "command": "turn_off"
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "relay",
-            "domain": "switch"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "on2",
-    "inputId": "command",
-    "messages": [
-      "Entity relay already has a When commanded step for Turn on; delete this one or choose another command",
-      "relay does nothing on Turn off: connect a step to Turn off",
-      "relay does nothing on Turn on: connect a step to Turn on"
-    ],
-    "codes": [
-      "command.duplicate",
-      "command.unhandled",
-      "command.unhandled"
     ]
   },
   {
@@ -34590,83 +34284,6 @@
     },
     "valid": true,
     "noDiagnostics": true
-  },
-  {
-    "name": "code entity.no_value: a cover's State with neither value",
-    "graph": {
-      "version": 5,
-      "name": "Blind",
-      "nodes": [
-        {
-          "id": "s",
-          "kind": "entity_state",
-          "config": {
-            "entity": "blind"
-          }
-        },
-        {
-          "id": "open",
-          "kind": "entity_command",
-          "config": {
-            "entity": "blind",
-            "command": "open"
-          }
-        },
-        {
-          "id": "close",
-          "kind": "entity_command",
-          "config": {
-            "entity": "blind",
-            "command": "close"
-          }
-        },
-        {
-          "id": "stop",
-          "kind": "entity_command",
-          "config": {
-            "entity": "blind",
-            "command": "stop"
-          }
-        },
-        {
-          "id": "move",
-          "kind": "entity_command",
-          "config": {
-            "entity": "blind",
-            "command": "set_position"
-          }
-        },
-        {
-          "id": "entity",
-          "kind": "entity",
-          "config": {
-            "key": "blind",
-            "domain": "cover"
-          }
-        }
-      ],
-      "edges": [],
-      "definition": {
-        "settings": [],
-        "device": {}
-      }
-    },
-    "valid": false,
-    "nodeId": "s",
-    "messages": [
-      "State needs at least one value",
-      "blind does nothing on Close: connect a step to Close",
-      "blind does nothing on Open: connect a step to Open",
-      "blind does nothing on Set position: connect a step to Set position",
-      "blind does nothing on Stop: connect a step to Stop"
-    ],
-    "codes": [
-      "command.unhandled",
-      "command.unhandled",
-      "command.unhandled",
-      "command.unhandled",
-      "entity.no_value"
-    ]
   },
   {
     "name": "entity graph: Set state with one of a light's two values",
@@ -37370,90 +36987,54 @@
     ]
   },
   {
-    "name": "code camera.duplicate: a second When a frame is needed for one camera, the later in id order",
+    "name": "a step of a kind this version does not have is named as unknown",
     "graph": {
       "version": 5,
-      "name": "Twice",
+      "name": "Door",
       "nodes": [
         {
-          "id": "f2",
-          "kind": "camera_frame",
-          "config": {
-            "entity": "annotated"
-          }
-        },
-        {
-          "id": "f1",
-          "kind": "camera_frame",
-          "config": {
-            "entity": "annotated"
-          }
-        },
-        {
-          "id": "snap",
-          "kind": "camera_snapshot",
-          "config": {
-            "entity": {
-              "kind": "literal",
-              "type": "entity_id:camera",
-              "value": "camera.front"
-            }
-          }
-        },
-        {
-          "id": "show",
-          "kind": "show_frame",
-          "config": {
-            "entity": "annotated",
-            "image": {
-              "kind": "unset"
-            }
-          }
-        },
-        {
-          "id": "entity",
+          "id": "door",
           "kind": "entity",
           "config": {
-            "key": "annotated",
-            "domain": "camera",
-            "name": "Annotated"
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
+            }
+          }
+        },
+        {
+          "id": "s",
+          "kind": "entity_state",
+          "config": {
+            "entity": "door",
+            "is_on": {
+              "kind": "literal",
+              "type": "boolean",
+              "value": false
+            }
           }
         }
       ],
-      "edges": [
-        {
-          "id": "f1:next:snap",
-          "source": "f1",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:show",
-          "source": "snap",
-          "target": "show",
-          "port": "next"
-        },
-        {
-          "id": "snap.image:show.image",
-          "kind": "data",
-          "source": "snap",
-          "target": "show",
-          "sourcePort": "image",
-          "targetPort": "image"
-        }
-      ],
+      "edges": [],
       "definition": {
         "settings": []
       }
     },
     "valid": false,
-    "nodeId": "f2",
-    "inputId": "entity",
+    "nodeId": "s",
     "messages": [
-      "Annotated already has a When a frame is needed step; delete this one or choose another camera"
+      "Entity state is not connected into the flow; connect a step to its execution input",
+      "Unknown node kind"
     ],
     "codes": [
-      "camera.duplicate"
+      "node.unknownKind",
+      "node.unreachable"
     ]
   },
   {

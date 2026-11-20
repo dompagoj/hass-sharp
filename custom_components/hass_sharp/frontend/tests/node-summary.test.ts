@@ -24,37 +24,11 @@ describe('the summaries of an entity definition\'s steps', () => {
     expect(both(node('set_entity_state', { entity: 'online' }))).toBe('Set state ▸ online')
     expect(both(node('set_entity_available', { entity: 'relay', available: lit('boolean', true) }))).toBe('Set available ▸ Relay')
   })
-  it('of State, When commanded and When a frame is needed name the entity by its name, else its key (the old steps, until Task 12)', () => {
-    expect(both(node('entity_state', { entity: 'power' }))).toBe('State ▸ Power')
-    expect(both(node('entity_state', { entity: 'heater' }))).toBe('State ▸ heater')
-    expect(both(node('entity_command', { entity: 'heater', command: 'turn_on' }))).toBe('When commanded ▸ heater: turn_on')
-    expect(stepSummary(node('entity_state', {}), nodeCatalog, undefined, graph)).toBeUndefined()
-    expect(nodeSummary(node('entity_state', {}), nodeCatalog, undefined, graph)).toBe(nodeCatalog.nodes.entity_state.description)
-    const cameras = definitionOf([hub('annotated', 'camera', 'Annotated'), hub('yard', 'camera')])
-    const summary = (n: GraphNode) => nodeSummary(n, withGraphTypes(nodeCatalog, cameras), undefined, cameras)
-    expect(summary(node('camera_frame', { entity: 'annotated' }))).toBe('When a frame is needed ▸ Annotated')
-    expect(summary(node('camera_frame', { entity: 'yard' }))).toBe('When a frame is needed ▸ yard')
-    expect(summary(node('camera_frame', {}))).toBe(nodeCatalog.nodes.camera_frame.description)
-  })
-  it('name the command by its label (When commanded, until Task 12)', () => {
-    expect(both(node('entity_command', { entity: 'relay', command: 'turn_off' }))).toBe('When commanded ▸ Relay: Turn off')
-    expect(both(node('entity_command', { entity: 'relay', command: 'toggle' }))).toBe('When commanded ▸ Relay: toggle')
-  })
-  it('name the command by the catalog\'s label of its type, else in words (When commanded, until Task 12)', () => {
-    const catalog = { ...nodeCatalog, entityDomains: { ...nodeCatalog.entityDomains, fan: { label: 'Fan', state: {}, commands: { turn_on: { label: 'Spin up' }, set_speed: {} }, options: {} } } } as unknown as VisualCatalogSnapshot
-    const fanGraph = definitionOf([hub('blades', 'fan', 'Blades')])
-    const summary = (config: Record<string, unknown>) => nodeSummary(node('entity_command', config), withGraphTypes(catalog, fanGraph), undefined, fanGraph)
-    expect(summary({ entity: 'blades', command: 'turn_on' })).toBe('When commanded ▸ Blades: Spin up')
-    expect(summary({ entity: 'blades', command: 'set_speed' })).toBe('When commanded ▸ Blades: Set speed')
-  })
-  it('name the new types\' commands by their labels (When commanded, until Task 12)', () => {
-    const things = definitionOf([hub('level', 'number', 'Level'), hub('lamp', 'light', 'Lamp'), hub('blind', 'cover', 'Blind'), hub('mode', 'select'), hub('bell', 'button', 'Bell')])
-    const summary = (kind: string, config: Record<string, unknown>) => nodeSummary(node(kind, config), withGraphTypes(nodeCatalog, things), undefined, things)
-    expect(summary('entity_command', { entity: 'level', command: 'set_value' })).toBe('When commanded ▸ Level: Set value')
-    expect(summary('entity_command', { entity: 'blind', command: 'set_position' })).toBe('When commanded ▸ Blind: Set position')
-    expect(summary('entity_command', { entity: 'mode', command: 'select_option' })).toBe('When commanded ▸ mode: Select option')
-    expect(summary('entity_command', { entity: 'bell', command: 'press' })).toBe('When commanded ▸ Bell: Press')
-    expect(summary('set_entity_state', { entity: 'lamp', brightness: lit('number', 128) })).toBe('Set state ▸ Lamp')
+  it('read a step of a kind this version does not have, such as the old State, as an unknown kind', () => {
+    for (const kind of ['entity_state', 'entity_command', 'camera_frame']) {
+      expect(stepSummary(node(kind, { entity: 'power', command: 'turn_on' }), nodeCatalog, undefined, graph), kind).toBeUndefined()
+      expect(both(node(kind, { entity: 'power', command: 'turn_on' })), kind).toBe('Unknown node kind')
+    }
   })
   it('name a setting by its label, else its key, and never show its value', () => {
     expect(both(node('setting', { key: 'host' }))).toBe('Setting ▸ Address')

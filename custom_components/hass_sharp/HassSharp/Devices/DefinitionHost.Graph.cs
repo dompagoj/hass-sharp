@@ -5,22 +5,22 @@ namespace HassSharp;
 
 /// <summary>
 /// The part of <see cref="DefinitionHost"/> only a definition built from nodes uses: its entities, created from the
-/// document, its When started, When commanded and When a frame is needed flows, and what its graph's runs do to it
+/// document, its When started flow and its Entity nodes' flows, and what its graph's runs do to it
 /// (<see cref="IDefinitionRuntime"/>).
 /// </summary>
 internal sealed partial class DefinitionHost
 {
     /// <summary>How long a command waits for the flow of a definition built from nodes that handles it; settable for tests.</summary>
     internal static TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(30);
-    /// <summary>How long a run of a State may take before the host warns that it has not finished; settable for tests.</summary>
+    /// <summary>How long a run of a state flow may take before the host warns that it has not finished; settable for tests.</summary>
     internal static TimeSpan SlowStateWarning { get; set; } = TimeSpan.FromSeconds(30);
 
     // A graph's entities by key; empty for a class, and once stopped.
     Dictionary<string, SharpEntity> graphEntities = new(StringComparer.Ordinal);
-    // The keys of a graph's entities a State works out and no run has given a state or availability yet: the host does
+    // The keys of a graph's entities a state flow works out and no run has given a state or availability yet: the host does
     // not publish them as it starts, so their first state is the one worked out, never an empty one before it.
     readonly HashSet<string> awaiting = new(StringComparer.Ordinal);
-    // Why each failing State's entity is unavailable, by key, as last warned.
+    // Why each failing state flow's entity is unavailable, by key, as last warned.
     readonly Dictionary<string, string> failing = new(StringComparer.Ordinal);
     // Why each trigger flow last failed, by method, as last logged.
     readonly Dictionary<string, FailureLog> failingFlows = new(StringComparer.Ordinal);
@@ -30,7 +30,7 @@ internal sealed partial class DefinitionHost
     readonly Dictionary<string, (string Reason, Exception Failure)> frameFailures = new(StringComparer.Ordinal);
     // A graph's settings by key, as its Setting nodes read them; read from the definition as it prepares, before any run.
     volatile IReadOnlyDictionary<string, (object? Value, bool Secret)> graphSettings = new Dictionary<string, (object?, bool)>();
-    // The keys of a graph's entities a State works out; none for a class.
+    // The keys of a graph's entities a state flow works out; none for a class.
     readonly HashSet<string> stateKeys = new(definition.Roots?.StateEntities.Values ?? [], StringComparer.Ordinal);
     // The revision preparing to replace this running one, which gets what changes meanwhile when this one stops.
     DefinitionHost? successor;
@@ -45,10 +45,10 @@ internal sealed partial class DefinitionHost
     /// A definition built from nodes: creates the entities its document describes, then runs its When started flow, if it
     /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
     /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
-    /// entity no State works out starts with the state, and availability, its namesake of the same domain has there
+    /// entity no state flow works out starts with the state, and availability, its namesake of the same domain has there
     /// (<see cref="Carry"/>), less each value it refuses; one that gets nothing from there takes the state values it last
     /// showed (<see cref="EntityStateStore"/>), less each it refuses. The When started flow may still set another. Each
-    /// When a frame is needed flow is what a request for its camera's picture runs first (<see cref="RunFrame"/>).
+    /// frame flow is what a request for its camera's picture runs first (<see cref="RunFrame"/>).
     /// </summary>
     async Task<SharpEntity[]> PrepareGraph(JsonArray described)
     {
@@ -64,7 +64,7 @@ internal sealed partial class DefinitionHost
         lock (gate)
         {
             graphEntities = all.ToDictionary(entity => entity.Key, StringComparer.Ordinal);
-            // Each entity a State works out is published first by its State, once a run worked it out (see StartAsync).
+            // Each entity a state flow works out is published first by its state flow, once a run worked it out (see StartAsync).
             awaiting.UnionWith(stateKeys.Where(graphEntities.ContainsKey));
             handed = carried;
             var taken = Carry(carried, dropped);
@@ -107,8 +107,8 @@ internal sealed partial class DefinitionHost
     }
 
     /// <summary>
-    /// A graph's entity as it is now, in plain values: its state values by key and its availability, and whether a State
-    /// of its revision works it out (its availability is then that State's, which the next revision does not take).
+    /// A graph's entity as it is now, in plain values: its state values by key and its availability, and whether a state flow
+    /// of its revision works it out (its availability is then that state flow's, which the next revision does not take).
     /// </summary>
     internal sealed record GraphEntityState(string Key, string Domain, bool Available, KeyValuePair<string, object?>[] Values, bool Worked = false);
 
@@ -210,13 +210,13 @@ internal sealed partial class DefinitionHost
     }
 
     // Under the gate: this revision's entity that takes the state of the replaced revision's: same key and domain, and no
-    // State works it out here.
+    // state flow works it out here.
     SharpEntity? Heir(GraphEntityState was) =>
         !stateKeys.Contains(was.Key) && graphEntities.TryGetValue(was.Key, out var entity) && entity.Domain == was.Domain && SharpDomains.Graph.ContainsKey(entity.Domain) ? entity : null;
 
-    // Under the gate, as the entities are created: each entity no State works out takes the state, value by value, and the
+    // Under the gate, as the entities are created: each entity no state flow works out takes the state, value by value, and the
     // availability of its namesake of the same domain in the revision this one replaces; a value it refuses is left out
-    // (see Take). Not the availability a State of that revision worked out: none works it out here. The keys of the
+    // (see Take). Not the availability a state flow of that revision worked out: none works it out here. The keys of the
     // entities that took a value.
     HashSet<string> Carry(GraphEntityState[] carried, List<string> dropped)
     {
@@ -264,7 +264,7 @@ internal sealed partial class DefinitionHost
     } : node;
 
     /// <summary>
-    /// Runs the graph's When commanded flow for the entity's command and waits for it, no longer than
+    /// Runs the graph's command flow for the entity's command and waits for it, no longer than
     /// <see cref="CommandTimeout"/> (the flow may wait on a command to this same entity, which waits behind it); a flow
     /// still running then is left to finish. The data is checked first, as a class's is (a value the entity does not take
     /// is refused, and no flow runs), and a value of it Home Assistant did not send is the entity's state value of the
@@ -300,7 +300,7 @@ internal sealed partial class DefinitionHost
     }
 
     /// <summary>
-    /// Runs the graph's When a frame is needed flow <paramref name="method"/> to its end, for a request for its camera's
+    /// Runs the graph's frame flow <paramref name="method"/> to its end, for a request for its camera's
     /// picture (<see cref="FrameNeeded"/>, under the rule of <see cref="CameraFrames"/>): what it shows, it shows through
     /// <see cref="ShowFrame"/>. A run still going at <see cref="CameraFrames.MakeLimit"/> is cancelled, so that a flow
     /// that hangs (a camera that never answers) does not keep its camera from making the next frame; its record says why.
@@ -489,12 +489,12 @@ internal sealed partial class DefinitionHost
     /// <inheritdoc/>
     public bool IsSecret(string key) => graphSettings.TryGetValue(key, out var setting) && setting.Secret;
 
-    /// <summary>Whether <paramref name="method"/> is one of a graph's States, whose runs end in <see cref="StateEnded"/>.</summary>
+    /// <summary>Whether <paramref name="method"/> is one of a graph's state flows, whose runs end in <see cref="StateEnded"/>.</summary>
     internal bool IsState(string method) => definition.Roots?.StateEntities.ContainsKey(method) == true;
 
     /// <summary>
-    /// How a run of a State ended, which the runner does not log: Home Assistant's entities come and go as it starts, so a
-    /// State may fail on every change for a while. A failed run, whatever failed (an input, or a value the entity does not
+    /// How a run of a state flow ended, which the runner does not log: Home Assistant's entities come and go as it starts, so a
+    /// state flow may fail on every change for a while. A failed run, whatever failed (an input, or a value the entity does not
     /// take), leaves the entity unavailable. The first failure warns, naming the entity and why (the failing node and its
     /// step, when the visual runtime named them), and then logs the whole failure at Debug; a failure for the same reason
     /// again says nothing and costs nothing more than comparing the reason, one for another reason warns again; a success
@@ -557,15 +557,15 @@ internal sealed partial class DefinitionHost
     }
 
     /// <summary>
-    /// How a run of one of the graph's other flows failed, which the runner leaves to the host: a When commanded flow, the
-    /// When started flow, or a trigger's flow. Logs one line naming the definition, the flow and why (as a State's
+    /// How a run of one of the graph's other flows failed, which the runner leaves to the host: a command flow, the
+    /// When started flow, or a trigger's flow. Logs one line naming the definition, the flow and why (as a state flow's
     /// warning says why), with no stack: a command's at warning, as whoever gave it is answered the error and Home
     /// Assistant logs it too, each time, as someone asked for each; the When started flow's not at all, as the definition
     /// then cannot start, which its manager warns of once per reason in the same words. A trigger flow's
-    /// at error once per reason, as a State's warning is: a poll of a device that does not answer fails on every tick,
+    /// at error once per reason, as a state flow's warning is: a poll of a device that does not answer fails on every tick,
     /// and only a failure for another reason logs again, until a run works (<see cref="FlowSucceeded"/>). Then, for every
     /// failure, the whole of it at Debug. Keeps the reason of a trigger flow's failure, and of the When started flow's for its start's error. A
-    /// When a frame is needed flow's is not logged here: its reason and failure are kept for <see cref="RunFrame"/>, which
+    /// frame flow's is not logged here: its reason and failure are kept for <see cref="RunFrame"/>, which
     /// fails its camera's frame with them, and the camera logs that once per reason. Never throws.
     /// </summary>
     /// <param name="method">The flow's method.</param>
@@ -598,7 +598,7 @@ internal sealed partial class DefinitionHost
         catch { }
     }
 
-    /// <summary>A run of a graph's flow other than a State worked: a trigger flow that failed before says, once, that it works again. Never throws.</summary>
+    /// <summary>A run of a graph's flow other than a state flow worked: a trigger flow that failed before says, once, that it works again. Never throws.</summary>
     /// <param name="method">The flow's method.</param>
     internal void FlowSucceeded(string method)
     {
@@ -643,8 +643,8 @@ internal sealed partial class DefinitionHost
     }
 
     /// <summary>
-    /// Watches a run of the graph's State <paramref name="method"/> until the returned handle is disposed, as it ends: one
-    /// that has not ended after <see cref="SlowStateWarning"/> warns once, naming the entity (a State waits on what it
+    /// Watches a run of the graph's state flow <paramref name="method"/> until the returned handle is disposed, as it ends: one
+    /// that has not ended after <see cref="SlowStateWarning"/> warns once, naming the entity (a state flow waits on what it
     /// reads, which should not take that long); when it then ends, Debug says after how long. Nothing for another method,
     /// or once the definition stops. Never throws.
     /// </summary>
@@ -658,7 +658,7 @@ internal sealed partial class DefinitionHost
         catch { return Nothing; }
     }
 
-    // A State's run being watched: 0 while it runs in time, 1 once warned of, 2 once ended.
+    // A state flow's run being watched: 0 while it runs in time, 1 once warned of, 2 once ended.
     sealed class SlowState : IDisposable
     {
         readonly DefinitionHost host;
@@ -693,7 +693,7 @@ internal sealed partial class DefinitionHost
     }
 
     /// <summary>
-    /// What a failure says, as the person reads it (a State's, a flow's, a timer's, and why a definition cannot start):
+    /// What a failure says, as the person reads it (a state flow's, a flow's, a timer's, and why a definition cannot start):
     /// the message of what was thrown, past any wrapper of the runner's or of reflection's, which names the failing node
     /// and the step that used it when the visual runtime wrapped it; then, when it does not say it already, the message
     /// of the failure underneath (such as the text a number could not be read from). Each its first line; null when the

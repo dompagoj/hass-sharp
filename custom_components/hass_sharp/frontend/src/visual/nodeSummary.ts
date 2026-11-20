@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityCommandLabel, entityDomain, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -244,7 +244,7 @@ function kindText(ctx: Context): string | undefined {
     case 'array_create': { const n = Array.isArray(config.items) ? config.items.length : 0; return n ? `${n} item${n === 1 ? '' : 's'}` : undefined }
     case 'condition_result': { const value = operandText(ctx, 'value'); return value ? `Return ${value}` : undefined }
     case 'loop_result': return 'Finish this iteration'
-    case 'entity_state': case 'set_entity_state': case 'set_entity_available': case 'camera_frame': case 'show_frame': {
+    case 'set_entity_state': case 'set_entity_available': case 'show_frame': {
       const entity = definitionEntityName(ctx)
       return entity ? `${entityStepWords[node.kind]} ▸ ${entity}` : undefined
     }
@@ -252,15 +252,6 @@ function kindText(ctx: Context): string | undefined {
     case 'entity': {
       const type = entityTypeLabel(catalog, text(config.domain)), key = text(config.key)
       return [type, key].filter(Boolean).join(' · ') || undefined
-    }
-    case 'entity_command': {
-      const entity = definitionEntityName(ctx), command = text(config.command)
-      if (!entity) return
-      // A command its type has as the catalog labels it; one it does not have as it is.
-      const catalog = definitionCatalog(ctx.catalog, ctx.graph), commands = entityDomain(catalog, text(config.entity))?.commands
-      const label = command && record(commands) && Object.hasOwn(commands, command)
-        ? entityCommandLabel(catalog, text(definitionEntity(catalog, text(config.entity))?.domain), command) : command
-      return `When commanded ▸ ${entity}${label ? `: ${label}` : ''}`
     }
     // A setting by its label; never its value, which may be a secret.
     case 'setting': {
@@ -303,7 +294,7 @@ function typedAddress(ctx: Context): URL | undefined {
     return url.protocol === 'http:' || url.protocol === 'https:' ? url : undefined
   } catch { return undefined }
 }
-const entityStepWords: Record<string, string> = { entity_state: 'State', set_entity_state: 'Set state', set_entity_available: 'Set available', camera_frame: 'When a frame is needed', show_frame: 'Show frame' }
+const entityStepWords: Record<string, string> = { set_entity_state: 'Set state', set_entity_available: 'Set available', show_frame: 'Show frame' }
 /** The definition's entity the step names, by its name, else its key (also a key the definition no longer has). */
 function definitionEntityName(ctx: Context): string | undefined {
   const key = text(ctx.node.config.entity)

@@ -10321,87 +10321,6 @@
           "command"
         ]
       },
-      "entity_state": {
-        "label": "State",
-        "category": "Entity",
-        "description": "Work out the state of one of this definition\u0027s entities from the values connected to it; it is worked out again each time an entity chosen (not wired) in the value steps connected to it changes, such as in Has state or Current state; an entity read by another step, such as Read entity, is not followed.",
-        "root": true,
-        "documents": [
-          "entity"
-        ],
-        "minGraphVersion": 5,
-        "config": {
-          "entity": {
-            "type": "string",
-            "required": true,
-            "description": "The entity of this definition whose state this works out, by its key.",
-            "label": "Entity"
-          },
-          "trackHistory": {
-            "type": "boolean",
-            "default": false,
-            "description": "Record each time the state is worked out, with its trace.",
-            "label": "Track in run history"
-          }
-        },
-        "inputs": {},
-        "outputs": {},
-        "dynamicInputs": "entity",
-        "execution": [],
-        "runtimeVersions": [
-          5
-        ],
-        "keywords": [
-          "derived",
-          "template",
-          "compute"
-        ]
-      },
-      "entity_command": {
-        "label": "When commanded",
-        "category": "Entity",
-        "description": "Run the steps after it when Home Assistant gives one of this definition\u0027s entities a command, such as turning a switch on.",
-        "root": true,
-        "documents": [
-          "entity"
-        ],
-        "minGraphVersion": 5,
-        "config": {
-          "entity": {
-            "type": "string",
-            "required": true,
-            "description": "The entity of this definition that takes the command, by its key.",
-            "label": "Entity"
-          },
-          "command": {
-            "type": "string",
-            "required": true,
-            "description": "The command to handle, such as turn_on or turn_off.",
-            "label": "Command"
-          },
-          "trackHistory": {
-            "type": "boolean",
-            "default": true,
-            "description": "Record each run and its trace.",
-            "label": "Track in run history"
-          }
-        },
-        "inputs": {},
-        "outputs": {},
-        "dynamicOutputs": "command",
-        "execution": [
-          "next"
-        ],
-        "runtimeVersions": [
-          5
-        ],
-        "keywords": [
-          "turn on",
-          "turn off",
-          "command",
-          "action"
-        ]
-      },
       "entity_setup": {
         "label": "When started",
         "category": "Entity",
@@ -10555,7 +10474,7 @@
               "entity_id"
             ],
             "required": true,
-            "description": "The entity to check. In an entity definition\u0027s graph, choose it here rather than connecting it, so that a State reading it is worked out again when it changes.",
+            "description": "The entity to check. In an entity definition\u0027s graph, choose it here rather than connecting it, so that the state of an Entity node reading it is worked out again when it changes.",
             "label": "Entity"
           },
           "state": {
@@ -10602,7 +10521,7 @@
               "entity_id"
             ],
             "required": true,
-            "description": "The entity to read. In an entity definition\u0027s graph, choose it here rather than connecting it, so that a State reading it is worked out again when it changes.",
+            "description": "The entity to read. In an entity definition\u0027s graph, choose it here rather than connecting it, so that the state of an Entity node reading it is worked out again when it changes.",
             "label": "Entity"
           }
         },
@@ -11022,45 +10941,6 @@
           "write",
           "annotate",
           "picture"
-        ]
-      },
-      "camera_frame": {
-        "label": "When a frame is needed",
-        "category": "Entity",
-        "description": "Run the steps after it when Home Assistant needs a new picture from one of this definition\u0027s cameras. Nothing runs while nobody is watching.",
-        "root": true,
-        "documents": [
-          "entity"
-        ],
-        "minGraphVersion": 5,
-        "config": {
-          "entity": {
-            "type": "string",
-            "required": true,
-            "description": "The camera of this definition whose picture the steps after it make, by its key.",
-            "label": "Camera"
-          },
-          "trackHistory": {
-            "type": "boolean",
-            "default": false,
-            "description": "Record each frame made, with its trace. A camera may be asked for a frame every second while someone watches.",
-            "label": "Track in run history"
-          }
-        },
-        "inputs": {},
-        "outputs": {},
-        "execution": [
-          "next"
-        ],
-        "runtimeVersions": [
-          5
-        ],
-        "keywords": [
-          "camera",
-          "frame",
-          "picture",
-          "snapshot",
-          "stream"
         ]
       },
       "show_frame": {

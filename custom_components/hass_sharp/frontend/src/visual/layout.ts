@@ -26,7 +26,7 @@ const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot
 /**
  * A layered left-to-right layout ("Tidy"). Each connected flow (steps joined by execution or value wires) is a
  * horizontal band of its own; bands are stacked top to bottom in the order of their first root's current
- * position (a trigger, or an entity definition's State, When commanded or When started), and steps connected to
+ * position (a trigger, or an entity definition's Entity node or When started), and steps connected to
  * nothing share a last band, in a row.
  *
  * Within a band, execution wires decide the columns: every node sits one column after the furthest step that runs it
@@ -99,7 +99,7 @@ export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = 
   for (const id of ids) groups.set(find(id), [...(groups.get(find(id)) ?? []), id])
   const at = (id: string) => ({ x: finite(byId.get(id)!.position?.x, 0), y: finite(byId.get(id)!.position?.y, 0) })
   const before = (a: string, b: string) => at(a).y - at(b).y || at(a).x - at(b).x || index.get(a)! - index.get(b)!
-  // A flow is led by its roots: triggers, and an entity definition's State, When commanded and When started.
+  // A flow is led by its roots: triggers, and an entity definition's Entity nodes and When started.
   const root = (id: string) => isRoot(byId.get(id)!, catalog)
   const lead = (members: string[]) => {
     const roots = members.filter(root)

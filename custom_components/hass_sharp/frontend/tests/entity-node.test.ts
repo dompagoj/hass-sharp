@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName } from '../src/components/TriggerSummary'
-import { connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
+import { catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition } from '../src/entities/model'
@@ -293,4 +293,11 @@ it('a declaring node is named by its entity in messages and run names', () => {
   // Any other step keeps its label, and declares no entity.
   expect(entityNodeName({ id: 'l', kind: 'log', label: 'Log', config: {} })).toBeUndefined()
   expect(runName(flowMethod(named, 'state'), definitionNames(graph, nodeCatalog))).toBe('Front door: State')
+})
+
+it('the old steps are gone from the catalog and the step library', () => {
+  for (const kind of ['entity_state', 'entity_command', 'camera_frame']) expect(nodeCatalog.nodes).not.toHaveProperty(kind)
+  const entity = catalogPalette(nodeCatalog, 'entity').filter(item => item.category === 'Entity').map(item => item.kind)
+  expect(entity.slice(0, 3)).toEqual(['entity', 'entity_setup', 'set_entity_state'])
+  expect(diagnosticCodes).not.toContain('state.duplicate')
 })

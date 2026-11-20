@@ -100,10 +100,10 @@ public partial class HassSharpManager
     }
 
     /// <summary>
-    /// Whether a root's runs are recorded: its <c>trackHistory</c>, else its kind's default as the catalog gives it (off for a
-    /// State, on for When commanded and When started). A trigger's is off unless set: in a definition, a trigger mostly
-    /// keeps a state up to date, as a State does (an automation's trigger is on unless set; the catalog's default is that
-    /// one, and stays so).
+    /// Whether a root's runs are recorded: its <c>trackHistory</c>, else its kind's default as the catalog gives it (on for
+    /// When started). A trigger's is off unless set: in a definition, a trigger mostly keeps a state up to date, as an
+    /// Entity node's state flow does (an automation's trigger is on unless set; the catalog's default is that one, and
+    /// stays so). An Entity node's flows are recorded as its <c>history</c> says (<see cref="DefinitionGraph.HubFlows"/>).
     /// </summary>
     static bool TrackHistory(JsonObject node, VisualCatalogSnapshot snapshot) =>
         node["config"]?["trackHistory"] is JsonValue given && given.TryGetValue<bool>(out var track) ? track

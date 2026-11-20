@@ -178,17 +178,6 @@ it('an automation keeps its trigger-only roots on the canvas', () => {
   expect(buildNodeView(graph.nodes.find(n => n.id === 'log')!, { graph, catalog: nodeCatalog, diagnostics: [] }).unreachable).toBe(true)
 })
 
-it('a new When commanded names the first command no other When commanded of the entity handles', () => {
-  // The old step's own prefill, kept until Task 12 removes the kind; the entity it names is an Entity node's.
-  // The switch's Turn on is handled, so the next When commanded is for Turn off, and nothing is handled twice.
-  const second = addGraphNode(add(relay(), 'entity_command', 'on'), 'entity_command', 'off', nodeCatalog)
-  expect(second.nodes.slice(1).map(n => n.config)).toMatchObject([{ entity: 'relay', command: 'turn_on' }, { entity: 'relay', command: 'turn_off' }])
-  expect(validateGraph(second, nodeCatalog).filter(d => d.code === 'command.duplicate')).toEqual([])
-  // Once every command is handled, a new one names the first again, as before.
-  const third = addGraphNode(second, 'entity_command', 'again', nodeCatalog)
-  expect(third.nodes.at(-1)!.config).toMatchObject({ entity: 'relay', command: 'turn_on' })
-})
-
 /** A light that can be dimmed, and a cover, of one definition. */
 const lampGraph = () => {
   const graph = add(empty('Lamp'), 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } })

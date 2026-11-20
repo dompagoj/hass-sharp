@@ -248,7 +248,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const execInConnected = incoming.some(e => e.kind !== 'data')
   const pure = isPure(node, catalog)
   // Unknown kinds keep their execution input, so wires into a node whose library vanished still show. A value node has
-  // none, and neither has a root: a trigger, or an entity definition's State, When commanded and When started.
+  // none, and neither has a root: a trigger, or an entity definition's Entity node and When started.
   const execIn: PinView | undefined = isRoot(node, catalog) || pure ? undefined : {
     id: 'in', side: 'in', kind: 'exec', label: 'Execution input', name: `Execution input, ${connectedText(execInConnected)}`,
     color: 'var(--hs-port-execution)', list: false, connected: execInConnected, error: false,

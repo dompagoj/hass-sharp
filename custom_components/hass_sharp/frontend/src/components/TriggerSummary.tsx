@@ -40,7 +40,7 @@ export function definitionNames(graph: Graph | undefined, catalog: VisualCatalog
 }
 /**
  * What a run is called: as recorded, unless that is the generated method name of a root step of the graph shown (an
- * entity definition's root runs under one), which reads as the step's title ("When a frame is needed"), or of a flow of
+ * entity definition's root runs under one), which reads as the step's title ("When started"), or of a flow of
  * an Entity node, which reads as the entity and the flow ("Lamp: Turn on"). An automation's names give no roots, so its
  * runs keep their names.
  */

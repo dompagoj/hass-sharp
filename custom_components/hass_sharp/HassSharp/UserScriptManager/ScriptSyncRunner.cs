@@ -139,7 +139,7 @@ class ScriptSyncRunner
         var waited = false;
         // An entity definition's runs act on it through its host; a run of any other script has none.
         var host = scriptClass.Script.Host;
-        // A State of a definition built from nodes fails routinely (a source missing while Home Assistant starts): its host
+        // An Entity node's state flow fails routinely (a source missing while Home Assistant starts): its host
         // says so once per reason, so its failure is not logged here.
         var state = host?.IsState(methodInfo.Name) == true;
         // What a failing State's run threw, which its host words and logs.
@@ -160,7 +160,7 @@ class ScriptSyncRunner
                 record.Status = "Running";
                 Save();
                 var timer = System.Diagnostics.Stopwatch.StartNew();
-                // A State that takes long is warned of by its host, which names its entity.
+                // A state flow that takes long is warned of by its host, which names its entity.
                 var slow = state ? host!.WatchState(methodInfo.Name) : null;
                 try
                 {
@@ -178,7 +178,7 @@ class ScriptSyncRunner
                 {
                     record.Status = "Failed"; record.Error = ex.GetBaseException().Message;
                     if (state) stateFailure = ex;
-                    // A definition's other flows (When commanded, When started, a trigger's) are logged by its host, which
+                    // A definition's other flows (a command's, When started, a trigger's) are logged by its host, which
                     // names the definition and the flow.
                     else if (host != null) host.FlowFailed(methodInfo.Name, cause, ex);
                     else Logger.Error($"Invocation {record.RunId} ({record.Action}) failed: {ex}");

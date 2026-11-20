@@ -163,7 +163,7 @@ public abstract partial class SharpEntity : SharpComponent
 
     /// <summary>
     /// Checks a command's data as <see cref="Command"/> does before its handler runs, without running it: for a definition
-    /// built from nodes, whose When commanded flow is the handler. Data the command does not read is not checked.
+    /// built from nodes, whose Entity node's command flow is the handler. Data the command does not read is not checked.
     /// </summary>
     /// <exception cref="ArgumentException">The entity does not take the data; the message names the entity and the value.</exception>
     internal virtual void CheckData(string name, JsonElement data) { }

@@ -96,7 +96,7 @@ function pinLabel(graph: VisualGraph, pin: PinRef, catalog: VisualCatalogSnapsho
   return label || data
 }
 
-/** Steps that run: reached from a root (a trigger, an entity definition's When commanded…) along execution wires. */
+/** Steps that run: reached from a root (a trigger, an entity definition's Entity node…) along execution wires. */
 function running(graph: VisualGraph, catalog: VisualCatalogSnapshot): Set<string> {
   const reached = new Set(graph.nodes.filter(n => isRoot(n, catalog)).map(n => n.id))
   const queue = [...reached]

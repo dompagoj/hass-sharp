@@ -48,10 +48,9 @@ export interface InputSpec {
 export interface OutputSpec { label?: string; type: string; description?: string; visibility?: string; scope?: string; group?: string; pointer?: string; refineFrom?: string; when?: string; propertyOf?: string }
 /**
  * `root`: the node starts a flow of its own (as a trigger does); `documents`: the kinds of graph it works in (any when
- * absent); `singleton`: a graph holds at most one. `dynamicInputs: 'entity'` gives the node the state values of the
- * domain of the definition's entity `config.entity` names (see `dataInputs`); `dynamicOutputs: 'command'` gives it the
- * data values of its entity's command `config.command` (see `commandOutputs`). `declared` (an Entity node's) gives it the
- * pins of the type its own `config.domain` names (see `declaredDomain`).
+ * absent); `singleton`: a graph holds at most one. `dynamicInputs: 'entity'` (a Set state's) gives the node the state
+ * values of the domain of the definition's entity `config.entity` names (see `dataInputs`). `declared` (an Entity node's)
+ * gives it the pins of the type its own `config.domain` names (see `declaredDomain`).
  */
 export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities. */ declares?: 'entity'; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
@@ -78,8 +77,8 @@ export interface ServicesSection { servicesGeneration: string; items: Record<str
 /** A state value of an entity domain, or a data value of one of its commands: `required: false` when it may be left out. */
 export interface EntityValueSpec { types: string[]; label?: string; required?: boolean }
 /**
- * One entity domain a definition's graph can define: its state values (inputs of State and Set state), its commands,
- * each with the values of its data (outputs of When commanded), and its options. `frame`: the type is asked for frames
+ * One entity domain a definition's graph can define: its state values (inputs of an Entity node and Set state), its
+ * commands, each with the values of its data (outputs of an Entity node), and its options. `frame`: the type is asked for frames
  * (a camera), and its Entity node has a `frame` execution pin with this label.
  */
 export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; frame?: { label: string }; options: Record<string, ConfigSpec> }
@@ -214,7 +213,7 @@ export const isPure = (node: GraphNode | string, catalog: VisualCatalogSnapshot 
 }
 /**
  * Whether the node starts a flow of its own, from which scopes and reachability start: a trigger, or a kind whose entry
- * says `root: true` (an entity definition's State, When commanded and When started). Mirrors `VisualNodeCatalog.IsRoot`.
+ * says `root: true` (an entity definition's When started and Entity node). Mirrors `VisualNodeCatalog.IsRoot`.
  */
 export const isRoot = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog) => node.kind === 'trigger' || nodeSpec(node.kind, catalog)?.root === true
 /** `entity` for a graph with an object `definition` (an entity definition's logic), else `automation`. */
@@ -341,31 +340,10 @@ const isCamera = (catalog: VisualCatalogSnapshot, key: string) => text(definitio
 /** The definition's entity with this key as a validator's sentence names it: its name, else its key. */
 const cameraName = (catalog: VisualCatalogSnapshot, key: string) => { const name = text(definitionEntity(catalog, key)?.name); return name.replace(blankEnds, '') ? name : key }
 export const definitionSettings = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'settings')
-/** The commands the type of the definition's entity with this key takes, in the catalog's order; none for an unknown entity. */
-export function entityCommands(catalog: VisualCatalogSnapshot, key: string): string[] {
-  const commands = entityDomain(catalog, key)?.commands
-  return record(commands) ? Object.keys(commands) : []
-}
-/** The steps that name one of the definition's cameras. */
-export const cameraKinds: readonly string[] = ['camera_frame', 'show_frame']
-/**
- * The definition's entities a step of this kind can name: When commanded only those whose type takes commands, Show
- * frame and When a frame is needed only its cameras.
- */
+/** The definition's entities a step of this kind can name: Show frame only its cameras. */
 export function entityChoices(catalog: VisualCatalogSnapshot, kind: string): Record<string, unknown>[] {
   const entities = definitionEntities(catalog)
-  if (kind === 'entity_command') return entities.filter(e => entityCommands(catalog, e.key as string).length > 0)
-  return cameraKinds.includes(kind) ? entities.filter(e => text(e.domain) === 'camera') : entities
-}
-/**
- * The config of a When commanded once its entity is set (ruling R12): a command the entity's type does not take, or none,
- * becomes the type's first command not in `handled`, or its first when all are. Any other config, and one whose entity
- * is unknown, as it is.
- */
-export function withEntityCommand(kind: string, config: Record<string, unknown>, catalog: VisualCatalogSnapshot, handled: readonly string[] = []): Record<string, unknown> {
-  if (!Object.hasOwn(nodeSpec(kind, catalog)?.config ?? {}, 'command')) return config
-  const commands = entityCommands(catalog, text(config.entity))
-  return commands.length && !commands.includes(text(config.command)) ? { ...config, command: commands.find(c => !handled.includes(c)) ?? commands[0] } : config
+  return kind === 'show_frame' ? entities.filter(e => text(e.domain) === 'camera') : entities
 }
 /**
  * The value a Set state is for, of the state values of its entity's type: the first its row does not mark optional, else
@@ -422,15 +400,15 @@ export function valueUpstream(start: GraphNode, nodes: ReadonlyMap<string, Graph
 /**
  * Whether an input (as `dataInputs` gives it) takes nothing but entity ids: every one of its types is `entity_id` or
  * `entity_id:<domain>`, built in, a node library's or a Custom C# node's alike. The entity chosen in such an input is one
- * a State follows; one given over a wire is not. Mirrors `VisualNodeCatalog.TakesOnlyEntityIds`.
+ * an Entity node's state follows; one given over a wire is not. Mirrors `VisualNodeCatalog.TakesOnlyEntityIds`.
  */
 export function takesOnlyEntityIds(input: { types?: unknown } | undefined): boolean {
   const types = input?.types
   return Array.isArray(types) && types.length > 0 && types.every(t => typeof t === 'string' && (t === 'entity_id' || t.startsWith('entity_id:')))
 }
 /**
- * Whether a wire from this node into an entity id input still lets a State follow the entity: a Constant of an entity
- * id type, whose chosen entity the State's dependencies count. Mirrors `VisualNodeCatalog.FollowedSource`.
+ * Whether a wire from this node into an entity id input still lets an Entity node's state follow the entity: a
+ * Constant of an entity id type, whose chosen entity the state's dependencies count. Mirrors `VisualNodeCatalog.FollowedSource`.
  */
 export function followedSource(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): boolean {
   return node.kind === 'constant' && takesOnlyEntityIds(dataInputs(node, undefined, catalog).value)
@@ -612,7 +590,6 @@ export function dataOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = no
   }
   if (spec?.dynamicOutputs === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.outputs ?? {}))
   if (spec?.dynamicOutputs === 'trigger') Object.assign(ports, triggerOutputs(node, catalog))
-  if (spec?.dynamicOutputs === 'command') Object.assign(ports, commandOutputs(node, catalog))
   if (spec?.dynamicOutputs === 'declared') Object.assign(ports, declaredOutputs(node, catalog))
   // An output with `when` exists only while that boolean config is true (D3, D9).
   for (const [key, port] of Object.entries(ports)) if (port.when && node.config[port.when] !== true) delete ports[key]
@@ -661,22 +638,9 @@ export function triggerOutputs(node: GraphNode, catalog: VisualCatalogSnapshot =
   return ports
 }
 /**
- * A When commanded step's outputs: one per data value of its command in the `entityDomains` row of its entity, named as
- * the row names it, of its first type, read from the run's trigger at `/data/<name>`; none for a command without data,
- * an unknown entity or an unknown command. Mirrored by `VisualNodeCatalog.CommandOutputs`.
- */
-export function commandOutputs(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, OutputSpec> {
-  const ports = Object.create(null) as Record<string, OutputSpec>
-  const commands = entityDomain(catalog, text(node.config.entity))?.commands, command = text(node.config.command)
-  const entry: unknown = record(commands) && Object.hasOwn(commands, command) ? commands[command] : undefined
-  const data = record(entry) && record(entry.data) ? entry.data : {}
-  for (const [name, value] of Object.entries(data)) ports[name] = commandValueOutput(name, value)
-  return ports
-}
-/**
- * An Entity node's value outputs: for each data value of each command of its type, `command:<command>:<value>`, as a When
- * commanded step gives it (`commandValueOutput`), grouped under its command's execution pin (`group`, layout only: it is
- * not a scope). Mirrors `VisualNodeCatalog.DeclaredOutputs`.
+ * An Entity node's value outputs: for each data value of each command of its type, `command:<command>:<value>`, of its
+ * first type and read from the run's trigger (`commandValueOutput`), grouped under its command's execution pin (`group`,
+ * layout only: it is not a scope). Mirrors `VisualNodeCatalog.DeclaredOutputs`.
  */
 function declaredOutputs(node: GraphNode, catalog: VisualCatalogSnapshot): Record<string, OutputSpec> {
   const ports = Object.create(null) as Record<string, OutputSpec>
@@ -732,14 +696,12 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [item.type], required: false, label: item.name, description: `New value for ${item.name}` }
   }
-  // The state values of the domain of the definition's entity config.entity names, each without a default: for a State,
-  // each required unless the domain's row says `required: false`; for a Set state, none required (what it is not given,
-  // the entity keeps). An Entity node has those of the type its own config.domain names, none required as a pin. Mirrors
-  // `VisualNodeCatalog.DataInputs`.
+  // The state values, each without a default and none required: a Set state's of the domain of the definition's entity
+  // config.entity names (what it is not given, the entity keeps); an Entity node's of the type its own config.domain
+  // names. Mirrors `VisualNodeCatalog.DataInputs`.
   const state = dynamic === 'entity' ? entityDomain(catalog, text(node.config.entity))?.state : dynamic === 'declared' ? declaredDomain(node, catalog)?.state : undefined
   if (record(state)) for (const [key, value] of Object.entries(state)) {
-    const required = dynamic === 'entity' && node.kind !== 'set_entity_state' && !(record(value) && value.required === false)
-    ports[key] = { types: typeIds(record(value) ? value.types : undefined), required, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}) }
+    ports[key] = { types: typeIds(record(value) ? value.types : undefined), required: false, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}) }
   }
   return ports
 }
@@ -1011,27 +973,16 @@ export const words = {
   rootIncoming: (step: string) => `${step} starts a flow of its own, so no step order wire can lead into it; remove this wire`,
   /** A step naming an entity its definition does not have. */
   unknownEntity: (key: string, label: string) => !key.replace(blankEnds, '') ? `Choose one of this definition's entities in ${label}` : `This definition has no entity ${words.name(key)}; choose one of its entities or add it`,
-  /** A When commanded step naming a command its entity's domain does not have. */
-  unknownCommand: (key: string, command: string, commands: string[], commanded: string[], label: string) =>
-    !commands.length ? `Entity ${words.name(key)} takes no commands; choose ${words.article(commanded[0] ?? '')} ${words.or(commanded)} entity instead`
-      : !command.replace(blankEnds, '') ? `Choose ${words.or(commands)} in ${label}`
-        : `Entity ${words.name(key)} has no command ${words.name(command)}; choose ${words.or(commands)}`,
   /** A Setting node naming a setting its definition does not have. */
   unknownSetting: (key: string, label: string) => !key.replace(blankEnds, '') ? `Choose one of this definition's settings in ${label}` : `This definition has no setting ${words.name(key)}; choose one of its settings or add it`,
-  /** A second State step for one entity. */
-  stateDuplicate: (key: string, label: string) => `Entity ${words.name(key)} already has ${words.article(label)} ${label} step; delete this one or choose another entity`,
-  /** A second When commanded step for one entity and command. */
-  commandDuplicate: (key: string, command: string, label: string) => `Entity ${words.name(key)} already has ${words.article(label)} ${label} step for ${command}; delete this one or choose another command`,
-  /** An entity reader a State reads whose entity comes over a wire: what the State watches cannot be known. */
+  /** An entity reader an Entity node's state reads whose entity comes over a wire: what the state watches cannot be known. */
   dynamicSource: (reader: string, state: string, input: string) => `${reader} gets its entity over a wire, so ${state} is not worked out again when that entity changes; choose the entity in ${input} instead`,
-  /** A State or Set state step naming an entity whose type has no state, such as a button. */
+  /** A Set state step naming an entity whose type has no state, such as a button. */
   stateless: (type: string) => { const article = words.article(type); return `${article[0].toUpperCase()}${article.slice(1)} ${type.toLowerCase()} has no state to set` },
-  /** A State or Set state step given none of its entity's state values, none of which is required. */
+  /** A Set state step given none of its entity's state values. */
   noValue: (step: string) => `${step} needs at least one value`,
-  /** A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one. */
+  /** A Show frame step naming an entity of the definition that is not a camera, by its name; whether the definition has one. */
   notACamera: (name: string, anyCamera: boolean) => anyCamera ? `${words.name(name)} is not a camera; choose one of this definition's cameras` : `${words.name(name)} is not a camera; add a camera to this definition first`,
-  /** A second When a frame is needed step for one camera, named by its name. */
-  frameDuplicate: (name: string, label: string) => `${words.name(name)} already has ${words.article(label)} ${label} step; delete this one or choose another camera`,
   /** A camera no Show frame step shows a frame for, named by its name. */
   noFrame: (name: string, label: string) => `${words.name(name)} never shows a frame: add ${words.article(label)} ${label} step for it`,
   // An Entity node's entity, named by entityNodeName.
@@ -1140,10 +1091,10 @@ export const diagnosticCodes = [
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow',
   'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
-  'definition.invalid', 'definition.unknownEntity', 'definition.unknownCommand', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
+  'definition.invalid', 'definition.unknownEntity', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
   'node.document', 'node.singleton', 'root.incoming',
-  'setting.unknown', 'state.duplicate', 'command.duplicate', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
-  'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.duplicate', 'camera.no_frame',
+  'setting.unknown', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
+  'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.no_frame',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -1207,7 +1158,7 @@ export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved:
 export function validateGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphDiagnostic[] {
   return analyzeGraph(value, catalog).diagnostics
 }
-/** The validator's structured scope of every node reachable from a root (a trigger, or an entity graph's State, When commanded or When started). */
+/** The validator's structured scope of every node reachable from a root (a trigger, or an entity graph's Entity node or When started). */
 export const analyzeScopes = (value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => analyzeGraph(value, catalog).scopes
 /** Runs the validator once and keeps what it learned: diagnostics with origins, scopes and resolved input types. */
 export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphAnalysis {
@@ -1336,7 +1287,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       scope(edge.target, scopePort(node, port) ? [...path, { owner: id, port }] : path)
     }
   }
-  // Flows start at the roots: triggers, and an entity graph's State, When commanded and When started. An automation
+  // Flows start at the roots: triggers, and an entity graph's Entity nodes and When started. An automation
   // needs a trigger; an entity graph needs none (a definition may have no logic yet).
   const roots = [...nodes.values()].filter(n => isRoot(n, catalog))
   if (document === 'automation' && ![...nodes.values()].some(n => n.kind === 'trigger')) error(null, 'At least one trigger is required', undefined, undefined, 'graph.noTrigger')
@@ -1485,30 +1436,19 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (spec.dynamicInputs === 'custom' && Object.hasOwn(node.config, 'code')) { error(node.id, words.oldCustomCode, 'source'); continue }
     // A kind that lists the documents it works in (an entity definition's steps) is refused in any other.
     if (Array.isArray(spec.documents) && !spec.documents.includes(document)) error(node.id, words.wrongDocument(words.stepName(node, catalog), document), undefined, undefined, 'node.document')
-    // An entity graph's steps name its definition's entities, their commands and its settings.
+    // An entity graph's steps name its definition's entities and its settings.
     const entityKey = node.config.entity
     if (entityGraph && Array.isArray(spec.documents) && Object.hasOwn(spec.config, 'entity') && typeof entityKey === 'string') {
-      const domain = entityDomain(catalog, entityKey), command = node.config.command
       if (!definitionEntity(catalog, entityKey)) error(node.id, words.unknownEntity(entityKey, configLabel(spec.config.entity, 'entity')), 'entity', undefined, 'definition.unknownEntity')
-      else if (node.kind === 'entity_command' && domain && typeof command === 'string' && !Object.hasOwn(record(domain.commands) ? domain.commands : {}, command)) {
-        const domainKey = text(definitionEntity(catalog, entityKey)?.domain)
-        const commands = Object.keys(record(domain.commands) ? domain.commands : {}).map(key => entityCommandLabel(catalog, domainKey, key))
-        const commanded = Object.entries(catalog.entityDomains ?? {}).filter(([, entry]) => record(entry) && record(entry.commands) && Object.keys(entry.commands).length > 0)
-          .map(([key]) => entityTypeLabel(catalog, key).toLowerCase())
-        error(node.id, words.unknownCommand(entityKey, command, commands, commanded, configLabel(spec.config.command, 'command')), 'command', undefined, 'definition.unknownCommand')
-      }
-      // Show frame and When a frame is needed name one of the definition's cameras.
-      else if ((node.kind === 'camera_frame' || node.kind === 'show_frame') && !isCamera(catalog, entityKey))
+      // Show frame names one of the definition's cameras.
+      else if (node.kind === 'show_frame' && !isCamera(catalog, entityKey))
         error(node.id, words.notACamera(cameraName(catalog, entityKey), definitionItems(catalog, 'entities').some(e => isCamera(catalog, text(e.key)))), 'entity', undefined, 'camera.entity')
     }
-    // A State or Set state needs an entity whose type has a state, and at least one of its values when none is required.
-    const row = (node.kind === 'entity_state' || node.kind === 'set_entity_state') && typeof entityKey === 'string' && definitionEntity(catalog, entityKey) ? entityDomain(catalog, entityKey) : undefined
+    // A Set state needs an entity whose type has a state, and at least one of its values.
+    const row = node.kind === 'set_entity_state' && typeof entityKey === 'string' && definitionEntity(catalog, entityKey) ? entityDomain(catalog, entityKey) : undefined
     if (entityGraph && row) {
       if (!record(row.state) || !Object.keys(row.state).length) error(node.id, words.stateless(entityTypeLabel(catalog, text(definitionEntity(catalog, entityKey as string)?.domain))), 'entity', undefined, 'entity.stateless')
-      else {
-        const values = Object.entries(dataInputs(node))
-        if (!values.some(([, input]) => input.required) && !values.some(([port]) => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
-      }
+      else if (!Object.keys(dataInputs(node)).some(port => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
     }
     // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
     // device names its entities, and none of its state values or each one its type needs. A field that is not text is
@@ -1681,10 +1621,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       error(null, words.unsupportedSettingType(setting.key, setting.type, settingTypes.map(t => typeLabel(t, catalog))), undefined, undefined, 'definition.invalid')
   }
   /**
-   * The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, one State per entity, one
-   * When commanded per command, a State reading an entity given over a wire, a command no step handles, one When a frame
-   * is needed per camera, a camera no Show frame step shows a frame for, one Entity node per key, and the flows of Entity
-   * nodes (`entityScopes`). Mirrors `VisualGraphValidator` `GraphRules`.
+   * The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, an Entity node's state
+   * reading an entity given over a wire, a command no step handles, a camera no Show frame step shows a frame for, one
+   * Entity node per key, and the flows of Entity nodes (`entityScopes`). Mirrors `VisualGraphValidator` `GraphRules`.
    */
   function graphRules() {
     const byId = (a: GraphNode, b: GraphNode) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0
@@ -1698,19 +1637,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     for (const kind of singletons) for (const node of later(ofKind(kind), () => kind)) error(node.id, words.singleton(words.name(kindLabel(kind))), undefined, undefined, 'node.singleton')
     if (!entityGraph) return
     const choice = (node: GraphNode, key: string) => text(node.config[key])
-    const states = ofKind('entity_state').filter(n => definitionEntity(catalog, choice(n, 'entity')))
-    for (const node of later(states, n => choice(n, 'entity'))) error(node.id, words.stateDuplicate(choice(node, 'entity'), kindLabel('entity_state')), 'entity', undefined, 'state.duplicate')
-    const commands = ofKind('entity_command').filter(n => { const known = entityDomain(catalog, choice(n, 'entity'))?.commands; return record(known) && Object.hasOwn(known, choice(n, 'command')) })
-    for (const node of later(commands, n => [choice(n, 'entity'), choice(n, 'command')]))
-      error(node.id, words.commandDuplicate(choice(node, 'entity'), entityCommandLabel(catalog, text(definitionEntity(catalog, choice(node, 'entity'))?.domain), choice(node, 'command')), kindLabel('entity_command')), 'command', undefined, 'command.duplicate')
-    // A State is worked out again when an entity it reads changes; only an entity chosen in a reader can be watched.
-    // A reader is any value node with an input that takes only entity ids (built in, a library's or Custom C#), warned
-    // about for the first such input given over a wire, unless that wire comes from a Constant of an entity id type, whose
-    // entity is followed as chosen. The warning is the reader's own, on no input: a wire into it is allowed
-    // (connectData), at the cost it names.
-    // An Entity node whose state is worked out (a value of it is given) is such a State.
+    // An Entity node whose state is worked out (a value of it is given) works it out again when an entity it reads
+    // changes; only an entity chosen in a reader can be watched. A reader is any value node with an input that takes only
+    // entity ids (built in, a library's or Custom C#), warned about for the first such input given over a wire, unless that
+    // wire comes from a Constant of an entity id type, whose entity is followed as chosen. The warning is the reader's own,
+    // on no input: a wire into it is allowed (connectData), at the cost it names.
     const readers = new Set<string>()
-    for (const state of [...nodes.values()].filter(n => n.kind === 'entity_state' || nodeSpec(n.kind)?.declares === 'entity' && Object.keys(dataInputs(n)).some(p => supplied(n, p))).sort(byId))
+    for (const state of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity' && Object.keys(dataInputs(n)).some(p => supplied(n, p))).sort(byId))
       for (const reader of valueUpstream(state, nodes, data, pure)) {
         if (readers.has(reader.id)) continue
         const wired = Object.entries(dataInputs(reader)).find(([port, input]) => {
@@ -1721,9 +1654,6 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         readers.add(reader.id)
         errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(wired[1], wired[0])), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
       }
-    // One When a frame is needed per camera.
-    const frames = ofKind('camera_frame').filter(n => isCamera(catalog, choice(n, 'entity')))
-    for (const node of later(frames, n => choice(n, 'entity'))) error(node.id, words.frameDuplicate(cameraName(catalog, choice(node, 'entity')), kindLabel('camera_frame')), 'entity', undefined, 'camera.duplicate')
     // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
     // camera, a Show frame step that names it.
     const keys = new Map<string, GraphNode>()
@@ -1862,7 +1792,7 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12). An
   // Entity node names no other: it is named after its type, and keyed by that name past every key the definition has.
   const named = spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
-    : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(graph, kind, spec, definitionCatalog(catalog, graph)) : {}
+    : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, definitionCatalog(catalog, graph)) : {}
   // A Custom C# node is titled by its method until someone names it; a node that declares an entity is named by it.
   const label = spec.dynamicInputs === 'custom' || spec.declares ? {} : { label: spec.label }
   return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...label, config: { ...config, ...named } }] })
@@ -1872,17 +1802,10 @@ function ownEntity(graph: Graph, domain: string, catalog: VisualCatalogSnapshot)
   const name = entityTypeLabel(catalog, domain)
   return { name, key: freeKey(entityKey(name), definitionEntityKeys(graph, catalog)) }
 }
-/**
- * The definition's entity or setting a new step of the kind names: the only one it can name, else none. A When commanded
- * takes the first command of its entity that no other When commanded of the graph handles.
- */
-function prefilled(graph: Graph, kind: string, spec: NodeSpec, catalog: VisualCatalogSnapshot): Record<string, unknown> {
+/** The definition's entity or setting a new step of the kind names: the only one it can name, else none. */
+function prefilled(kind: string, spec: NodeSpec, catalog: VisualCatalogSnapshot): Record<string, unknown> {
   const entities = Object.hasOwn(spec.config, 'entity') ? entityChoices(catalog, kind) : []
-  if (entities.length === 1) {
-    const entity = entities[0].key
-    const handled = graph.nodes.filter(n => n.kind === 'entity_command' && n.config.entity === entity).map(n => text(n.config.command))
-    return withFirstStateValue(kind, withEntityCommand(kind, { entity }, catalog, handled), catalog)
-  }
+  if (entities.length === 1) return withFirstStateValue(kind, { entity: entities[0].key }, catalog)
   const settings = Object.hasOwn(spec.config, 'key') ? definitionSettings(catalog) : []
   return settings.length === 1 ? { key: settings[0].key } : {}
 }
@@ -1906,7 +1829,7 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   const after = analyzeGraph(next, catalog)
   // A Select property node that now has a value says which property to choose (or that its chosen one is missing): that
   // is about the node, not a problem the wire causes; one on the input the wire fills still refuses it.
-  // A reader that now gets its entity over a wire is warned that a State reading it cannot watch that entity: the
+  // A reader that now gets its entity over a wire is warned that an Entity node's state reading it cannot watch that entity: the
   // warning names the cost, and the wire is allowed. An Entity node given one of its state values asks for the others
   // its type needs: they can only be connected one at a time.
   const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||

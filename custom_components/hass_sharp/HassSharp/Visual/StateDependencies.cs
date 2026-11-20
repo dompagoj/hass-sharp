@@ -3,8 +3,8 @@ using System.Text.Json.Nodes;
 namespace HassSharp;
 
 /// <summary>
-/// The Home Assistant entities a State (<c>entity_state</c>) of an entity definition's graph reads, so that it is
-/// worked out again whenever one of them changes. A State has no flow: what it reads is in the graph, as the entity
+/// The Home Assistant entities the state of an Entity node of an entity definition's graph reads, so that it is
+/// worked out again whenever one of them changes. Its state flow has no steps: what it reads is in the graph, as the entity
 /// chosen on each value node upstream of it, such as Has state (<c>entity_is</c>) and Current state
 /// (<c>entity_current</c>).
 /// </summary>

@@ -1229,7 +1229,7 @@ it('blocks Save while a required option is empty or a number option is not a num
   expect(control(inspector(root), 'option:min').getAttribute('aria-invalid')).toBe('true')
   expect(button(root, 'Save').disabled).toBe(true)
   // Kept while another step is selected, and when the node is selected again (the step's adding then undone).
-  dropStep(root, 'State')
+  dropStep(root, 'Set state')
   await selectNode(root, level)
   expect(control(inspector(root), 'option:min').value).toBe('5,5')
   undo(root)
