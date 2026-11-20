@@ -6,60 +6,34 @@ using System.Text.RegularExpressions;
 namespace HassSharp;
 
 /// <summary>
-/// One problem of a definition: its code, its message, the key of the entity or setting it is about and, for an entity's
-/// option, the key of that option (null when it is about no one option); and the Entity node it is on, if any.
+/// One problem of a definition: its code, its message, the key of the setting it is about (for an Entity node's option,
+/// <c>option:&lt;option&gt;</c>) and, as <see cref="DefinitionDocument"/>'s option check words it, the key of that option
+/// (null when it is about no one option); and the Entity node it is on, if any.
 /// </summary>
 internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null, string? node = null);
 
 /// <summary>
-/// The checks of a graph definition's document, before its graph is looked at: its entities and settings, as
-/// <see cref="DefinitionGraph.Compose"/> puts them into the graph. A document that passes them composes to a definition
-/// the validator reads (it never answers <c>definition.invalid</c>).
+/// The checks of a graph definition's document, before its graph is looked at: its graph, the options of its Entity
+/// nodes and its settings, as <see cref="DefinitionGraph.Compose"/> puts the settings into the graph. A document that
+/// passes them composes to a definition the validator reads (it never answers <c>definition.invalid</c>).
 /// </summary>
 internal static class DefinitionDocument
 {
-    /// <summary>The entity description fields given as a text, each absent or null for none.</summary>
-    static readonly string[] TextFields = ["name", "icon", "deviceClass"];
-    /// <summary>The categories an entity can have, as <see cref="SharpEntity"/> describes them to Home Assistant.</summary>
-    static readonly string[] Categories = ["config", "diagnostic"];
-
     /// <summary>
-    /// Every problem of the document, in a fixed order: it has a graph and at least one entity, listed or declared by an
-    /// Entity node of its graph; each listed entity whose key no Entity node declares has a key of
-    /// its own of the form entity keys take, its description fields of their types, a domain the catalog's
-    /// <c>entityDomains</c> describes and only options that domain takes, each of its type, and every option it needs
-    /// (<see cref="Options"/>); each setting has a key of its own and a type a graph reads, and a value of that type or
-    /// none. An entity member none of these name is kept as given. An Entity node's options are checked as a listed
-    /// entity's when its type is one the catalog describes, each problem on the node, about <c>option:&lt;option&gt;</c>; the
-    /// rest of the node (its key, type, name and fields) is the validator's, which checks it on the node too.
+    /// Every problem of the document, in a fixed order: it has a graph with at least one Entity node; each Entity node of
+    /// a type the catalog's <c>entityDomains</c> describes has only options that type takes, each of its type, and every
+    /// option it needs (<see cref="Options"/>), each problem on the node, about <c>option:&lt;option&gt;</c> (the rest of the
+    /// node, its key, type, name and fields, is the validator's, which checks it on the node too); each setting has a key
+    /// of its own and a type a graph reads, and a value of that type or none.
     /// </summary>
-    /// <param name="error">Called with each problem's code, message, the key of the entity or setting it is about and, for an option, the option's key.</param>
+    /// <param name="error">Called with each problem's code, message, the setting or option it is about and, for an option, its Entity node.</param>
     internal static void Check(DefinitionBody body, JsonObject catalog, DefinitionProblem error)
     {
         if (body.Logic!.Graph == null) error("definition.graph", "Give the definition a graph: its logic is a graph of nodes, and none was given", null);
         var domains = catalog["entityDomains"] as JsonObject ?? [];
-        var entities = body.Entities ?? [];
         var nodes = body.Logic!.Graph is { } graph ? VisualNodeCatalog.DeclaredEntities(graph, catalog).ToList() : [];
-        var declared = nodes.Select(d => VisualNodeCatalog.Text(d.Entity, "key")).ToHashSet(StringComparer.Ordinal);
-        if (entities.Count == 0 && nodes.Count == 0) error("definition.entitiesRequired", "Add an entity: a definition built from nodes creates the entities it lists, and lists none", null);
-        var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (item, index) in entities.Select((e, i) => (e, i + 1)))
-        {
-            if (item is not JsonObject entity) { error("definition.entityKey", $"Entity {index} is not an entity: give each entity a key and a domain", null); continue; }
-            // An entity an Entity node declares is checked on its node.
-            if (IsText(entity["key"], out var declaredKey) && declared.Contains(declaredKey)) continue;
-            if (!IsText(entity["key"], out var key))
-            {
-                error("definition.entityKey", $"Give entity {index} a key, such as {(index == 1 ? "power" : "power_" + index)}", null);
-                continue;
-            }
-            if (!SharpEntity.KeyPattern().IsMatch(key)) error("definition.entityKey", $"Entity key {key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters", key);
-            if (!keys.Add(key) && repeated.Add(key)) error("definition.duplicateEntity", $"Two entities have the key {key}; give each a key of its own", key);
-            Fields(key, entity, error);
-            if (!IsText(entity["domain"], out var domain)) { error("definition.entityDomain", $"Choose a domain for entity {key}: {Or(domains.Select(d => d.Key))}", key); continue; }
-            if (domains[domain] is not JsonObject spec) { error("definition.entityDomain", $"Entity {key} has the domain {domain}, which a definition built from nodes cannot create; choose {Or(domains.Select(d => d.Key))}", key); continue; }
-            Options(key, entity, domain, spec, error);
-        }
+        // A document with no graph is told to give one, and no more.
+        if (body.Logic.Graph != null && nodes.Count == 0) error("definition.entitiesRequired", "Add an Entity node: an entity definition creates the entities on its canvas, and has none", null);
         // Options that are not an object are the node's Options field's problem, said by the validator.
         foreach (var (nodeId, entity) in nodes)
             if (IsText(entity["domain"], out var domain) && domains[domain] is JsonObject spec && (entity["options"] is JsonObject || !entity.ContainsKey("options")))
@@ -80,32 +54,17 @@ internal static class DefinitionDocument
     }
 
     /// <summary>
-    /// The problems of an entity's description fields, each absent or null for none: a name, icon and device class are
-    /// texts, the category is one Home Assistant has, and whether it is enabled by default is true or false (absent: it is).
-    /// </summary>
-    static void Fields(string key, JsonObject entity, DefinitionProblem error)
-    {
-        foreach (var field in TextFields)
-            if (!Fits("string", entity[field])) error("definition.entityField", $"The {field} of entity {key} is not a text; give it as a text, or leave it out", key);
-        if (entity["entityCategory"] is { } category && category.GetValueKind() != JsonValueKind.Null && !(IsText(category, out var text) && Categories.Contains(text, StringComparer.Ordinal)))
-            error("definition.entityField", $"The entityCategory of entity {key} is not one Home Assistant has; choose {Or(Categories)}, or leave it out", key);
-        if (entity.TryGetPropertyValue("enabledByDefault", out var enabled) && enabled?.GetValueKind() is not (JsonValueKind.True or JsonValueKind.False))
-            error("definition.entityField", $"The enabledByDefault of entity {key} is not true or false; give true or false, or leave it out", key);
-    }
-
-    /// <summary>
-    /// The problems of an entity's options: each must be one its domain takes, of that option's type (a list of texts
-    /// for an array, which is not empty) and, with an enum, one of its values; each option the domain marks required is
-    /// given; a number option is one Home Assistant takes (<see cref="Limit"/>) and within its rule's range when it has one
-    /// (<see cref="Range"/>); a <c>min</c> is below the <c>max</c>,
-    /// either given or its class's own; and a <c>pattern</c> is a regular expression. Each problem is about the entity's
-    /// key and the option's (a min not below the max is about the min), and words the option by its label and the entity
-    /// by its name, such as <c>Minimum of Target takes a number</c>; one about no single option (options that are not an
-    /// object) names no option. The panel words the ones it finds itself the same (<c>optionProblems</c> in
+    /// The problems of an entity's options, given as an object or not at all: each must be one its domain takes, of that
+    /// option's type (a list of texts for an array, which is not empty) and, with an enum, one of its values; each option
+    /// the domain marks required is given; a number option is one Home Assistant takes (<see cref="Limit"/>) and within its
+    /// rule's range when it has one (<see cref="Range"/>); a <c>min</c> is below the <c>max</c>, either given or its
+    /// class's own; and a <c>pattern</c> is a regular expression. Each problem is about the entity's key and the option's
+    /// (a min not below the max is about the min), and words the option by its label and the entity by its name, such as
+    /// <c>Minimum of Target takes a number</c>. The panel words the ones it finds itself the same (<c>optionProblems</c> in
     /// <c>frontend/src/entities/definitionEdits.ts</c>).
     /// </summary>
     /// <param name="key">The entity's key.</param>
-    /// <param name="entity">The entity, whose name the messages use when it has one.</param>
+    /// <param name="entity">The entity an Entity node declares, whose name the messages use when it has one.</param>
     /// <param name="domainId">The entity's domain, such as <c>number</c>.</param>
     /// <param name="spec">What the catalog's <c>entityDomains</c> says of that domain.</param>
     static void Options(string key, JsonObject entity, string domainId, JsonObject spec, DefinitionProblem error)
@@ -121,8 +80,6 @@ internal static class DefinitionDocument
         void Problem(string option, string message) => error("definition.entityOption", message, key, option);
         var options = given as JsonObject ?? [];
         var bounded = false;
-        if (given != null && given.GetValueKind() != JsonValueKind.Null && given is not JsonObject)
-        { error("definition.entityOption", $"The options of entity {key} are not a set of named values; give them as an object, such as {{\"unit\": \"W\"}}", key); return; }
         foreach (var (option, value) in options)
         {
             if (known[option] is not JsonObject rule)

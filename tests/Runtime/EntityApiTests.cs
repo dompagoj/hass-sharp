@@ -75,8 +75,49 @@ static class EntityApiTests
             await Scenario(api, home);
             await DerivesCustomPins(api);
             await RunsATriggerStep(api, home);
+            await AListAndAnOlderDocumentAreRefusedInWords(api, home);
         }
         finally { await api.UnloadAsync(); }
+    }
+
+    /// <summary>
+    /// A graph definition that lists its entities is refused by preview and save with the one sentence about
+    /// <c>entities</c>. A version 1 graph document from an earlier development build is skipped by list (logged once, with
+    /// the sentence), its read answers the sentence as its error, and delete at revision 0 removes it.
+    /// </summary>
+    static async Task AListAndAnOlderDocumentAreRefusedInWords(HassSharpManager api, EntityTestHome home)
+    {
+        const string listed = "Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each";
+        const string earlier = "saved by an earlier development build; delete it and build it again";
+        async Task<JsonNode> Entity(object request) => JsonNode.Parse(await api.EntityRequest(JsonSerializer.Serialize(request)))!;
+        JsonObject Door() => GraphDefinition("Door", Graph("Door", []), ("door", "binary_sensor"));
+        foreach (var entities in new[] { "[]", """[{"key":"door","domain":"binary_sensor"}]""", "null" })
+        {
+            var definition = Door();
+            definition["entities"] = JsonNode.Parse(entities);
+            var preview = (await Entity(new { operation = "preview", definition }))["result"]!;
+            var problems = preview["diagnostics"]!.AsArray().Select(d => $"{d!["code"]} {d["inputId"]} {d["message"]}").ToArray();
+            Check(!preview["valid"]!.GetValue<bool>() && problems.SequenceEqual([$"definition.entitiesNotAllowed entities {listed}"]), $"a preview with entities {entities}: " + preview.ToJsonString());
+            var save = await Entity(new { operation = "save", id = "door", expectedRevision = 0, definition });
+            Check(save["error"]?["code"]?.GetValue<string>() == "validation" && save["error"]!["detail"]!["diagnostics"]!.AsArray().Single()!["message"]!.GetValue<string>() == listed,
+                $"a save with entities {entities}: " + save.ToJsonString());
+        }
+        var saved = await Entity(new { operation = "save", id = "door", expectedRevision = 0, definition = Door() });
+        Check(saved["ok"]!.GetValue<bool>(), "without the key it saves: " + saved.ToJsonString());
+
+        var path = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "door.json");
+        var file = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        file["version"] = 1;
+        File.WriteAllText(path, file.ToJsonString());
+        var list = (await Entity(new { operation = "list" }))["result"]!.AsArray();
+        Check(!list.Any(d => d!["id"]!.GetValue<string>() == "door"), "list leaves it out: " + list.ToJsonString());
+        await Entity(new { operation = "list" });
+        Check(home.Logs().Count(l => l == $"Skipping entity definition {Path.GetFullPath(path)}: {earlier}") == 1, "it is logged once with the sentence: " + string.Join(" / ", home.Logs().Where(l => l.Contains("door.json", StringComparison.Ordinal))));
+        var read = await Entity(new { operation = "read", id = "door" });
+        Check(read.ToJsonString() == JsonSerializer.Serialize(new { version = 1, ok = false, error = new { code = "invalid_request", detail = earlier } }), "its read answers the sentence: " + read.ToJsonString());
+        var deleted = await Entity(new { operation = "delete", id = "door", expectedRevision = 0 });
+        Check(deleted["ok"]!.GetValue<bool>() && !File.Exists(path), "delete at revision 0 removes it: " + deleted.ToJsonString());
+        Console.WriteLine("PASS entity api: a listed entities key is refused in words, and a version 1 graph document is skipped, answered with why, and deleted at revision 0");
     }
 
     static JsonObject N(string id, string kind, object? config = null) => VisualExecutionTests.N(id, kind, config);

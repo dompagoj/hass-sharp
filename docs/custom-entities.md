@@ -18,8 +18,14 @@ from one of two places:
 
 Definitions live in the panel's **Entities** section, beside Automations and Node
 library. An assistant can build them too; see [Through MCP](#through-mcp).
-Definitions are stored in `.storage/hass_sharp/entities/`, one file each. The
-programming interface is in [the entity definitions API](backend/entity-definitions.md).
+Definitions are stored in `.storage/hass_sharp/entities/`, one file each, as
+document version 2. A definition built with steps by an earlier development build
+(document version 1) does not load and is not on the **Entities** page: the log
+says `Skipping entity definition …: saved by an earlier development build; delete it
+and build it again`. Remove that file (or delete the definition through MCP or the
+API with expected revision 0) and build it again. A class definition of version 1
+loads as it is. The programming interface is in
+[the entity definitions API](backend/entity-definitions.md).
 
 ## Build a derived sensor in the panel
 
@@ -126,7 +132,14 @@ Select an Entity node to edit it in the panel on the right: its name at the top
 Home Assistant device class, such as `motion` or `power`), an **Icon** (such as
 `mdi:motion-sensor`), a **Category** (None, Config or Diagnostic), **Enabled by
 default**, the options of its type and its **Run history** (see
-[Run history](#run-history)).
+[Run history](#run-history)). A required option, such as a select's **Options**,
+says it is missing once you leave its field; **Save** waits for it all the same.
+
+With no step selected, the panel on the right holds the definition's own form: its
+**Device** and its **Settings**, with any problem of the definition as a whole above
+them. On a phone, tap **Device and settings** at the bottom to open it. A problem of
+an entity is the Entity node's: choosing it in the **Problems** tab selects the node
+and puts the cursor in the field it is about.
 
 A sensor with options takes only one of them. With a unit, a state class or a device
 class other than date, timestamp and enum, it takes a number or a text that reads as
@@ -705,6 +718,9 @@ name the command pin under `port`:
 
 A command's values are the node's data outputs `command:<command>:<value>`, such as
 `command:turn_on:brightness` for a light, and a camera's frame flow starts at its
-`frame` output. A secret typed into a
+`frame` output. A definition it sends carries no `entities` list: one that does,
+even an empty one, is refused with "Entities are Entity nodes in the graph now:
+leave entities out and add one Entity node for each". A definition it reads lists
+them under `entities`, for reading only. A secret typed into a
 conversation reaches the assistant's provider: enter secrets in the panel instead.
 See [MCP authoring](mcp-authoring.md).

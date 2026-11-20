@@ -266,13 +266,13 @@ describe('the in-memory entities backend', () => {
     const codes = async (definition: DefinitionBody) => (await api.preview(definition)).diagnostics.map(d => d.code)
     expect(await codes({ ...body(), name: '' })).toEqual(['definition.name'])
     expect(await codes({ ...body(), name: 'x'.repeat(121) })).toEqual(['definition.name'])
-    // Neither an Entity node nor an entity listed.
+    // No Entity node.
     expect(await codes({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } } })).toEqual(['definition.entitiesRequired'])
-    // Listed entities (until Task 11 ends the list): each key checked, once.
-    expect(await codes({ ...body(), entities: [{ key: 'Door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }, { key: 'door', domain: 'binary_sensor' }] }))
-      .toEqual(['definition.entityKey', 'definition.duplicateEntity'])
-    const keyProblem = (await api.preview({ ...body(), entities: [{ key: 'Door', domain: 'binary_sensor' }] })).diagnostics[0]
-    expect(keyProblem).toEqual({ nodeId: null, message: 'Entity key Door is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters', severity: 3, startLine: null, startColumn: null, inputId: 'Door', portId: null, code: 'definition.entityKey' })
+    // A graph request that lists entities, even none, is told to use Entity nodes, before anything else is checked.
+    const listed = (entities: unknown) => ({ ...body(), entities } as unknown as DefinitionBody)
+    expect(await codes(listed([{ key: 'Door', domain: 'binary_sensor' }]))).toEqual(['definition.entitiesNotAllowed'])
+    expect(await codes(listed(null))).toEqual(['definition.entitiesNotAllowed'])
+    expect((await api.preview(listed([]))).diagnostics).toEqual([{ nodeId: null, message: 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', severity: 3, startLine: null, startColumn: null, inputId: 'entities', portId: null, code: 'definition.entitiesNotAllowed' }])
     // With no document problem, the seeded graph diagnostics.
     expect(await api.preview(body())).toMatchObject({ valid: false, diagnostics: [{ message: 'On is required' }] })
     expect(await codes(newGraphDefinition('x'.repeat(120)))).toEqual([undefined])

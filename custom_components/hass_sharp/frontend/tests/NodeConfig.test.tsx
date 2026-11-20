@@ -1026,7 +1026,7 @@ it('refuses a setting\'s comma where the person\'s number format writes a point,
 it('shows run history tracking a step\'s config does not hold as the entity definition\'s default', async () => {
   const graph: VisualGraph = {
     version: 5, name: 'Relay', edges: [],
-    definition: { entities: [], settings: [] },
+    definition: { settings: [] },
     nodes: [
       { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Relay', history: {} }, position: { x: 0, y: 0 } },
       { id: 'setup', kind: 'entity_setup', config: {}, position: { x: 0, y: 400 } },

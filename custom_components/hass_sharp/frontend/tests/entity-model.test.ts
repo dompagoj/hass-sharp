@@ -53,17 +53,22 @@ describe('editor graph', () => {
     for (const body of [motion(), plug()]) {
       const graph = editorGraph(body)
       expect(graph.name).toBe(body.name)
-      // Its entities are its Entity nodes: the editor lists none (Task 11 drops the empty list).
-      expect(graph.definition).toEqual({ entities: [], settings: body.settings, device: body.device })
+      // Its entities are its Entity nodes: the definition carries its settings and device only.
+      expect(graph.definition).toEqual({ settings: body.settings, device: body.device })
       expect(definitionBody(graph)).toEqual(body)
     }
   })
-  it('sends no entities list for a definition whose entities are Entity nodes', () => {
-    // Gap found converting these tests: the body always carried `entities: []`, which Task 11 refuses. The server
-    // reads no list as none, so only a definition that still lists an entity sends one.
-    for (const body of [motion(), plug()]) expect(definitionBody(editorGraph(body))).not.toHaveProperty('entities')
-    const listed: DefinitionBody = { ...motion(), entities: [{ key: 'door', domain: 'binary_sensor', name: 'Door' }] }
-    expect(definitionBody(editorGraph(listed)).entities).toEqual([{ key: 'door', domain: 'binary_sensor', name: 'Door' }])
+  it('the body sent to the server has no entities, and the editor ignores the answer\'s', () => {
+    const graph = editorGraph(newGraphDefinition('Front door'))
+    expect(definitionBody(graph)).not.toHaveProperty('entities')
+    expect(graph.definition).toEqual({ settings: [], device: null })
+    const answered = { ...definitionBody(graph), entities: [{ key: 'front_door', domain: 'binary_sensor' }] }
+    expect(editorGraph(answered as never).definition).toEqual({ settings: [], device: null })
+    // Nor does any other definition send one, whatever its read answer listed.
+    for (const body of [motion(), plug()]) {
+      expect(definitionBody(editorGraph(body))).not.toHaveProperty('entities')
+      expect(definitionBody(editorGraph({ ...body, entities: [{ key: 'door', domain: 'binary_sensor', name: 'Door' }] } as never))).toEqual(body)
+    }
   })
   it('keeps a stored via untouched', () => {
     const body = plug()
@@ -106,7 +111,7 @@ describe('editor graph', () => {
     expect(() => definitionBody(plugGraph())).toThrow(/definition/)
   })
 
-  // Decision 1: the device sits in graph.definition.device; the validator reads entities and settings, and of the device
+  // Decision 1: the device sits in graph.definition.device; the validator reads the settings, and of the device
   // only whether there is one (its entities then need no names), so a fixture's device is given with every member, and
   // none is given for a fixture without one (whose entities then need names: the `entity.name` cases).
   describe('validates as the shared fixture expects, with every member of the definition in it and the device when the fixture has one', () => {
@@ -123,9 +128,9 @@ describe('editor graph', () => {
       merge(catalog as unknown as Record<string, unknown>, patch)
       return catalog
     }
-    // A definition whose entities are not a list cannot be sent as a body; one without a list (its Entity nodes declare them) is sent with none.
+    // A definition whose settings are not a list cannot be sent as a body. Its entities are its Entity nodes: none sends a list.
     const entityCases = cases.filter(c => c.graph && typeof c.graph === 'object' && c.graph.definition && typeof c.graph.definition === 'object' && !Array.isArray(c.graph.definition) &&
-      (!Object.hasOwn(c.graph.definition, 'entities') || Array.isArray(c.graph.definition.entities)))
+      Array.isArray(c.graph.definition.settings))
     it('has the fixture entity cases', () => expect(entityCases.length).toBeGreaterThan(30))
     for (const fixture of entityCases) it(fixture.name, () => {
       const graph = structuredClone(fixture.graph)
@@ -135,11 +140,6 @@ describe('editor graph', () => {
         settings: graph.definition.settings.map((s: any, i: number) => i % 2
           ? { ...s, value: null, label: `Setting ${s.key}`, secret: true, hasValue: true }
           : { ...s, value: s.type === 'number' ? 4 : s.type === 'boolean' ? true : 'text', label: `Setting ${s.key}` }),
-        // Only a fixture of the listed form lists entities (a name it gives, null for none, stays, as a sentence that
-        // names an entity by its name says it); every other declares them by its Entity nodes and sends no list.
-        ...(Array.isArray(graph.definition.entities) ? {
-          entities: graph.definition.entities.map((e: any) => ({ ...e, name: Object.hasOwn(e, 'name') ? e.name : `Entity ${e.key}`, icon: 'mdi:flash', entityCategory: null, enabledByDefault: true })),
-        } : {}),
         logic: { kind: 'graph', graph: withoutDefinition(graph) },
       }
       const diagnostics = contract.validateGraph(editorGraph(body), fixture.catalogPatch ? patched(fixture.catalogPatch) : contract.nodeCatalog)
@@ -203,9 +203,9 @@ describe('secret settings', () => {
 })
 
 describe('a new graph definition', () => {
-  it('has one Entity node, a binary sensor named after it, and no listed entity, device, settings or other step', () => {
+  it('has one Entity node, a binary sensor named after it, and no device, settings or other step', () => {
     expect(newGraphDefinition('Any motion')).toEqual({
-      name: 'Any motion', device: null, settings: [], entities: [],
+      name: 'Any motion', device: null, settings: [],
       logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', edges: [], nodes: [{
         id: 'entity-1', kind: 'entity', position: { x: 60, y: 100 },
         config: { key: 'any_motion', domain: 'binary_sensor', name: 'Any motion', enabledByDefault: true, options: {}, history: {}, arguments: {} },

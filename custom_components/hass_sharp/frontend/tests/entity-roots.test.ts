@@ -9,7 +9,7 @@ import { add, empty, lit } from './visual-fixture'
 // The roots of an entity definition's graph start a flow as a trigger does. An Entity node is one: each command pin on
 // its right runs the steps connected to it, its state is worked out from its value inputs on the left, and nothing
 // runs into it. When started runs the steps after it.
-const relay = () => add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+const relay = () => add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
 const view = (graph: Graph, id: string) => buildNodeView(graph.nodes.find(n => n.id === id)!, { graph, catalog: nodeCatalog, diagnostics: [] })
 /** The labels of a card's right column, top to bottom. */
 const outputs = (graph: Graph, id: string) => view(graph, id).rows.flatMap(r => (r.output ? [r.output.label] : []))
@@ -105,7 +105,7 @@ it('quick-add from a command pin connects the new step to that pin', () => {
 it('quick-add from a command\'s value runs the new step from that command, as a step reading it must', () => {
   // Gap found converting the When commanded tests: a command's value output is drawn under its command (`group`), and
   // quick-add put the new step beside the node, out of every flow ("Connect Log into the flow to run it").
-  let graph = add(empty([], 'Lamp'), 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } })
+  let graph = add(empty('Lamp'), 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } })
   const pin = { nodeId: 'lamp', handle: 'data:command:turn_on:brightness', type: 'source' as const }
   const result = addConnected(graph, 'log', { x: 600, y: 0 }, pin, nodeCatalog, 'added')!
   expect(result.graph.edges.filter(e => e.target === 'added').map(e => (e.kind === 'data' ? `${e.sourcePort}->${e.targetPort}` : e.port)).sort())
@@ -123,7 +123,7 @@ it('quick-add from a command\'s value runs the new step from that command, as a 
 
 it('layout puts the bands of an entity graph\'s roots first, each led by its root', () => {
   // Steps no root runs (Delay → Stop) sit highest; the relay is below the Log its Turn on runs, When started in between.
-  let graph = add(empty([], 'Relay'), 'delay', 'wait', {}, { x: 0, y: 0 })
+  let graph = add(empty('Relay'), 'delay', 'wait', {}, { x: 0, y: 0 })
   graph = add(graph, 'stop', 'halt', {}, { x: 300, y: 0 })
   graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }, { x: 0, y: 900 })
   graph = add(graph, 'log', 'log', {}, { x: 300, y: 100 })
@@ -142,7 +142,7 @@ it('layout puts the bands of an entity graph\'s roots first, each led by its roo
 
 it('an Entity node\'s flows lay out from it, one after another', () => {
   // Turn on runs Log, Turn off runs Delay → Stop: both are right of the node, each in the column its depth gives it.
-  let graph = add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }, { x: 500, y: 500 })
+  let graph = add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }, { x: 500, y: 500 })
   graph = add(graph, 'log', 'log', {}, { x: 0, y: 0 })
   graph = add(graph, 'delay', 'wait', {}, { x: 0, y: 300 })
   graph = add(graph, 'stop', 'halt', {}, { x: 0, y: 600 })
@@ -158,7 +158,7 @@ it('an Entity node\'s flows lay out from it, one after another', () => {
 })
 
 it('an Entity node with only its state counts as a rooted flow in the layout', () => {
-  let graph = add(empty([], 'Relay'), 'delay', 'wait', {}, { x: 0, y: 0 })
+  let graph = add(empty('Relay'), 'delay', 'wait', {}, { x: 0, y: 0 })
   graph = add(graph, 'stop', 'halt', {}, { x: 300, y: 0 })
   graph = add(graph, 'entity_is', 'is', { entity: lit('entity_id', 'binary_sensor.motion') }, { x: 0, y: 600 })
   graph = add(graph, 'entity', 'door', { key: 'door', domain: 'binary_sensor', name: 'Door' }, { x: 300, y: 600 })
@@ -191,7 +191,7 @@ it('a new When commanded names the first command no other When commanded of the 
 
 /** A light that can be dimmed, and a cover, of one definition. */
 const lampGraph = () => {
-  const graph = add(empty([], 'Lamp'), 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } })
+  const graph = add(empty('Lamp'), 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp', options: { dimmable: true } })
   return add(graph, 'entity', 'blind', { key: 'blind', domain: 'cover', name: 'Blind' })
 }
 
@@ -232,7 +232,7 @@ it('an Entity node asks for the values its type requires once it has one, and a 
 })
 
 it('an Entity node of a button has no state pins, and a Set state of it is refused', () => {
-  let graph = add(empty([], 'Bell'), 'entity', 'bell', { key: 'bell', domain: 'button', name: 'Bell' })
+  let graph = add(empty('Bell'), 'entity', 'bell', { key: 'bell', domain: 'button', name: 'Bell' })
   graph = connectNodes(add(graph, 'set_entity_state', 'set', { entity: 'bell' }), 'bell', 'set', 'command:press')
   const bell = graph.nodes.find(n => n.id === 'bell')!
   expect(dataInputs(bell)).toEqual({})
@@ -245,7 +245,7 @@ it('an Entity node of a button has no state pins, and a Set state of it is refus
 })
 
 it('a camera\'s When a frame is needed starts a flow as a command does: no step order wire leads into it, and its steps run', () => {
-  let graph = add(empty([], 'Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
+  let graph = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
   graph = add(graph, 'camera_snapshot', 'snap', { entity: lit('entity_id:camera', 'camera.front') })
   graph = add(graph, 'show_frame', 'show')
   graph = connectNodes(connectNodes(graph, 'annotated', 'snap', 'frame'), 'snap', 'show')
@@ -262,7 +262,7 @@ it('a camera\'s When a frame is needed starts a flow as a command does: no step 
   expect(view(graph, 'show').unreachable).toBe(false)
   expect(canAddFor(graph, 'entity', { nodeId: 'snap', handle: 'next', type: 'source' }, nodeCatalog)).toBe(false)
   // Quick-add from its frame pin runs the new step when a frame is needed.
-  const fresh = add(empty([], 'Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
+  const fresh = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
   const added = addConnected(fresh, 'camera_snapshot', { x: 400, y: 0 }, { nodeId: 'annotated', handle: 'frame', type: 'source' }, nodeCatalog, 'snap')!
   expect(added.graph.edges).toMatchObject([{ source: 'annotated', target: 'snap', port: 'frame' }])
 })

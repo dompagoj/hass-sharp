@@ -30,29 +30,24 @@ internal sealed record HubFlow(string NodeId, string Port, string Method, string
 
 /// <summary>
 /// Between a stored entity definition and the graph its nodes are checked, generated and run as: the stored graph never
-/// has a <c>definition</c>; the document's entities and settings are composed into one for the validator and the
-/// generator, and taken out again before the graph is stored.
+/// has a <c>definition</c>; the document's settings, and whether it has a device, are composed into one for the
+/// validator and the generator, and taken out again before the graph is stored. Its entities are its Entity nodes.
 /// </summary>
 internal static class DefinitionGraph
 {
     /// <summary>
-    /// A copy of the definition's graph with <c>definition</c> = <c>{entities, settings}</c>: the document's entities as
-    /// it gives them, in its order, but those whose key an Entity node of the graph declares (the node's are its own, as
-    /// <see cref="VisualNodeCatalog.WithGraphTypes"/> merges them, and a stored document, or a read answer saved back,
-    /// lists them too: left out, the graph and the source it embeds are the same either way), and each setting's key and
-    /// type only. A setting's value, label and secret flag never reach the graph (nor the source it embeds in): a value
-    /// may be secret, and changing one must not change the source. A definition with a device has an empty <c>device</c>
-    /// object, which only says it has one (its entities then need no names). Any <c>definition</c> already in the graph is
-    /// replaced. Without a graph, the definition alone.
+    /// A copy of the definition's graph with <c>definition</c> = <c>{settings}</c>: each setting's key and type only. A
+    /// setting's value, label and secret flag never reach the graph (nor the source it embeds in): a value may be secret,
+    /// and changing one must not change the source. A definition with a device has an empty <c>device</c> object too,
+    /// which only says it has one (its entities then need no names). Its entities are the graph's Entity nodes, as
+    /// <see cref="VisualNodeCatalog.WithGraphTypes"/> derives them. Any <c>definition</c> already in the graph is replaced.
+    /// Without a graph, the definition alone.
     /// </summary>
     internal static JsonObject Compose(DefinitionBody body)
     {
         var graph = Decompose(body.Logic?.Graph ?? []);
-        var declared = VisualNodeCatalog.DeclaredEntities(graph, VisualNodeCatalog.Root).Select(d => VisualNodeCatalog.Text(d.Entity, "key")).ToHashSet(StringComparer.Ordinal);
-        var listed = (body.Entities ?? []).Where(e => !(e is JsonObject entity && entity["key"] is JsonValue k && k.TryGetValue<string>(out var key) && declared.Contains(key)));
         var definition = new JsonObject
         {
-            ["entities"] = new JsonArray([.. listed.Select(e => e?.DeepClone())]),
             ["settings"] = new JsonArray((body.Settings ?? []).Select(s => (JsonNode)new JsonObject { ["key"] = s?.Key, ["type"] = s?.Type }).ToArray()),
         };
         if (body.Device != null) definition["device"] = new JsonObject();
@@ -61,8 +56,8 @@ internal static class DefinitionGraph
     }
 
     /// <summary>
-    /// The entities of a composed graph (<see cref="Compose"/>), as a copy: the ones it lists whose key no Entity node
-    /// declares, then the ones its Entity nodes declare (<see cref="VisualNodeCatalog.WithGraphTypes"/>), the first of each key.
+    /// The entities of a composed graph (<see cref="Compose"/>), as a copy: the ones its Entity nodes declare
+    /// (<see cref="VisualNodeCatalog.WithGraphTypes"/>), the first of each key.
     /// </summary>
     internal static JsonArray Entities(JsonObject composed, VisualCatalogSnapshot snapshot) =>
         new([.. VisualNodeCatalog.DefinitionItems(VisualNodeCatalog.WithGraphTypes(snapshot.Root, composed), "entities").Select(e => e.DeepClone())]);

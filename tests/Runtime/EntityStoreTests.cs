@@ -98,8 +98,6 @@ static class EntityStoreTests
             ? Graph("Level", [N("k", "setting", new { key = "offset" }), level], D("k", "s", "value"))
             : Graph("Level", [N("k", "setting", new { key = "offset" }), N("h", through, new { arguments = new { } }), level], D("k", "h", "value"), D("h", "s", "value", "result"));
     }
-    /// <summary>A listed sensor of the key <c>level</c>, for the checks of a listed entity's own document.</summary>
-    static JsonArray LevelEntities(object? more = null) => [Entity("level", "sensor", more)];
     static JsonObject Hub(string id, string key, string domain, JsonObject? more = null, JsonObject? values = null) => VisualExecutionTests.Hub(id, key, domain, more, values);
     static JsonObject Flow(string hub, string port, string target) { var wire = VisualExecutionTests.Flow(hub, port, target); wire["id"] = $"{hub}:{port}:{target}"; return wire; }
     static string Method(string id) => VisualNodeCatalog.EffectiveTriggerMethod(new JsonObject { ["id"] = id });
@@ -125,13 +123,151 @@ static class EntityStoreTests
             (nameof(RootsListSetupCommandsAndStates), () => RootsListSetupCommandsAndStates(snapshot)),
             (nameof(ClassSettingsKeepTheirShape), () => ClassSettingsKeepTheirShape(snapshot)),
             (nameof(KeepIsNeverStored), () => KeepIsNeverStored(snapshot)),
-            (nameof(RebuiltRegeneratesAGraphDefinition), () => RebuiltRegeneratesAGraphDefinition(compiler)) })
+            (nameof(RebuiltRegeneratesAGraphDefinition), () => RebuiltRegeneratesAGraphDefinition(compiler)),
+            (nameof(ARequestThatListsEntitiesIsRefused), () => ARequestThatListsEntitiesIsRefused(snapshot)),
+            (nameof(AClassRequestKeepsItsOwnRefusal), () => AClassRequestKeepsItsOwnRefusal(snapshot)),
+            (nameof(ADefinitionWithoutAnEntityNodeAsksForOne), () => ADefinitionWithoutAnEntityNodeAsksForOne(snapshot)),
+            (nameof(ASaveWritesVersionTwoWithTheDerivedEntities), () => ASaveWritesVersionTwoWithTheDerivedEntities(snapshot)),
+            (nameof(AnOlderGraphDocumentSaysToBuildItAgain), () => AnOlderGraphDocumentSaysToBuildItAgain(snapshot)),
+            (nameof(AnOlderClassDocumentStillLoads), () => AnOlderClassDocumentStillLoads(snapshot)),
+            (nameof(ComposeGivesNoEntities), ComposeGivesNoEntities) })
             try { test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"Graph definitions: {failures.Count} failing:\n" + string.Join("\n", failures));
     }
 
     static string TempDirectory(string what) => Path.Combine(Path.GetTempPath(), $"entity-store-{what}-" + Guid.NewGuid());
+
+    internal const string ListedEntities = "Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each";
+    internal const string EarlierBuild = "saved by an earlier development build; delete it and build it again";
+
+    /// <summary>
+    /// A graph request that has an <c>entities</c> key, even an empty list, is refused with one problem about
+    /// <c>entities</c>, by the preview and by the save, which writes nothing.
+    /// </summary>
+    static void ARequestThatListsEntitiesIsRefused(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("listed");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            foreach (var (what, entities) in new (string, JsonArray)[] { ("an empty list", []), ("a list of one", MotionEntities()) })
+            {
+                var body = GraphBody(MotionGraph(), entities);
+                var preview = new DefinitionGenerator().Preview(body, snapshot);
+                Check(!preview.Valid && preview.Source == "" && preview.Diagnostics.Count == 1, $"{what}: one problem: " + Codes(preview));
+                Check(preview.Diagnostics[0] is { Severity: 3, NodeId: null, InputId: "entities", Code: "definition.entitiesNotAllowed" } && preview.Diagnostics[0].Message == ListedEntities,
+                    $"{what}: the refusal of a list: " + Codes(preview));
+                var refused = Throws<DefinitionValidationException>(() => store.Save("motion", body, 0, snapshot, "g1"), $"saving {what}");
+                Check(refused.Preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.Message}").SequenceEqual([$"definition.entitiesNotAllowed entities {ListedEntities}"]),
+                    $"{what}: the save answers the same one problem: " + Codes(refused.Preview));
+                Check(store.Read("motion") == null, $"{what}: nothing is written");
+            }
+            Check(new DefinitionGenerator().Preview(GraphBody(MotionGraph(), null), snapshot).Valid, "the same definition without the key is valid");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>A class request keeps its own rule and sentence: a list of entities is refused, an empty one is none.</summary>
+    static void AClassRequestKeepsItsOwnRefusal(VisualCatalogSnapshot snapshot)
+    {
+        var generator = new DefinitionGenerator();
+        var listed = generator.Preview(Body(entities: [Entity("relay", "switch")]), snapshot);
+        Check(listed.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.Message}").SequenceEqual(["definition.entitiesNotAllowed  A class definition's entities come from its code"]),
+            "a class definition's list is refused in its own words: " + Codes(listed));
+        Check(generator.Preview(Body(entities: []), snapshot).Valid, "an empty list is none for a class");
+    }
+
+    /// <summary>A graph definition without an Entity node is asked for one, about no input.</summary>
+    static void ADefinitionWithoutAnEntityNodeAsksForOne(VisualCatalogSnapshot snapshot)
+    {
+        var preview = new DefinitionGenerator().Preview(GraphBody(Graph("Empty", [N("setup", "entity_setup")]), null), snapshot);
+        Check(preview.Diagnostics.Select(d => $"{d.Code}|{d.InputId}|{d.NodeId}|{d.Message}").SequenceEqual(
+            ["definition.entitiesRequired|||Add an Entity node: an entity definition creates the entities on its canvas, and has none"]), "the one problem: " + Codes(preview));
+    }
+
+    /// <summary>The stored file is version 2 and lists the entities its Entity nodes declare.</summary>
+    static void ASaveWritesVersionTwoWithTheDerivedEntities(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("version");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            var saved = store.Save("motion", Motion(), 0, snapshot, "g1");
+            var file = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!;
+            Check(file["version"]!.GetValue<int>() == 2 && saved.Version == 2, "the file is version 2: " + file["version"]?.ToJsonString());
+            Check(JsonNode.DeepEquals(file["entities"], MotionEntities()), "it lists the node's entity: " + file["entities"]?.ToJsonString());
+            store.Save("plug", Body(), 0, snapshot, "g1");
+            Check(JsonNode.Parse(File.ReadAllText(store.FilePath("plug")))!["version"]!.GetValue<int>() == 2, "a class definition is saved at version 2 too");
+            Check(store.Read("motion")!.Body.Entities == null, "the body of a stored graph has no entities: a regeneration composes from the graph alone");
+            Check(store.Read("plug")!.Body.Entities == null, "a class definition's body has its own, none here");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>The definition's file rewritten with <paramref name="version"/>, as an earlier build wrote it.</summary>
+    static void Downgrade(EntityDefinitionStore store, string id, int version)
+    {
+        var json = JsonNode.Parse(File.ReadAllText(store.FilePath(id)))!.AsObject();
+        json["version"] = version;
+        File.WriteAllText(store.FilePath(id), json.ToJsonString(VisualStore.Json));
+    }
+
+    /// <summary>
+    /// A version 1 graph document, from an earlier development build, is skipped by List, says so when read (also in a
+    /// strict List), and is deleted at revision 0.
+    /// </summary>
+    static void AnOlderGraphDocumentSaysToBuildItAgain(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("older-graph");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            store.Save("motion", Motion(), 0, snapshot, "g1");
+            store.Save("plug", Body(), 0, snapshot, "g1");
+            Downgrade(store, "motion", 1);
+            Check(store.List().Select(d => d.Id).SequenceEqual(["plug"]), "List skips it: " + string.Join(", ", store.List().Select(d => d.Id)));
+            Check(Throws<JsonException>(() => store.Read("motion"), "reading it").Message == EarlierBuild, "reading it says why");
+            var strict = Throws<JsonException>(() => store.List(strict: true), "a strict List");
+            Check(strict.Message == $"Cannot read entity definition {Path.GetFullPath(store.FilePath("motion"))}: {EarlierBuild}", "a strict List names the file and says why: " + strict.Message);
+            Throws<VisualConflictException>(() => store.Delete("motion", 1), "deleting it at its revision");
+            store.Delete("motion", 0);
+            Check(!File.Exists(store.FilePath("motion")) && store.Ids().SequenceEqual(["plug"]), "revision 0 deletes it");
+            Check(store.Save("motion", Motion(), 0, snapshot, "g1") is { Version: 2, Revision: 1 }, "it is built again as a new definition");
+            // One with no Entity node is refused alike.
+            var empty = JsonNode.Parse(File.ReadAllText(store.FilePath("motion")))!.AsObject();
+            empty["version"] = 1; empty["logic"]!["graph"]!["nodes"] = new JsonArray(); empty["entities"] = MotionEntities();
+            File.WriteAllText(store.FilePath("listed"), empty.ToJsonString(VisualStore.Json).Replace("\"id\":\"motion\"", "\"id\":\"listed\"", StringComparison.Ordinal));
+            Check(Throws<JsonException>(() => store.Read("listed"), "reading a listed one").Message == EarlierBuild, "a version 1 graph document that lists its entities says the same");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>A version 1 class document is read and listed as it is.</summary>
+    static void AnOlderClassDocumentStillLoads(VisualCatalogSnapshot snapshot)
+    {
+        var directory = TempDirectory("older-class");
+        try
+        {
+            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
+            var saved = store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
+            Downgrade(store, "plug", 1);
+            Check(store.Read("plug") is { Version: 1, Revision: 1, Logic: { Kind: "class", Type: Plug } } read && read.Source == saved.Source && read.Settings[0].Value!.GetValue<string>() == "10.0.0.5",
+                "it reads back as it was");
+            Check(store.List().Select(d => d.Id).SequenceEqual(["plug"]), "it is listed");
+            Check(new DefinitionGenerator().Preview(store.Read("plug")!.Body, snapshot) is { Valid: true } preview && preview.Source == saved.Source, "it regenerates its source");
+            Check(store.Save("plug", store.Read("plug")!.Body, 1, snapshot, "g1").Version == 2, "saved again, it is version 2");
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>The composed definition is the settings (and a device marker): its entities are the graph's Entity nodes.</summary>
+    static void ComposeGivesNoEntities()
+    {
+        var composed = DefinitionGraph.Compose(GraphBody(MotionGraph(), null, [Typed("host", "string")]));
+        Check(composed["definition"] is JsonObject definition && !definition.ContainsKey("entities") && JsonNode.DeepEquals(definition["settings"], JsonNode.Parse("""[{"key":"host","type":"string"}]""")),
+            "the definition has settings and no entities: " + composed["definition"]?.ToJsonString());
+    }
 
     static void GraphDefinitionSavesAndReadsBack(VisualCatalogSnapshot snapshot)
     {
@@ -153,7 +289,7 @@ static class EntityStoreTests
             Check(!file.Contains("\"definition\"", StringComparison.Ordinal), "the file holds no composed definition: " + file);
             // The source embeds the graph with its definition composed from the document.
             var preview = new DefinitionGenerator().Preview(read.Body, snapshot);
-            Check(preview.Valid && preview.Source == saved.Source && preview.Graph?["definition"] is JsonObject definition && definition["entities"] is JsonArray { Count: 0 }
+            Check(preview.Valid && preview.Source == saved.Source && preview.Graph?["definition"] is JsonObject definition && !definition.ContainsKey("entities")
                 && JsonNode.DeepEquals(DefinitionGraph.Entities(preview.Graph, snapshot), MotionEntities())
                 && preview.Source.Contains(VisualGenerator.Pieces(preview.Graph.ToJsonString()), StringComparison.Ordinal) && preview.EmbeddedCatalog?["entityDomains"] is JsonObject,
                 "the read definition previews to the saved source, with the composed graph and its catalog");
@@ -171,9 +307,9 @@ static class EntityStoreTests
     }
 
     /// <summary>
-    /// A stored definition lists the entities its Entity nodes declare (a read answer has them), and Compose leaves a
-    /// listed entity of a node's key out: the stored document, and its read answer saved back, regenerate the source it
-    /// was saved with, so a restart has nothing to write again. A listed entity of another key is composed as given.
+    /// A stored definition lists the entities its Entity nodes declare (a read answer has them), but its body has none:
+    /// the stored document, and its read answer saved back without them, regenerate the source it was saved with, so a
+    /// restart has nothing to write again.
     /// </summary>
     static void AStoredGraphOfEntityNodesRegeneratesItsSavedSource(VisualCatalogSnapshot snapshot)
     {
@@ -184,14 +320,12 @@ static class EntityStoreTests
             var saved = store.Save("motion", GraphBody(MotionGraph(), null), 0, snapshot, "g1");
             var read = store.Read("motion")!;
             Check(JsonNode.DeepEquals(read.Entities, MotionEntities()), "the stored document lists the node's entity: " + read.Entities?.ToJsonString());
-            Check(JsonNode.DeepEquals(DefinitionGraph.Compose(read.Body), DefinitionGraph.Compose(GraphBody(read.Logic.Graph, null))),
-                "a listed entity of a node's key is left out of the composed graph: " + DefinitionGraph.Compose(read.Body)["definition"]?.ToJsonString());
+            Check(read.Body.Entities == null && JsonNode.DeepEquals(DefinitionGraph.Compose(read.Body), DefinitionGraph.Compose(GraphBody(read.Logic.Graph, null))),
+                "the stored document's body composes from its graph alone: " + DefinitionGraph.Compose(read.Body)["definition"]?.ToJsonString());
             var preview = new DefinitionGenerator().Preview(read.Body, snapshot);
             Check(preview.Valid && preview.Source == saved.Source, "the stored document regenerates the source it was saved with");
             Check(!store.RefreshDerived("motion", 1, preview.Source, preview.SourceMap, "g1"), "so regenerating it, as a restart does, writes nothing");
-            Check(store.Save("motion", read.Body, 1, snapshot, "g1").Source == saved.Source, "its read answer saved back has the same source");
-            var other = DefinitionGraph.Compose(GraphBody(MotionGraph(), [Entity("extra", "sensor"), Entity("any_motion", "binary_sensor")]));
-            Check(other["definition"]?["entities"]?.ToJsonString() == """[{"key":"extra","domain":"sensor"}]""", "a listed entity of another key is composed as given: " + other["definition"]?.ToJsonString());
+            Check(store.Save("motion", read.Body, 1, snapshot, "g1").Source == saved.Source, "its read answer saved back without its entities has the same source");
             Console.WriteLine("PASS entity store: a stored graph of Entity nodes, and its read answer saved back, regenerate the source it was saved with");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
@@ -204,7 +338,7 @@ static class EntityStoreTests
         var body = GraphBody(graph, null, [Typed("threshold", "number", "3"), Typed("host", "string")]);
         var composed = DefinitionGraph.Compose(body);
         Check(graph.ToJsonString() == before, "Compose leaves the body's graph as it was");
-        Check(JsonNode.DeepEquals(composed["definition"], JsonNode.Parse("""{"entities":[],"settings":[{"key":"threshold","type":"number"},{"key":"host","type":"string"}]}""")),
+        Check(JsonNode.DeepEquals(composed["definition"], JsonNode.Parse("""{"settings":[{"key":"threshold","type":"number"},{"key":"host","type":"string"}]}""")),
             "the definition is each setting's key and type, and lists no entity, its Entity node declaring it: " + composed["definition"]?.ToJsonString());
         Check(JsonNode.DeepEquals(DefinitionGraph.Entities(composed, VisualCatalogSnapshot.BuiltIn), MotionEntities()), "the composed graph's entities are its Entity node's: " + DefinitionGraph.Entities(composed, VisualCatalogSnapshot.BuiltIn).ToJsonString());
         Check(JsonNode.DeepEquals(DefinitionGraph.Decompose(composed), graph), "Decompose gives the graph back");
@@ -213,7 +347,7 @@ static class EntityStoreTests
         forged["definition"] = new JsonObject { ["entities"] = new JsonArray(Entity("evil", "switch")), ["settings"] = new JsonArray() };
         Check(JsonNode.DeepEquals(DefinitionGraph.Compose(body with { Logic = body.Logic with { Graph = forged } }), composed), "Compose replaces a definition the graph has");
         Check(JsonNode.DeepEquals(DefinitionGraph.Compose(body with { Logic = body.Logic with { Graph = DefinitionGraph.Decompose(composed) } }), composed), "composing a decomposed graph again gives the same graph");
-        Check(JsonNode.DeepEquals(DefinitionGraph.Compose(GraphBody(graph, null))["definition"], JsonNode.Parse("""{"entities":[],"settings":[]}""")), "no entities and no settings compose to empty lists");
+        Check(JsonNode.DeepEquals(DefinitionGraph.Compose(GraphBody(graph, null))["definition"], JsonNode.Parse("""{"settings":[]}""")), "no settings compose to an empty list, and the definition has no entities");
         Console.WriteLine("PASS entity store: Compose writes the document's settings into the graph beside its Entity nodes, and Decompose takes them out again");
     }
 
@@ -254,76 +388,62 @@ static class EntityStoreTests
             Check(diagnostic is { Severity: 3, NodeId: null } && diagnostic.Code == code && diagnostic.InputId == input && named.All(n => diagnostic.Message.Contains(n, StringComparison.Ordinal)),
                 $"{code}: expected input {input} and a message naming {string.Join(", ", named)}: {Codes(preview)}");
         }
-        // A listed entity's own checks, of a graph that has no node: a graph's entity is an Entity node, which the validator checks.
-        DefinitionBody With(params JsonObject[] entities) => GraphBody(Graph("Listed", []), [.. entities, Entity("any_motion", "binary_sensor")]);
-        DefinitionBody Level(object? more = null) => GraphBody(Graph("Listed", []), LevelEntities(more), [Typed("offset", "number")], "Level");
+        // An Entity node's options, the one problem on the node, about the option; a definition with a device, so the
+        // entity needs no name, and its commands with no step on them are warnings only.
+        void OnNode(DefinitionBody body, string option, params string[] named)
+        {
+            var preview = generator.Preview(body, snapshot);
+            var errors = preview.Diagnostics.Where(d => d.Severity == 3).ToList();
+            Check(!preview.Valid && preview.Source == "" && errors.Count == 1, $"option {option}: exactly one problem: " + Codes(preview));
+            Check(errors[0] is { NodeId: "e", PortId: null, Code: "definition.entityOption" } && errors[0].InputId == "option:" + option && named.All(n => errors[0].Message.Contains(n, StringComparison.Ordinal)),
+                $"option {option}: expected a message naming {string.Join(", ", named)}: {Codes(preview)}");
+        }
         DefinitionBody Settings(List<DefinitionSetting> settings) => GraphBody(LevelGraph(), null, settings, "Level");
 
         Only(GraphBody(Graph("Empty", []), null), "definition.entitiesRequired", null);
-        Only(GraphBody(Graph("Empty", []), []), "definition.entitiesRequired", null);
-        Only(GraphBody(null, MotionEntities()), "definition.graph", null);
-        Only(With(Entity("Bad Key", "binary_sensor")), "definition.entityKey", "Bad Key", "Bad Key");
-        Only(With(Entity("x" + new string('a', 40), "binary_sensor")), "definition.entityKey", "x" + new string('a', 40));
-        Only(With(new JsonObject { ["domain"] = "binary_sensor" }), "definition.entityKey", null);
-        Only(GraphBody(MotionGraph(), [JsonValue.Create("any_motion"), Entity("any_motion", "binary_sensor")]), "definition.entityKey", null);
-        Only(With(Entity("any_motion", "binary_sensor")), "definition.duplicateEntity", "any_motion", "any_motion");
-        Only(With(Entity("heater", "climate")), "definition.entityDomain", "heater", "heater", "climate", "binary_sensor", "sensor", "switch", "button", "number", "select", "text", "light", "cover");
-        Only(With(new JsonObject { ["key"] = "lamp" }), "definition.entityDomain", "lamp", "lamp");
-        Only(With(Entity("door", "binary_sensor", new { options = new { unit = "W" } })), "definition.entityOption", "door", "door", "unit");
-        Only(Level(new { options = new { stateClass = "sometimes" } }), "definition.entityOption", "level", "State class of ", "measurement");
-        Only(Level(new { options = new { unit = 5 } }), "definition.entityOption", "level", "Unit of ");
-        Only(Level(new { options = new { options = new object[] { "low", 1 } } }), "definition.entityOption", "level", "Options of ");
-        Only(Level(new { options = new { options = "low" } }), "definition.entityOption", "level", "Options of ");
-        Only(Level(new { options = new[] { "unit" } }), "definition.entityOption", "level", "level");
-        Only(Level(new { options = new { options = Array.Empty<string>() } }), "definition.entityOption", "level", "Options of level is an empty list; give it at least one text, or leave it out");
-        // The options of the other domains: numbers, true or false, those a domain needs, a min below the max, a pattern.
-        DefinitionBody One(string domain, object? options) => GraphBody(Graph("All", []), [Entity("e", domain, new { options })]);
-        Only(One("button", new { unit = "W" }), "definition.entityOption", "e", "Entity e has the option unit, but a button takes no options; remove it");
-        Only(One("number", new { min = "5" }), "definition.entityOption", "e", "Minimum of e takes a number");
-        Only(One("number", new { step = true }), "definition.entityOption", "e", "Step of e takes a number");
-        Only(One("number", new { mode = "dial" }), "definition.entityOption", "e", "Shown as of e takes one of auto, box, slider");
-        Only(One("number", new { min = 10, max = 5 }), "definition.entityOption", "e", "Minimum of e is 10, which is not below its maximum of 5");
-        Only(One("number", new { min = 2.5, max = 2.5 }), "definition.entityOption", "e", "Minimum of e is 2.5, which is not below its maximum of 2.5");
-        Only(One("text", new { min = 8, max = 4 }), "definition.entityOption", "e", "Shortest length of e is 8, which is not below its longest length of 4");
-        Only(One("number", new { min = 500 }), "definition.entityOption", "e", "Minimum of e is 500, which is not below its maximum of 100");
-        Only(One("text", new { max = -1 }), "definition.entityOption", "e", "Shortest length of e is 0, which is not below its longest length of -1");
-        Only(One("text", new { mode = "secret" }), "definition.entityOption", "e", "Shown as of e takes one of text, password");
-        Only(One("text", new { pattern = "([" }), "definition.entityOption", "e", "Pattern of e is not a regular expression");
-        Only(One("select", null), "definition.entityOption", "e", "Entity e needs options: a select cannot work without it");
-        Only(One("select", new { options = (string[]?)null }), "definition.entityOption", "e", "Entity e needs options: a select cannot work without it");
-        Only(One("select", new { options = Array.Empty<string>() }), "definition.entityOption", "e", "Options of e is an empty list; give it at least one text");
-        Check(!generator.Preview(One("select", new { options = Array.Empty<string>() }), snapshot).Diagnostics[0].Message.Contains("leave it out", StringComparison.Ordinal), "a list an entity needs is not one to leave out");
-        Only(One("select", new { options = new object[] { "a", 1 } }), "definition.entityOption", "e", "Options of e takes a list of texts");
+        Only(GraphBody(null, null), "definition.graph", null);
+        // The options of each type: of its type, those a type needs, a min below the max, a pattern.
+        OnNode(One("button", new { unit = "W" }), "unit", "Entity e has the option unit, but a button takes no options; remove it");
+        OnNode(One("binary_sensor", new { unit = "W" }), "unit", "unit");
+        OnNode(One("sensor", new { stateClass = "sometimes" }), "stateClass", "State class of ", "measurement");
+        OnNode(One("sensor", new { unit = 5 }), "unit", "Unit of ");
+        OnNode(One("sensor", new { options = new object[] { "low", 1 } }), "options", "Options of ");
+        OnNode(One("sensor", new { options = "low" }), "options", "Options of ");
+        OnNode(One("sensor", new { options = Array.Empty<string>() }), "options", "Options of e is an empty list; give it at least one text, or leave it out");
+        OnNode(One("number", new { min = "5" }), "min", "Minimum of e takes a number");
+        OnNode(One("number", new { step = true }), "step", "Step of e takes a number");
+        OnNode(One("number", new { mode = "dial" }), "mode", "Shown as of e takes one of auto, box, slider");
+        OnNode(One("number", new { min = 10, max = 5 }), "min", "Minimum of e is 10, which is not below its maximum of 5");
+        OnNode(One("number", new { min = 2.5, max = 2.5 }), "min", "Minimum of e is 2.5, which is not below its maximum of 2.5");
+        OnNode(One("text", new { min = 8, max = 4 }), "min", "Shortest length of e is 8, which is not below its longest length of 4");
+        OnNode(One("number", new { min = 500 }), "min", "Minimum of e is 500, which is not below its maximum of 100");
+        OnNode(One("text", new { max = -1 }), "min", "Shortest length of e is 0, which is not below its longest length of -1");
+        OnNode(One("text", new { mode = "secret" }), "mode", "Shown as of e takes one of text, password");
+        OnNode(One("text", new { pattern = "([" }), "pattern", "Pattern of e is not a regular expression");
+        OnNode(One("select", null), "options", "Entity e needs options: a select cannot work without it");
+        OnNode(One("select", new { options = (string[]?)null }), "options", "Entity e needs options: a select cannot work without it");
+        OnNode(One("select", new { options = Array.Empty<string>() }), "options", "Options of e is an empty list; give it at least one text");
+        Check(!generator.Preview(One("select", new { options = Array.Empty<string>() }), snapshot).Diagnostics.Single(d => d.Severity == 3).Message.Contains("leave it out", StringComparison.Ordinal), "a list an entity needs is not one to leave out");
+        OnNode(One("select", new { options = new object[] { "a", 1 } }), "options", "Options of e takes a list of texts");
         // What Home Assistant takes: a step above 0, a text of 0 to 255 characters, a length a whole number.
         var limits = new List<string>();
-        void Limit(DefinitionBody body, params string[] messages)
+        void Limit(DefinitionBody body, params (string Option, string Message)[] messages)
         {
-            var got = generator.Preview(body, snapshot).Diagnostics.Where(d => d.Severity == 3).Select(d => $"{d.Code} {d.InputId} {d.Message}").ToList();
-            var want = messages.Select(m => $"definition.entityOption e {m}").ToList();
+            var got = generator.Preview(body, snapshot).Diagnostics.Where(d => d.Severity == 3).Select(d => $"{d.Code} {d.NodeId} {d.InputId} {d.Message}").ToList();
+            var want = messages.Select(m => $"definition.entityOption e option:{m.Option} {m.Message}").ToList();
             if (!got.SequenceEqual(want)) limits.Add($"expected [{string.Join(" | ", want)}], got [{string.Join(" | ", got)}]");
         }
-        Limit(One("number", new { step = 0 }), "Step of e takes a number above 0, not 0");
-        Limit(One("number", new { step = -0.5 }), "Step of e takes a number above 0, not -0.5");
-        Limit(One("text", new { max = 300 }), "Longest length of e takes 255 or less, as Home Assistant keeps at most 255 characters, not 300");
-        Limit(One("text", new { min = -1 }), "Shortest length of e takes 0 or more, not -1");
-        Limit(One("text", new { min = 0.5 }), "Shortest length of e takes a whole number, not 0.5");
-        Limit(One("text", new { min = 0.5, max = 0.9 }), "Shortest length of e takes a whole number, not 0.5", "Longest length of e takes a whole number, not 0.9");
+        Limit(One("number", new { step = 0 }), ("step", "Step of e takes a number above 0, not 0"));
+        Limit(One("number", new { step = -0.5 }), ("step", "Step of e takes a number above 0, not -0.5"));
+        Limit(One("text", new { max = 300 }), ("max", "Longest length of e takes 255 or less, as Home Assistant keeps at most 255 characters, not 300"));
+        Limit(One("text", new { min = -1 }), ("min", "Shortest length of e takes 0 or more, not -1"));
+        Limit(One("text", new { min = 0.5 }), ("min", "Shortest length of e takes a whole number, not 0.5"));
+        Limit(One("text", new { min = 0.5, max = 0.9 }), ("min", "Shortest length of e takes a whole number, not 0.5"), ("max", "Longest length of e takes a whole number, not 0.9"));
         Limit(One("text", new { min = 0, max = 255 }));
         Limit(One("number", new { min = -0.5, max = 0.5, step = 0.25 }));
         if (limits.Count > 0) throw new Exception($"option limits: {limits.Count} failing:\n" + string.Join("\n", limits));
-        Only(One("light", new { dimmable = "yes" }), "definition.entityOption", "e", "Can be dimmed of e takes true or false");
-        Only(One("cover", new { positionable = 1 }), "definition.entityOption", "e", "Has a position of e takes true or false");
-        Only(Level(new { name = 5 }), "definition.entityField", "level", "level", "name");
-        Only(Level(new { icon = true }), "definition.entityField", "level", "level", "icon");
-        Only(Level(new { deviceClass = new { kind = "power" } }), "definition.entityField", "level", "level", "deviceClass");
-        Only(Level(new { entityCategory = "sensor" }), "definition.entityField", "level", "level", "entityCategory", "config", "diagnostic");
-        Only(Level(new { entityCategory = 1 }), "definition.entityField", "level", "level", "entityCategory");
-        Only(Level(new { enabledByDefault = "yes" }), "definition.entityField", "level", "level", "enabledByDefault");
-        Only(Level(new JsonObject { ["enabledByDefault"] = null }), "definition.entityField", "level", "level", "enabledByDefault");
-        Check(generator.Preview(Level(new { name = (string?)null, icon = (string?)null, deviceClass = (string?)null, entityCategory = (string?)null, comment = 7 }), snapshot).Valid,
-            "null description fields are none, and a member no check names is kept as given");
-        foreach (var category in new[] { "config", "diagnostic" })
-            Check(generator.Preview(Level(new { entityCategory = category, enabledByDefault = false }), snapshot).Valid, $"the category {category} is accepted");
+        OnNode(One("light", new { dimmable = "yes" }), "dimmable", "Can be dimmed of e takes true or false");
+        OnNode(One("cover", new { positionable = 1 }), "positionable", "Has a position of e takes true or false");
         Only(Settings([Typed("offset", null)]), "definition.settingType", "offset", "offset");
         Only(Settings([Typed("offset", "integer")]), "definition.settingType", "offset", "offset", "integer");
         Only(Settings([Typed("offset", "number", "\"x\"")]), "definition.settingType", "offset", "offset");
@@ -334,21 +454,34 @@ static class EntityStoreTests
         Only(Settings([Typed("offset", "number"), Typed(" ", "number")]), "definition.settingKey", null);
         Only(Settings([Typed("offset", "number"), null!]), "definition.settingKey", null);
         Check(!generator.Preview(Body(kind: "graph", type: null), snapshot).Diagnostics.Any(d => d.Code == "definition.graphUnsupported"), "definition.graphUnsupported is gone");
-        Console.WriteLine("PASS entity store: each problem of a graph definition's document gives its code, at the entity or setting it names");
+        Console.WriteLine("PASS entity store: each problem of a graph definition's document gives its code, at the Entity node option or setting it names");
 
         // The document's problems come first: the graph is not checked against a definition that would only repeat them.
-        var both = generator.Preview(GraphBody(MotionGraph(), [Entity("door", "binary_sensor"), Entity("door", "binary_sensor")]), snapshot);
-        Check(both.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.duplicateEntity"]), "only the document's problem is reported: " + Codes(both));
-        var many = generator.Preview(GraphBody(MotionGraph(), [Entity("Bad", "climate"), Entity("a", "sensor", new { options = new { color = "red" } })], [Typed("t", "date", "1"), Typed("t", "number")], name: ""), snapshot);
-        Check(many.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entityKey", "definition.entityDomain", "definition.entityOption", "definition.settingType", "definition.duplicateSetting"]),
-            "every problem of the document is reported, in a fixed order: " + Codes(many));
+        var many = generator.Preview(GraphBody(Graph("Many", [Hub("e", "e", "sensor", new JsonObject { ["options"] = new JsonObject { ["color"] = "red" } }), N("log", "log", new { value = Lit("string", "Ran") })]),
+            null, [Typed("t", "date", "1"), Typed("t", "number")], name: ""), snapshot);
+        Check(many.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entityOption", "definition.settingType", "definition.duplicateSetting"]),
+            "every problem of the document is reported, in a fixed order, and none of the graph's: " + Codes(many));
         Console.WriteLine("PASS entity store: a document with problems gets those alone, every one in a fixed order");
     }
 
     /// <summary>
+    /// A definition with a device whose one Entity node <c>e</c>, of no name, is of the type <paramref name="domain"/> with
+    /// <paramref name="options"/> (none when null).
+    /// </summary>
+    static DefinitionBody One(string domain, object? options)
+    {
+        var hub = Hub("e", "e", domain);
+        var config = hub["config"]!.AsObject();
+        config.Remove("name");
+        if (options == null) config.Remove("options");
+        else config["options"] = JsonSerializer.SerializeToNode(options);
+        return GraphBody(Graph("One", [hub]), null) with { Device = new DefinitionDevice(null, null, null, null, null, null, null) };
+    }
+
+    /// <summary>
     /// Each case of tests/fixtures/entity-option-problems.json, which the panel's tests read too: the problems of one
-    /// entity's options, each at the entity (<c>inputId</c>) and the option it is about (<c>portId</c>), in the labels'
-    /// words, and with that option in the JSON the API answers.
+    /// Entity node's options, each on the node and about its option (<c>option:&lt;option&gt;</c>), in the labels' words,
+    /// and with that input in the JSON the API answers.
     /// </summary>
     static void OptionProblemsNameTheirOption(VisualCatalogSnapshot snapshot)
     {
@@ -360,25 +493,22 @@ static class EntityStoreTests
             var entity = new JsonObject { ["key"] = item["key"]!.DeepClone(), ["domain"] = item["domain"]!.DeepClone() };
             if (item["name"] is { } name) entity["name"] = name.DeepClone();
             if (item.ContainsKey("options")) entity["options"] = item["options"]?.DeepClone();
-            // A case marked node gives the entity as an Entity node, whose problems are on it, about option:<option>; the
-            // graph's own problems (it has no step, and may have no name) are not the case's.
-            var node = item["node"]?.GetValue<bool>() == true;
-            var preview = generator.Preview(node ? GraphBody(Graph("Options", [new JsonObject { ["id"] = "e", ["kind"] = "entity", ["config"] = entity }]), null) : GraphBody(Graph("Options", []), [entity]), snapshot);
-            var diagnostics = preview.Diagnostics.Where(d => !node || d.Code == "definition.entityOption").ToList();
+            // The graph's own problems (it has no step, and may have no name) are not the case's.
+            var preview = generator.Preview(GraphBody(Graph("Options", [new JsonObject { ["id"] = "e", ["kind"] = "entity", ["config"] = entity }]), null), snapshot);
+            var diagnostics = preview.Diagnostics.Where(d => d.Code == "definition.entityOption").ToList();
             var got = diagnostics.Select(d => $"{d.Code} {d.InputId} {d.PortId ?? "null"} {d.NodeId ?? "null"} {d.Message}").ToArray();
-            var wanted = item["problems"]!.AsArray().OfType<JsonObject>().Select(w => (Want: w, Input: node ? "option:" + w["portId"]!.GetValue<string>() : w["inputId"]?.GetValue<string>(),
-                Port: node ? null : w["portId"]?.GetValue<string>(), Node: node ? "e" : null)).ToArray();
-            bool Matches(VisualDiagnostic d, (JsonObject Want, string? Input, string? Port, string? Node) w) => d.Code == w.Want["code"]!.GetValue<string>() && d.InputId == w.Input
-                && d.PortId == w.Port && d.NodeId == w.Node && d.Severity == 3
+            var wanted = item["problems"]!.AsArray().OfType<JsonObject>().Select(w => (Want: w, Input: "option:" + w["option"]!.GetValue<string>())).ToArray();
+            bool Matches(VisualDiagnostic d, (JsonObject Want, string Input) w) => d.Code == w.Want["code"]!.GetValue<string>() && d.InputId == w.Input
+                && d.PortId == null && d.NodeId == "e" && d.Severity == 3
                 && (w.Want["message"] is { } message ? d.Message == message.GetValue<string>() : d.Message.StartsWith(w.Want["messageStartsWith"]!.GetValue<string>(), StringComparison.Ordinal));
             if (diagnostics.Count != wanted.Length || !diagnostics.Zip(wanted).All(pair => Matches(pair.First, pair.Second)))
                 failures.Add($"{item["what"]}: expected {string.Join(" | ", wanted.Select(w => w.Want.ToJsonString()))}, got {string.Join(" | ", got)}");
-            if (node && (preview.Valid || preview.Source != ""))
+            if (preview.Valid || preview.Source != "")
                 failures.Add($"{item["what"]}: a problem on a node leaves the preview invalid, with no source");
-            // The preview and save answers serialize the diagnostics as they are: the option goes out as portId.
+            // The preview and save answers serialize the diagnostics as they are: the option goes out as the input.
             var answered = JsonSerializer.SerializeToNode(diagnostics, VisualStore.Json)!.AsArray();
-            if (!answered.OfType<JsonObject>().Zip(wanted).All(pair => pair.First.ContainsKey("portId") && pair.First["portId"]?.ToJsonString() == (pair.Second.Port == null ? null : JsonValue.Create(pair.Second.Port).ToJsonString())))
-                failures.Add($"{item["what"]}: the answer's portId: {answered.ToJsonString()}");
+            if (!answered.OfType<JsonObject>().Zip(wanted).All(pair => pair.First["inputId"]?.GetValue<string>() == pair.Second.Input && pair.First["nodeId"]?.GetValue<string>() == "e"))
+                failures.Add($"{item["what"]}: the answer's inputId and nodeId: {answered.ToJsonString()}");
         }
         if (failures.Count > 0) throw new Exception($"{failures.Count} of {cases.Count} option problem cases failing:\n" + string.Join("\n", failures));
         Console.WriteLine($"PASS entity store: each of {cases.Count} option problems of the shared fixture is at its entity and option, in the labels' words");
@@ -433,26 +563,33 @@ static class EntityStoreTests
     static void ValidDocumentsAreValidDefinitions(VisualCatalogSnapshot snapshot)
     {
         var generator = new DefinitionGenerator();
+        // Entity nodes, one per entity, each keyed and named by its key, with its own settings.
+        static DefinitionBody Nodes(params JsonObject[] entities) => GraphBody(Graph("All", [.. entities.Select(e =>
+        {
+            var hub = Hub(e["key"]!.GetValue<string>(), e["key"]!.GetValue<string>(), e["domain"]!.GetValue<string>());
+            foreach (var (name, value) in e) hub["config"]![name] = value?.DeepClone();
+            return hub;
+        })]), null);
         var documents = new List<(string What, DefinitionBody Body)>
         {
             ("the acceptance definition", Motion()),
-            ("no graph nodes", GraphBody(Graph("Nothing yet", []), [Entity("a", "binary_sensor"), Entity("b", "sensor"), Entity("c", "switch")])),
-            ("every entity field", GraphBody(Graph("All", []), [Entity("a", "sensor", new { name = "A", deviceClass = "power", icon = "mdi:flash", entityCategory = "diagnostic", enabledByDefault = false,
-                options = new { unit = "W", stateClass = "total_increasing", options = new[] { "low", "high" } } })])),
-            ("options left null", GraphBody(Graph("All", []), [Entity("a", "sensor", new { options = new { unit = (string?)null } })])),
-            ("no options", GraphBody(Graph("All", []), [Entity("a", "switch", new { options = (object?)null })])),
-            ("one entity of each type, every option", GraphBody(Graph("All", []), [
+            ("Entity nodes and no other step", Nodes(Entity("a", "binary_sensor"), Entity("b", "sensor"), Entity("c", "switch"))),
+            ("every entity field", Nodes(Entity("a", "sensor", new { name = "A", deviceClass = "power", icon = "mdi:flash", entityCategory = "diagnostic", enabledByDefault = false,
+                options = new { unit = "W", stateClass = "total_increasing", options = new[] { "low", "high" } } }))),
+            ("the config category", Nodes(Entity("a", "sensor", new { entityCategory = "config" }))),
+            ("options left null", Nodes(Entity("a", "sensor", new { options = new { unit = (string?)null } }))),
+            ("one entity of each type, every option", Nodes(
                 Entity("bell", "button", new { options = new { } }),
                 Entity("target", "number", new { options = new { min = 5, max = 30.5, step = 0.5, mode = "slider", unit = "C" } }),
                 Entity("mode", "select", new { options = new { options = new[] { "low", "high" } } }),
                 Entity("code", "text", new { options = new { min = 0, max = 8, pattern = "^[0-9]*$", mode = "password" } }),
                 Entity("lamp", "light", new { options = new { dimmable = true } }),
-                Entity("blind", "cover", new { options = new { positionable = false } })])),
-            ("one entity of each type, no options but those needed", GraphBody(Graph("All", []), [Entity("bell", "button"), Entity("target", "number"),
-                Entity("mode", "select", new { options = new { options = new[] { "low" } } }), Entity("code", "text"), Entity("lamp", "light"), Entity("blind", "cover")])),
-            ("a min alone, a max alone", GraphBody(Graph("All", []), [Entity("low", "number", new { options = new { min = 99.5 } }), Entity("high", "text", new { options = new { max = 1, min = (int?)null } })])),
+                Entity("blind", "cover", new { options = new { positionable = false } }))),
+            ("one entity of each type, no options but those needed", Nodes(Entity("bell", "button"), Entity("target", "number"),
+                Entity("mode", "select", new { options = new { options = new[] { "low" } } }), Entity("code", "text"), Entity("lamp", "light"), Entity("blind", "cover"))),
+            ("a min alone, a max alone", Nodes(Entity("low", "number", new { options = new { min = 99.5 } }), Entity("high", "text", new { options = new { max = 1, min = (int?)null } }))),
             ("every setting type", GraphBody(LevelGraph(), null, [Typed("offset", "number", "1.5"), Typed("host", "string", "\"a\"", label: "Host", secret: true), Typed("eco", "boolean", "false"), Typed("blank", "string", "null")], "Level")),
-            ("a key of 40 characters", GraphBody(Graph("All", []), [Entity("a" + new string('_', 39), "binary_sensor")])),
+            ("a key of 40 characters", Nodes(Entity("a" + new string('_', 39), "binary_sensor"))),
             ("an entity and a setting of one key", GraphBody(LevelGraph(), null, [Typed("offset", "number"), Typed("level", "string")], "Level")),
         };
         foreach (var (what, body) in documents)
@@ -611,7 +748,7 @@ static class EntityStoreTests
     }
 
     /// <summary>
-    /// A class definition's stored file, byte for byte apart from its save time, as phase 1 wrote it: its settings have
+    /// A class definition's stored file, byte for byte apart from its save time, as phase 1 wrote it but for its version, 2: its settings have
     /// no label, type or secret, and a label, type or secret a client sends with them is not stored.
     /// </summary>
     static void ClassDefinitionFilesAreUnchanged(VisualCatalogSnapshot snapshot)
@@ -626,7 +763,7 @@ static class EntityStoreTests
                 "public static class SharpDefinition { public static object Create() => new global::NodeLib.ShellyPlug(); }",
                 "// NodeLibrarySource \"shelly\" revision 1",
                 NodeLibraryCompiler.WrapSource(EntityTypeTests.Shelly)) + "\n";
-            string Expected(string id) => "{\"version\":1,\"id\":\"" + id + "\",\"revision\":1,\"name\":\"Kitchen plug\","
+            string Expected(string id) => "{\"version\":2,\"id\":\"" + id + "\",\"revision\":1,\"name\":\"Kitchen plug\","
                 + "\"device\":{\"manufacturer\":\"Shelly\",\"model\":\"Plug S\",\"swVersion\":null,\"hwVersion\":null,\"configurationUrl\":null,\"suggestedArea\":\"Kitchen\",\"via\":null},"
                 + "\"settings\":[{\"key\":\"Host\",\"value\":\"10.0.0.5\"},{\"key\":\"Token\",\"value\":null}],\"entities\":null,"
                 + "\"logic\":{\"kind\":\"class\",\"type\":\"" + Plug + "\",\"graph\":null},"
@@ -641,7 +778,7 @@ static class EntityStoreTests
                 return json.ToJsonString(VisualStore.Json);
             }
             store.Save("plug9", Body(settings: settings), 0, snapshot, "g1");
-            Check(Stored("plug9") == Expected("plug9"), "a class definition's file is as phase 1 wrote it:\n" + Stored("plug9") + "\n" + Expected("plug9"));
+            Check(Stored("plug9") == Expected("plug9"), "a class definition's file is as phase 1 wrote it, at version 2:\n" + Stored("plug9") + "\n" + Expected("plug9"));
             Check(File.ReadAllText(store.FilePath("plug9")).Replace(JsonNode.Parse(File.ReadAllText(store.FilePath("plug9")))!["savedUtc"]!.ToJsonString(), "\"SAVED\"") == Expected("plug9"),
                 "the file's own bytes match too");
             Console.WriteLine("PASS entity store: a class definition's stored file is byte-identical to phase 1's apart from its save time");

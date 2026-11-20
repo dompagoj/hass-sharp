@@ -60,6 +60,7 @@ static class EntityGraphTests
             (nameof(SecretSettingsAreMaskedInEveryAnswer), SecretSettingsAreMaskedInEveryAnswer),
             (nameof(ASaveKeepsASecretItWasNotGiven), ASaveKeepsASecretItWasNotGiven),
             (nameof(AnAnswerSavedBackKeepsItsSecrets), AnAnswerSavedBackKeepsItsSecrets),
+            (nameof(AnOlderClassDocumentStillLoadsAndRuns), AnOlderClassDocumentStillLoadsAndRuns),
             (nameof(ThePreviewAcceptsAKeptSecret), ThePreviewAcceptsAKeptSecret),
             (nameof(NoProblemQuotesASecret), NoProblemQuotesASecret),
             (nameof(TheHomeListSummarisesRuns), TheHomeListSummarisesRuns),
@@ -170,24 +171,19 @@ static class EntityGraphTests
     /// entities are registered in); it takes the listed entity's type, name and settings, named by its key when it has no
     /// name and the definition no device. Each <see cref="Command"/> or <see cref="FrameNeeded"/> stand-in of its key is
     /// that node's pin: the wires out of it start at the pin, a data wire at the pin's value. A stand-in's
-    /// <c>trackHistory</c>, and a State's, are the node's <c>history</c> switches. A listed entity whose Entity node is
-    /// already complete stays listed: only a test that saves a read answer back, with its derived entities, sends one. A
-    /// definition of no graph is sent as it is.
+    /// <c>trackHistory</c>, and a State's, are the node's <c>history</c> switches. A definition of no graph is sent as it is.
     /// </summary>
     static JsonObject Placed(JsonObject definition)
     {
         if (definition["logic"]?["graph"] is not JsonObject graph || definition["entities"] is not JsonArray listed) return definition;
-        if (listed.Count == 0) { definition.Remove("entities"); return definition; }
+        definition.Remove("entities");
         static string? Text(JsonNode? node, string name) => node?[name] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
         var nodes = graph["nodes"] as JsonArray ?? [];
         var edges = (graph["edges"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
         var hubs = new List<JsonObject>();
-        var kept = new JsonArray();
         foreach (var entity in listed.OfType<JsonObject>())
         {
             var key = Text(entity, "key")!;
-            // An Entity node of the key already in that form declares it: the entity stays listed, as a read answer saved back lists it.
-            if (nodes.OfType<JsonObject>().Any(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] != null)) { kept.Add(entity.DeepClone()); continue; }
             var state = nodes.OfType<JsonObject>().FirstOrDefault(n => Text(n, "kind") == "entity" && Text(n["config"], "key") == key && n["config"]!["domain"] == null);
             var id = Text(state, "id") ?? key;
             var config = new JsonObject();
@@ -219,8 +215,6 @@ static class EntityGraphTests
             hubs.Add(new JsonObject { ["id"] = id, ["kind"] = "entity", ["label"] = "", ["config"] = config });
         }
         for (var i = 0; i < hubs.Count; i++) nodes.Insert(i, hubs[i]);
-        if (kept.Count > 0) definition["entities"] = kept;
-        else definition.Remove("entities");
         return definition;
     }
     static JsonObject Read(string id, string entity) => N(id, "read_entity", new JsonObject { ["entity"] = Lit("entity_id", entity) });
@@ -1086,9 +1080,9 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A definition that lists no entities and declares one with an Entity node creates it: the preview asks for no entity,
-    /// the save stores and answers the node's entity, syncs it, and a Set state naming it sets it; the answer saved back
-    /// unchanged answers the same entities.
+    /// A definition that declares an entity with an Entity node creates it: the preview asks for no entity, the save
+    /// stores and answers the node's entity, syncs it, and a Set state naming it sets it. The answer saved back with its
+    /// entities is refused; saved back without them, it answers the same entities.
     /// </summary>
     static async Task AnEntityNodeCreatesItsEntity()
     {
@@ -1111,17 +1105,23 @@ static class EntityGraphTests
         await rig.Change("sensor.button", "pressed");
         await rig.Flush();
         Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
-        // On purpose with the read answer's entities, derived from the node: the answer saved back as it is.
+        // The read answer's entities are for reading: saved back with them, it is refused in words (sent as it is, not as
+        // the editor sends it); without them, as the editor sends it, it answers the same entities.
         var back = new JsonObject
         {
             ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
             ["entities"] = read["entities"]!.DeepClone(), ["logic"] = read["logic"]!.DeepClone(),
         };
+        var refused = JsonNode.Parse(await rig.Api.EntityRequest(JsonSerializer.Serialize(new { operation = "save", id = "door", expectedRevision = read["revision"]!.GetValue<long>(), definition = back })))!;
+        Check(refused["error"]?["code"]?.GetValue<string>() == "validation" && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Single() is { } problem
+            && problem["code"]!.GetValue<string>() == "definition.entitiesNotAllowed" && problem["inputId"]!.GetValue<string>() == "entities"
+            && problem["message"]!.GetValue<string>() == EntityStoreTests.ListedEntities, "the read answer saved back with its entities is refused: " + refused.ToJsonString());
+        back.Remove("entities");
         var again = await rig.Save("door", back, read["revision"]!.GetValue<long>());
-        Check(JsonNode.DeepEquals(again["document"]!["entities"], read["entities"]), "the read answer saved back answers the same entities: " + again["document"]!["entities"]!.ToJsonString());
+        Check(JsonNode.DeepEquals(again["document"]!["entities"], read["entities"]), "the read answer saved back without them answers the same entities: " + again["document"]!["entities"]!.ToJsonString());
     }
 
-    /// <summary>A definition that neither lists an entity nor has an Entity node is asked for one, and for nothing else.</summary>
+    /// <summary>A definition that has no Entity node is asked for one, and for nothing else.</summary>
     static async Task APreviewWithoutAnyEntityAsksForOne()
     {
         await using var rig = await Rig.Start("no-entity");
@@ -1258,6 +1258,31 @@ static class EntityGraphTests
     /// <summary>A definition's stored file.</summary>
     static string StoredFile(Rig rig, string id) => Path.Combine(rig.Home.Root, ".storage", "hass_sharp", "entities", id + ".json");
 
+    /// <summary>
+    /// A version 1 class document, as an earlier build saved it, still loads: after a restart it is listed and read as it
+    /// is, starts, and Home Assistant gets its entities.
+    /// </summary>
+    static async Task AnOlderClassDocumentStillLoadsAndRuns()
+    {
+        await using var rig = await Rig.Start("older-class");
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        await rig.Save("plug", JsonSerializer.SerializeToNode(SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" }))!.AsObject());
+        var path = StoredFile(rig, "plug");
+        var file = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        file["version"] = 1;
+        File.WriteAllText(path, file.ToJsonString());
+        var syncs = rig.Home.Syncs("plug").Length;
+        await rig.Restart();
+        var read = await rig.Read("plug");
+        Check(read["version"]!.GetValue<int>() == 1 && read["logic"]!["kind"]!.GetValue<string>() == "class" && read["revision"]!.GetValue<long>() == 1, "it reads as it was saved: " + read.ToJsonString());
+        var listed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray();
+        Check(listed.Any(d => d!["id"]!.GetValue<string>() == "plug"), "it is listed: " + listed.ToJsonString());
+        await EntityTestHome.Until(() => rig.Home.Syncs("plug").Length > syncs, "the restart syncs it");
+        var sync = JsonNode.Parse(rig.Home.Syncs("plug").Last())!;
+        Check(sync["entities"]!.AsArray().Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["plug:relay"]), "Home Assistant gets its entity: " + sync.ToJsonString());
+        await rig.Until("plug:relay", s => Available(s), "its relay runs");
+    }
+
     /// <summary>A class with a secret setting and one that is not, as a node library declares it.</summary>
     const string SecretLibrary = """
         public class SecretPlug : SharpDevice
@@ -1389,11 +1414,11 @@ static class EntityGraphTests
         await rig.Ok(new { operation = "save", id = "plug", expectedRevision = 0,
             definition = SecretPlugDefinition(new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" }) });
         await rig.Save("level", Level(Offset(4), Token("graph-hunter2")));
-        // The definition members of an answer, as the answer has them: a graph's on purpose with its derived entities.
+        // The definition members of an answer that a save takes, as the answer has them (its entities are for reading only).
         static JsonObject Back(JsonObject answer) => new()
         {
             ["name"] = answer["name"]!.DeepClone(), ["device"] = answer["device"]?.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(),
-            ["entities"] = answer["entities"]?.DeepClone(), ["logic"] = answer["logic"]!.DeepClone(),
+            ["logic"] = answer["logic"]!.DeepClone(),
         };
         async Task<JsonNode> SaveBack(JsonObject answer, Action<JsonObject>? change = null)
         {
@@ -2668,7 +2693,7 @@ static class EntityGraphTests
         {
             var graph = Graph("Pictures", [N("setup", "entity_setup"), N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") }), step],
                 [Next("setup", "snap"), Next("snap", step["id"]!.GetValue<string>()), .. wires]);
-            graph["definition"] = new JsonObject { ["entities"] = new JsonArray(Entity("porch", "sensor")), ["settings"] = new JsonArray() };
+            graph["definition"] = new JsonObject { ["settings"] = new JsonArray() };
             return graph;
         }
         string[] Problems(JsonObject graph) => [.. VisualGraphValidator.Validate(graph, snapshot).Select(d => $"{d.NodeId}.{d.InputId}: {d.Message}")];

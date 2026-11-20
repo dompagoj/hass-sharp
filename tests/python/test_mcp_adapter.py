@@ -497,7 +497,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             {'id':'relay','kind':'entity','config':{'key':'relay','domain':'switch','name':'Relay'},'size':{'width':220,'height':112}},
             {'id':'power','kind':'entity','config':{'key':'power','domain':'sensor','name':'Power'}},
             {'id':'log','kind':'log','config':{'value':{'kind':'literal','type':'string','value':'x'*5000}}}],'edges':[]}
-        return {'version':1,'id':'porch','revision':4,'name':'Porch plug','device':{'model':'Plug'},
+        return {'version':2,'id':'porch','revision':4,'name':'Porch plug','device':{'model':'Plug'},
                 'settings':[{'key':'address','label':'Address','type':'string','value':'http://plug'},{'key':'token','label':'Token','type':'string','value':None,'secret':True,'hasValue':True}],
                 'entities':[{'key':'relay','domain':'switch','name':'Relay'},{'key':'power','domain':'sensor','name':'Power'}],
                 'logic':{'kind':'graph','graph':graph,'type':None},'source':'class Porch {}','sourceMap':[],'enabled':True,'savedUtc':'2026-11-19T00:00:00Z',
@@ -740,6 +740,31 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         result=await self.call('entities_history',{'id':'gone'})
         self.assertTrue(result.error); self.assertEqual(result.data,missing)
 
+    async def test_a_definition_that_lists_entities_gets_the_servers_sentence(self):
+        # A graph's entities are its Entity nodes: a definition that lists them still reaches the server, whose refusal
+        # says so in words, rather than a schema error about the key.
+        listed='Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each'
+        refused={'version':1,'ok':False,'error':{'code':'validation','detail':{'valid':False,'source':'','diagnostics':[
+            {'severity':3,'code':'definition.entitiesNotAllowed','nodeId':None,'inputId':'entities','message':listed}]}}}
+        for entities in ([],self.LISTED,None):
+            for name,args in (('entities_preview',{}),('entities_save',{'id':'porch','expectedRevision':0})):
+                with self.subTest(name=name,entities=entities):
+                    self.service.entities.reset_mock()
+                    self.service.entities.return_value=refused
+                    definition={**self.DEFINITION,'entities':entities}
+                    result=await self.call(name,{**args,'definition':definition})
+                    self.assertTrue(result.error)
+                    self.assertEqual(result.data['error']['detail']['diagnostics'][0]['message'],listed)
+                    self.assertEqual(self.service.entities.await_args.args[0]['definition'],definition)
+        # entities is no part of a definition: no description of one lists it, and a document is not taken for a definition by it.
+        self.assertNotIn('entities',self.adapter.DEFINITION_PARTS)
+        self.assertIn('entities',self.adapter.GRAPH_MISPLACED)
+        self.assertIn('entities',self.adapter.STORED_DOCUMENT_KEYS)
+        for name in ('entities_preview','entities_save'):
+            self.assertNotIn('entities?',self.adapter.TOOLS[name][1])
+            self.assertIn('{name, device?, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
+        self.assertIn('The definition you send is {name, device, settings, logic}',self.adapter.SEMANTICS['definitions'])
+
     async def test_the_wrong_kind_of_document_is_refused_in_words(self):
         # Each way a document reaches the wrong tool, or a definition the wrong shape: the phrases its refusal must hold,
         # in that order, and those it must not.
@@ -771,8 +796,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_save',save({'name':'Porch','graph':automation}),['the graph goes inside logic'],['for an automation']),
             ('entities_save',save({'graph':automation,'entities':entities,'settings':[]}),['the graph goes inside logic'],['for an automation']),
             ('entities_save',save({'graph':automation,'device':{'model':'Plug'}}),['the graph goes inside logic'],['for an automation']),
-            ('entities_save',save({'name':'Porch','entities':entities,'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation']),
-            ('entities_save',save({'version':5,'name':'Porch','entities':entities,'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation','remove version']),
+            ('entities_save',save({'name':'Porch','settings':[],'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation']),
+            ('entities_save',save({'version':5,'name':'Porch','settings':[],'nodes':[],'edges':[]}),['the nodes and edges go inside logic.graph'],['for an automation','remove version']),
+            # A list of entities is no part of a definition: beside one's own parts, it is a key an entities_read answer adds.
+            ('entities_save',save({'name':'Porch','settings':[],'entities':entities,'nodes':[],'edges':[]}),
+             ['the nodes and edges go inside logic.graph','Send as definition only name, device, settings and logic: remove entities, which an entities_read answer adds'],['for an automation']),
             ('entities_save',{'id':'x','expectedRevision':0,'graph':self.DEFINITION},['send it as definition, not graph'],['for an automation']),
             # A definition and a separate graph argument: the graph goes inside the definition's logic.
             ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph'}},'graph':self.GRAPH},
@@ -815,8 +843,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_preview',{'definition':{'name':'Motion','logic':{'kind':'graph','graph':{**self.GRAPH,'entities':entities,'settings':[]}}}},
              ['remove its entities and settings, and add an Entity node for each entity instead','Put its settings at the top of the definition, beside name and logic'],
              ['Put its entities','entities_read','for an automation']),
+            # The top's entities are what an entities_read answer adds, and the graph's are removed as well.
             ('entities_preview',{'definition':{'name':'Motion','entities':entities,'logic':{'kind':'graph','graph':{**self.GRAPH,'entities':entities,'settings':address}}}},
-             ['remove its entities and settings','Put its settings at the top of the definition'],['Put its entities','entities_read','http://plug']),
+             ['remove entities, which an entities_read answer adds; entities_preview takes only the definition','remove its entities and settings','Put its settings at the top of the definition'],
+             ['Put its entities','from entities_read','http://plug']),
             # The top's device is null (none), so the graph's goes there.
             ('entities_save',save(in_logic({**self.GRAPH,'device':{}})),['remove its device','Put its device at the top of the definition'],['entities_read']),
             ('entities_save',save(in_logic({**self.GRAPH,'logic':{}})),['remove its logic'],['entities_read','at the top']),
@@ -828,10 +858,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_save',{'id':'x','expectedRevision':0},['entities_save takes a definition'],['for an automation']),
             # 8. The mirror: a definition, or a graph carrying a definition's parts, sent to an automation's tool.
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'logic':{'kind':'graph'}}},[to_entities],[]),
-            ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'entities':[]}},[to_entities],[]),
+            ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'settings':[]}},[to_entities],[]),
             ('save',{'id':'x','expectedRevision':0,'definition':self.DEFINITION},[to_entities],[]),
             ('preview',{'graph':self.DEFINITION},['preview takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_preview'],[]),
-            ('save',{'id':'x','expectedRevision':0,'graph':{'name':'Porch','entities':entities,'graph':composed}},
+            ('save',{'id':'x','expectedRevision':0,'graph':{'name':'Porch','settings':[],'graph':composed}},
              [to_entities,'the graph goes inside logic','remove its definition',*trace_says],['for an automation use']),
             # An automation sent to its own tool under the definition's name: the argument's name, not the other family.
             ('save',{'id':'x','expectedRevision':0,'definition':automation},['save takes an automation graph: {version, name, nodes, edges}: send it as graph, not definition'],
@@ -911,11 +941,12 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             graphs=[g for g in (logic.get('graph') if isinstance(logic,dict) else None,d.get('graph')) if isinstance(g,dict)]
             inner=any(k in g for g in graphs for k in marks)
             flat='nodes' in d or 'edges' in d
-            marked=inner or any(k in d for k in marks)
+            # A list of entities at the top is no part of a definition (DEFINITION_PARTS), but in a graph it is misplaced.
+            marked=inner or any(k in d for k in marks if k!='entities')
             return types.SimpleNamespace(
                 marked=marked, flat=flat, trace_top='definition' in d, traced='definition' in d or any('definition' in g for g in graphs),
                 automation_like=not marked and (flat or isinstance(d.get('graph'),dict) and 'name' not in d),
-                definition_like='definition' not in d and any(k in d for k in ('entities','settings','device','logic')),
+                definition_like='definition' not in d and any(k in d for k in ('settings','device','logic')),
                 stored=[k for k in self.adapter.STORED_DOCUMENT_KEYS if k in d and not (k=='version' and flat)],
                 movable=[k for k in ('settings','device') if any(k in g for g in graphs) and d.get(k) in (None,[])],
                 loose_graph=('graph' in d or flat) and not (isinstance(logic,dict) and logic.get('graph') is not None),
@@ -940,7 +971,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             rules=[
                 # 1. "use save" only for a pure automation, sent alone to an entities tool, naming the twin.
                 not use_automation or entity and sent!='both' and f is not None and not f.marked and f'for an automation use {twin}.' in hint,
-                # 2. "use entities_save" only for what has logic, entities, settings or a device at its top, never a trace graph.
+                # 2. "use entities_save" only for what has logic, settings or a device at its top, never a trace graph.
                 not use_entities or not entity and f is not None and f.definition_like and f'for an entity definition use {twin},' in hint,
                 # 3. The tool named does not name this one back for the same document (sent as that tool's argument).
                 (not use_automation or 'for an entity definition use' not in (texts[twin,'graph'] or ''))

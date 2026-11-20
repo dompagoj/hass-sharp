@@ -7,7 +7,7 @@ namespace HassSharp;
 
 /// <summary>What a definition previews to: whether it can be saved, its problems, the source it generates and its class.</summary>
 /// <param name="Valid">True when no diagnostic is an error.</param>
-/// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input; for an entity's option, the entity's key as its input and the option's as its port.</param>
+/// <param name="Diagnostics">Its problems, each with a <c>definition.</c> code and, for a setting, the setting's key as its input; for an Entity node's option, that node and <c>option:&lt;option&gt;</c> as its input; for a graph request that lists entities, <c>entities</c> as its input.</param>
 /// <param name="Source">The generated source; empty when the definition is not valid.</param>
 /// <param name="Type">The class it creates; null when the type is not one the libraries declare, and for graph logic.</param>
 public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagnostics, string Source, EntityTypeDescriptor? Type)
@@ -17,7 +17,10 @@ public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagno
     /// generator's (its nodes' and libraries'). Empty when it is not valid.
     /// </summary>
     public List<VisualSourceMap> SourceMap { get; init; } = [];
-    /// <summary>For a graph, the graph as previewed, with its definition composed (<see cref="DefinitionGraph.Compose"/>); null for a class, or a document with problems.</summary>
+    /// <summary>
+    /// For a graph, the graph as previewed, with its definition (its settings, and whether it has a device) composed into
+    /// it (<see cref="DefinitionGraph.Compose"/>); its entities are its Entity nodes. Null for a class, or a document with problems.
+    /// </summary>
     [JsonIgnore] public JsonObject? Graph { get; init; }
     /// <summary>For a valid graph, the pruned catalog its source embeds (the run snapshot's catalog); null otherwise.</summary>
     [JsonIgnore] public JsonObject? EmbeddedCatalog { get; init; }
@@ -26,8 +29,8 @@ public sealed record DefinitionPreview(bool Valid, List<VisualDiagnostic> Diagno
 /// <summary>
 /// Checks an entity definition and generates its source. For a class: against the classes the node libraries declare,
 /// a <c>SharpDefinition</c> class that creates it, with the libraries after it, as an automation embeds them. For a
-/// graph: its document (entities and settings) first, then its graph with that definition composed into it, generated
-/// as an automation's graph is.
+/// graph: its document (its settings, and the entities its Entity nodes declare) first, then its graph with that
+/// definition composed into it, generated as an automation's graph is.
 /// </summary>
 /// <param name="diagnostics">What a graph's Custom C# nodes compile with; a shared one of its own when null.</param>
 /// <param name="serviceCalls">The typed service calls one request read once, for a graph's compile; the current ones when null.</param>
@@ -48,8 +51,11 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         if (string.IsNullOrWhiteSpace(body.Name) || body.Name.Length > 120) Error("definition.name", "Give the definition a name of up to 120 characters");
         var kind = body.Logic?.Kind;
         if (kind is not ("class" or "graph")) Error("definition.logic", "Logic is a graph or a class");
-        // An empty array is the same as none: a client may always send the field.
+        // For a class an empty array is the same as none: a client may always send the field. A graph's entities are its
+        // Entity nodes: a request that lists them at all, even as an empty list, is told so.
         if (kind == "class" && body.Entities is { Count: > 0 }) Error("definition.entitiesNotAllowed", "A class definition's entities come from its code");
+        if (kind == "graph" && body.Entities != null)
+            Error("definition.entitiesNotAllowed", "Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each", "entities");
         if (kind == "graph") DefinitionDocument.Check(body, snapshot.Root, Error);
 
         EntityTypeDescriptor? type = null;

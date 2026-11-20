@@ -259,7 +259,7 @@ describe('the image type', () => {
     expect(show.description).toBe('Make this picture the camera\'s current picture.')
     // A camera's Entity node has one execution pin, the flow Home Assistant starts when it needs a new picture, and
     // records no frame's run unless its run history says so.
-    let camera = add(empty([], 'Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
+    let camera = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
     const node = camera.nodes[0]
     expect(contract.executionPorts(node)).toEqual(['frame'])
     expect(contract.executionLabel(node, 'frame')).toBe('When a frame is needed')
@@ -277,7 +277,7 @@ describe('the image type', () => {
     expect(frame.outputs).toEqual({})
     expect(frame.description).toBe('Run the steps after it when Home Assistant needs a new picture from one of this definition\'s cameras. Nothing runs while nobody is watching.')
     expect(frame.singleton).toBeUndefined()
-    const camera = add(empty([], 'Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
+    const camera = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
     expect(contract.trackHistoryDefault('camera_frame', 'entity', contract.nodeCatalog)).toBe(false)
     expect(contract.addGraphNode(camera, 'camera_frame', 'n', contract.nodeCatalog).nodes.at(-1)!.config.trackHistory).toBe(false)
     expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.duplicate']))
@@ -285,7 +285,7 @@ describe('the image type', () => {
 })
 it('names an Entity node whose command pin runs nothing by its entity\'s name, else its key, on that pin', () => {
   const relay = (name?: string): Graph => {
-    const graph = add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: name ?? '' })
+    const graph = add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: name ?? '' })
     if (name !== undefined) return graph
     const { name: _name, ...config } = graph.nodes[0].config
     return { ...graph, nodes: [{ ...graph.nodes[0], config }] }
@@ -546,7 +546,7 @@ describe('type and service names that cannot run away or repeat (final fix round
 
 it('a new step tracks run history by its document: a trigger of an entity definition does not', () => {
   const automation: Graph = { version: 5, name: 'Hall', nodes: [], edges: [] }
-  const entity = add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  const entity = add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
   const catalog = contract.nodeCatalog
   expect(contract.trackHistoryDefault('trigger', 'automation', catalog)).toBe(true)
   expect(contract.trackHistoryDefault('trigger', 'entity', catalog)).toBe(false)
@@ -574,7 +574,7 @@ it('a new State records no run, and a new When commanded records its runs (the o
     expect(contract.trackHistoryDefault('entity_state', document, catalog)).toBe(false)
     expect(contract.trackHistoryDefault('entity_command', document, catalog)).toBe(true)
   }
-  const entity = add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  const entity = add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
   const added = (kind: string) => contract.addGraphNode(entity, kind, 'n', catalog).nodes.at(-1)!.config
   expect(added('entity_state').trackHistory).toBe(false)
   expect(added('entity_command').trackHistory).toBe(true)

@@ -388,16 +388,14 @@ public static class VisualGraphValidator
         }
         /// <summary>A Repeat count typed in above the loop's Maximum iterations.</summary>
         internal static string RepeatCount(string label, double max, string maxLabel) => $"{label} must be at most {Number(max)}, as {maxLabel} is {Number(max)}";
-        // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
+        // An entity definition's graph: its definition (the settings composed into it) and its own steps.
         /// <summary>A graph past the catalog's limits; an entity definition's graph may also have no node.</summary>
         internal static string GraphLimit(string document) => document == "automation"
             ? "Graph limit: 1–256 nodes and at most 512 edges"
             : "Graph limit: at most 256 nodes and at most 512 edges";
-        /// <summary>A definition that is not an object of entities and settings of the shape a graph reads.</summary>
-        internal const string DefinitionUnreadable = "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type";
-        /// <summary>An entity of a domain the catalog's <c>entityDomains</c> does not describe.</summary>
-        internal static string UnsupportedDomain(string key, string domain, IEnumerable<string> labels) => $"Entity {Name(key)} has the domain {Name(domain)}, which a graph cannot define; choose {Or(labels)}";
-        /// <summary>Two entities, or two settings, of one key.</summary>
+        /// <summary>A definition that is not an object with a list of settings of the shape a graph reads.</summary>
+        internal const string DefinitionUnreadable = "This definition's settings cannot be read: each setting needs a key and a type";
+        /// <summary>Two settings of one key.</summary>
         internal static string RepeatedKey(string items, string key) => $"Two {items} have the key {Name(key)}; give each a key of its own";
         /// <summary>A setting of a type a graph cannot read.</summary>
         internal static string UnsupportedSettingType(string key, string type, IEnumerable<string> labels) => $"Setting {Name(key)} has the type {Name(type)}, which a graph cannot read; choose {Or(labels)}";
@@ -428,14 +426,11 @@ public static class VisualGraphValidator
         internal static string Stateless(string type) => $"{Capital(Article(type))} {type.ToLowerInvariant()} has no state to set";
         /// <summary>A State or Set state step given none of its entity's state values, none of which is required.</summary>
         internal static string NoValue(string step) => $"{step} needs at least one value";
-        /// <summary>A command of an entity that no When commanded step handles, the entity named by its name and key (its key alone when it has no name).</summary>
-        internal static string CommandUnhandled(string domain, string key, string? name, string command, string label) =>
-            $"{domain} {(Trimmed(name ?? "") is { Length: > 0 } named ? $"{named} ({key})" : Name(key))} does nothing on {command}; add {Article(label)} {label} step for it";
         /// <summary>A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one.</summary>
         internal static string NotACamera(string name, bool anyCamera) => anyCamera ? $"{Name(name)} is not a camera; choose one of this definition's cameras" : $"{Name(name)} is not a camera; add a camera to this definition first";
         /// <summary>A second When a frame is needed step for one camera, named by its name.</summary>
         internal static string FrameDuplicate(string name, string label) => $"{Name(name)} already has {Article(label)} {label} step; delete this one or choose another camera";
-        /// <summary>A camera no Show frame step shows a frame for, named by its name.</summary>
+        /// <summary>A camera an Entity node declares that no Show frame step shows a frame for, named by its name.</summary>
         internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: add {Article(label)} {label} step for it";
         // An Entity node's entity, named by EntityName.
         /// <summary>What an Entity node's key must be, as an entity key is (<c>SharpEntity.KeyPattern</c>).</summary>
@@ -663,26 +658,17 @@ public static class VisualGraphValidator
         /// <summary>Whether the definition has a device (<c>definition.device</c> is an object), which names its entities.</summary>
         bool device;
         /// <summary>
-        /// The definition a graph carries: an object with a list of entities (or none, when Entity nodes declare them all),
-        /// each with a text key and domain, and a list of settings, each with a text key and type; each entity of a domain
-        /// <c>entityDomains</c> describes, each setting of a type a setting can have, and no key twice in either list. Its
+        /// The definition a graph carries: an object with a list of settings, each with a text key and type, each of a type a
+        /// setting can have, and no key twice. Its entities are the graph's Entity nodes: a list of them it has is ignored. Its
         /// <c>device</c>, an object when it has one, is read too (<see cref="device"/>).
         /// </summary>
         void Definition(JsonNode? definition)
         {
             device = definition is JsonObject { } given && given["device"] is JsonObject;
-            if (definition is not JsonObject d || (d.ContainsKey("entities") ? d["entities"] : new JsonArray()) is not JsonArray entities || d["settings"] is not JsonArray settings ||
-                !entities.All(e => e is JsonObject o && IsText(o["key"]) && IsText(o["domain"])) || !settings.All(s => s is JsonObject o && IsText(o["key"]) && IsText(o["type"])))
+            if (definition is not JsonObject d || d["settings"] is not JsonArray settings || !settings.All(s => s is JsonObject o && IsText(o["key"]) && IsText(o["type"])))
             { Error(null, Words.DefinitionUnreadable, code: "definition.invalid"); return; }
-            var domains = Root["entityDomains"] as JsonObject ?? [];
-            var labels = domains.Select(p => Text(p.Value, "label", Words.DomainWords(p.Key))).ToList();
-            void Keys(JsonArray items, string name)
-            {
-                var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var item in items) if (!keys.Add(Text(item, "key")) && repeated.Add(Text(item, "key"))) Error(null, Words.RepeatedKey(name, Text(item, "key")), code: "definition.invalid");
-            }
-            Keys(entities, "entities"); Keys(settings, "settings");
-            foreach (var entity in entities) if (!domains.ContainsKey(Text(entity, "domain"))) Error(null, Words.UnsupportedDomain(Text(entity, "key"), Text(entity, "domain"), labels), code: "definition.invalid");
+            var keys = new HashSet<string>(StringComparer.Ordinal); var repeated = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var setting in settings) if (!keys.Add(Text(setting, "key")) && repeated.Add(Text(setting, "key"))) Error(null, Words.RepeatedKey("settings", Text(setting, "key")), code: "definition.invalid");
             foreach (var setting in settings) if (!SettingTypes.Contains(Text(setting, "type")))
                 Error(null, Words.UnsupportedSettingType(Text(setting, "key"), Text(setting, "type"), SettingTypes.Select(t => Words.TypeLabel(Root, t))), code: "definition.invalid");
         }
@@ -720,19 +706,9 @@ public static class VisualGraphValidator
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
                         errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
-            // These two rules are the When commanded and Show frame steps' own: an entity an Entity node declares is left out.
-            var declared = nodes.Values.Where(n => Declares(Spec(n), "entity")).Select(n => Choice(n, "key")).ToHashSet(StringComparer.Ordinal);
-            foreach (var entity in DefinitionItems(Root, "entities").Where(e => !declared.Contains(Text(e, "key"))))
-                if (EntityDomain(Root, Text(entity, "key")) is { } domain)
-                    foreach (var (command, _) in domain["commands"] as JsonObject ?? [])
-                        if (!commands.Any(n => Choice(n, "entity") == Text(entity, "key") && Choice(n, "command") == command))
-                            errors.Add(new(null, Words.CommandUnhandled(Text(domain, "label", Words.DomainWords(Text(entity, "domain"))), Text(entity, "key"), Text(entity, "name"), CommandLabel(Text(entity, "key"), command), KindLabel("entity_command")), 2, Code: "command.unhandled"));
-            // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
+            // One When a frame is needed per camera.
             var frames = OfKind("camera_frame").Where(n => IsCamera(Choice(n, "entity"))).ToList();
             foreach (var node in Later(frames, n => Choice(n, "entity"))) Error(Id(node), Words.FrameDuplicate(EntityName(Choice(node, "entity")), KindLabel("camera_frame")), "entity", code: "camera.duplicate");
-            foreach (var camera in DefinitionItems(Root, "entities").Where(e => IsCamera(Text(e, "key")) && !declared.Contains(Text(e, "key"))))
-                if (!OfKind("show_frame").Any(n => Choice(n, "entity") == Text(camera, "key")))
-                    errors.Add(new(null, Words.NoFrame(EntityName(Text(camera, "key")), KindLabel("show_frame")), 2, Code: "camera.no_frame"));
             // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
             // camera, a Show frame step that names it.
             var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);

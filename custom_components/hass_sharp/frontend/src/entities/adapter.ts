@@ -33,7 +33,7 @@ export const entityTexts: EditorTexts = {
   conflictElsewhere: 'It was saved again somewhere else while you had unsaved changes here. Saving a node library does this to every entity definition that uses it.',
   conflictDraft: time => `Your unsaved changes from ${time} were made before this entity definition was saved again somewhere else.`,
   copyNoun: 'a new entity definition',
-  overviewPeek: 'Entities, device and settings',
+  overviewPeek: 'Device and settings',
   runsNone: 'Runs appear here when one of its entities is commanded, when it starts, or when a trigger with run history fires.',
   runRevision: 'Revision',
   traceBack: 'Back to the entity definition’s runs',

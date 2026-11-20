@@ -7,7 +7,7 @@ const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type,
 const hub = (key: string, domain: string, name?: string): GraphNode => ({ id: key, kind: 'entity', config: { key, domain, ...(name === undefined ? {} : { name }) } })
 /** An entity definition whose entities are the Entity nodes `hubs`, with no settings unless given. */
 const definitionOf = (hubs: GraphNode[], settings: unknown[] = []): Graph =>
-  ({ version: 5, name: 'Plug', nodes: hubs, edges: [], definition: { entities: [], settings } as unknown as Graph['definition'] })
+  ({ version: 5, name: 'Plug', nodes: hubs, edges: [], definition: { settings } as unknown as Graph['definition'] })
 const graph = definitionOf([hub('relay', 'switch', 'Relay'), hub('power', 'sensor', 'Power'), hub('online', 'binary_sensor')],
   [{ key: 'host', label: 'Address', type: 'string', value: '10.0.0.7' }, { key: 'port', type: 'number' }, { key: 'password', label: 'Password', type: 'string', secret: true, value: null, hasValue: true }])
 const node = (kind: string, config: Record<string, unknown>): GraphNode => ({ id: 'n', kind, config })

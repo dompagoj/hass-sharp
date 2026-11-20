@@ -64,9 +64,17 @@ definition envelope"), `storage` (the file could not be read or written) and
   node's inputs), commands (its execution outputs `command:<command>`, with their
   values as data outputs `command:<command>:<value>`; a camera has `frame`) and
   `options`; `entityCategory` is `config` or `diagnostic`. An entity of a
-  definition without a device needs a `name`. The answered document lists them
-  under `entities`, for reading only; a class's entities are in
+  definition without a device needs a `name`. A graph with no Entity node is
+  refused with `definition.entitiesRequired`, "Add an Entity node: an entity
+  definition creates the entities on its canvas, and has none". The answered
+  document lists them under `entities`, for reading only; a class's entities are in
   `registeredEntities`.
+- `entities` is not part of a request. A graph definition that has the key at all,
+  even an empty list or null, is refused before anything else is checked, with
+  `definition.entitiesNotAllowed` on input `entities`: "Entities are Entity nodes in
+  the graph now: leave entities out and add one Entity node for each". A class
+  definition may send an empty list; one that lists an entity is refused with "A
+  class definition's entities come from its code".
 - `device`: null for none, or, for a class, null for the class's own (a
   `SharpDevice` class always makes its device); otherwise `{manufacturer?, model?,
   swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}`, where `via` is
@@ -82,6 +90,14 @@ The server never trusts a `definition` key a client puts inside `graph` (the gra
 is stored without one), fills in missing node positions, and answers the document
 with `version`, `id`, `revision`, `source`, `sourceMap`,
 `catalogGeneration`, `enabled` and `savedUtc` added.
+
+A save writes the document as `version: 2`, with the entities its Entity nodes
+declare under `entities`. A version 1 document whose logic is a class loads as it
+is. A version 1 graph document, from an earlier development build, does not load:
+`list` leaves it out and logs `Skipping entity definition <path>: saved by an
+earlier development build; delete it and build it again` once, `read` of its id
+answers `invalid_request` with that sentence, and `delete` with
+`expectedRevision` 0 removes the file.
 
 Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID:
 new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a

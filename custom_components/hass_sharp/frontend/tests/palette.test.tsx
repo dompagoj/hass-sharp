@@ -101,7 +101,7 @@ it('the canvas quick-add offers the steps of the document its graph is', async (
   const automation = await offered(createGraph('Hall'))
   for (const kind of entityOnly) expect(automation, kind).not.toContain(`Create ${label(kind)}`)
   expect(automation).toContain(`Create ${label('trigger')}`)
-  const entity = await offered(add(empty([], 'Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }))
+  const entity = await offered(add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }))
   for (const kind of entityKinds) expect(entity, kind).toContain(`Create ${label(kind)}`)
 })
 

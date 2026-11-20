@@ -8,7 +8,7 @@ import { DraftField, describedBy } from '../visual/widgets/common'
  */
 
 /** Focuses the first field of the row of `list` whose `data-<member>` is `key` (its head while it is closed). */
-export function focusRow(list: HTMLElement | undefined, member: 'entityKey' | 'settingKey', key: string) {
+export function focusRow(list: HTMLElement | undefined, member: 'settingKey', key: string) {
   const row = [...(list?.children ?? [])].find(el => el instanceof HTMLElement && el.dataset[member] === key) as HTMLElement | undefined
   if (row) focusControl(row.querySelector<HTMLElement>('.hs-def-row__body') ?? row)
 }

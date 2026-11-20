@@ -8,7 +8,8 @@ import { addGraphNode, connectData, nodeCatalog, validateGraph, withFirstStateVa
 import { graphTypes } from '../src/visual/connectionIndex'
 import { connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { icons, nodeIdentity } from '../src/visual/icons'
-import { chooseEntity, refitNotice, retypeNode } from '../src/entities/NodePickers'
+import { chooseEntity } from '../src/entities/NodePickers'
+import { refitNotice, retypeNode } from '../src/entities/refit'
 import { HassCtx } from '../src/context'
 import { add, empty, lit } from './visual-fixture'
 
@@ -39,7 +40,7 @@ const entityNode = (graph: VisualGraph, entity: EntityNode) => {
 }
 /** A plug's definition: an Entity node for each of `nodes` (its relay, power and online), and its settings. */
 const entityGraph = ({ nodes = plug, settings = plugSettings() }: { nodes?: EntityNode[]; settings?: Record<string, unknown>[] } = {}): VisualGraph =>
-  nodes.reduce(entityNode, { ...empty([], 'Plug'), definition: { entities: [], settings } as never })
+  nodes.reduce(entityNode, { ...empty('Plug'), definition: { settings } as never })
 /** The graph with one step added and its config replaced by `config`. */
 const step = (graph: VisualGraph, kind: string, id: string, config: Record<string, unknown>) =>
   updateNode(addGraphNode(graph, kind, id, nodeCatalog), id, { config })
@@ -124,15 +125,15 @@ describe('the entity picker', () => {
     expect(node().config.entity).toBe('heater')
   })
 
-  it('says when the definition has no entities yet', async () => {
+  it('says to add an Entity node when the definition has none', async () => {
     const { el } = mount(step(entityGraph({ nodes: [] }), 'set_entity_state', 'state', {}), 'state')
-    expect(field(el, 'entity').textContent).toContain('This definition has no entities yet. Add one under Entities, shown when no step is selected.')
+    expect(field(el, 'entity').textContent).toContain("None of this definition's steps is an Entity node. Add an Entity node from the step library first.")
     expect(box(el, 'entity').disabled).toBe(true)
   })
 
   it('says where to give an entity a type that takes commands when none does (When commanded, until Task 12)', async () => {
     const { el } = mount(step(entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] }), 'entity_command', 'cmd', {}), 'cmd')
-    expect(field(el, 'entity').textContent).toContain("None of this definition's entities takes commands. Give one a type that does, such as a switch, under Entities, shown when no step is selected.")
+    expect(field(el, 'entity').textContent).toContain("None of this definition's entities takes commands. Give one a type that does, such as a switch, on its Entity node.")
     expect(field(el, 'command').textContent).toContain('Give an entity a type that takes commands first.')
   })
 

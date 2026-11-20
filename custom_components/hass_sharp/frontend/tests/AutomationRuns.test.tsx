@@ -417,7 +417,7 @@ const at = { x: 0, y: 0 }
 const hubsGraph = (name: string, hubs: [string, string, string, string?][], more: Graph['nodes'] = [], edges: Graph['edges'] = []) => ({
   version: 5, name, edges,
   nodes: [...hubs.map(([id, key, domain, named]) => ({ id, kind: 'entity', config: { key, domain, ...(named === undefined ? {} : { name: named }) }, position: at })), ...more],
-  definition: { entities: [], settings: [] },
+  definition: { settings: [] },
 }) as unknown as Graph
 /** The plug's names, from its Entity nodes: a relay named Main relay, and a power sensor with no name. */
 const plugNames = definitionNames(hubsGraph('Plug', [['relay', 'relay', 'switch', 'Main relay'], ['power', 'power', 'sensor']]), nodeCatalog)!
@@ -520,7 +520,7 @@ it('titles an entity definition\'s run by its root step when it carries that ste
 it('titles a run of an Entity node\'s flow by the entity and the flow when it carries the flow\'s method name', async () => {
   const hubGraph = { version: 5, name: 'Lamp', edges: [],
     nodes: [{ id: 'l', kind: 'entity', config: { key: 'lamp', domain: 'light', name: 'Lamp' }, position: at }],
-    definition: { entities: [], settings: [] },
+    definition: { settings: [] },
   } as unknown as Graph
   const runs = [
     // Run_6C_ and the hex of command:turn_on, then of state (flowMethod).

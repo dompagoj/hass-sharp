@@ -4,8 +4,8 @@ using static VisualExecutionTests;
 
 /// <summary>
 /// An Entity node declares one entity of its definition: its settings, without its run history and state values, are
-/// the entity's description, and the catalog of its graph lists it after the listed entities of other keys, in place of
-/// a listed one of its key. A graph of the wrong shape declares nothing.
+/// the entity's description, and the catalog of its graph lists the entities its nodes declare and no other (a list in
+/// the graph's definition is ignored). A graph of the wrong shape declares nothing.
 /// </summary>
 static class EntityNodeTests
 {
@@ -16,7 +16,7 @@ static class EntityNodeTests
         // Every test runs, and each failure is reported under its name.
         foreach (var (name, test) in new (string, Action)[] {
             (nameof(NodesDeclareEntities), NodesDeclareEntities),
-            (nameof(ANodeReplacesAListedEntityOfItsKey), ANodeReplacesAListedEntityOfItsKey),
+            (nameof(AListOnTheGraphIsIgnored), AListOnTheGraphIsIgnored),
             (nameof(AGraphOfTheWrongShapeDeclaresNothing), AGraphOfTheWrongShapeDeclaresNothing),
             (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins),
             (nameof(ACommandEntryThatIsNotAnObjectHasNoValues), ACommandEntryThatIsNotAnObjectHasNoValues),
@@ -52,12 +52,14 @@ static class EntityNodeTests
         Check(string.Join(",", VisualNodeCatalog.DefinitionItems(merged, "entities").Select(e => e["key"])) == "door,power", "the catalog of the graph lists them");
     }
 
-    static void ANodeReplacesAListedEntityOfItsKey()
+    static void AListOnTheGraphIsIgnored()
     {
         var listed = new JsonArray(new JsonObject { ["key"] = "old", ["domain"] = "switch" }, new JsonObject { ["key"] = "door", ["domain"] = "switch" });
         var merged = VisualNodeCatalog.WithGraphTypes(VisualNodeCatalog.Root, Graph(listed, Hub("a", "door", "binary_sensor")));
         var entities = VisualNodeCatalog.DefinitionItems(merged, "entities");
-        Check(string.Join(",", entities.Select(e => e["key"] + ":" + e["domain"])) == "old:switch,door:binary_sensor", "listed first, a node's entity in place of the listed one of its key");
+        Check(string.Join(",", entities.Select(e => e["key"] + ":" + e["domain"])) == "door:binary_sensor", "only the node's entity: " + string.Join(",", entities.Select(e => e["key"] + ":" + e["domain"])));
+        var none = VisualNodeCatalog.WithGraphTypes(VisualNodeCatalog.Root, Graph(listed.DeepClone().AsArray()));
+        Check(VisualNodeCatalog.DefinitionItems(none, "entities").Count == 0, "a graph of no Entity node has no entity, whatever its definition lists");
     }
 
     static void AGraphOfTheWrongShapeDeclaresNothing()

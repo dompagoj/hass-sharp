@@ -1,9 +1,11 @@
-import { For, Match, Show, Switch, type JSX } from 'solid-js'
+import { createSignal, For, Match, Show, Switch, type JSX } from 'solid-js'
 import { declaredDomain, declaredEntities, entityTypeLabel, words, type ConfigSpec } from '../visual/contract'
-import { definitionOf, keyProblem, keyRule, readNumber } from './definitionEdits'
+import { rowLocated } from '../visual/InputRow'
+import { keyProblem, keyRule, readNumber } from './definitionEdits'
 import { ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey } from './model'
-import { refitNotice, retypeNode, type StepPickerContext } from './NodePickers'
+import type { StepPickerContext } from './NodePickers'
+import { refitNotice, retypeNode } from './refit'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
@@ -41,10 +43,7 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
   }
   // The key no longer changes once Home Assistant has it.
   const fixed = () => key() !== '' && !!ctx.saved?.()?.keys.includes(key())
-  const others = () => [
-    ...definitionOf(ctx.graph()).entities.map(e => e.key),
-    ...declaredEntities(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.entity.key)),
-  ]
+  const others = () => declaredEntities(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.entity.key))
   // A new type, as one change: what no longer fits it goes, and the notice says what.
   const retype = (value: string) => {
     const { graph, removed } = retypeNode(ctx.graph(), ctx.node().id, value, ctx.catalog())
@@ -65,6 +64,13 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     else next[option] = value
     set('options', next)
   }
+  // A required option left empty says so on its field once the field has been left, or a problem chosen in a list led
+  // to it (the class page's rule): not in red the moment the type is chosen. Save waits for it all the same, and the
+  // Problems tab counts it.
+  const [left, setLeft] = createSignal<ReadonlySet<string>>(new Set())
+  const leave = (option: string) => { if (!left().has(option)) setLeft(new Set([...left(), option])) }
+  const missing = (option: string) => { const value = options()[option]; return row()?.options?.[option]?.required === true && (value === undefined || value === null) }
+  const optionErrors = (option: string) => (!missing(option) || left().has(option) ? ctx.errorsFor(`option:${option}`) : [])
   // Only the flows its type has: state values, commands, frames.
   const recordable = () => {
     const type = row()
@@ -120,10 +126,10 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
       {/* By key: a field stays (and keeps focus) while another option changes. */}
       <For each={optionKeys()}>
         {option => (
-          <At id={`option:${option}`}>
-            <OptionField option={option} rule={row()?.options?.[option] ?? { type: 'string' }} value={options()[option]} errors={ctx.errorsFor(`option:${option}`)}
+          <div data-input-id={`option:${option}`} onFocusOut={() => leave(option)} ref={el => el.addEventListener(rowLocated, () => leave(option))}>
+            <OptionField option={option} rule={row()?.options?.[option] ?? { type: 'string' }} value={options()[option]} errors={optionErrors(option)}
               onChange={value => setOption(option, value)} />
-          </At>
+          </div>
         )}
       </For>
       <Show when={recordable().length}>

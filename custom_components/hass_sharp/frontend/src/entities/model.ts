@@ -59,8 +59,6 @@ export interface DefinitionBody {
   name: string
   device?: DefinitionDevice | null
   settings?: DefinitionSetting[]
-  /** A graph definition's; a class definition's come from its code (none here). */
-  entities?: DefinitionEntity[] | null
   logic: DefinitionLogic
 }
 /** An entity of a running definition, with the entity id Home Assistant gave it. */
@@ -90,11 +88,13 @@ export interface DefinitionTrigger {
 }
 /** A saved definition as `read` and `save` answer it (`list` without `source` and `sourceMap`). */
 export interface EntityDocument extends DefinitionBody {
-  version: 1
+  /** 2; a class definition saved by an earlier build is 1. */
+  version: 1 | 2
   id: string
   revision: number
   device: DefinitionDevice | null
   settings: DefinitionSetting[]
+  /** For a graph, the entities its Entity nodes declare, for reading only; none for a class (its code makes them). */
   entities: DefinitionEntity[] | null
   enabled: boolean
   source: string
@@ -143,11 +143,10 @@ export interface EntityType {
 }
 
 /**
- * The definition an editor graph carries in `graph.definition`: every member of its entities, settings and device.
- * The validator reads the entities' keys and domains and the settings' keys and types, and ignores the rest.
+ * The definition an editor graph carries in `graph.definition`: every member of its settings and its device. The
+ * validator reads the settings' keys and types, and ignores the rest. Its entities are its Entity nodes.
  */
 export interface EditorDefinition {
-  entities: DefinitionEntity[]
   settings: DefinitionSetting[]
   device: DefinitionDevice | null
 }
@@ -160,14 +159,12 @@ const editorDefinition = (graph: Graph) => graph.definition as unknown as Editor
 /**
  * The graph the visual editor edits for a graph definition: its logic graph named after the definition, with the whole
  * definition under `definition`, so the editor's dirty tracking, undo, drafts and conflicts cover all of it. Class
- * definitions are edited by a form, from the body itself.
+ * definitions are edited by a form, from the body itself. The entities a read answer lists are its Entity nodes'
+ * (edited on the nodes), so they are not carried.
  */
 export function editorGraph(body: DefinitionBody): Graph {
   if (body.logic.kind !== 'graph') throw new Error('A class definition has no editor graph; edit its body')
-  // An entity an Entity node of the graph declares is edited on its node, not listed (the answer lists it too).
-  const declared = new Set(declaredEntities(body.logic.graph).map(d => d.entity.key))
   const definition: EditorDefinition = {
-    entities: structuredClone((body.entities ?? []).filter(e => !declared.has(e.key))),
     settings: structuredClone(body.settings ?? []),
     device: structuredClone(body.device ?? null),
   }
@@ -196,18 +193,16 @@ const settingToSend = (setting: DefinitionSetting): DefinitionSetting => {
 
 /**
  * The body an editor graph stands for, for `preview` and `save`: the name from the graph, the logic graph without its
- * definition. It has `entities` only while the definition lists one: an Entity node's entity is in the graph, and the
- * server reads no list as none.
+ * definition. It has no `entities`: they are the graph's Entity nodes, and the server refuses a list of them.
  */
 export function definitionBody(graph: Graph): DefinitionBody {
   if (!record(graph.definition)) throw new Error('This graph has no definition: it is not an entity definition’s')
   const { definition, ...logic } = graph
-  const { entities, settings, device } = definition as unknown as EditorDefinition
+  const { settings, device } = definition as unknown as EditorDefinition
   return {
     name: graph.name,
     device: structuredClone(device ?? null),
     settings: (settings ?? []).map(setting => settingToSend(structuredClone(setting))),
-    ...(entities?.length ? { entities: structuredClone(entities) } : {}),
     logic: { kind: 'graph', graph: structuredClone(logic) },
   }
 }
@@ -223,8 +218,8 @@ export function draftGraph(graph: Graph): Graph {
 export { entityKey }
 
 /**
- * A new graph definition: no device, no settings, no listed entity, and a graph whose one step is an Entity node, a
- * binary sensor named after the definition (no name when that is blank) and keyed by that name.
+ * A new graph definition: no device, no settings, and a graph whose one step is an Entity node, a binary sensor named
+ * after the definition (no name when that is blank) and keyed by that name.
  */
 export function newGraphDefinition(name: string): DefinitionBody {
   // The shape `createGraph` starts an automation with; its one step a new Entity node.
@@ -232,7 +227,7 @@ export function newGraphDefinition(name: string): DefinitionBody {
   const [node] = graph.nodes
   const { name: _typeLabel, ...config } = node.config
   const starter = { ...node, config: { ...config, key: entityKey(name), domain: 'binary_sensor', ...(name.trim() ? { name } : {}) } }
-  return { name, device: null, settings: [], entities: [], logic: { kind: 'graph', graph: { ...graph, nodes: [starter] } } }
+  return { name, device: null, settings: [], logic: { kind: 'graph', graph: { ...graph, nodes: [starter] } } }
 }
 
 /**
@@ -258,29 +253,19 @@ export function definitionId(name: string, taken: string[]): string {
 export const definitionEntityKinds: readonly string[] = ['entity_state', 'entity_command', 'set_entity_state', 'set_entity_available', 'camera_frame', 'show_frame']
 
 /**
- * Renames an entity of the editor graph and every step whose `entity` names it ({@link definitionEntityKinds}): a
- * listed one, or with `nodeId` the one that Entity node declares. The same graph when no such entity has `from`, `to`
- * is not an entity key, or another entity already has it. The steps stay with `from` while another entity keeps it
- * (two nodes declared the same key).
+ * Renames the entity the Entity node `nodeId` declares, and every step whose `entity` names it
+ * ({@link definitionEntityKinds}). The same graph when that node does not declare `from`, `to` is not an entity key, or
+ * another entity already has it. The steps stay with `from` while another node keeps it (two nodes declared the same key).
  */
-export function renameEntityKey(graph: Graph, from: string, to: string, nodeId?: string): Graph {
+export function renameEntityKey(graph: Graph, from: string, to: string, nodeId: string): Graph {
   if (!record(graph.definition) || from === to || !entityKeyPattern.test(to)) return graph
-  const definition = editorDefinition(graph)
-  if (nodeId !== undefined) {
-    const declared = declaredEntities(graph)
-    const keys = [...definition.entities.map(e => e.key), ...declared.map(d => d.entity.key)]
-    if (!declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from) || keys.includes(to)) return graph
-    const follow = from !== '' && keys.filter(key => key === from).length === 1
-    return {
-      ...graph,
-      nodes: graph.nodes.map(node => node.id === nodeId ? { ...node, config: { ...node.config, key: to } }
-        : follow && definitionEntityKinds.includes(node.kind) && node.config?.entity === from ? { ...node, config: { ...node.config, entity: to } } : node),
-    }
-  }
-  if (!definition.entities.some(e => e.key === from) || definition.entities.some(e => e.key === to)) return graph
+  const declared = declaredEntities(graph)
+  const keys = declared.map(d => d.entity.key)
+  if (!declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from) || keys.includes(to)) return graph
+  const follow = from !== '' && keys.filter(key => key === from).length === 1
   return {
     ...graph,
-    nodes: graph.nodes.map(node => (definitionEntityKinds.includes(node.kind) && node.config?.entity === from ? { ...node, config: { ...node.config, entity: to } } : node)),
-    definition: { ...definition, entities: definition.entities.map(e => (e.key === from ? { ...e, key: to } : e)) } as unknown as GraphDefinition,
+    nodes: graph.nodes.map(node => node.id === nodeId ? { ...node, config: { ...node.config, key: to } }
+      : follow && definitionEntityKinds.includes(node.kind) && node.config?.entity === from ? { ...node, config: { ...node.config, entity: to } } : node),
   }
 }

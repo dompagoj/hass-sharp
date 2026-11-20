@@ -27,14 +27,12 @@ const clean = (text: string) => forbidden.filter(word => text.includes(word))
 /** The `n`th gear: an Entity node, a binary sensor. */
 const gear = (n: number) => ({ id: `gear_${n}`, kind: 'entity', config: { key: `gear_${n}`, domain: 'binary_sensor', name: `Gear ${n}` }, position: { x: 60, y: 200 * n } })
 /**
- * A widget graph: an entity graph (it carries a definition) with gears as its Entity nodes, and a secret setting. Its
- * definition lists no entity, as an editor graph's does while its entities are its Entity nodes'.
+ * A widget graph: an entity graph (it carries a definition) with gears as its Entity nodes, and a secret setting.
  */
 function widgetGraph(name: string, gears = 1, token: string | null = 'hunter2'): VisualGraph {
   return {
     version: 5, name, nodes: Array.from({ length: gears }, (_, i) => gear(i + 1)), edges: [],
     definition: {
-      entities: [],
       settings: [{ key: 'token', type: 'string', value: token, secret: true } as { key: string; type: string }],
     },
   }

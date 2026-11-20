@@ -63,19 +63,8 @@ public static class VisualNodeCatalog
             if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "entity")) yield return (Text(node, "id"), EntityDescription(node));
     }
     /// <summary>
-    /// The definition's entities as a graph gives them: those <paramref name="definition"/> lists (none without a list)
-    /// whose key no node declares, in their order, then the ones its nodes declare (<see cref="DeclaredEntities"/>).
-    /// </summary>
-    static JsonArray DerivedEntities(JsonObject definition, JsonObject graph, JsonObject catalog)
-    {
-        var declared = DeclaredEntities(graph, catalog).Select(d => d.Entity).ToList();
-        var keys = declared.Select(e => Text(e, "key")).ToHashSet(StringComparer.Ordinal);
-        var listed = (definition["entities"] as JsonArray ?? []).Where(e => !(e is JsonObject entity && entity["key"] is JsonValue k && k.TryGetValue<string>(out var key) && keys.Contains(key)));
-        return new JsonArray([.. listed.Select(e => e?.DeepClone()), .. declared]);
-    }
-    /// <summary>
     /// The kind of document a graph is: <c>entity</c> when it has an object <c>definition</c> (an entity definition's
-    /// logic, its entities and settings composed into it), else <c>automation</c>.
+    /// logic, its settings composed into it), else <c>automation</c>.
     /// </summary>
     internal static string GraphDocument(JsonObject graph) => graph["definition"] is JsonObject ? "entity" : "automation";
     /// <summary>The types a graph definition's setting can have, and so the setting's value in its graph.</summary>
@@ -204,8 +193,8 @@ public static class VisualNodeCatalog
     /// <c>types</c> whose id the catalog does not have. Each node lists what its own compile knows a type converts to and
     /// from, so the entries of one id are merged: the first node's entry, with <c>assignableTo</c> and
     /// <c>assignableFrom</c> the union of every node's (in node order). The order of the nodes never changes what is
-    /// accepted. An entity graph's <c>definition</c> is carried too, its <c>entities</c> those the graph gives
-    /// (<see cref="DerivedEntities"/>). The catalog itself when there are none, and for a graph past the catalog's limits:
+    /// accepted. An entity graph's <c>definition</c> is carried too, its <c>entities</c> those its nodes declare
+    /// (<see cref="DeclaredEntities"/>), whatever the graph's own lists. The catalog itself when there are none, and for a graph past the catalog's limits:
     /// the validator answers that graph with <c>graph.limit</c> alone, and nothing is merged or resolved for it, whoever asks.
     /// </summary>
     internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
@@ -237,7 +226,7 @@ public static class VisualNodeCatalog
         if (definition != null)
         {
             var copy = (JsonObject)definition.DeepClone();
-            copy["entities"] = DerivedEntities(definition, graph, catalog);
+            copy["entities"] = new JsonArray([.. DeclaredEntities(graph, catalog).Select(d => (JsonNode)d.Entity)]);
             merged["definition"] = copy;
             ResolveSettings(merged, graph);
         }

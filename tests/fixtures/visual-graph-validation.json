@@ -32976,17 +32976,20 @@
           "config": {
             "entity": "door"
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
@@ -33124,60 +33127,6 @@
     "noDiagnostics": true
   },
   {
-    "name": "code definition.invalid: unknown domain",
-    "graph": {
-      "version": 5,
-      "name": "Heater",
-      "nodes": [],
-      "edges": [],
-      "definition": {
-        "entities": [
-          {
-            "key": "heater",
-            "domain": "climate"
-          }
-        ],
-        "settings": []
-      }
-    },
-    "valid": false,
-    "messages": [
-      "Entity heater has the domain climate, which a graph cannot define; choose Binary sensor, Sensor, Switch, Button, Number, Select, Text, Light, Cover or Camera"
-    ],
-    "codes": [
-      "definition.invalid"
-    ]
-  },
-  {
-    "name": "code definition.invalid: repeated key",
-    "graph": {
-      "version": 5,
-      "name": "Doors",
-      "nodes": [],
-      "edges": [],
-      "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          },
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
-        "settings": []
-      }
-    },
-    "valid": false,
-    "messages": [
-      "Two entities have the key door; give each a key of its own"
-    ],
-    "codes": [
-      "definition.invalid"
-    ]
-  },
-  {
     "name": "code definition.invalid: repeated setting key",
     "graph": {
       "version": 5,
@@ -33244,30 +33193,6 @@
     "valid": false,
     "messages": [
       "Setting when has the type integer, which a graph cannot read; choose Text, Number or True/False"
-    ],
-    "codes": [
-      "definition.invalid"
-    ]
-  },
-  {
-    "name": "code definition.invalid: entity without a domain",
-    "graph": {
-      "version": 5,
-      "name": "Broken",
-      "nodes": [],
-      "edges": [],
-      "definition": {
-        "entities": [
-          {
-            "key": "door"
-          }
-        ],
-        "settings": []
-      }
-    },
-    "valid": false,
-    "messages": [
-      "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type"
     ],
     "codes": [
       "definition.invalid"
@@ -33691,26 +33616,33 @@
             "entity": "relay",
             "command": ""
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "relay",
-            "domain": "switch"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
     "nodeId": "c",
     "inputId": "command",
     "messages": [
-      "Choose Turn on or Turn off in Command"
+      "Choose Turn on or Turn off in Command",
+      "relay does nothing on Turn off: connect a step to Turn off",
+      "relay does nothing on Turn on: connect a step to Turn on"
     ],
     "codes": [
+      "command.unhandled",
+      "command.unhandled",
       "definition.unknownCommand"
     ]
   },
@@ -33743,26 +33675,33 @@
             "entity": "relay",
             "command": "toggle"
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "relay",
-            "domain": "switch"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
     "nodeId": "toggle",
     "inputId": "command",
     "messages": [
-      "Entity relay has no command toggle; choose Turn on or Turn off"
+      "Entity relay has no command toggle; choose Turn on or Turn off",
+      "relay does nothing on Turn off: connect a step to Turn off",
+      "relay does nothing on Turn on: connect a step to Turn on"
     ],
     "codes": [
+      "command.unhandled",
+      "command.unhandled",
       "definition.unknownCommand"
     ]
   },
@@ -33779,17 +33718,20 @@
             "entity": "door",
             "command": "turn_on"
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
@@ -33933,17 +33875,20 @@
               "value": true
             }
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
@@ -33985,27 +33930,34 @@
             "entity": "relay",
             "command": "turn_off"
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "relay",
+            "domain": "switch"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "relay",
-            "domain": "switch"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
     "nodeId": "on2",
     "inputId": "command",
     "messages": [
-      "Entity relay already has a When commanded step for Turn on; delete this one or choose another command"
+      "Entity relay already has a When commanded step for Turn on; delete this one or choose another command",
+      "relay does nothing on Turn off: connect a step to Turn off",
+      "relay does nothing on Turn on: connect a step to Turn on"
     ],
     "codes": [
-      "command.duplicate"
+      "command.duplicate",
+      "command.unhandled",
+      "command.unhandled"
     ]
   },
   {
@@ -34683,25 +34635,36 @@
             "entity": "blind",
             "command": "set_position"
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "blind",
+            "domain": "cover"
+          }
         }
       ],
       "edges": [],
       "definition": {
-        "entities": [
-          {
-            "key": "blind",
-            "domain": "cover"
-          }
-        ],
-        "settings": []
+        "settings": [],
+        "device": {}
       }
     },
     "valid": false,
     "nodeId": "s",
     "messages": [
-      "State needs at least one value"
+      "State needs at least one value",
+      "blind does nothing on Close: connect a step to Close",
+      "blind does nothing on Open: connect a step to Open",
+      "blind does nothing on Set position: connect a step to Set position",
+      "blind does nothing on Stop: connect a step to Stop"
     ],
     "codes": [
+      "command.unhandled",
+      "command.unhandled",
+      "command.unhandled",
+      "command.unhandled",
       "entity.no_value"
     ]
   },
@@ -37446,6 +37409,15 @@
               "kind": "unset"
             }
           }
+        },
+        {
+          "id": "entity",
+          "kind": "entity",
+          "config": {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
         }
       ],
       "edges": [
@@ -37471,13 +37443,6 @@
         }
       ],
       "definition": {
-        "entities": [
-          {
-            "key": "annotated",
-            "domain": "camera",
-            "name": "Annotated"
-          }
-        ],
         "settings": []
       }
     },
@@ -37912,24 +37877,23 @@
     ]
   },
   {
-    "name": "code definition.invalid: entities that are not a list",
+    "name": "code definition.invalid: settings that are not a list",
     "graph": {
       "version": 5,
       "name": "Broken",
       "nodes": [],
       "edges": [],
       "definition": {
-        "entities": {
-          "door": {
-            "domain": "binary_sensor"
+        "settings": {
+          "delay": {
+            "type": "number"
           }
-        },
-        "settings": []
+        }
       }
     },
     "valid": false,
     "messages": [
-      "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type"
+      "This definition's settings cannot be read: each setting needs a key and a type"
     ],
     "codes": [
       "definition.invalid"

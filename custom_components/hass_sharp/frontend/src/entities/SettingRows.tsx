@@ -9,11 +9,13 @@ import { icons } from '../visual/icons'
 import { typeLabel } from '../visual/typeLabels'
 import { describedBy } from '../visual/widgets/common'
 import { addSetting, definitionOf, maskedSecret, removeSetting, renameSetting, retypeSetting, settingKeyProblem, settingKeyRule, stepsUsingSetting, updateSetting, valueFor } from './definitionEdits'
-import { usedBy } from './EntityRows'
 import { FieldErrors, focusRow, ReadOnlyField, SelectField, SwitchField, TextField } from './formFields'
 import type { DefinitionSetting } from './model'
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
+/** "N steps use this setting…": what removing a used setting leaves. */
+const usedBy = (count: number) =>
+  `${count} ${count === 1 ? 'step uses' : 'steps use'} this setting. ${count === 1 ? 'It' : 'They'} will show a problem until you change or remove ${count === 1 ? 'it' : 'them'}.`
 const none = (value: unknown) => value === null || value === undefined
 /** What a new type that removed a setting's value says. */
 export const valueRemoved = 'The value was removed because it does not fit the new type.'
@@ -76,7 +78,7 @@ export function SettingRows(props: SettingRowsProps) {
         <Button onClick={() => setRemoving(undefined)}>Cancel</Button>
         <Button variant="danger" onClick={() => { const key = removing()!; setRemoving(undefined); props.commit(removeSetting(props.graph, key)) }}>Remove</Button>
       </>}>
-        <p>{usedBy(removingUses(), 'setting')}</p>
+        <p>{usedBy(removingUses())}</p>
       </Dialog>
     </section>
   )

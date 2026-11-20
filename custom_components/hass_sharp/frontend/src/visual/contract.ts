@@ -10,11 +10,16 @@ export interface ExecutionEdge { id: string; kind?: 'execution'; source: string;
 export interface DataEdge { id: string; kind: 'data'; source: string; target: string; sourcePort: string; targetPort: string }
 export type GraphEdge = ExecutionEdge | DataEdge
 /**
- * What an entity definition's graph is checked against, composed from the definition's entities and settings (never
- * stored in the graph): each entity by its key and domain (a key of the catalog's `entityDomains`), each setting by its
- * key and type (`string`, `number` or `boolean`).
+ * What an entity definition's graph is checked against, composed from the definition's settings (never stored in the
+ * graph): each setting by its key and type (`string`, `number` or `boolean`), and its device when it has one. Its
+ * entities are its Entity nodes.
  */
-export interface GraphDefinition { entities: ({ key: string; domain: string } & Record<string, unknown>)[]; settings: { key: string; type: string }[] }
+export interface GraphDefinition { settings: { key: string; type: string }[]; device?: unknown }
+/**
+ * The definition a catalog carries for an entity definition's graph (`withGraphTypes`, `definitionCatalog`): the
+ * graph's, with the entities its Entity nodes declare, each by its key and domain (a key of the catalog's `entityDomains`).
+ */
+export interface CatalogDefinition extends GraphDefinition { entities: ({ key: string; domain: string } & Record<string, unknown>)[] }
 /** A graph is an entity definition's when it has an object `definition`; otherwise it is an automation's. */
 export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: GraphEdge[]; definition?: GraphDefinition }
 /** The kind of document a graph is, as `graphDocument` tells it and a node's `documents` lists them. */
@@ -83,7 +88,7 @@ export interface EntityDomainSpec { label: string; state: Record<string, EntityV
  * state value of the same name, if the entity takes it (a light turned on at full). No validator reads it.
  */
 export interface CommandValueSpec extends EntityValueSpec { default?: JsonValue }
-export interface VisualCatalogSnapshot { entityDomains?: Record<string, EntityDomainSpec>; /** Per graph (`withGraphTypes`): an entity graph's definition. */ definition?: GraphDefinition; services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; /** Per graph (`withGraphTypes`): the type of each `propertyOf` output, by node id and port. */ resolvedOutputs?: Record<string, Record<string, string>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
+export interface VisualCatalogSnapshot { entityDomains?: Record<string, EntityDomainSpec>; /** Per graph (`withGraphTypes`): an entity graph's definition, with its Entity nodes' entities. */ definition?: CatalogDefinition; services?: ServicesSection; version: number; graphVersion: number; limits: { nodes: number; edges: number; nesting: number; executionSteps: number; loopIterations: number }; types: Record<string, TypeSpec>; parametricTypes?: Record<string, ParametricTypeSpec>; nodes: Record<string, NodeSpec>; triggerOutputs?: Record<string, Record<string, OutputSpec>>; /** Per graph (`withGraphTypes`): the type of each `propertyOf` output, by node id and port. */ resolvedOutputs?: Record<string, Record<string, string>>; structures: { loopDeclaration: { name: { pattern: string } }; branchId: { pattern: string } } }
 /** Pass the server-produced catalog explicitly for each document; graph metadata is never type authority. */
 export const nodeCatalog = rawCatalog as unknown as VisualCatalogSnapshot
 const nodeSpec = (kind: unknown, catalog: VisualCatalogSnapshot = nodeCatalog) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
@@ -242,12 +247,11 @@ export function declaredEntities(graph: unknown, catalog: VisualCatalogSnapshot 
     .map(node => ({ nodeId: text(node.id), entity: entityDescription(node as unknown as GraphNode) }))
 }
 /**
- * The keys a graph's definition already gives its entities: those its `definition` lists and those its nodes declare,
- * each text key once; none for a graph that is not an entity definition's.
+ * The keys a graph already gives its entities: those its Entity nodes declare, each text key once; none for a graph
+ * without Entity nodes.
  */
 export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
-  const listed = record(graph) && record(graph.definition) && Array.isArray(graph.definition.entities) ? graph.definition.entities as unknown[] : []
-  const keys = [...listed.filter(record).map(e => e.key), ...declaredEntities(graph, catalog).map(d => d.entity.key)]
+  const keys = declaredEntities(graph, catalog).map(d => d.entity.key)
   return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
 }
 /** `base`, else `base_2`, `base_3`… past the keys `taken`, each within the 40 characters of an entity key. */
@@ -272,23 +276,19 @@ export const entityKey = (name: string) => {
   return new RegExp(words.entityKeyPattern).test(key) ? key : 'entity'
 }
 /**
- * The definition's entities as a graph gives them: those its `definition` lists (none without a list) whose key no node
- * declares, in their order, then the ones its nodes declare. Mirrors `VisualNodeCatalog.DerivedEntities`.
+ * The definition's entities as a graph gives them: the ones its Entity nodes declare, whatever its `definition` lists.
+ * As `VisualNodeCatalog.WithGraphTypes` gives them.
  */
-function derivedEntities(definition: Record<string, unknown>, graph: unknown, catalog: VisualCatalogSnapshot): GraphDefinition['entities'] {
-  const declared = declaredEntities(graph, catalog).map(d => d.entity)
-  const keys = new Set(declared.map(e => text(e.key)))
-  const listed = (Array.isArray(definition.entities) ? definition.entities as unknown[] : []).filter(e => !(record(e) && typeof e.key === 'string' && keys.has(e.key)))
-  return structuredClone([...listed, ...declared]) as GraphDefinition['entities']
-}
+const derivedEntities = (graph: unknown, catalog: VisualCatalogSnapshot): CatalogDefinition['entities'] =>
+  structuredClone(declaredEntities(graph, catalog).map(d => d.entity)) as CatalogDefinition['entities']
 /**
  * The catalog with the definition of the graph a step is in: the catalog as it is when it has one already (the canvas
- * lifted it), else with the graph's definition and the entities the graph gives (its list and its Entity nodes); the
- * catalog as it is for an automation's graph.
+ * lifted it), else with the graph's definition and the entities its Entity nodes declare; the catalog as it is for an
+ * automation's graph.
  */
 export function definitionCatalog(catalog: VisualCatalogSnapshot, graph: unknown): VisualCatalogSnapshot {
   if (catalog.definition || !record(graph) || !record(graph.definition)) return catalog
-  return { ...catalog, definition: { ...structuredClone(graph.definition), entities: derivedEntities(graph.definition, graph, catalog) } as unknown as GraphDefinition }
+  return { ...catalog, definition: { ...structuredClone(graph.definition), entities: derivedEntities(graph, catalog) } as unknown as CatalogDefinition }
 }
 /** The definition's entity with this key. */
 export const definitionEntity = (catalog: VisualCatalogSnapshot, key: string) => definitionItems(catalog, 'entities').find(e => e.key === key)
@@ -499,7 +499,7 @@ export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): 
   const merged: VisualCatalogSnapshot = { ...catalog, types: Object.keys(added).length ? Object.assign(Object.create(null), catalog.types, added) : catalog.types }
   if (selecting.length) resolveOutputs(merged, graph)
   if (definition) {
-    merged.definition = { ...structuredClone(definition), entities: derivedEntities(definition as unknown as Record<string, unknown>, graph, catalog) }
+    merged.definition = { ...structuredClone(definition), entities: derivedEntities(graph, catalog) }
     resolveSettings(merged, graph)
   }
   return merged
@@ -992,14 +992,12 @@ export const words = {
   variable: (subject: string) => `${subject} reads a variable, and variables are gone; connect a wire to it instead`,
   entitiesExpression: 'Entities expression is gone; choose the entity in Entity',
   schedulesExpression: 'Schedules expression is gone; set the time in Time of day',
-  // An entity definition's graph: its definition (the entities and settings composed into it) and its own steps.
+  // An entity definition's graph: its definition (the settings composed into it) and its own steps.
   /** A graph past the catalog's limits; an entity definition's graph may also have no node. */
   graphLimit: (document: GraphDocument) => document === 'automation' ? 'Graph limit: 1–256 nodes and at most 512 edges' : 'Graph limit: at most 256 nodes and at most 512 edges',
-  /** A definition that is not an object of entities and settings of the shape a graph reads. */
-  definitionUnreadable: "This definition's entities and settings cannot be read: each entity needs a key and a domain, and each setting a key and a type",
-  /** An entity of a domain the catalog's `entityDomains` does not describe. */
-  unsupportedDomain: (key: string, domain: string, labels: string[]) => `Entity ${words.name(key)} has the domain ${words.name(domain)}, which a graph cannot define; choose ${words.or(labels)}`,
-  /** Two entities, or two settings, of one key. */
+  /** A definition that is not an object with a list of settings of the shape a graph reads. */
+  definitionUnreadable: "This definition's settings cannot be read: each setting needs a key and a type",
+  /** Two settings of one key. */
   repeatedKey: (items: string, key: string) => `Two ${items} have the key ${words.name(key)}; give each a key of its own`,
   /** A setting of a type a graph cannot read. */
   unsupportedSettingType: (key: string, type: string, labels: string[]) => `Setting ${words.name(key)} has the type ${words.name(type)}, which a graph cannot read; choose ${words.or(labels)}`,
@@ -1030,9 +1028,6 @@ export const words = {
   stateless: (type: string) => { const article = words.article(type); return `${article[0].toUpperCase()}${article.slice(1)} ${type.toLowerCase()} has no state to set` },
   /** A State or Set state step given none of its entity's state values, none of which is required. */
   noValue: (step: string) => `${step} needs at least one value`,
-  /** A command of an entity no When commanded step handles. */
-  /** A command of an entity that no When commanded step handles, the entity named by its name and key (its key alone when it has no name). */
-  commandUnhandled: (domain: string, key: string, name: string, command: string, label: string) => `${domain} ${name.replace(blankEnds, '') ? `${name.replace(blankEnds, '')} (${key})` : words.name(key)} does nothing on ${command}; add ${words.article(label)} ${label} step for it`,
   /** A Show frame or When a frame is needed step naming an entity of the definition that is not a camera, by its name; whether the definition has one. */
   notACamera: (name: string, anyCamera: boolean) => anyCamera ? `${words.name(name)} is not a camera; choose one of this definition's cameras` : `${words.name(name)} is not a camera; add a camera to this definition first`,
   /** A second When a frame is needed step for one camera, named by its name. */
@@ -1672,24 +1667,16 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   graphRules()
   return analysis(true)
   /**
-   * The definition a graph carries: an object with a list of entities (or none, when Entity nodes declare them all), each
-   * with a text key and domain, and a list of settings, each with a text key and type; each entity of a domain
-   * `entityDomains` describes, each setting of a type a setting can have, and no key twice in either list. Its `device`,
-   * an object when it has one, is read too (`hasDevice`). Mirrors `VisualGraphValidator` `Definition`.
+   * The definition a graph carries: an object with a list of settings, each with a text key and type, each of a type a
+   * setting can have, and no key twice. Its entities are the graph's Entity nodes: a list of them it has is ignored. Its
+   * `device`, an object when it has one, is read too (`hasDevice`). Mirrors `VisualGraphValidator` `Definition`.
    */
   function checkDefinition(definition: unknown) {
     hasDevice = record(definition) && record(definition.device)
-    const entities = record(definition) ? (definition.entities === undefined ? [] : definition.entities) : undefined, settings = record(definition) ? definition.settings : undefined
-    if (!Array.isArray(entities) || !Array.isArray(settings) || !entities.every(e => record(e) && typeof e.key === 'string' && typeof e.domain === 'string') ||
-      !settings.every(s => record(s) && typeof s.key === 'string' && typeof s.type === 'string')) { error(null, words.definitionUnreadable, undefined, undefined, 'definition.invalid'); return }
-    const domains = record(catalog.entityDomains) ? catalog.entityDomains : {}
-    const labels = Object.keys(domains).map(key => entityTypeLabel(catalog, key))
-    const keys = (items: { key: string }[], name: string) => {
-      const seen = new Set<string>(), repeated = new Set<string>()
-      for (const { key } of items) if (seen.has(key)) { if (!repeated.has(key)) { repeated.add(key); error(null, words.repeatedKey(name, key), undefined, undefined, 'definition.invalid') } } else seen.add(key)
-    }
-    keys(entities, 'entities'); keys(settings, 'settings')
-    for (const entity of entities as { key: string; domain: string }[]) if (!Object.hasOwn(domains, entity.domain)) error(null, words.unsupportedDomain(entity.key, entity.domain, labels), undefined, undefined, 'definition.invalid')
+    const settings = record(definition) ? definition.settings : undefined
+    if (!Array.isArray(settings) || !settings.every(s => record(s) && typeof s.key === 'string' && typeof s.type === 'string')) { error(null, words.definitionUnreadable, undefined, undefined, 'definition.invalid'); return }
+    const seen = new Set<string>(), repeated = new Set<string>()
+    for (const { key } of settings as { key: string }[]) if (seen.has(key)) { if (!repeated.has(key)) { repeated.add(key); error(null, words.repeatedKey('settings', key), undefined, undefined, 'definition.invalid') } } else seen.add(key)
     for (const setting of settings as { key: string; type: string }[]) if (!settingTypes.includes(setting.type))
       error(null, words.unsupportedSettingType(setting.key, setting.type, settingTypes.map(t => typeLabel(t, catalog))), undefined, undefined, 'definition.invalid')
   }
@@ -1734,22 +1721,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         readers.add(reader.id)
         errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(wired[1], wired[0])), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
       }
-    // These two rules are the When commanded and Show frame steps' own: an entity an Entity node declares is left out.
-    const declared = new Set([...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity').map(n => choice(n, 'key')))
-    for (const entity of definitionItems(catalog, 'entities').filter(e => !declared.has(text(e.key)))) {
-      const domain = entityDomain(catalog, text(entity.key))
-      if (domain) for (const command of Object.keys(record(domain.commands) ? domain.commands : {}))
-        if (!commands.some(n => choice(n, 'entity') === entity.key && choice(n, 'command') === command)) {
-          errors.push({ nodeId: null, message: words.commandUnhandled(entityTypeLabel(catalog, text(entity.domain)), text(entity.key), text(entity.name), entityCommandLabel(catalog, text(entity.domain), command), kindLabel('entity_command')), severity: 2, code: 'command.unhandled' }); origins.push(origin)
-        }
-    }
-    // One When a frame is needed per camera, and a camera with no Show frame step never has a frame to give.
+    // One When a frame is needed per camera.
     const frames = ofKind('camera_frame').filter(n => isCamera(catalog, choice(n, 'entity')))
     for (const node of later(frames, n => choice(n, 'entity'))) error(node.id, words.frameDuplicate(cameraName(catalog, choice(node, 'entity')), kindLabel('camera_frame')), 'entity', undefined, 'camera.duplicate')
-    for (const camera of definitionItems(catalog, 'entities').filter(e => isCamera(catalog, text(e.key)) && !declared.has(text(e.key))))
-      if (!ofKind('show_frame').some(n => choice(n, 'entity') === camera.key)) {
-        errors.push({ nodeId: null, message: words.noFrame(cameraName(catalog, text(camera.key)), kindLabel('show_frame')), severity: 2, code: 'camera.no_frame' }); origins.push(origin)
-      }
     // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
     // camera, a Show frame step that names it.
     const keys = new Map<string, GraphNode>()

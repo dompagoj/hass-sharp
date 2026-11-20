@@ -6,7 +6,7 @@ import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition } from '../src/entities/model'
 import { renameDefinition } from '../src/entities/definitionEdits'
-import { refitNotice, retypeNode } from '../src/entities/NodePickers'
+import { refitNotice, retypeNode } from '../src/entities/refit'
 import { add, empty, lit } from './visual-fixture'
 
 it('an Entity node declares an entity', () => {
@@ -21,12 +21,15 @@ it('an Entity node declares an entity', () => {
   expect(validateGraph(graph).filter(d => d.severity === 3)).toEqual([])
 })
 
-it('a node replaces a listed entity of its key, and a definition without a list is one', () => {
-  const graph = add(empty([{ key: 'old', domain: 'switch' }, { key: 'door', domain: 'switch' }]), 'entity', 'a', { key: 'door', domain: 'binary_sensor' })
-  expect(withGraphTypes(nodeCatalog, graph).definition!.entities.map(e => `${e.key}:${e.domain}`)).toEqual(['old:switch', 'door:binary_sensor'])
-  const bare = { ...graph, definition: { settings: [] } }
-  expect(definitionCatalog(nodeCatalog, bare).definition!.entities.map(e => e.key)).toEqual(['door'])
-  expect(validateGraph(bare).some(d => d.code === 'definition.invalid')).toBe(false)
+it('a list on the graph is ignored', () => {
+  const node = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor' })
+  const graph = { ...node, definition: { settings: [], entities: [{ key: 'old', domain: 'switch' }, { key: 'door', domain: 'switch' }] } as never }
+  expect(withGraphTypes(nodeCatalog, graph).definition!.entities.map(e => `${e.key}:${e.domain}`)).toEqual(['door:binary_sensor'])
+  expect(definitionCatalog(nodeCatalog, graph).definition!.entities.map(e => `${e.key}:${e.domain}`)).toEqual(['door:binary_sensor'])
+  // A list the definition has, even one that cannot be read, is no problem of it; one of no Entity node gives none.
+  expect(validateGraph(graph).some(d => d.code === 'definition.invalid')).toBe(false)
+  expect(validateGraph({ ...node, definition: { settings: [], entities: 5 } as never }).some(d => d.code === 'definition.invalid')).toBe(false)
+  expect(withGraphTypes(nodeCatalog, { ...empty(), definition: { settings: [], entities: [{ key: 'old', domain: 'switch' }] } as never }).definition!.entities).toEqual([])
 })
 
 it('a new Set state step chooses a node\'s entity', () => {
@@ -34,14 +37,16 @@ it('a new Set state step chooses a node\'s entity', () => {
   expect(graph.nodes.at(-1)!.config.entity).toBe('door')
 })
 
-it('the editor does not list an entity that a node declares', () => {
+it('the editor lists no entity of a read answer: its entities are its nodes\'', () => {
   const node = add(empty(), 'entity', 'a', { key: 'door', domain: 'binary_sensor' }).nodes[0]
   const body = { name: 'Nodes', device: null, settings: [], entities: [{ key: 'door', domain: 'binary_sensor' }, { key: 'old', domain: 'switch' }], logic: { kind: 'graph', graph: { version: 5, name: 'Nodes', nodes: [node], edges: [] } } }
-  expect((editorGraph(body as never).definition as never as { entities: { key: string }[] }).entities.map(e => e.key)).toEqual(['old'])
+  const graph = editorGraph(body as never)
+  expect(graph.definition).toEqual({ settings: [], device: null })
+  expect(withGraphTypes(nodeCatalog, graph).definition!.entities.map(e => e.key)).toEqual(['door'])
 })
 
 it('a new Entity node does not take the key of the definition\'s one setting', () => {
-  const graph: VisualGraph = { version: 5, name: 'Nodes', nodes: [], edges: [], definition: { entities: [], settings: [{ key: 'delay', type: 'number' }] } as never }
+  const graph: VisualGraph = { version: 5, name: 'Nodes', nodes: [], edges: [], definition: { settings: [{ key: 'delay', type: 'number' }] } as never }
   const node = addGraphNode(graph, 'entity', 'a', nodeCatalog).nodes[0]
   expect(node.config.key).toBe('binary_sensor')
   expect(Object.values(node.config)).not.toContain('delay')
@@ -53,8 +58,8 @@ it('a dropped Entity node arrives named and with a key of its own', () => {
   graph = add(graph, 'entity', 'b')
   expect(graph.nodes[1].config.key).toBe('binary_sensor_2')
   expect(validateGraph(graph).filter(d => d.severity === 3)).toEqual([])
-  // A key a listed entity has is taken too.
-  expect(addGraphNode(empty([{ key: 'binary_sensor', domain: 'switch' }]), 'entity', 'c', nodeCatalog).nodes[0].config.key).toBe('binary_sensor_2')
+  // A key only a list on the graph has is free: that list is no entity.
+  expect(addGraphNode({ ...empty(), definition: { settings: [], entities: [{ key: 'binary_sensor', domain: 'switch' }] } as never }, 'entity', 'c', nodeCatalog).nodes[0].config.key).toBe('binary_sensor')
   // Its name is its own: the node carries no label, and no member is null.
   expect(graph.nodes[0]).not.toHaveProperty('label')
   expect(Object.values(graph.nodes[0].config)).not.toContain(null)
@@ -153,7 +158,7 @@ it('a pasted copy of an Entity node whose key is 40 characters long gets a valid
 it('a new definition starts with one Entity node that follows its name until it is saved', () => {
   const graph = editorGraph(newGraphDefinition('Front door'))
   expect(graph.nodes.map(n => [n.kind, n.config.key, n.config.name])).toEqual([['entity', 'front_door', 'Front door']])
-  expect((graph.definition as never as { entities: unknown[] }).entities).toEqual([])
+  expect(graph.definition).toEqual({ settings: [], device: null })
   const renamed = renameDefinition(graph, 'Back door', false)
   expect(renamed.nodes[0].config).toMatchObject({ key: 'back_door', name: 'Back door' })
   expect(renameDefinition(graph, 'Back door', true).nodes[0].config.key).toBe('front_door')

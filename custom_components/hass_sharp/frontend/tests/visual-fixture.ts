@@ -6,11 +6,11 @@ import { updateNode, type VisualGraph } from '../src/visual/graph'
 /** A value typed in on a step's input. */
 export const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
 /**
- * An entity definition's editor graph with no steps, as `editorGraph` gives one: its entities are the Entity nodes added
- * to it; `listed` only for a test of the listed form, which Task 11 removes.
+ * An entity definition's editor graph with no steps and no settings, as `editorGraph` gives one: its entities are the
+ * Entity nodes added to it.
  */
-export const empty = (listed: Record<string, unknown>[] = [], name = 'Nodes'): VisualGraph =>
-  ({ version: 5, name, nodes: [], edges: [], definition: { entities: listed, settings: [] } as never })
+export const empty = (name = 'Nodes'): VisualGraph =>
+  ({ version: 5, name, nodes: [], edges: [], definition: { settings: [] } as never })
 /**
  * The graph with a `kind` step `id` added as the editor adds one (an Entity node named by its type with a free key, a
  * step prefilled with the definition's only entity), then `config` merged over its config and, when given, placed at
@@ -136,9 +136,9 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  * `EntityApi.EntityRequest` and the Python route do, in the `{version, ok, result | error}` envelope.
  *
  * - `documents`: the stored definitions by id, as the store keeps them: secrets in clear, `logic` as `{kind, type, graph}`,
- *   the graph without `definition`, a graph's `entities` derived as `EntityDefinitionStore.Save` stores them (the
- *   listed ones whose key no Entity node declares, then those its Entity nodes declare), with the run fields an
- *   answer has (`automationId` `entity:<id>`, `status`, …). Every
+ *   the graph without `definition`, at `version` 2, a graph's `entities` derived as `EntityDefinitionStore.Save` stores
+ *   them (those its Entity nodes declare), with the run fields an answer has (`automationId` `entity:<id>`, `status`,
+ *   …). Every
  *   answer masks secrets from it: a graph's `secret` settings, and every setting of a class except those its type in
  *   `types` declares and does not mark secret (all of them when the type is not in `types`, as for a library that does
  *   not compile).
@@ -171,12 +171,12 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  *   and every class setting answered masked).
  *
  * The document checks are the real ones a test meets most (codes of `DefinitionDocument`/`DefinitionGenerator`): a name
- * of 1–120 characters (`definition.name`) and, for a graph, at least one entity (`definition.entitiesRequired`), each
- * keyed `^[a-z][a-z0-9_]{0,39}$` (`definition.entityKey`) and uniquely (`definition.duplicateEntity`), of a domain of
- * the catalog's `entityDomains` (`definition.entityDomain`), with options as `DefinitionDocument.Options` checks them
- * (`definition.entityOption`: one its domain has, of its type, not an empty list, a number Home Assistant takes and
- * within its rule's range, a pattern that is a regular expression, every option the domain needs, a min below the max); with any of them the
- * seeded diagnostics are not answered.
+ * of 1–120 characters (`definition.name`), no list of entities (`definition.entitiesNotAllowed`: a graph's at all, even
+ * empty or null, a class's when it lists one) and, for a graph, at least one Entity node (`definition.entitiesRequired`),
+ * each with options as `DefinitionDocument.Options` checks them (`definition.entityOption`, on the node: one its domain
+ * has, of its type, not an empty list, a number Home Assistant takes and within its rule's range, a pattern that is a
+ * regular expression, every option the domain needs, a min below the max); with any of them the seeded diagnostics are
+ * not answered.
  *
  * Every definition `list`, `read` and `save` answer carries `triggers`, as Python's `definition_triggers` gives them: a
  * graph's Trigger steps `{triggerId, method, manual, runnable}`, `runnable` only while its saved revision runs and is
@@ -223,41 +223,28 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     ({ nodeId: null, message, severity: 3, startLine: null, startColumn: null, inputId, portId, code })
   /**
    * A graph definition's entities as the store keeps and answers them, derived by the editor's own `withGraphTypes`
-   * (which mirrors `VisualNodeCatalog.WithGraphTypes`): those it lists whose key no Entity node declares, then those its
-   * Entity nodes declare; a class's as given (none).
+   * (which mirrors `VisualNodeCatalog.WithGraphTypes`): those its Entity nodes declare; none for a class.
    */
   const derivedEntities = (body: DefinitionBody): DefinitionEntity[] | null => {
-    if (body.logic.kind !== 'graph') return structuredClone(body.entities ?? null)
-    const graph = { ...body.logic.graph, definition: { entities: body.entities ?? [], settings: [] } }
+    if (body.logic.kind !== 'graph') return null
+    const graph = { ...body.logic.graph, definition: { settings: [] } }
     return structuredClone(withGraphTypes(nodeCatalog, graph).definition?.entities ?? []) as DefinitionEntity[]
   }
   /**
-   * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a listed entity
-   * whose key an Entity node declares is checked on its node, whose options' problems are on it, about `option:<option>`.
+   * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a request that
+   * lists entities (a graph's at all, a class's when it lists one), a graph with no Entity node, and each Entity node's
+   * options, whose problems are on it, about `option:<option>`.
    */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 120) problems.push(problem('definition.name', 'Give the definition a name of up to 120 characters'))
+    // As EntityApi reads it: an entities key given as null is an empty list.
+    const listed = Object.hasOwn(body, 'entities') ? (body as { entities?: unknown }).entities ?? [] : undefined
+    if (body.logic?.kind === 'class' && Array.isArray(listed) && listed.length) problems.push(problem('definition.entitiesNotAllowed', "A class definition's entities come from its code"))
     if (body.logic?.kind !== 'graph') return problems
-    const nodes = declaredEntities(body.logic.graph), declared = new Set(nodes.map(d => d.entity.key))
-    const entities: unknown[] = body.entities ?? []
-    if (!entities.length && !nodes.length) problems.push(problem('definition.entitiesRequired', 'Add an entity: a definition built from nodes creates the entities it lists, and lists none'))
-    const keys = new Set<string>(), repeated = new Set<string>()
-    entities.forEach((entity: any, i) => {
-      const index = i + 1
-      if (!entity || typeof entity !== 'object' || Array.isArray(entity)) return problems.push(problem('definition.entityKey', `Entity ${index} is not an entity: give each entity a key and a domain`))
-      const key = entity.key
-      if (typeof key === 'string' && declared.has(key)) return
-      if (typeof key !== 'string') return problems.push(problem('definition.entityKey', `Give entity ${index} a key, such as ${index === 1 ? 'power' : `power_${index}`}`))
-      if (!/^[a-z][a-z0-9_]{0,39}$/.test(key)) problems.push(problem('definition.entityKey', `Entity key ${key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters`, key))
-      if (keys.has(key) && !repeated.has(key)) { repeated.add(key); problems.push(problem('definition.duplicateEntity', `Two entities have the key ${key}; give each a key of its own`, key)) }
-      keys.add(key)
-      const domains = nodeCatalog.entityDomains ?? {}
-      const domain = entity.domain
-      if (typeof domain !== 'string') return problems.push(problem('definition.entityDomain', `Choose a domain for entity ${key}: ${words.or(Object.keys(domains))}`, key))
-      if (!Object.hasOwn(domains, domain)) return problems.push(problem('definition.entityDomain', `Entity ${key} has the domain ${domain}, which a definition built from nodes cannot create; choose ${words.or(Object.keys(domains))}`, key))
-      problems.push(...optionProblems(key, domain, entity.options, typeof entity.name === 'string' && entity.name.trim() ? entity.name : undefined))
-    })
+    if (listed !== undefined) problems.push(problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities'))
+    const nodes = declaredEntities(body.logic.graph)
+    if (!nodes.length) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
     for (const { nodeId, entity } of nodes) {
       const domain = entity.domain, options = entity.options
       if (typeof domain !== 'string' || !Object.hasOwn(nodeCatalog.entityDomains ?? {}, domain) || (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options)))) continue
@@ -267,8 +254,9 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     return problems
   }
   /**
-   * The problems of an entity's options, in the order and words of `DefinitionDocument.Options`: each about the entity
-   * (`inputId`) and the option (`portId`), the option by its label and the entity by its name, else its key.
+   * The problems of an Entity node's options (an object, or none), in the order and words of `DefinitionDocument.Options`:
+   * each about the entity (`inputId`) and the option (`portId`), which the caller puts on the node, the option by its
+   * label and the entity by its name, else its key.
    */
   const optionProblems = (key: string, domain: string, given: unknown, name: string | undefined): VisualDiagnostic[] => {
     const out: VisualDiagnostic[] = []
@@ -277,11 +265,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const label = row.label || key, a = `${words.article(label)} ${label.toLowerCase()}`
     const shown = (option: string) => (Object.hasOwn(known, option) && known[option].label) || words.key(option)
     const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
-    const error = (option: string | null, message: string) => out.push(problem('definition.entityOption', message, key, option))
-    if (given !== undefined && given !== null && (typeof given !== 'object' || Array.isArray(given))) {
-      error(null, `The options of entity ${key} are not a set of named values; give them as an object, such as {"unit": "W"}`)
-      return out
-    }
+    const error = (option: string, message: string) => out.push(problem('definition.entityOption', message, key, option))
     const options = (given ?? {}) as Record<string, unknown>
     const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
     // What Home Assistant takes of a number option beyond its type (`DefinitionDocument.Limit`).
@@ -410,7 +394,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const d = body.device
     const { definition: _definition, ...logicGraph } = (body.logic.kind === 'graph' ? body.logic.graph : {}) as Record<string, unknown>
     return {
-      version: 1, id, revision, name: body.name,
+      version: 2, id, revision, name: body.name,
       device: d ? { manufacturer: d.manufacturer ?? null, model: d.model ?? null, swVersion: d.swVersion ?? null, hwVersion: d.hwVersion ?? null, configurationUrl: d.configurationUrl ?? null, suggestedArea: d.suggestedArea ?? null, via: d.via ?? null } : null,
       settings, entities: derivedEntities(body),
       logic: body.logic.kind === 'graph' ? { kind: 'graph', type: null, graph: structuredClone(logicGraph) as unknown as VisualGraph } : { kind: 'class', type: body.logic.type, graph: null },

@@ -320,7 +320,7 @@ it('names an entity step\'s state values and an Entity node\'s state values and 
   const g = { version: 5, name: 'Things', edges: [], nodes: [
     { id: 'lamp', kind: 'entity', config: { key: 'lamp', domain: 'light', name: 'Lamp' } }, { id: 'label', kind: 'entity', config: { key: 'label', domain: 'text', name: 'Label' } },
     { id: 'set', kind: 'set_entity_state', config: { entity: 'lamp' } }],
-    definition: { entities: [], settings: [] } } as unknown as Graph
+    definition: { settings: [] } } as unknown as Graph
   const [lamp, label, set] = g.nodes
   expect(inputLabel(g, set, 'is_on', nodeCatalog)).toBe('On')
   expect(inputOrder(g, set, { brightness: 1, is_on: true }, nodeCatalog)).toEqual(['is_on', 'brightness'])

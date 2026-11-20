@@ -12,7 +12,6 @@ import { deviceMemory, DeviceForm, type DeviceMemory } from './DeviceForm'
 import type { DefinitionDevice } from './model'
 
 export { deviceMemory, type DeviceMemory }
-import { EntityRows } from './EntityRows'
 import { SettingRows } from './SettingRows'
 
 /** An entity of the saved definition with the entity id Home Assistant gave it. */
@@ -23,34 +22,29 @@ export interface DefinitionPanelProps {
   graph: VisualGraph
   catalog: VisualCatalogSnapshot
   diagnostics: VisualDiagnostic[]
-  /**
-   * The keys of the saved definition's entities (none before its first save): each is part of its entity's identity in
-   * Home Assistant and no longer changes.
-   */
-  savedKeys: readonly string[]
   /** The saved definition's id and device: a device turned on again with nothing remembered is the saved one. */
   savedId?: string
   savedDevice?: DefinitionDevice | null
   /** The device turned off while the editor was open (default: one of this form's own, gone with it). */
   deviceMemory?: DeviceMemory
   /**
-   * A problem chosen in the Problems tab: its row opens, and focus goes into it (`entity:<key>` or `setting:<key>`), or
-   * the list of problems no row shows takes it (`problems`).
+   * A problem chosen in the Problems tab: its row opens, and focus goes into it (`setting:<key>`), or the list of
+   * problems no row shows takes it (`problems`). A problem about an entity is on its Entity node, which it selects.
    */
   located?: { target: string }
   /** Changes the graph as one undo step. */
   commit(graph: VisualGraph, options?: { coalesce?: string }): void
   /** The saved definition's entities as Home Assistant has them (running, else as its entity registry keeps them). */
   liveEntities?: DefinitionLiveEntity[]
-  /** Says what a change also did (the steps an entity's new type no longer fits, a setting's value a new type removed). */
+  /** Says what a change also did (a setting's value a new type removed). */
   onNotice?(text: string): void
 }
 
 /**
- * The definition form, where the inspector shows an overview with no step selected: the entities, the device and the
- * settings of an entity definition built from steps. It edits `graph.definition` through `commit` only, so undo,
- * unsaved changes, drafts and conflicts cover it as they cover the steps. The problems about no step are shown here:
- * an entity's or a setting's on its row, the rest above the form.
+ * The definition form, where the inspector shows an overview with no step selected: the device and the settings of an
+ * entity definition built from steps, whose entities are its Entity nodes. It edits `graph.definition` through
+ * `commit` only, so undo, unsaved changes, drafts and conflicts cover it as they cover the steps. The problems about no
+ * step are shown here: a setting's on its row, the rest above the form.
  */
 export function DefinitionPanel(props: DefinitionPanelProps) {
   const definition = () => definitionOf(props.graph)
@@ -75,8 +69,6 @@ export function DefinitionPanel(props: DefinitionPanelProps) {
           </For>
         </ul>
       </Show>
-      <EntityRows graph={props.graph} catalog={props.catalog} problems={problems().entities} savedKeys={props.savedKeys} commit={commit}
-        entityIds={entityIds()} onNotice={props.onNotice} located={props.located} />
       <DeviceForm graph={props.graph} commit={commit} memory={props.deviceMemory ?? ownMemory} savedId={props.savedId}
         savedDevice={props.savedDevice} ownEntityIds={[...entityIds().values()]} />
       <SettingRows graph={props.graph} catalog={props.catalog} problems={problems().settings} commit={commit} onNotice={props.onNotice}
@@ -99,13 +91,12 @@ export function liveEntitiesOf(document: EntityEditorDocument | undefined): Defi
  */
 export function DefinitionOverview(props: { context: EditorContext<EntityEditorDocument>; memory: DeviceMemory }) {
   const context = props.context
-  const savedKeys = () => (context.document?.entities ?? []).map(e => e.key)
   return (
     <>
       <Show when={context.enabled === false}>
         <p class="hs-insp-off" role="note"><strong>Off:</strong> its entities are unavailable in Home Assistant and none of its steps run.</p>
       </Show>
-      <DefinitionPanel graph={context.graph()} catalog={context.catalog} diagnostics={context.diagnostics} savedKeys={savedKeys()}
+      <DefinitionPanel graph={context.graph()} catalog={context.catalog} diagnostics={context.diagnostics}
         savedId={context.document?.id} savedDevice={context.document?.device} deviceMemory={props.memory} located={context.located}
         commit={context.commit} liveEntities={liveEntitiesOf(context.document)} onNotice={text => context.notice({ text })} />
       <Show when={context.document}>

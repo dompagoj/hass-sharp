@@ -4,7 +4,7 @@ import { Menu, type MenuItem } from '../components/Menu'
 import { ServiceFields } from './ServiceFields'
 import { retypeTriggerNode, TriggerAdvanced, TriggerConfig } from './TriggerConfig'
 import { Glyph } from './Glyph'
-import { Errors, focusRow, InputRow, type RowContext } from './InputRow'
+import { Errors, focusRow, InputRow, locateRow, type RowContext } from './InputRow'
 import { CSharpTypeText } from './typeDefinition'
 import { csharpType } from './csharpType'
 import { ArrayItems, Branches, Declarations, ObjectFields, type StructureContext } from './StructureEditors'
@@ -281,7 +281,7 @@ export function NodeConfig(props: NodeConfigProps) {
               return (
                 <li class="hs-insp-problem" classList={{ 'hs-insp-problem--warning': problem.severity !== 3 }}>
                   <Show when={port} fallback={<span class="hs-insp-problem__body">{body()}</span>}>
-                    <button type="button" class="hs-insp-problem__body" title="Go to the field" onClick={() => focusRow(root, port!)}>{body()}</button>
+                    <button type="button" class="hs-insp-problem__body" title="Go to the field" onClick={() => locateRow(root, port!)}>{body()}</button>
                   </Show>
                   <RemoveWire graph={props.graph} diagnostic={problem} catalog={props.catalog} class="hs-insp-link hs-insp-problem__action"
                     onRemove={next => props.onGraphChange(next)} focusAfter={() => title} />

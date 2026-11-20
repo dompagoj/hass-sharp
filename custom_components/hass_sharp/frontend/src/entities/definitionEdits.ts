@@ -4,8 +4,8 @@ import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
 
 /**
- * The definition form's changes to an editor graph's `definition` (its entities, settings and device), each a new
- * graph: one undo step when committed. Nothing here changes its argument.
+ * The definition form's changes to an editor graph's `definition` (its settings and device), each a new graph: one undo
+ * step when committed. Nothing here changes its argument. Its entities are its Entity nodes, edited on the canvas.
  */
 
 /** The rule an entity's key follows, as the form says it. */
@@ -14,10 +14,10 @@ export const keyRule = 'Lower-case letters, digits and underscores, starting wit
 export const settingKeyRule = "Any text that is not blank and not another setting's key."
 const takenKey = 'Another one already has this key; give each a key of its own.'
 
-/** The definition the graph carries; empty lists and no device when it has none. */
+/** The definition the graph carries; no settings and no device when it has none. */
 export function definitionOf(graph: VisualGraph): EditorDefinition {
   const definition = (graph.definition ?? {}) as unknown as Partial<EditorDefinition>
-  return { entities: definition.entities ?? [], settings: definition.settings ?? [], device: definition.device ?? null }
+  return { settings: definition.settings ?? [], device: definition.device ?? null }
 }
 const withDefinition = (graph: VisualGraph, change: Partial<EditorDefinition>): VisualGraph =>
   ({ ...graph, definition: { ...definitionOf(graph), ...(graph.definition ?? {}), ...change } as unknown as GraphDefinition })
@@ -51,16 +51,16 @@ export const stepsUsingEntity = (graph: VisualGraph, key: string, except: Readon
 
 /**
  * What deleting the steps `ids` asks first, when among them are Entity nodes whose entities steps left behind still
- * name (a key no listed entity or other Entity node gives): those steps would then show a problem. Undefined when
- * nothing would: the steps are deleted at once.
+ * name (a key no other Entity node gives): those steps would then show a problem. Undefined when nothing would: the
+ * steps are deleted at once.
  */
 export function entityRemoval(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot): { title: string; body: string } | undefined {
   const deleted = new Set(ids)
   const declared = declaredEntities(graph, catalog)
   const going = declared.filter(d => deleted.has(d.nodeId))
   if (!going.length) return
-  // A key the definition still gives after the delete (listed, or declared by a node that stays) leaves no step without it.
-  const staying = new Set([...definitionOf(graph).entities.map(e => e.key), ...declared.filter(d => !deleted.has(d.nodeId)).map(d => d.entity.key)])
+  // A key a node that stays still declares leaves no step without it.
+  const staying = new Set(declared.filter(d => !deleted.has(d.nodeId)).map(d => d.entity.key))
   const keys = new Set(going.map(d => d.entity.key).filter((key): key is string => typeof key === 'string' && key !== '' && !staying.has(key)))
   const steps = [...keys].reduce((count, key) => count + stepsUsingEntity(graph, key, deleted).length, 0)
   if (!steps) return
@@ -69,45 +69,6 @@ export function entityRemoval(graph: Graph, ids: string[], catalog: VisualCatalo
     title: several ? 'Delete these entities?' : 'Delete this entity?',
     body: `${steps === 1 ? '1 step uses' : `${steps} steps use`} ${several ? 'these entities' : 'this entity'}. They will show a problem until you change or remove them.`,
   }
-}
-
-/** A new entity of the type `domain` with a free key, at the end. */
-export function addEntity(graph: VisualGraph, domain: string): { graph: VisualGraph; key: string } {
-  const entities = definitionOf(graph).entities
-  const key = freeKey('entity', entities.map(e => e.key))
-  return { graph: withDefinition(graph, { entities: [...entities, { key, domain }] }), key }
-}
-
-/** The definition without its entity `key`; the steps that name it stay, for the validator to name. */
-export const removeEntity = (graph: VisualGraph, key: string): VisualGraph =>
-  withDefinition(graph, { entities: definitionOf(graph).entities.filter(e => e.key !== key) })
-
-/**
- * The entity `key` with `changes` made: a member given `undefined` is left out (a name, icon or device class cleared,
- * no category, enabled by default as when absent).
- */
-export function updateEntity(graph: VisualGraph, key: string, changes: Partial<Record<keyof DefinitionEntity, unknown>>): VisualGraph {
-  return withDefinition(graph, {
-    entities: definitionOf(graph).entities.map(entity => {
-      if (entity.key !== key) return entity
-      const next: DefinitionEntity = { ...entity }
-      for (const [member, value] of Object.entries(changes)) {
-        if (value === undefined) delete next[member]
-        else next[member] = value
-      }
-      return next
-    }),
-  })
-}
-
-/** The entity `key` with its option `option` set, or left out when `value` is undefined (and no `options` when none are left). */
-export function setEntityOption(graph: VisualGraph, key: string, option: string, value: unknown): VisualGraph {
-  const entity = definitionOf(graph).entities.find(e => e.key === key)
-  if (!entity) return graph
-  const options: Record<string, unknown> = { ...(entity.options ?? {}) }
-  if (value === undefined) delete options[option]
-  else options[option] = value
-  return updateEntity(graph, key, { options: Object.keys(options).length ? options : undefined })
 }
 
 /**
@@ -136,8 +97,6 @@ export function readNumber(typed: string, whole = false): number | null | undefi
   return parsed
 }
 
-const optionProblem = (key: string, option: string, message: string): VisualDiagnostic =>
-  ({ nodeId: null, inputId: key, portId: option, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
 /** A problem with an option of the entity an Entity node declares: on the node, about `option:<option>`. */
 const nodeOptionProblem = (nodeId: string, option: string, message: string): VisualDiagnostic =>
   ({ nodeId, inputId: `option:${option}`, portId: null, message, severity: 3, startLine: null, startColumn: null, code: 'definition.entityOption' })
@@ -145,8 +104,6 @@ const nodeOptionProblem = (nodeId: string, option: string, message: string): Vis
 export const optionLabel = (option: string, rule: ConfigSpec | undefined) =>
   typeof rule?.label === 'string' && rule.label ? rule.label : words.key(option)
 const hasName = (entity: { name?: unknown }) => typeof entity.name === 'string' && entity.name.trim() !== ''
-/** An entity as a problem about its options names it: its name, else its key. */
-export const entityNamed = (entity: { key: string; name?: unknown }) => hasName(entity) ? entity.name as string : entity.key
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 /**
  * The range a number option's rule gives (its `min` and `max`, such as a camera's seconds between frames), in the words
@@ -158,42 +115,40 @@ function outsideRange(rule: ConfigSpec, value: number): string | undefined {
 }
 
 /**
- * What the form knows of the entities' options without asking the server, in the server's words
- * (`DefinitionDocument.Options`), about the same entity and option (`inputId`, `portId`), so its answer about the same
- * option is not shown twice: an option the type needs left empty, a number option holding a text that is not a number
- * (kept as typed, so it can be finished), and a number outside the range its rule gives. Each blocks Save; the server
- * checks the rest. The entity an Entity node declares is checked the same, each problem on its node (`nodeId`) about
- * `option:<option>`, in place of a listed one of its key; one whose options are not an object is its Options field's.
+ * What the editor knows of the Entity nodes' options without asking the server, in the server's words
+ * (`DefinitionDocument.Options`), each problem on its node (`nodeId`) about `option:<option>`, so the server's answer
+ * about the same option is not shown twice: an option the type needs left empty, a number option holding a text that
+ * is not a number (kept as typed, so it can be finished), and a number outside the range its rule gives. Each blocks
+ * Save; the server checks the rest. A node whose options are not an object is its Options field's.
  */
 export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualDiagnostic[] {
   const problems: VisualDiagnostic[] = []
-  const check = (entity: Partial<DefinitionEntity>, problem: (key: string, option: string, message: string) => VisualDiagnostic) => {
+  const check = (entity: Partial<DefinitionEntity>, problem: (option: string, message: string) => VisualDiagnostic) => {
     const domains = catalog.entityDomains
     const row = domains && typeof entity.domain === 'string' && Object.hasOwn(domains, entity.domain) ? domains[entity.domain] : undefined
     if (!row || typeof entity.key !== 'string' || typeof entity.domain !== 'string') return
     if (entity.options !== undefined && (entity.options === null || typeof entity.options !== 'object' || Array.isArray(entity.options))) return
-    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = entityNamed(entity as { key: string })
+    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = hasName(entity) ? entity.name as string : entity.key
     for (const [option, rule] of Object.entries(row.options ?? {})) {
       const value = Object.hasOwn(options, option) ? options[option] : undefined
       const range = rule.type === 'number' && typeof value === 'number' && Number.isFinite(value) ? outsideRange(rule, value) : undefined
-      if (rule.type === 'number' && typeof value === 'string') problems.push(problem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes a number`))
-      else if (range) problems.push(problem(entity.key, option, `${optionLabel(option, rule)} of ${named} takes ${range}, not ${value}`))
+      if (rule.type === 'number' && typeof value === 'string') problems.push(problem(option, `${optionLabel(option, rule)} of ${named} takes a number`))
+      else if (range) problems.push(problem(option, `${optionLabel(option, rule)} of ${named} takes ${range}, not ${value}`))
       else if (rule.required === true && (value === undefined || value === null))
         // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
-        problems.push(problem(entity.key, option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
+        problems.push(problem(option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
     }
   }
-  const nodes = declaredEntities(graph, catalog), declared = new Set(nodes.map(d => d.entity.key))
-  for (const entity of definitionOf(graph).entities) if (!declared.has(entity.key)) check(entity, optionProblem)
   // A node without a text key is named by none, as the server names it.
-  for (const { nodeId, entity } of nodes) check({ ...entity, key: typeof entity.key === 'string' ? entity.key : '' } as Partial<DefinitionEntity>, (_key, option, message) => nodeOptionProblem(nodeId, option, message))
+  for (const { nodeId, entity } of declaredEntities(graph, catalog))
+    check({ ...entity, key: typeof entity.key === 'string' ? entity.key : '' } as Partial<DefinitionEntity>, (option, message) => nodeOptionProblem(nodeId, option, message))
   return problems
 }
 
 /**
- * The definition renamed to `name` before its first save: its entity follows the name (key and name) while it still
- * has what the name gave it, so the person who never touched it gets an entity named after the definition. That is
- * the first Entity node (the starter's), else the first listed entity.
+ * The definition renamed to `name` before its first save: its first Entity node (the starter's) follows the name (key
+ * and name) while it still has what the name gave it, so the person who never touched it gets an entity named after
+ * the definition.
  */
 export function renameDefinition(graph: VisualGraph, name: string, saved: boolean): VisualGraph {
   const renamed = { ...graph, name }
@@ -202,22 +157,17 @@ export function renameDefinition(graph: VisualGraph, name: string, saved: boolea
   const given = (text: string) => (text.trim() ? text : undefined)
   const follows = (entity: { key?: unknown; name?: unknown }) => entity.key === entityKey(graph.name) && entity.name === given(graph.name)
   const [starter] = declaredEntities(graph)
-  if (starter && follows(starter.entity)) {
-    const { nodeId, entity } = starter
-    const keyed = renameEntityKey(renamed, entity.key as string, entityKey(name), nodeId)
-    return {
-      ...keyed,
-      nodes: keyed.nodes.map(node => {
-        if (node.id !== nodeId) return node
-        const { name: _name, ...config } = node.config
-        return { ...node, config: { ...config, ...(given(name) ? { name } : {}) } }
-      }),
-    }
+  if (!starter || !follows(starter.entity)) return renamed
+  const { nodeId, entity } = starter
+  const keyed = renameEntityKey(renamed, entity.key as string, entityKey(name), nodeId)
+  return {
+    ...keyed,
+    nodes: keyed.nodes.map(node => {
+      if (node.id !== nodeId) return node
+      const { name: _name, ...config } = node.config
+      return { ...node, config: { ...config, ...(given(name) ? { name } : {}) } }
+    }),
   }
-  const first = definitionOf(graph).entities[0]
-  if (!first || first.key !== entityKey(graph.name) || (first.name ?? '') !== graph.name) return renamed
-  const keyed = renameEntityKey(renamed, first.key, entityKey(name))
-  return updateEntity(keyed, definitionOf(keyed).entities[0].key, { name: name || undefined })
 }
 
 // ---- Settings
@@ -338,28 +288,24 @@ export const setDevice = (graph: VisualGraph, device: DefinitionDevice | null): 
 
 // ---- Problems
 
-const entityCodes = /^definition\.(entity(Key|Field|Domain|Option)|duplicateEntity)$/
 const settingCodes = /^definition\.(setting(Key|Type)|duplicateSetting|unknownSetting)$/
-/** The form's row a problem about no step is about: `entity:<key>` or `setting:<key>`, by its code and `inputId`. */
+/** The form's row a problem about no step is about: `setting:<key>`, by its code and `inputId`. */
 export function problemRow(diagnostic: VisualDiagnostic): string | undefined {
   const key = diagnostic.inputId, code = diagnostic.code ?? ''
   if (diagnostic.nodeId || !key) return
-  if (entityCodes.test(code)) return `entity:${key}`
   if (settingCodes.test(code)) return `setting:${key}`
 }
 /**
- * The problems about no step, by where the form shows them: an entity's or a setting's (by its key, `inputId`), and
- * the rest (the definition's own, and an entity or setting the form has no row for).
+ * The problems about no step, by where the form shows them: a setting's (by its key, `inputId`), and the rest (the
+ * definition's own, and a setting the form has no row for). A problem about an entity is on its Entity node.
  */
 export function definitionProblems(diagnostics: VisualDiagnostic[], definition: EditorDefinition) {
-  const entities = new Map<string, VisualDiagnostic[]>(), settings = new Map<string, VisualDiagnostic[]>(), others: VisualDiagnostic[] = []
+  const settings = new Map<string, VisualDiagnostic[]>(), others: VisualDiagnostic[] = []
   for (const diagnostic of diagnostics) {
     if (diagnostic.nodeId || diagnostic.severity <= 0) continue
-    const row = problemRow(diagnostic), key = diagnostic.inputId ?? ''
-    const into = row?.startsWith('entity:') && definition.entities.some(e => e.key === key) ? entities
-      : row?.startsWith('setting:') && definition.settings.some(s => s.key === key) ? settings : undefined
-    if (into) into.set(key, [...(into.get(key) ?? []), diagnostic])
+    const key = diagnostic.inputId ?? ''
+    if (problemRow(diagnostic) && definition.settings.some(s => s.key === key)) settings.set(key, [...(settings.get(key) ?? []), diagnostic])
     else others.push(diagnostic)
   }
-  return { entities, settings, others }
+  return { settings, others }
 }

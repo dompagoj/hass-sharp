@@ -54,21 +54,24 @@ public sealed record DefinitionSetting(string Key, JsonNode? Value)
 /// <param name="Kind"><c>class</c> (a class the node libraries declare) or <c>graph</c> (a graph of nodes).</param>
 /// <param name="Type">For a class, its <see cref="EntityTypeDescriptor.Id"/>, such as <c>library:shelly:NodeLib.ShellyPlug</c>.</param>
 /// <param name="Graph">For a graph, the graph, never with a <c>definition</c>: that is composed from the document's
-/// entities and settings (<see cref="DefinitionGraph.Compose"/>).</param>
+/// settings and device (<see cref="DefinitionGraph.Compose"/>). Its entities are its Entity nodes.</param>
 public sealed record DefinitionLogic(string Kind, string? Type, JsonObject? Graph);
 
 /// <summary>A definition as the user writes it: what is saved, before the store adds its id, revision and source.</summary>
 /// <param name="Name">What the definition and its device are called; up to 120 characters.</param>
 /// <param name="Device">What the device page shows; null for the class's own.</param>
 /// <param name="Settings">Values for the class's settings, one not given keeping the class default; or a graph's settings.</param>
-/// <param name="Entities">The entities of a graph definition; a class definition's come from its code.</param>
+/// <param name="Entities">A request gives none: a graph definition's entities are its Entity nodes, and a request that
+/// lists them, even as an empty list, is refused (<c>definition.entitiesNotAllowed</c>); a class definition's come from its
+/// code, and an empty list is the same as none.</param>
 /// <param name="Logic">The class or graph that gives it its behaviour.</param>
 public sealed record DefinitionBody(string Name, DefinitionDevice? Device, List<DefinitionSetting>? Settings,
     JsonArray? Entities, DefinitionLogic Logic);
 
 /// <summary>
 /// A saved entity definition: its body, with the source generated from it when it was saved, as one JSON file of
-/// <see cref="EntityDefinitionStore"/>.
+/// <see cref="EntityDefinitionStore"/>. <see cref="Version"/> is 2; a class definition an earlier build saved is 1.
+/// <see cref="Entities"/> is, for a graph, the entities its Entity nodes declare, for reading only.
 /// </summary>
 public sealed record EntityDefinitionDocument(int Version, string Id, long Revision, string Name, DefinitionDevice? Device,
     List<DefinitionSetting> Settings, JsonArray? Entities, DefinitionLogic Logic, string Source, List<VisualSourceMap> SourceMap)
@@ -79,8 +82,11 @@ public sealed record EntityDefinitionDocument(int Version, string Id, long Revis
     public DateTime? SavedUtc { get; init; }
     /// <summary>The library generation <see cref="Source"/> was generated from.</summary>
     public string? CatalogGeneration { get; init; }
-    /// <summary>The definition as written, to preview or save again; derived, never stored.</summary>
-    [JsonIgnore] public DefinitionBody Body => new(Name, Device, Settings, Entities, Logic);
+    /// <summary>
+    /// The definition as written, to preview or save again; derived, never stored. A graph's has no entities: they are its
+    /// Entity nodes, so a regeneration composes from the graph alone.
+    /// </summary>
+    [JsonIgnore] public DefinitionBody Body => new(Name, Device, Settings, Logic?.Kind == "graph" ? null : Entities, Logic!);
     /// <summary>
     /// For a graph, the pruned catalog JSON <see cref="Source"/> embeds, for the run snapshot, as the preview that generated
     /// the source gave it; derived, never stored, so null for a document read from its file.
@@ -114,11 +120,20 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
         return Path.Combine(directory, id + ".json");
     }
 
-    static bool Complete(EntityDefinitionDocument? document, string id) => document != null && document.Version == 1 && document.Id == id &&
-        document.Name != null && document.Settings != null && document.Logic != null && document.Source != null && document.SourceMap != null && document.Revision >= 1;
+    /// <summary>The version of the document a save writes: a graph's entities are its Entity nodes.</summary>
+    internal const int Version = 2;
+    /// <summary>
+    /// What a graph definition an earlier development build saved (version 1, whose entities may be a list) is told: it
+    /// is not read, and is deleted as any unreadable file is.
+    /// </summary>
+    internal const string EarlierBuild = "saved by an earlier development build; delete it and build it again";
+
+    // Version 2; or 1 for a class definition, whose document is the same in both.
+    static bool Complete(EntityDefinitionDocument? document, string id) => document != null && (document.Version == Version || document.Version == 1 && document.Logic?.Kind == "class")
+        && document.Id == id && document.Name != null && document.Settings != null && document.Logic != null && document.Source != null && document.SourceMap != null && document.Revision >= 1;
 
     /// <summary>The definition, or null when there is none.</summary>
-    /// <exception cref="JsonException">Its file is not a definition.</exception>
+    /// <exception cref="JsonException">Its file is not a definition, or is a graph definition an earlier build saved (<see cref="EarlierBuild"/>).</exception>
     public EntityDefinitionDocument? Read(string id)
     {
         lock (Gate)
@@ -126,6 +141,7 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             var path = FilePath(id);
             if (!File.Exists(path)) return null;
             var document = JsonSerializer.Deserialize<EntityDefinitionDocument>(File.ReadAllText(path), VisualStore.Json);
+            if (document is { Version: 1, Logic.Kind: "graph" }) throw new JsonException(EarlierBuild);
             if (!Complete(document, id)) throw new JsonException("Invalid entity definition envelope");
             return document;
         }
@@ -224,10 +240,9 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             // A graph is stored as previewed (a Custom C# signature the compile refreshed, as refreshed), without its definition.
             // A valid preview had logic to preview.
             var logic = graphLogic ? body.Logic! with { Graph = DefinitionGraph.Decompose(preview.Graph!) } : body.Logic! with { Graph = (JsonObject?)body.Logic.Graph?.DeepClone() };
-            // A graph's entities are stored as its Entity nodes and its list give them together, so a read answer saved back
-            // is saved as it was (a listed entity of a node's key is the node's).
+            // A graph's entities are stored as its Entity nodes declare them, for a read answer, a list and Home Assistant.
             var entities = graphLogic ? DefinitionGraph.Entities(preview.Graph!, catalog) : (JsonArray?)body.Entities?.DeepClone();
-            var document = new EntityDefinitionDocument(1, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
+            var document = new EntityDefinitionDocument(Version, id, checked(expectedRevision + 1), body.Name, body.Device, settings,
                 entities, logic, preview.Source, preview.SourceMap)
                 { CatalogGeneration = catalogGeneration, Enabled = old?.Enabled ?? enabled ?? true, SavedUtc = DateTime.UtcNow, EmbeddedCatalog = preview.EmbeddedCatalog?.ToJsonString() };
             Directory.CreateDirectory(directory);

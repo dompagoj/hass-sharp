@@ -275,10 +275,13 @@ public partial class HassSharpManager
     /// The request's <c>definition</c>. A setting given <c>keep</c> carries no value (null counts as none): the value is the
     /// stored definition's, which the save puts in (<see cref="DefinitionSetting.Keep"/>). One sent back as an answer masks
     /// it, <c>hasValue</c> and no value, is kept alike; with a value, the value wins (<see cref="DefinitionSetting.HasValue"/>).
+    /// An <c>entities</c> key given as null is an empty list: a graph's is refused whatever it holds, and a class's is none.
     /// </summary>
     static DefinitionBody DefinitionBody(JsonObject request)
     {
-        var body = ApiRequest.Object(request, "definition").Deserialize<DefinitionBody>(VisualStore.Json) ?? throw new ArgumentException("definition is required");
+        var definition = ApiRequest.Object(request, "definition");
+        var body = definition.Deserialize<DefinitionBody>(VisualStore.Json) ?? throw new ArgumentException("definition is required");
+        if (body.Entities == null && definition.ContainsKey("entities")) body = body with { Entities = [] };
         // The value is not quoted: it may be a secret.
         if (body.Settings?.FirstOrDefault(s => s is { Keep: true, Value: { } value } && value.GetValueKind() != JsonValueKind.Null) is { } both)
             throw new ArgumentException($"Setting {both.Key} has both a value and keep; give the value, or keep to leave the saved one as it is");

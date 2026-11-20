@@ -256,7 +256,12 @@ envelope; validation, conflicts and revisions work as above.
    out (no settings come back). Unlike the panel's API, it leaves out the generated
    `source` and `sourceMap`, and so does a refusal for errors (`validation`) from it
    or from `entities_save`, whose detail is the preview; `entities_read` has a saved
-   definition's `source`.
+   definition's `source`. A graph definition that carries `entities`, even an empty
+   list, is refused with the server's own sentence, `definition.entitiesNotAllowed`:
+   "Entities are Entity nodes in the graph now: leave entities out and add one Entity
+   node for each". One with no Entity node gets `definition.entitiesRequired`, "Add
+   an Entity node: an entity definition creates the entities on its canvas, and has
+   none".
 5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
    creates or updates its entities, returning `saved`, `document` (as
    `entities_read` gives it, without `source` and `sourceMap`), `active`,
@@ -270,7 +275,10 @@ envelope; validation, conflicts and revisions work as above.
    entities it has created stay as unavailable; a definition saved off creates its
    entities the first time it is turned on) and returns `enabled`, `active` and
    `activationError`. `entities_delete({id, expectedRevision})` deletes it and
-   removes its entities and device.
+   removes its entities and device. A graph definition stored by an earlier
+   development build (document `version` 1) is left out of `entities_list`, and
+   `entities_read` of it answers "saved by an earlier development build; delete it
+   and build it again": delete it with `expectedRevision` 0 and save it again.
 7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
    one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
    command runs when the entity's service is called, an Entity node's state follows
