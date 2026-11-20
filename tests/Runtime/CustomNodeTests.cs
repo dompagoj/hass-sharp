@@ -470,6 +470,32 @@ static class CustomNodeTests
             }
             """, 1)]);
         Check(library.Valid && NullWarned(library.Diagnostics) == "Address,Other", "a library's SharpComponent warns only of a property that is no setting, any other class of every property: " + Messages(library.Diagnostics));
+        // A graph's preview compiles each library again inside its source: there too a required setting of a library's
+        // SharpComponent draws no warning, with or without a constructor, and every other warning of the library section
+        // is listed as it was, at the same place.
+        foreach (var constructor in new[] { "    public Meter() { }\n", "" })
+        {
+            var meters = new NodeLibrarySource("meters", "public class Meter : SharpDevice\n{\n" + constructor
+                + "    [Setting] public string Host { get; set; }\n    [Setting] public SensorEntity Source { get; set; }\n    public string Other { get; set; }\n}\n"
+                + "public class Plain\n{\n    [Setting] public string Address { get; set; }\n}", 1);
+            var graph = new VisualGenerator(Entities).Preview(G(Say("say", "hi")), [meters]);
+            var section = graph.Diagnostics.Where(d => d.NodeId == "$library:meters" && d.Message.StartsWith("Non-nullable property '", StringComparison.Ordinal)).ToArray();
+            var kept = string.Join(" | ", section.Select(d => $"{d.Severity} {d.StartLine}:{d.StartColumn} {d.Message}"));
+            // The two warnings kept, as the preview gave them before required settings lost theirs: the property's
+            // (or, with a constructor, the constructor's) line and column in the generated source, word for word.
+            const string Tail = " must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable.";
+            var expected = constructor.Length == 0
+                ? $"2 {{1}}:29 Non-nullable property 'Address'{Tail} | 2 {{0}}:19 Non-nullable property 'Other'{Tail}"
+                : $"2 {{1}}:29 Non-nullable property 'Address'{Tail} | 2 {{0}}:12 Non-nullable property 'Other'{Tail}";
+            var start = graph.SourceMap.Single(m => m.NodeId == "$library:meters").StartLine;
+            // The library's lines in the source: the wrapper's three, then the code. Other's warning is on Other's line (the
+            // code's fifth) or, with a constructor, on the constructor's (its third); Address's on the last but one.
+            int Line(int code) => start + NodeLibraryCompiler.SourceLineOffset + code - 1;
+            var otherLine = Line(constructor.Length == 0 ? 5 : 3);
+            var addressLine = Line(constructor.Length == 0 ? 9 : 10);
+            Check(graph.Valid && kept == string.Format(expected, otherLine, addressLine),
+                $"a graph's preview{(constructor.Length > 0 ? ", with a constructor," : "")} lists the library's warnings but a required setting's: " + kept + " ; all: " + Messages(graph.Diagnostics));
+        }
         // A Custom C# step's code is no class node's: a SharpComponent class in it keeps its warning.
         var step = Compiled("public class Helper : SharpDevice\n{\n    [Setting] public string Host { get; set; }\n}\npublic static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(string value) { }\n}");
         Check(step.Valid && NullWarned(step.Diagnostics) == "Host", "a Custom C# step's code keeps its nullability warnings: " + Messages(step.Diagnostics));

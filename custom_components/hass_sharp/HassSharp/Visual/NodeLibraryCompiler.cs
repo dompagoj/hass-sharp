@@ -152,16 +152,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var portAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.PortAttribute");
         var nodeContext = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeContext");
         var entityBase = frameworkAssembly.GetTypeByMetadataName("HassSharp.Entities.Entity");
-        var entityDomain = frameworkAssembly.GetTypeByMetadataName("HassSharp.Entities.EntityDomainAttribute");
-        // An entity handle on a pin is the entity id it wraps: entity_id for Entity, entity_id:<domain> for a domain's
-        // generated class (the type's own [EntityDomain]); null for any other type. A ? does not change the id.
-        string? EntityPin(ITypeSymbol type)
-        {
-            if (SymbolEqualityComparer.Default.Equals(type, entityBase)) return "entity_id";
-            return type is INamedTypeSymbol named && named.ContainingAssembly?.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal) == true
-                && named.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, entityDomain))?.ConstructorArguments.FirstOrDefault().Value is string domain
-                ? "entity_id:" + domain : null;
-        }
+        // An entity handle on a pin is the entity id it wraps (see EntityPins).
+        var entityPin = EntityPins(frameworkAssembly);
+        string? EntityPin(ITypeSymbol type) => entityPin(type);
         // The catalog id of a pin of this type.
         string PinType(ITypeSymbol type) => EntityPin(type) ?? TypeIdentity(type);
         // Whether an entity handle is inside the type (an array's element, a type argument, a tuple's element); the type is no deeper than a pin may be.
@@ -183,30 +176,15 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         {
             if (location.SourceTree is not { } tree) return null;
             if (!models.TryGetValue(tree, out var model)) models[tree] = model = compilation.GetSemanticModel(tree);
-            for (var node = tree.GetRoot(cancellationToken).FindToken(location.SourceSpan.Start).Parent; node != null; node = node.Parent)
-                if (model.GetDeclaredSymbol(node, cancellationToken) is { } declared) return declared;
-            return null;
+            return DeclaredSymbolAt(model, location, cancellationToken);
         }
         var classes = new EntityClasses(frameworkAssembly, EntityPin, (location, message) => Report(location, message), cancellationToken);
-        // A required setting is given its value by the host before Setup(), so the warning that its property is null when
-        // a constructor ends (CS8618, at the property, or at a constructor that names it only in its message) is not the
-        // code's to fix: in a C# entity's or C# device's code, and in a library's class deriving SharpComponent. A Custom
-        // C# step's code keeps it, as does every other property.
-        bool UnsetRequiredSetting(Diagnostic diagnostic)
-        {
-            if (diagnostic.Location.SourceTree is not { } tree || !(trees.ContainsKey(tree) || customTrees.TryGetValue(tree, out var custom) && custom.IsClass)) return false;
-            var message = diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
-            return DeclaredAt(diagnostic.Location) switch
-            {
-                IPropertySymbol property => classes.RequiredSetting(property),
-                IMethodSymbol { MethodKind: MethodKind.Constructor } constructor => constructor.ContainingType.GetMembers().OfType<IPropertySymbol>()
-                    .Any(p => message.Contains($"property '{p.Name}'", StringComparison.Ordinal) && classes.RequiredSetting(p)),
-                _ => false,
-            };
-        }
+        // A required setting's nullability warning (UnsetRequiredSetting) is dropped in a C# entity's or C# device's code
+        // and in a library's code; a Custom C# step's code keeps it.
+        bool ClassCodeOrLibrary(SyntaxTree? tree) => tree != null && (trees.ContainsKey(tree) || customTrees.TryGetValue(tree, out var custom) && custom.IsClass);
         foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
         {
-            if (diagnostic.Id == "CS8618" && UnsetRequiredSetting(diagnostic)) continue;
+            if (ClassCodeOrLibrary(diagnostic.Location.SourceTree) && UnsetRequiredSetting(diagnostic, classes, DeclaredAt)) continue;
             if (diagnostic.Id is "CS1591" or "CS1573" && diagnostic.Location.SourceTree is { } tree && customTrees.ContainsKey(tree)) continue;
             if (diagnostic.Id == "CS1591" && !NodeMethod(DeclaredAt(diagnostic.Location))) continue;
             if (diagnostic.Id == "CS1573" && !NodeMethod(DeclaredAt(diagnostic.Location)?.ContainingSymbol)) continue;
@@ -718,6 +696,70 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     static XElement? Documentation(ISymbol symbol, CancellationToken cancellationToken)
     {
         try { return XElement.Parse(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
+    }
+
+    /// <summary>
+    /// The pin of an entity handle's type, from the compilation's HassSharp assembly: <c>entity_id</c> for
+    /// <c>Entity</c>, <c>entity_id:&lt;domain&gt;</c> for a domain's generated class (the type's own
+    /// <c>[EntityDomain]</c>); null for any other type. A <c>?</c> does not change the id.
+    /// </summary>
+    static Func<ITypeSymbol, string?> EntityPins(IAssemblySymbol hassSharp)
+    {
+        var entityBase = hassSharp.GetTypeByMetadataName("HassSharp.Entities.Entity");
+        var entityDomain = hassSharp.GetTypeByMetadataName("HassSharp.Entities.EntityDomainAttribute");
+        return type =>
+        {
+            if (SymbolEqualityComparer.Default.Equals(type, entityBase)) return "entity_id";
+            return type is INamedTypeSymbol named && named.ContainingAssembly?.Name.StartsWith(GeneratedEntities.AssemblyPrefix, StringComparison.Ordinal) == true
+                && named.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, entityDomain))?.ConstructorArguments.FirstOrDefault().Value is string domain
+                ? "entity_id:" + domain : null;
+        };
+    }
+
+    /// <summary>The symbol declared nearest around <paramref name="location"/> (a property, a constructor, a type); null outside any.</summary>
+    static ISymbol? DeclaredSymbolAt(SemanticModel model, Location location, CancellationToken cancellationToken)
+    {
+        if (location.SourceTree is not { } tree) return null;
+        for (var node = tree.GetRoot(cancellationToken).FindToken(location.SourceSpan.Start).Parent; node != null; node = node.Parent)
+            if (model.GetDeclaredSymbol(node, cancellationToken) is { } declared) return declared;
+        return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="diagnostic"/> is the warning that a required setting is null when a constructor ends
+    /// (CS8618, at the property, or at a constructor that names it only in its message). The host gives a required
+    /// setting its value before <c>Setup()</c>, so the warning is not the code's to fix. Which code it is dropped in is
+    /// the caller's to decide.
+    /// </summary>
+    static bool UnsetRequiredSetting(Diagnostic diagnostic, EntityClasses classes, Func<Location, ISymbol?> declaredAt)
+    {
+        if (diagnostic.Id != "CS8618") return false;
+        var message = diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        return declaredAt(diagnostic.Location) switch
+        {
+            IPropertySymbol property => classes.RequiredSetting(property),
+            IMethodSymbol { MethodKind: MethodKind.Constructor } constructor => constructor.ContainingType.GetMembers().OfType<IPropertySymbol>()
+                .Any(p => message.Contains($"property '{p.Name}'", StringComparison.Ordinal) && classes.RequiredSetting(p)),
+            _ => false,
+        };
+    }
+
+    /// <summary>
+    /// <see cref="UnsetRequiredSetting"/> for another compilation of the same code, such as a graph's generated source,
+    /// which holds each library again: the caller asks it only of a diagnostic in a library's code.
+    /// </summary>
+    internal static Func<Diagnostic, bool> RequiredSettingWarnings(CSharpCompilation compilation, CancellationToken cancellationToken = default)
+    {
+        var hassSharp = compilation.SourceModule.ReferencedAssemblySymbols.Single(a => a.Identity.Name == typeof(NodeAttribute).Assembly.GetName().Name);
+        var classes = new EntityClasses(hassSharp, EntityPins(hassSharp), (_, _) => { }, cancellationToken);
+        var models = new Dictionary<SyntaxTree, SemanticModel>();
+        ISymbol? Declared(Location location)
+        {
+            if (location.SourceTree is not { } tree) return null;
+            if (!models.TryGetValue(tree, out var model)) models[tree] = model = compilation.GetSemanticModel(tree);
+            return DeclaredSymbolAt(model, location, cancellationToken);
+        }
+        return diagnostic => UnsetRequiredSetting(diagnostic, classes, Declared);
     }
 
     /// <summary>At a <c>[Setting]</c> property of a type a setting cannot have.</summary>

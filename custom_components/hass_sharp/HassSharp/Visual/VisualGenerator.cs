@@ -551,6 +551,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             var tree=CSharpSyntaxTree.ParseText(source,new CSharpParseOptions(LanguageVersion.Latest));
             var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings)};
             var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences().AddRange(services.References),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
+            var unsetRequiredSetting=NodeLibraryCompiler.RequiredSettingWarnings(compilation);
             foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
                 // Only a diagnostic in the generated automation has a line a node owns: one elsewhere (the global usings)
                 // is the graph's, never the node whose section has the same line number. The typed service calls are a
@@ -565,7 +566,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                     if(d.Severity==DiagnosticSeverity.Error)errors.Add(new(section.Id,d.GetMessage(),3,Math.Max(1,line-section.Start+1-NodeLibraryCompiler.SourceLineOffset),location.StartLinePosition.Character+1,"source"));
                     continue;
                 }
-                errors.Add(new(maps.FirstOrDefault(m=>line>=m.StartLine&&line<=m.EndLine)?.NodeId,d.GetMessage(),(int)d.Severity,line,location.StartLinePosition.Character+1));
+                var owner=maps.FirstOrDefault(m=>line>=m.StartLine&&line<=m.EndLine)?.NodeId;
+                // A library's required setting is given its value before Setup(): as when the library was compiled on its
+                // own, its nullability warning is dropped. Every other warning of a library section stays.
+                if(owner?.StartsWith("$library:",StringComparison.Ordinal)==true&&unsetRequiredSetting(d))continue;
+                errors.Add(new(owner,d.GetMessage(),(int)d.Severity,line,location.StartLinePosition.Character+1));
             }
             return new(!errors.Any(e=>e.Severity==3),source,maps,errors){EmbeddedCatalog=embedded.ToJsonString(),Graph=refreshed};
         }catch(Exception e)when(e is ArgumentException or InvalidOperationException or FormatException or JsonException or TimeZoneNotFoundException){errors.Add(new(current,e.Message));return new(false,string.Join('\n',lines),maps,errors){Graph=refreshed};}
