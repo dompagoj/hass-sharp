@@ -4,9 +4,10 @@ import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { serializeGraph } from '../src/visual/graph'
 import {
-  cardEntities, definitionBody, definitionEntityKinds, definitionId, draftGraph, editorGraph, newGraphDefinition, renameEntityKey,
+  cardEntities, definitionBody, definitionEntityKinds, definitionId, draftGraph, editorGraph, newGraphDefinition, rangeHint, renameEntityKey,
   type DefinitionBody, type DefinitionSetting,
 } from '../src/entities/model'
+import type { ClassSetting } from '../src/visual/contract'
 
 interface ValidationCase { name: string; graph: any; valid: boolean; messages?: string[]; codes?: string[]; catalogPatch?: Record<string, unknown> }
 const cases = fixtureCases as ValidationCase[]
@@ -273,6 +274,21 @@ describe('a definition card\'s entities', () => {
       { key: 'plug:relay', name: 'Stray', domain: 'switch', entityId: 'switch.plug_relay', disabled: false },
       { key: 'relay', name: 'Relay', domain: 'switch', entityId: 'switch.hall_plug_relay', disabled: false, device: 'plug' },
     ])
+  })
+})
+
+describe('the range a C# node\'s setting declares', () => {
+  it('says at least, at most or between for a whole or decimal setting, and nothing without one', () => {
+    const range = (type: ClassSetting['type'], minimum?: number, maximum?: number) => rangeHint({ type, minimum, maximum })
+    expect([
+      // An int's own bounds stand for the side it does not declare.
+      range('integer', 1, 2147483647), range('integer', -2147483648, 60), range('integer', 1, 3600), range('integer', -2147483648, 2147483647),
+      range('number', 0.5), range('number', undefined, 99.5), range('number', -1.5, 1.5), range('number'), range('integer'),
+    ]).toEqual(['At least 1.', 'At most 60.', 'Between 1 and 3600.', undefined, 'At least 0.5.', 'At most 99.5.', 'Between -1.5 and 1.5.', undefined, undefined])
+    // A decimal setting has no bounds of its own: the int's are a range like any other.
+    expect(range('number', -2147483648, 2147483647)).toBe('Between -2147483648 and 2147483647.')
+    // Only a number has a range.
+    for (const type of ['string', 'boolean', 'enum'] as const) expect(range(type, 1, 10), type).toBeUndefined()
   })
 })
 

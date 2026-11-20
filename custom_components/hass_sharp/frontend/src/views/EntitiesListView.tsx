@@ -18,8 +18,9 @@ const byName = (a: HomeDefinition, b: HomeDefinition) => a.name.localeCompare(b.
 /**
  * The Entities section: a card for each entity definition, with its status, its entities and their live states, its
  * switch and its menu; "New entity definition" names a draft and opens it in the node editor. The list is read as the
- * automations page reads its own: again while a run is going or a definition starts, and after a switch or a delete. A definition file the backend cannot read is listed apart, by its id and why, with
- * Delete (at revision 0) its only action, or, for one a delete cannot remove, how to remove it by hand.
+ * automations page reads its own: again while a run is going or a definition starts, and after a switch or a delete.
+ * A definition file the backend cannot read is listed apart, by its id and why, with Delete (at revision 0) its only
+ * action, or, for one a delete cannot remove, how to remove it by hand.
  */
 export const EntitiesListView = (_props: RouteSectionProps) => {
   const hass = useContext(HassCtx)!

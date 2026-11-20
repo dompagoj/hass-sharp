@@ -6,7 +6,7 @@ import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, rena
 /**
  * The definition form's changes to an editor graph's `definition` (its settings), each a new graph: one undo step when
  * committed. Nothing here changes its argument. Its entities and devices are its Entity and Device nodes, edited on the
- * canvas. The device helpers below are the class editor's, whose definition has a device of its own.
+ * canvas.
  */
 
 /** The rule an entity's key follows, as the form says it. */
@@ -90,15 +90,15 @@ export function optionFits(rule: ConfigSpec, value: unknown): boolean {
 
 /**
  * A number as typed: digits, a sign, a fraction and an exponent, with a point; `null` for an empty text, `undefined`
- * for one that is not a number (a comma, a unit, an unfinished number), or not a whole one when `whole`. How the class
- * page's number settings and the entity form's number options read what is typed.
+ * for one that is not a number (a comma, a unit, an unfinished number). How the entity form's number options read
+ * what is typed.
  */
-export function readNumber(typed: string, whole = false): number | null | undefined {
+export function readNumber(typed: string): number | null | undefined {
   const trimmed = typed.trim()
   if (!trimmed) return null
   if (!/^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i.test(trimmed)) return
   const parsed = Number(trimmed)
-  if (!Number.isFinite(parsed) || (whole && !Number.isSafeInteger(parsed))) return
+  if (!Number.isFinite(parsed)) return
   return parsed
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import shared from '../../../../tests/fixtures/entity-option-problems.json'
-import { optionProblems } from '../src/entities/definitionEdits'
+import { optionProblems, readNumber } from '../src/entities/definitionEdits'
 import { editorGraph, type DefinitionBody, type DefinitionEntity } from '../src/entities/model'
 import type { VisualDiagnostic } from '../src/visual/api'
 import { nodeCatalog } from '../src/visual/contract'
@@ -46,5 +46,15 @@ describe('the problems of an Entity node\'s options', () => {
     expect(answer.ok).toBe(true)
     expect(answer.result.valid).toBe(false)
     same(answer.result.diagnostics, (c as Case).problems)
+  })
+})
+
+describe('a number option as typed', () => {
+  it('reads digits, a sign, a fraction and an exponent with a point; an empty text as none, and anything else as no number', () => {
+    const typed = ['-0', '-0.', '-0.5', '.5', '1', '+2', '-3', '1.5', '1e1', '1e3', '1E-2', ' 7 ']
+    expect(typed.map(text => readNumber(text))).toEqual([-0, -0, -0.5, 0.5, 1, 2, -3, 1.5, 10, 1000, 0.01, 7])
+    expect(['', '   '].map(text => readNumber(text))).toEqual([null, null])
+    // Unfinished, with a comma or a unit, or past what a number holds: not a number, so nothing is committed for it.
+    for (const text of ['-', '.', '1e', '1e+', '1,5', '5 W', '0x10', 'Infinity', '1e999']) expect(readNumber(text), text).toBeUndefined()
   })
 })

@@ -847,6 +847,60 @@ it('gives a new definition the next free id when its id was taken elsewhere befo
   expect(fixture.entities.documents.get('hall_motion')!.revision).toBe(1)
 })
 
+/** Holds every save until `release`; `asked` says once one was sent. */
+function holdSaves(fixture: Fixture) {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => (release = resolve))
+  const held = { asked: false, release: () => release() }
+  const answer = fixture.entities.callWS
+  fixture.entities.callWS = async (message: any) => {
+    if (message.request?.operation === 'save') { held.asked = true; await gate }
+    return answer(message)
+  }
+  return held
+}
+
+it('stays where the person went when a first save answers after they left', async () => {
+  let held!: ReturnType<typeof holdSaves>
+  const { root, fixture, history } = setup('/entities/new?name=Hall motion', f => { held = holdSaves(f) })
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(held.asked).toBe(true))
+  // A new definition nobody changed leaves without asking.
+  ;[...root.querySelectorAll<HTMLAnchorElement>('a')].find(a => a.textContent === 'Leave')!.click()
+  await vi.waitFor(() => expect(history.get()).toBe('/elsewhere'))
+  held.release()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('hall_motion')).toBeDefined())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(history.get()).toBe('/elsewhere')
+  expect(root.querySelector('h1')?.textContent).toBe('Elsewhere')
+})
+
+it('keeps the definition shown when a save answers after the address moved to another one', async () => {
+  let held!: ReturnType<typeof holdSaves>
+  const { root, fixture, history } = setup('/entities/new?name=Hall motion', f => { f.entities.seed('plug', plugBody()); held = holdSaves(f) })
+  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
+  button(root, 'Save').click()
+  await vi.waitFor(() => expect(held.asked).toBe(true))
+  // Back in the browser's history, to another definition, while the save is on its way.
+  history.set({ value: '/entities/plug' })
+  await vi.waitFor(() => expect(nameInput(root)?.value).toBe('Plug'))
+  held.release()
+  await vi.waitFor(() => expect(fixture.entities.documents.get('hall_motion')).toBeDefined())
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(history.get()).toBe('/entities/plug')
+  expect(nameInput(root).value).toBe('Plug')
+  expect(relayName(root)).toBe('Relay')
+  // The saved one opens from its own address, read as usual: the page reads it, the editor waiting for that read.
+  const release = holdReads(fixture)
+  history.set({ value: '/entities/hall_motion' })
+  await vi.waitFor(() => expect(root.querySelector('[role="status"]')?.textContent).toBe('Loading saved entity definition…'))
+  expect(editorShown(root)).toBe(false)
+  release()
+  await vi.waitFor(() => expect(nameInput(root)?.value).toBe('Hall motion'))
+  expect(history.get()).toBe('/entities/hall_motion')
+})
+
 /** The plug with three secrets saved: Password, Token and API key. */
 const securePlug = () => {
   const body = plugBody()
@@ -1108,6 +1162,16 @@ it('says a definition that is not stored was not found, and one that could not b
   const { root, history } = setup('/entities/nothing')
   await vi.waitFor(() => expect(root.querySelector('[role="alert"]')?.textContent).toContain('This entity definition was not found. It may have been deleted.'))
   expect(editorShown(root)).toBe(false)
+  // Its top bar, with Back, comes first and stays at the top of the panel's main area, which scrolls.
+  const opening = root.querySelector('section.hs-cdef[aria-label="Opening entity definition"]')!
+  expect(opening.firstElementChild!.matches('header.hs-topbar')).toBe(true)
+  expect(opening.firstElementChild!.contains(button(root, 'Back to entities'))).toBe(true)
+  const { readFileSync } = await import('node:fs')
+  expect(readFileSync('src/styles/base.css', 'utf8')).toMatch(/\.hs-app \.hs-main \{[^}]*overflow: auto/)
+  const css = readFileSync('src/styles/entities.css', 'utf8')
+  expect(css).toMatch(/\.hs-app \.hs-cdef > \.hs-topbar \{[^}]*position: sticky; top: 0; z-index: \d+;/)
+  // The page scrolls with the main area, not on its own, or the bar would stick to nothing.
+  expect(css).not.toMatch(/\.hs-app \.hs-cdef \{[^}]*overflow/)
   button(root, 'Back to entities').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities'))
   dispose!(); document.body.innerHTML = ''

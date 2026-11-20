@@ -60,8 +60,8 @@ const registry = {
   devices: [{ id: 'router', name: 'Router', area_id: null }, { id: 'own', name: 'Hall plug', area_id: null }],
 }
 
-/** The inspector of one node over a graph history, as the editor wires them. */
-function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[]; onEditCode?: (id: string) => void } = {}) {
+/** The inspector of one node over a graph history, as the editor wires them, with Home Assistant's `registry` (default: the one above). */
+function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[]; onEditCode?: (id: string) => void; registry?: unknown } = {}) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
@@ -69,7 +69,7 @@ function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: {
   const [selected] = createSignal(id)
   const notices: string[] = []
   client = new QueryClient()
-  const hass = { callWS: async (message: { type: string }) => (message.type === 'hass_sharp/get_entities' ? structuredClone(registry) : {}) }
+  const hass = { callWS: async (message: { type: string }) => (message.type === 'hass_sharp/get_entities' ? structuredClone(options.registry ?? registry) : {}) }
   dispose = render(() => (
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={hass as any}>
@@ -613,6 +613,41 @@ describe('devices in the right panel', () => {
     expect(node().config).not.toHaveProperty('via')
     history.undo()
     expect(node().config.via).toEqual({ deviceId: 'router' })
+  })
+
+  it('Part of a Home Assistant device offers them by name with their areas, keeps the focus on Part of, and shows the one picked by name', async () => {
+    // Out of name order, one in an area, and the device Home Assistant made for this definition's saved relay.
+    const withAreas = { ...registry, areas: [{ area_id: 'loft', name: 'Loft', floor_id: null }],
+      devices: [{ id: 'zigbee', name: 'Zigbee coordinator', area_id: null }, { id: 'own', name: 'Hall plug', area_id: null }, { id: 'attic', name: 'Attic router', area_id: 'loft' }] }
+    const saved = { keys: ['relay'], entityIds: { relay: 'switch.hall_relay' }, deviceKeys: [] }
+    const { el, node, history } = mount(devices(), 'plug', nodeCatalog, { saved, registry: withAreas })
+    const partOf = () => select(el, 'via')
+    const ha = () => el.querySelector<HTMLElement>('.hs-inspector [data-field="viaDevice"]')
+    const picker = () => ha()!.querySelector<HTMLInputElement>('input[role="combobox"]')!
+    partOf().focus()
+    pickLabel(partOf(), 'A Home Assistant device…')
+    await vi.waitFor(() => expect(ha()).not.toBeNull())
+    expect(picker().getAttribute('aria-label')).toBe('Home Assistant device')
+    // Nothing is written until a device is picked; the focus stays on Part of, and Tab goes on to the picker.
+    expect(node().config).not.toHaveProperty('via')
+    expect(ha()!.querySelector('.hs-field-hint')!.textContent).toBe('Part of nothing until you pick a device.')
+    expect(document.activeElement).toBe(partOf())
+    const focusable = [...el.querySelectorAll<HTMLElement>('.hs-inspector :is(input, select, textarea, button)')]
+    expect(focusable[focusable.indexOf(partOf()) + 1]).toBe(picker())
+    picker().click()
+    await vi.waitFor(() => expect(ha()!.querySelectorAll('[role="option"]').length).toBeGreaterThan(0))
+    const offered = [...ha()!.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(texts(offered)).toEqual(['Attic router · Loft', 'Zigbee coordinator'])
+    offered[1].click()
+    expect(node().config.via).toEqual({ deviceId: 'zigbee' })
+    expect(partOf().value).toBe('device')
+    expect(ha()!.querySelector('.hs-field-hint')).toBeNull()
+    // Opened again, Part of shows that device by its name.
+    const graph = history.graph()
+    dispose?.(); document.body.innerHTML = ''
+    const again = mount(graph, 'plug', nodeCatalog, { saved, registry: withAreas })
+    await vi.waitFor(() => expect(again.el.querySelector<HTMLInputElement>('.hs-inspector [data-field="viaDevice"] input[role="combobox"]')?.value).toBe('Zigbee coordinator'))
+    expect(select(again.el, 'via').value).toBe('device')
   })
 
   it('Part of offers another device of this definition only when there is one to pick, or one is named', async () => {
