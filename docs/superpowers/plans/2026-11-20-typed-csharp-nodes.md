@@ -20,6 +20,7 @@
 - **Exact copy.**
   - Bad type: `A setting is a string, bool, int, long, double, enum or an entity class such as LightEntity; {type} cannot be one`
   - Secret entity: `An entity setting cannot be secret`
+  - The `required` modifier on a setting: `A setting does not take the required modifier: one that is not nullable and has no initializer is required already`
   - Empty required pin: the validators' existing sentence for a required input, `{label} is required` (no code, as today).
   - Start with a required setting that has no value: reason `the setting {Label} has no value`, in the host's existing failure form `{Definition}: {Node name}: {reason}`.
   - `setting.value` phrase for an entity: `an entity id` without a domain, `an entity id that starts with {domain}.` with one (so: `Source takes an entity id that starts with sensor.`).
@@ -57,8 +58,10 @@
   - A setting declared in a library base class with no initializer is required in the node's signature (the initializer is read from the base's syntax).
   - `ClassProblems`: `[Setting(Secret = true)] public LightEntity Light { get; set; }` is refused with exactly one error, `An entity setting cannot be secret`, at the property's name; `[Setting] public DateTime When { get; set; }` is refused with the new `SettingTypeMessage("DateTime")` (update the existing assertion); `[Setting] public LightEntity[] Lights { get; set; }` is refused with `SettingTypeMessage("LightEntity[]")`.
   - `SameSettings`: two signatures that differ only in `required`, and two that differ only in `domain`, are not the same.
+  - No nullability warning for a required setting: a class with `[Setting] public LightEntity Light { get; set; }` and `[Setting] public string Host { get; set; }`, once without a constructor and once with an explicit one, has no CS8618 diagnostic in what the preview returns; a property of the same class that is not a setting (`public string Other { get; set; }`) still has its CS8618. The same holds for whatever gives the code editor its markers, if that is a different path from the preview (find out; say which in the report).
+  - `[Setting] public required LightEntity Light { get; set; }` is refused with exactly one error, the `required` modifier sentence, at the property's name.
 - [ ] **Step 2:** Run `--custom-nodes`; the new checks fail.
-- [ ] **Step 3: Implement.** `SettingType` asks `EntityPin` for a handle type (after unwrapping a nullable annotation); required as in Global Constraints, read from the property's declaration syntax (`PropertyDeclarationSyntax.Initializer`), false when the symbol has no syntax. Range attributes on an entity setting are refused by the existing `SettingRangeTypeMessage`. `CheckLibrarySettings` goes through the same check, so a library class's entity setting is accepted too.
+- [ ] **Step 3: Implement.** `SettingType` asks `EntityPin` for a handle type (after unwrapping a nullable annotation); required as in Global Constraints, read from the property's declaration syntax (`PropertyDeclarationSyntax.Initializer`), false when the symbol has no syntax. Range attributes on an entity setting are refused by the existing `SettingRangeTypeMessage`. CS8618 for a required setting is dropped where a class node's diagnostics are collected (the host gives the property its value before `Setup()`); with an explicit constructor the compiler reports it at the constructor and names the property only in its message, so match on the id and the property. `CheckLibrarySettings` goes through the same check, so a library class's entity setting is accepted too.
 - [ ] **Step 4:** `--custom-nodes`, `--entity-handles`, `--generated-source-pins`, `--entity-graph-generator` pass.
 - [ ] **Step 5: Commit**: `A setting of a C# node's class can be an entity handle, and says when it is required.`
 
@@ -217,4 +220,5 @@ Decisions this plan made where the spec left room. Format: what, why, cost if wr
 6. **`Services` is a real member whose type is in HassSharp; the generated assembly extends that type.** HassSharp cannot reference the generated assembly, and an extension property on `SharpComponent` itself would have to be written `this.Services`. Cost if wrong: one generated block to move.
 7. **`Services` works wherever `CallService` works**, the constructor included, where the spec first said "from `Setup()` on". It is the same call. Cost if wrong: one guard.
 8. **A stored signature that lacks `required` for a setting that is now required is out of date**, and the node says so at the next preview, as for any code change. Nothing has shipped. Cost if wrong: none.
-9. **No new authoring example** in `authoring_examples.json`; the guide's class is held by its own test. The examples file feeds several pinned lists. Cost if wrong: one example and the lists that count them.
+9. **A required setting draws no CS8618**, and the C# `required` modifier on a setting is refused. The warning's own advice is to add `required`, which the host's `new T()` cannot satisfy. Inside the class's constructor the property is still null; the guide says so. Cost if wrong: one filter and one check to remove.
+10. **No new authoring example** in `authoring_examples.json`; the guide's class is held by its own test. The examples file feeds several pinned lists. Cost if wrong: one example and the lists that count them.
