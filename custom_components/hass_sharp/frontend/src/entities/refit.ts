@@ -1,4 +1,4 @@
-import { dataInputs, dataOutputs, executionLabel, executionPorts, isAssignable, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
+import { dataInputs, dataOutputs, executionLabel, executionPorts, isAssignable, isHub, words, type GraphNode, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { removeEdge, updateNode, type VisualGraph } from '../visual/graph'
 import { optionFits } from './definitionEdits'
@@ -56,7 +56,8 @@ function refitSteps(graph: VisualGraph, next: VisualGraph, key: string, catalog:
 export function retypeNode(graph: VisualGraph, nodeId: string, domain: string, catalog: VisualCatalogSnapshot): { graph: VisualGraph; removed: Refitted } {
   const removed = refitted()
   const node = graph.nodes.find(n => n.id === nodeId)
-  if (!node || nodeSpec(node.kind, catalog)?.declares !== 'entity' || node.config.domain === domain) return { graph, removed }
+  // A C# entity's type is its code's: it is never retyped here.
+  if (!node || !isHub(nodeSpec(node.kind, catalog)) || node.config.domain === domain) return { graph, removed }
   const config = { ...node.config, domain, options: fittingOptions(node.config.options, domain, catalog) }
   // The node's pins come from its own type: the graph's types serve before and after.
   const types = graphTypes(graph, catalog)

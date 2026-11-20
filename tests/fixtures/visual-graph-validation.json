@@ -41514,5 +41514,969 @@
       "device.name",
       "flow.declaration"
     ]
+  },
+  {
+    "name": "a C# entity node alone is a valid definition",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a C# device node alone is a valid definition",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a C# entity is not asked for a name, a domain, state values or command wires",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "lamp",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "lamp",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Lamp",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "light",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a C# entity and an Entity node cannot share a key",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "temp",
+          "kind": "entity",
+          "config": {
+            "key": "thermometer",
+            "domain": "sensor",
+            "name": "Hall temperature"
+          }
+        },
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "thermo",
+    "inputId": "key",
+    "contains": "already used by Hall temperature",
+    "messages": [
+      "The key thermometer is already used by Hall temperature: give this entity its own"
+    ],
+    "codes": [
+      "definition.duplicateEntity"
+    ]
+  },
+  {
+    "name": "a C# device and a Device node cannot share a key",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "hall",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "hall.entities:thermo.device",
+          "kind": "data",
+          "source": "hall",
+          "target": "thermo",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "key",
+    "contains": "already used by Hall plug",
+    "messages": [
+      "The key plug is already used by Hall plug: give this device its own"
+    ],
+    "codes": [
+      "definition.duplicateDevice"
+    ]
+  },
+  {
+    "name": "a C# device with no wire is not an empty device",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "hall",
+          "kind": "device",
+          "config": {
+            "key": "hall",
+            "name": "Hall plug"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "Hall plug has no entities",
+    "warningNodeId": "hall",
+    "messages": [
+      "Hall plug has no entities: connect its Entities pin to an entity's Device pin"
+    ],
+    "codes": [
+      "device.empty"
+    ]
+  },
+  {
+    "name": "a Device node wired only to a C# entity is not empty",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "hall",
+          "kind": "device",
+          "config": {
+            "key": "hall",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "http://192.168.1.60/temperature"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "hall.entities:thermo.device",
+          "kind": "data",
+          "source": "hall",
+          "target": "thermo",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a device can be part of a C# device",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "desk",
+          "kind": "device",
+          "config": {
+            "key": "desk",
+            "name": "Desk",
+            "via": {
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "desk.entities:thermo.device",
+          "kind": "data",
+          "source": "desk",
+          "target": "thermo",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a step cannot name a C# entity",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {
+            "trackHistory": true
+          }
+        },
+        {
+          "id": "set",
+          "kind": "set_entity_state",
+          "config": {
+            "entity": "thermometer"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "start:next",
+          "source": "start",
+          "target": "set"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "set",
+    "inputId": "entity",
+    "contains": "This definition has no entity thermometer",
+    "messages": [
+      "This definition has no entity thermometer; choose one of its entities or add it"
+    ],
+    "codes": [
+      "definition.unknownEntity"
+    ]
+  },
+  {
+    "name": "a step-order wire into a C# entity is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "hall_temperature",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {
+            "trackHistory": true
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "start:next",
+          "source": "start",
+          "target": "thermo"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "thermo",
+    "contains": "Thermometer is an entity and is not part of the run order",
+    "messages": [
+      "Thermometer is an entity and is not part of the run order"
+    ],
+    "codes": [
+      "flow.declaration"
+    ]
+  },
+  {
+    "name": "code csharp.signature: settings that cannot be read",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": 5
+            },
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "http://192.168.1.60/temperature"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "thermo",
+    "inputId": "signature",
+    "contains": "The settings of this node cannot be read",
+    "messages": [
+      "The settings of this node cannot be read; open Edit code and apply it",
+      "Unknown input Address"
+    ],
+    "codes": [
+      "csharp.signature"
+    ]
+  },
+  {
+    "name": "a Setting read only by a C# node is used",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "address",
+          "kind": "setting",
+          "config": {
+            "key": "address"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "address.value:plug.Address",
+          "kind": "data",
+          "source": "address",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Address"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a step-order wire out of a C# device is refused as a device's",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "On"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug:next",
+          "source": "plug",
+          "target": "log"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "contains": "Plug is a device and is not part of the run order",
+    "messages": [
+      "Log is not connected into the flow; connect a step to its execution input",
+      "Plug is a device and is not part of the run order"
+    ],
+    "codes": [
+      "flow.declaration",
+      "node.unreachable"
+    ]
+  },
+  {
+    "name": "a C# entity without a title or a key is called C# entity, and is asked for its key",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": " ",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {
+            "trackHistory": true
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "start:next",
+          "source": "start",
+          "target": "thermo"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "thermo",
+    "inputId": "key",
+    "contains": "Give this entity a key",
+    "messages": [
+      "C# entity is an entity and is not part of the run order",
+      "Give this entity a key, such as power"
+    ],
+    "codes": [
+      "definition.entityKey",
+      "flow.declaration"
+    ]
+  },
+  {
+    "name": "a C# device is asked for its key and its name, and its Part of is checked as a Device node's",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "Plug 1",
+            "name": " ",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {},
+            "via": {
+              "device": "nowhere"
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "via",
+    "contains": "which is not a device of this definition",
+    "messages": [
+      "Device key Plug 1 is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters",
+      "Name this device: Home Assistant shows it by this name",
+      "Plug 1 is part of the device nowhere, which is not a device of this definition: choose another, or none"
+    ],
+    "codes": [
+      "definition.deviceKey",
+      "device.name",
+      "device.viaUnknown"
+    ]
+  },
+  {
+    "name": "a C# device has no configuration URL to check",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\"{Address}/relay?turn={(on ? \"on\" : \"off\")}\", null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {},
+            "configurationUrl": "nowhere"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a setting pin takes the type of its setting",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "interval",
+          "kind": "setting",
+          "config": {
+            "key": "interval"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "interval.value:thermo.Address",
+          "kind": "data",
+          "source": "interval",
+          "target": "thermo",
+          "sourcePort": "value",
+          "targetPort": "Address"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "interval",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "thermo",
+    "inputId": "Address",
+    "contains": "Address accepts Text, not Number",
+    "messages": [
+      "Address accepts Text, not Number"
+    ]
   }
 ]

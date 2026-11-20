@@ -315,7 +315,11 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             }
         }
         if(refreshed!=null)graph=refreshed;
-        errors.AddRange(VisualGraphValidator.Validate(graph,snapshot,out var inputTypes));if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors){Graph=refreshed};
+        errors.AddRange(VisualGraphValidator.Validate(graph,snapshot,out var inputTypes));
+        // A C# entity or C# device is not compiled yet, so a graph with one cannot run: it is previewed, and not generated.
+        foreach(var node in (graph["nodes"] as JsonArray??[]).OfType<JsonObject>().Where(n=>VisualNodeCatalog.IsClassNode(VisualNodeCatalog.Spec(n,snapshot))))
+            errors.Add(new(Text(node,"id"),"C# entity and C# device nodes cannot run yet",InputId:"source"));
+        if(errors.Any(e=>e.Severity==3))return new(false,"",[],errors){Graph=refreshed};
         var lines=new List<string>();var maps=new List<VisualSourceMap>();string? current=null;
         var customSections=new List<(string Id,int Start,int End)>();
         void Add(string source)=>lines.AddRange(source.Replace("\r\n","\n").Split('\n'));
@@ -342,7 +346,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             // and When started step alike, each with one action; and its Entity nodes, with one per flow they start
             // (DefinitionGraph.HubFlows), none for a node with nothing supplied or wired.
             var roots=nodes.Where(n=>VisualNodeCatalog.IsRoot(n,snapshot)).OrderBy(n=>Text(n,"id"),StringComparer.Ordinal)
-                .SelectMany(n=>VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n,snapshot),"entity")?DefinitionGraph.HubFlows(n,graph,snapshot).Select(f=>(Node:n,Flow:(HubFlow?)f)):[(n,(HubFlow?)null)]).ToArray();
+                .SelectMany(n=>VisualNodeCatalog.IsHub(VisualNodeCatalog.Spec(n,snapshot))?DefinitionGraph.HubFlows(n,graph,snapshot).Select(f=>(Node:n,Flow:(HubFlow?)f)):[(n,(HubFlow?)null)]).ToArray();
             var hubFlows=roots.Any(r=>r.Flow!=null);
             // Internal identifiers are deterministic and cannot shadow authored identifiers.
             var authored=graph.ToJsonString()+string.Join("\n",snapshot.Sources.Select(s=>s.Source));var prefix="__visual_";while(authored.Contains(prefix,StringComparison.Ordinal))prefix+="x";

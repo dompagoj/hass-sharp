@@ -305,9 +305,10 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
       },
     }
   })
-  // A root's structural input takes the header's left slot: it says what the node belongs to (an entity's device), so
-  // the state rows below stay level with the command pins. Its name and source chip name only what is wired to it.
-  const structuralInput = isRoot(node, catalog) ? inputs.find(input => structural(input.spec)) : undefined
+  // A root's or a declaration's structural input takes the header's left slot: it says what the node belongs to (an
+  // entity's device, a C# entity's), so the rows below stay level with the command pins. Its name and source chip name
+  // only what is wired to it.
+  const structuralInput = isRoot(node, catalog) || declaration ? inputs.find(input => structural(input.spec)) : undefined
   const headerSource = structuralInput?.sourceNode ? nodeTitle(graph.nodes.find(n => n.id === structuralInput.sourceNode), catalog, structuralInput.sourceNode) : undefined
   const headerInput: InputView | undefined = structuralInput && {
     ...structuralInput, source: headerSource,

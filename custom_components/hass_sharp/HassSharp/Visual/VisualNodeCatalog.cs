@@ -49,6 +49,71 @@ public static class VisualNodeCatalog
     /// </summary>
     internal static bool Declaration(JsonObject? spec) => Flag(spec, "declaration");
     /// <summary>
+    /// Whether the kind is an Entity node, the hub of its entity's flows: a root that declares an entity. A C# entity
+    /// declares one too, but its code is its behaviour: it has no flows, state values or commands. Mirrored by <c>isHub</c>
+    /// in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool IsHub(JsonNode? spec) => Flag(spec, "root") && Declares(spec, "entity");
+    /// <summary>
+    /// Whether the kind is a class node (<c>"dynamicInputs": "settings"</c>, a C# entity or a C# device): its code is one
+    /// class, and its pins after its kind's own are the class's settings (<see cref="ClassSignature"/>). Mirrored by
+    /// <c>isClassNode</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool IsClassNode(JsonNode? spec) => Text(spec, "dynamicInputs") == "settings";
+    /// <summary>Whether a node of the kind holds C# code: a Custom C# step or a class node. Mirrored by <c>hasCode</c> in <c>contract.ts</c>.</summary>
+    internal static bool HasCode(JsonNode? spec) => Text(spec, "dynamicInputs") is "custom" or "settings";
+    /// <summary>The types a class's setting can have, as its signature names them, and the pin type of each.</summary>
+    static readonly Dictionary<string, string> SettingPinTypes = new(StringComparer.Ordinal) { ["string"] = "string", ["enum"] = "string", ["integer"] = "number", ["number"] = "number", ["boolean"] = "boolean" };
+    /// <summary>
+    /// A class node's signature (<c>config.signature</c>) has a text <c>title</c> and <c>description</c>, a <c>domain</c>
+    /// that is a text or null, and <c>settings</c>, a list. Each setting has an identifier for its <c>key</c>, no key twice,
+    /// a text <c>label</c> and <c>description</c>, a <c>type</c> of string, integer, number, boolean or enum, a true/false
+    /// <c>secret</c>, and may have <c>options</c>, a list of text, and a number <c>minimum</c> and <c>maximum</c>. Mirrored
+    /// by <c>wellFormedClassSignature</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool WellFormedClassSignature(JsonNode? signature)
+    {
+        static bool Is<T>(JsonNode? value) => value is JsonValue v && v.TryGetValue<T>(out _);
+        static bool Number(JsonNode? value) => value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number;
+        if (signature is not JsonObject s || !Is<string>(s["title"]) || !Is<string>(s["description"])) return false;
+        if (!s.TryGetPropertyValue("domain", out var domain) || domain != null && !Is<string>(domain)) return false;
+        if (s["settings"] is not JsonArray settings) return false;
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in settings)
+            if (raw is not JsonObject setting || setting["key"] is not JsonValue k || !k.TryGetValue<string>(out var key) || !VisualTypes.Matches(key, "^[A-Za-z_][A-Za-z0-9_]*$") || !keys.Add(key)
+                || !Is<string>(setting["label"]) || !Is<string>(setting["description"]) || !Is<bool>(setting["secret"])
+                || setting["type"] is not JsonValue t || !t.TryGetValue<string>(out var type) || !SettingPinTypes.ContainsKey(type)
+                || setting.TryGetPropertyValue("options", out var options) && (options is not JsonArray list || !list.All(Is<string>))
+                || setting.TryGetPropertyValue("minimum", out var minimum) && !Number(minimum)
+                || setting.TryGetPropertyValue("maximum", out var maximum) && !Number(maximum))
+                return false;
+        return true;
+    }
+    /// <summary>
+    /// A class node's signature, when the node's kind is a class node's (<see cref="IsClassNode"/>), its signature is well
+    /// formed (<see cref="WellFormedClassSignature"/>) and no setting has the key of one of its kind's own pins; else null.
+    /// Mirrored by <c>classSignature</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static JsonObject? ClassSignature(JsonObject node, JsonNode? spec) =>
+        IsClassNode(spec) && node["config"] is JsonObject config && config["signature"] is JsonObject signature && WellFormedClassSignature(signature)
+            && !signature["settings"]!.AsArray().Any(s => (spec?["inputs"] as JsonObject)?.ContainsKey(Text(s, "key")) == true) ? signature : null;
+    /// <summary>
+    /// The pin of a class's setting: optional, of the setting's pin type (text for a string or an enum, a number for an
+    /// integer or a number, true or false for a boolean), labelled and described as the setting is, with the setting's
+    /// type, secret flag, options and range under <c>setting</c>. Mirrored by <c>settingInput</c> in <c>contract.ts</c>.
+    /// </summary>
+    static JsonObject SettingInput(JsonObject setting)
+    {
+        var type = Text(setting, "type");
+        var about = new JsonObject { ["type"] = type, ["secret"] = setting["secret"]!.DeepClone() };
+        foreach (var member in new[] { "options", "minimum", "maximum" }) if (setting.TryGetPropertyValue(member, out var value)) about[member] = value?.DeepClone();
+        return new JsonObject
+        {
+            ["types"] = new JsonArray(JsonValue.Create(SettingPinTypes[type])), ["required"] = false,
+            ["label"] = Text(setting, "label"), ["description"] = Text(setting, "description"), ["setting"] = about,
+        };
+    }
+    /// <summary>
     /// Whether a type or an input is structural (<c>"structural": true</c>, a device): a wire of it says what belongs to what
     /// and carries no value. No list of every type has a structural type, and nothing that reads an Entity node's state
     /// values reads a structural input. Mirrored by <c>structural</c> in <c>contract.ts</c>.
@@ -56,12 +121,13 @@ public static class VisualNodeCatalog
     internal static bool Structural(JsonNode? typeOrInput) => Flag(typeOrInput, "structural");
     /// <summary>
     /// The node's data inputs (<see cref="DataInputs"/> under <paramref name="catalog"/>) without the structural ones: an
-    /// Entity node's or a Set state's state values. Mirrored by <c>stateInputs</c> in <c>contract.ts</c>.
+    /// Entity node's or a Set state's state values. A class node has none: its pins are its settings, and its code gives its
+    /// state. Mirrored by <c>stateInputs</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, JsonObject catalog) => StateInputs(node, VisualCatalogSnapshot.BuiltIn.WithRoot(catalog));
     /// <summary>The node's state values (<see cref="StateInputs(JsonObject, JsonObject)"/>) under the catalog of <paramref name="snapshot"/>.</summary>
     internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, VisualCatalogSnapshot snapshot) =>
-        DataInputs(node, null, snapshot).Where(p => !Structural(p.Value)).ToList();
+        IsClassNode(Spec(node, snapshot)) ? [] : DataInputs(node, null, snapshot).Where(p => !Structural(p.Value)).ToList();
     /// <summary>
     /// The entity an Entity node declares, as a definition lists one (the shape <see cref="SharpDomains.Create"/> reads):
     /// a copy of its settings without its run history and state values, and without a name that is blank once trimmed
@@ -77,24 +143,44 @@ public static class VisualNodeCatalog
         return entity;
     }
     /// <summary>
-    /// The entities the graph's nodes declare (<see cref="Declares"/>), each with its node's id, in the order of the graph's
-    /// <c>nodes</c>; none for a graph of the wrong shape. Mirrored by <c>declaredEntities</c> in <c>contract.ts</c>.
+    /// The entities the graph's Entity nodes declare, each with its node's id, in the order of the graph's <c>nodes</c>;
+    /// none for a graph of the wrong shape. A C# entity's entity is its code's, which no list carries yet. Every kind that
+    /// declares an entity is named here on purpose: one this does not know is refused, never copied as it is (its config
+    /// may hold code). Mirrored by <c>declaredEntities</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<(string NodeId, JsonObject Entity)> DeclaredEntities(JsonObject graph, JsonObject catalog)
     {
         foreach (var raw in graph["nodes"] as JsonArray ?? [])
-            if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "entity")) yield return (Text(node, "id"), EntityDescription(node));
+            if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "entity"))
+                switch (Text(node, "kind"))
+                {
+                    case "entity": yield return (Text(node, "id"), EntityDescription(node)); break;
+                    case "csharp_entity": break;
+                    case var kind: throw new InvalidOperationException($"The kind {kind} declares an entity that no list knows how to describe");
+                }
     }
     /// <summary>
-    /// The devices the graph's Device nodes declare (<c>"declares": "device"</c>), each with its node's id, in the order of
-    /// the graph's <c>nodes</c>: a copy of the node's config (empty when it is not an object); none for a graph of the wrong
-    /// shape. Mirrored by <c>declaredDevices</c> in <c>contract.ts</c>.
+    /// The devices the graph's device nodes declare (<c>"declares": "device"</c>), each with its node's id, in the order of
+    /// the graph's <c>nodes</c>: a Device node's a copy of its config (empty when it is not an object); a C# device's the
+    /// key, name and Part of its config has, as it has them, marked <c>csharp</c>, and never its code,
+    /// settings or their values. None for a graph of the wrong shape. A declaring kind this does not know is refused, as
+    /// in <see cref="DeclaredEntities"/>. Mirrored by <c>declaredDevices</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<(string NodeId, JsonObject Device)> DeclaredDevices(JsonObject graph, JsonObject catalog)
     {
         foreach (var raw in graph["nodes"] as JsonArray ?? [])
             if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "device"))
-                yield return (Text(node, "id"), node["config"] is JsonObject config ? (JsonObject)config.DeepClone() : []);
+                switch (Text(node, "kind"))
+                {
+                    case "device": yield return (Text(node, "id"), node["config"] is JsonObject config ? (JsonObject)config.DeepClone() : []); break;
+                    case "csharp_device":
+                        var picked = new JsonObject();
+                        if (node["config"] is JsonObject own) foreach (var member in new[] { "key", "name", "via" }) if (own.TryGetPropertyValue(member, out var value)) picked[member] = value?.DeepClone();
+                        picked["csharp"] = true;
+                        yield return (Text(node, "id"), picked);
+                        break;
+                    case var kind: throw new InvalidOperationException($"The kind {kind} declares a device that no list knows how to describe");
+                }
     }
     /// <summary>
     /// The id of the Device node an Entity node is on: the source of the first value wire into its Device pin, as the
@@ -129,11 +215,13 @@ public static class VisualNodeCatalog
     }
     /// <summary>
     /// The definition's devices as a graph gives them: those of its Device nodes with a key (<see cref="DeviceKey"/>), in
-    /// node order, each described (<see cref="DeviceDescription"/>); two of one key are both listed (the validator refuses
-    /// the second). Mirrored by <c>derivedDevices</c> in <c>contract.ts</c>.
+    /// node order, then those of its C# devices alike, each described (<see cref="DeviceDescription"/>); two of one key
+    /// are both listed (the validator refuses the second). Mirrored by <c>derivedDevices</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<JsonObject> DerivedDevices(JsonObject graph, JsonObject catalog) =>
-        DeclaredDevices(graph, catalog).Where(d => DeviceKey(d.Device) != null).Select(d => DeviceDescription(d.Device));
+        DeclaredDevices(graph, catalog).Where(d => DeviceKey(d.Device) != null).OrderBy(d => IsCSharpDevice(d.Device)).Select(d => DeviceDescription(d.Device));
+    /// <summary>Whether a device a graph lists is a C# device's (<c>"csharp": true</c>), which its own code sets up.</summary>
+    internal static bool IsCSharpDevice(JsonNode? device) => Flag(device, "csharp");
     /// <summary>
     /// The definition's entities as a graph gives them: those its Entity nodes declare (<see cref="DeclaredEntities"/>),
     /// each with <c>device</c>, the key of the Device node it is on (<see cref="DeviceOf"/>), or null when it is on none or
@@ -583,6 +671,9 @@ public static class VisualNodeCatalog
         var all = (snapshot?.Root ?? Root)["types"]!.AsObject().Where(p => !Structural(p.Value)).Select(p => p.Key).ToArray();
         var dynamic = Text(spec, "dynamicInputs");
         if (dynamic == "custom" && CustomSignature(node, spec)?["inputs"] is JsonObject custom) foreach (var (key, value) in custom) ports[key] = value?.DeepClone();
+        // A class node's settings follow its kind's own pins, in the class's order.
+        if (dynamic == "settings" && ClassSignature(node, spec) is { } classSignature)
+            foreach (var setting in classSignature["settings"]!.AsArray().OfType<JsonObject>()) ports[Text(setting, "key")] = SettingInput(setting);
         if (dynamic == "fields" && node["config"]?["fields"] is JsonObject fields)
             foreach (var (key, _) in fields) ports["field:" + key] = Input(all, true, "Field " + key);
         if (dynamic == "service")

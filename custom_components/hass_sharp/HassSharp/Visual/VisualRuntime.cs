@@ -181,6 +181,8 @@ public sealed class VisualRuntime
                 // A wire into a structural input (an Entity node's Device pin) says what belongs to what and carries no value:
                 // it is no value to prepare or read.
                 if(nodes.ContainsKey(Text(e,"target"))&&VisualNodeCatalog.Structural((InputSpecs(Text(e,"target")) as JsonObject)?[Text(e,"targetPort")]))continue;
+                // Nor is a wire into a declaration (a C# entity's or C# device's setting): a declaration is never walked or worked out.
+                if(nodes.ContainsKey(Text(e,"target"))&&Declared(Text(e,"target")))continue;
                 data[(Text(e,"target"),Text(e,"targetPort"))]=(Text(e,"source"),Text(e,"sourcePort"));
                 if(!sources.TryGetValue(Text(e,"target"),out var list))sources[Text(e,"target")]=list=[];list.Add(Text(e,"source"));
             }
@@ -640,7 +642,7 @@ public sealed class VisualRuntime
             if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
             scope.CancellationToken.ThrowIfCancellationRequested();
             // No step order wire goes into or out of a declaration and none is a root, so no walk reaches one.
-            if(Declared(id))throw new InvalidOperationException($"{Title(id)} is a device and is not part of the run order");
+            if(Declared(id))throw new InvalidOperationException(VisualGraphValidator.Words.DeclarationNotInFlow(nodes[id],Spec(id)));
             var n=nodes[id];var kind=Text(n,"kind");var cfg=n["config"]!;string? next=Next(id);
             VisualTrace.Event? ev=null;var port="next";
             // The step's event follows the events of its value nodes; it is started even when one of them failed.

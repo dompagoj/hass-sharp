@@ -42,6 +42,8 @@ export interface InputSpec {
   connectable?: boolean; wireOnly?: boolean; structural?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
+  /** A class node's setting pin (see `settingInput`): the setting's own type, secret flag, options and range. */
+  setting?: { type: ClassSetting['type']; secret: boolean; options?: string[]; minimum?: number; maximum?: number }
 }
 /**
  * An output pin. `when` names a boolean config key; the output exists only while it is true. `propertyOf` names an
@@ -260,34 +262,53 @@ export function entityDescription(node: GraphNode): Record<string, unknown> {
   if (typeof entity.name === 'string' && !entity.name.replace(blankEnds, '')) delete entity.name
   return entity
 }
+/** The graph's nodes that declare `what` (a kind with `declares: what`), in the order of its `nodes`; none for a graph of the wrong shape. */
+const declaringNodes = (graph: unknown, what: 'entity' | 'device', catalog: VisualCatalogSnapshot) =>
+  (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record).filter(node => nodeSpec(node.kind, catalog)?.declares === what)
 /**
- * The entities the graph's nodes declare (a kind with `declares: 'entity'`), each with its node's id, in the order of
- * the graph's `nodes`; none for a graph of the wrong shape. Mirrors `VisualNodeCatalog.DeclaredEntities`.
+ * The entities the graph's Entity nodes declare, each with its node's id, in the order of the graph's `nodes`; none for
+ * a graph of the wrong shape. A C# entity's entity is its code's, which no list carries yet. Every kind that declares an
+ * entity is named here on purpose: one this does not know is refused, never copied as it is (its config may hold code).
+ * Mirrors `VisualNodeCatalog.DeclaredEntities`.
  */
 export function declaredEntities(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; entity: Record<string, unknown> }[] {
-  return (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record)
-    .filter(node => nodeSpec(node.kind, catalog)?.declares === 'entity')
-    .map(node => ({ nodeId: text(node.id), entity: entityDescription(node as unknown as GraphNode) }))
+  return declaringNodes(graph, 'entity', catalog).flatMap(node => {
+    if (node.kind === 'entity') return [{ nodeId: text(node.id), entity: entityDescription(node as unknown as GraphNode) }]
+    if (node.kind === 'csharp_entity') return []
+    throw new Error(`The kind ${text(node.kind)} declares an entity that no list knows how to describe`)
+  })
 }
 /**
- * The keys a graph already gives its entities: those its Entity nodes declare, each text key once; none for a graph
- * without Entity nodes.
+ * The keys every node that declares an entity gives it (an Entity node, a C# entity), each with its node's id, in the
+ * order of the graph's `nodes`: one namespace, which no two may share.
+ */
+export const entityKeyHolders = (graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; key: unknown }[] =>
+  declaringNodes(graph, 'entity', catalog).map(node => ({ nodeId: text(node.id), key: record(node.config) ? node.config.key : undefined }))
+/**
+ * The keys a graph already gives its entities: those its Entity nodes and C# entities have (`entityKeyHolders`), each
+ * text key once; none for a graph without either.
  */
 export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
-  const keys = declaredEntities(graph, catalog).map(d => d.entity.key)
+  const keys = entityKeyHolders(graph, catalog).map(d => d.key)
   return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
 }
 /**
- * The devices the graph's Device nodes declare (a kind with `declares: 'device'`), each with its node's id, in the order
- * of the graph's `nodes`: a copy of the node's config (empty when it is not an object); none for a graph of the wrong
- * shape. Mirrors `VisualNodeCatalog.DeclaredDevices`.
+ * The devices the graph's device nodes declare (a kind with `declares: 'device'`), each with its node's id, in the order
+ * of the graph's `nodes`: a Device node's a copy of its config (empty when it is not an object); a C# device's the key,
+ * name and Part of its config has, as it has them, marked `csharp`, and never its code, settings or
+ * their values. None for a graph of the wrong shape. A declaring kind this does not know is refused, as in
+ * `declaredEntities`. Mirrors `VisualNodeCatalog.DeclaredDevices`.
  */
 export function declaredDevices(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; device: Record<string, unknown> }[] {
-  return (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record)
-    .filter(node => nodeSpec(node.kind, catalog)?.declares === 'device')
-    .map(node => ({ nodeId: text(node.id), device: record(node.config) ? structuredClone(node.config) : {} }))
+  return declaringNodes(graph, 'device', catalog).map(node => {
+    const config = record(node.config) ? node.config : undefined
+    if (node.kind === 'device') return { nodeId: text(node.id), device: config ? structuredClone(config) : {} }
+    if (node.kind === 'csharp_device')
+      return { nodeId: text(node.id), device: { ...structuredClone(Object.fromEntries(['key', 'name', 'via'].filter(member => config && Object.hasOwn(config, member)).map(member => [member, config![member]]))), csharp: true } }
+    throw new Error(`The kind ${text(node.kind)} declares a device that no list knows how to describe`)
+  })
 }
-/** The keys a graph already gives its devices: those its Device nodes have, each text key once; none without Device nodes. */
+/** The keys a graph already gives its devices: those its Device nodes and C# devices have, each text key once; none without either. */
 export function definitionDeviceKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const keys = declaredDevices(graph, catalog).map(d => d.device.key)
   return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
@@ -342,12 +363,14 @@ function deviceDescription(config: Record<string, unknown>): Record<string, unkn
   return device
 }
 /**
- * The definition's devices as a graph gives them: those of its Device nodes with a key, in node order, each described
- * (`deviceDescription`); two of one key are both listed (the validator refuses the second). Mirrors
- * `VisualNodeCatalog.DerivedDevices`.
+ * The definition's devices as a graph gives them: those of its Device nodes with a key, in node order, then those of
+ * its C# devices alike, each described (`deviceDescription`); two of one key are both listed (the validator refuses the
+ * second). Mirrors `VisualNodeCatalog.DerivedDevices`.
  */
-export const derivedDevices = (graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): CatalogDefinition['devices'] =>
-  declaredDevices(graph, catalog).filter(d => deviceKey(d.device) !== undefined).map(d => deviceDescription(d.device)) as CatalogDefinition['devices']
+export const derivedDevices = (graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): CatalogDefinition['devices'] => {
+  const keyed = declaredDevices(graph, catalog).filter(d => deviceKey(d.device) !== undefined)
+  return [...keyed.filter(d => d.device.csharp !== true), ...keyed.filter(d => d.device.csharp === true)].map(d => deviceDescription(d.device)) as CatalogDefinition['devices']
+}
 /**
  * The definition's entities as a graph gives them: the ones its Entity nodes declare, whatever its `definition` lists,
  * each with `device`, the key of the Device node it is on (`deviceNodeOf`), or null when it is on none or on one without
@@ -522,6 +545,65 @@ export function wellFormedSignature(signature: unknown): signature is CustomSign
   if (!texts(signature.execution) || !texts(signature.scopePorts)) return false
   if (signature.executionLabels !== undefined && signature.executionLabels !== null && (!record(signature.executionLabels) || !Object.values(signature.executionLabels).every(v => typeof v === 'string'))) return false
   return Object.values(types).every(record)
+}
+/**
+ * Whether the kind is an Entity node, the hub of its entity's flows: a root that declares an entity. A C# entity
+ * declares one too, but its code is its behaviour: it has no flows, state values or commands. Mirrors `VisualNodeCatalog.IsHub`.
+ */
+export const isHub = (spec: NodeSpec | undefined) => spec?.root === true && spec.declares === 'entity'
+/**
+ * Whether the kind is a class node (`dynamicInputs: 'settings'`, a C# entity or a C# device): its code is one class, and
+ * its pins after its kind's own are the class's settings (`classSignature`). Mirrors `VisualNodeCatalog.IsClassNode`.
+ */
+export const isClassNode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === 'settings'
+/** Whether a node of the kind holds C# code: a Custom C# step or a class node. Mirrors `VisualNodeCatalog.HasCode`. */
+export const hasCode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === 'custom' || spec?.dynamicInputs === 'settings'
+/** One setting of a class node's class, as the compiler writes it: one of its `[Setting]` properties. */
+export interface ClassSetting { key: string; label: string; description: string; type: 'string' | 'integer' | 'number' | 'boolean' | 'enum'; secret: boolean; options?: string[]; minimum?: number; maximum?: number }
+/** What a class node's code gives, as the compiler writes it into `config.signature`: its title, its description, its entity's type (a C# entity's) and its settings. */
+export interface ClassSignature { title: string; description: string; domain: string | null; settings: ClassSetting[] }
+/** The types a class's setting can have, and the pin type of each. */
+const settingPinTypes: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
+/**
+ * Whether a class node's signature is one the compiler writes: a text `title` and `description`, a `domain` that is a
+ * text or null, and `settings`, a list. Each setting has an identifier for its `key`, no key twice, a text `label` and
+ * `description`, a `type` of string, integer, number, boolean or enum, a true/false `secret`, and may have `options`, a
+ * list of text, and a number `minimum` and `maximum`. Mirrors `VisualNodeCatalog.WellFormedClassSignature`.
+ */
+export function wellFormedClassSignature(signature: unknown): signature is ClassSignature {
+  if (!record(signature) || typeof signature.title !== 'string' || typeof signature.description !== 'string') return false
+  if (!Object.hasOwn(signature, 'domain') || signature.domain !== null && typeof signature.domain !== 'string') return false
+  if (!Array.isArray(signature.settings)) return false
+  const keys = new Set<string>()
+  for (const setting of signature.settings as unknown[]) {
+    if (!record(setting) || typeof setting.key !== 'string' || !matches(setting.key, pinId) || keys.has(setting.key)) return false
+    keys.add(setting.key)
+    if (typeof setting.label !== 'string' || typeof setting.description !== 'string' || typeof setting.secret !== 'boolean') return false
+    if (typeof setting.type !== 'string' || !Object.hasOwn(settingPinTypes, setting.type)) return false
+    if (Object.hasOwn(setting, 'options') && !(Array.isArray(setting.options) && setting.options.every(o => typeof o === 'string'))) return false
+    for (const bound of ['minimum', 'maximum']) if (Object.hasOwn(setting, bound) && typeof setting[bound] !== 'number') return false
+  }
+  return true
+}
+/**
+ * A class node's signature, when the node's kind is a class node's (`isClassNode`), its signature is well formed
+ * (`wellFormedClassSignature`) and no setting has the key of one of its kind's own pins; else undefined. Mirrors
+ * `VisualNodeCatalog.ClassSignature`.
+ */
+export function classSignature(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): ClassSignature | undefined {
+  const spec = nodeSpec(node.kind, catalog)
+  const signature = isClassNode(spec) && record(node.config) ? node.config.signature : undefined
+  return wellFormedClassSignature(signature) && !signature.settings.some(s => Object.hasOwn(spec!.inputs ?? {}, s.key)) ? signature : undefined
+}
+/**
+ * The pin of a class's setting: optional, of the setting's pin type (text for a string or an enum, a number for an
+ * integer or a number, true or false for a boolean), labelled and described as the setting is, with the setting's
+ * type, secret flag, options and range under `setting`. Mirrors `VisualNodeCatalog.SettingInput`.
+ */
+function settingInput(setting: ClassSetting): InputSpec {
+  const about: NonNullable<InputSpec['setting']> = { type: setting.type, secret: setting.secret }
+  for (const member of ['options', 'minimum', 'maximum'] as const) if (Object.hasOwn(setting, member)) (about as Record<string, unknown>)[member] = structuredClone(setting[member])
+  return { types: [settingPinTypes[setting.type]], required: false, label: setting.label, description: setting.description, setting: about }
 }
 /** The signature of a Custom C# node when its kind takes its pins from one and it is well formed; else undefined. */
 export function customSignature(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): CustomSignature | undefined {
@@ -784,6 +866,8 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
     }
   }
   if (dynamic === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.inputs ?? {}))
+  // A class node's settings follow its kind's own pins, in the class's order.
+  if (dynamic === 'settings') for (const setting of classSignature(node, catalog)?.settings ?? []) ports[setting.key] = settingInput(setting)
   if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i + 1}`, description: `Item ${i + 1}` } })
   if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
@@ -799,11 +883,11 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   return ports
 }
 /**
- * The node's data inputs (`dataInputs`) without the structural ones: an Entity node's or a Set state's state values.
- * Mirrors `VisualNodeCatalog.StateInputs`.
+ * The node's data inputs (`dataInputs`) without the structural ones: an Entity node's or a Set state's state values. A
+ * class node has none: its pins are its settings, and its code gives its state. Mirrors `VisualNodeCatalog.StateInputs`.
  */
 export const stateInputs = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> =>
-  Object.fromEntries(Object.entries(dataInputs(node, undefined, catalog)).filter(([, input]) => !structural(input)))
+  isClassNode(nodeSpec(node.kind, catalog)) ? {} : Object.fromEntries(Object.entries(dataInputs(node, undefined, catalog)).filter(([, input]) => !structural(input)))
 /** An own property only, as `TryGetInputValue` reads it: a field named `constructor` or `toString` is not inherited. */
 const own = (container: unknown, key: string): unknown => record(container) && Object.hasOwn(container, key) ? container[key] : undefined
 export function inputValue(node: GraphNode, port: string, catalog: VisualCatalogSnapshot): unknown {
@@ -889,14 +973,16 @@ function kindName(node: GraphNode, catalog: VisualCatalogSnapshot): string {
 }
 /**
  * The entity a node declares as people read it, in the validator's messages and in its runs' names: its name, else its
- * key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device alike. Undefined for
- * a node that declares neither. Mirrors `VisualGraphValidator.Words.EntityName`.
+ * key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device and a C# device's
+ * alike. A C# entity has no name of its own (its code names its entity): it is its class's title, else its key, else its
+ * kind's label. Undefined for a node that declares neither. Mirrors `VisualGraphValidator.Words.EntityName`.
  */
 export function entityNodeName(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
-  const declares = nodeSpec(node.kind, catalog)?.declares
+  const spec = nodeSpec(node.kind, catalog), declares = spec?.declares
   if (declares !== 'entity' && declares !== 'device') return undefined
   const config = record(node.config) ? node.config : {}
-  return text(config.name).replace(blankEnds, '') || text(config.key).replace(blankEnds, '') || kindName(node, catalog)
+  const name = isClassNode(spec) && declares === 'entity' ? classSignature(node, catalog)?.title ?? '' : text(config.name)
+  return name.replace(blankEnds, '') || text(config.key).replace(blankEnds, '') || kindName(node, catalog)
 }
 /** JavaScript's whitespace, spelled out so `VisualGraphValidator.Words.Name` trims the very same characters. */
 export const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g
@@ -945,6 +1031,11 @@ export const words = {
   notInFlow: (node: string) => `${node} is a value and is not part of the run order`,
   /** A step order wire into or out of a Device node. */
   deviceNotInFlow: (device: string) => `${device} is a device and is not part of the run order`,
+  /** A step order wire into or out of a C# entity. */
+  entityNotInFlow: (entity: string) => `${entity} is an entity and is not part of the run order`,
+  /** A step order wire into or out of a declaration, in the words of what it declares (`stepName`). */
+  declarationNotInFlow: (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string =>
+    nodeSpec(node.kind, catalog)?.declares === 'entity' ? words.entityNotInFlow(words.stepName(node, catalog)) : words.deviceNotInFlow(words.stepName(node, catalog)),
   /** A node on a cycle of value wires. */
   ownResult: (node: string) => `${node} would depend on its own result`,
   /** A value node none of whose outputs is connected. */
@@ -1045,6 +1136,8 @@ export const words = {
   },
   /** A Custom C# node whose stored signature is not one the compiler writes. */
   malformedSignature: 'The pins of this node cannot be read; open Edit code and apply it',
+  /** A C# entity or C# device node whose stored settings are not of the shape the compiler writes. */
+  unreadableSettings: 'The settings of this node cannot be read; open Edit code and apply it',
   /** A Custom C# node whose stored signature is not what its code gives (only the backend, which compiles it, knows). */
   staleSignature: 'The pins are out of date with the code: open Edit code and apply it',
   /** The things hand-written automations left behind, and what to do instead. */
@@ -1215,7 +1308,7 @@ export const diagnosticCodes = [
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow',
-  'flow.pure', 'flow.declaration', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
+  'flow.pure', 'flow.declaration', 'pure.unused', 'custom.signature', 'csharp.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
   'definition.deviceKey', 'definition.duplicateDevice',
   'node.document', 'node.singleton', 'root.incoming',
@@ -1408,8 +1501,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (pure(from) || pure(to) || declared(from) || declared(to)) {
         if (pure(from)) error(from.id, words.notInFlow(words.stepName(from, catalog)), undefined, undefined, 'flow.pure')
         if (pure(to) && to.id !== from.id) error(to.id, words.notInFlow(words.stepName(to, catalog)), undefined, undefined, 'flow.pure')
-        if (declared(from)) error(from.id, words.deviceNotInFlow(words.stepName(from, catalog)), undefined, undefined, 'flow.declaration')
-        if (declared(to) && to.id !== from.id) error(to.id, words.deviceNotInFlow(words.stepName(to, catalog)), undefined, undefined, 'flow.declaration')
+        if (declared(from)) error(from.id, words.declarationNotInFlow(from, catalog), undefined, undefined, 'flow.declaration')
+        if (declared(to) && to.id !== from.id) error(to.id, words.declarationNotInFlow(to, catalog), undefined, undefined, 'flow.declaration')
         continue
       }
       const node = nodes.get(edge.source)!, port = flowPort(node, edge)
@@ -1471,7 +1564,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (wrong) error(target.id, wrong.message, edge.targetPort, edge.targetPort, wrong.code)
       // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable. A state value of an
       // Entity node reads no step in a flow at all, which scope.stateSource says instead.
-      const stateValue = nodeSpec(target.kind)?.declares === 'entity'
+      const stateValue = isHub(nodeSpec(target.kind))
       if (!stateValue && scopes.has(source.id) && scopes.has(target.id) && !visible(source, target, output))
         error(target.id, words.scopeData(inputSubject(target, input, edge.targetPort, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
       // A step reading a value node reads, in effect, every step output that value node uses.
@@ -1619,15 +1712,18 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     }
     // A text setting of an Entity or a Device node: '' when left out, undefined when it is not text (the config rule's below).
     const typed = (field: string) => !Object.hasOwn(node.config, field) ? '' : typeof node.config[field] === 'string' ? node.config[field] as string : undefined
-    // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless it is on a device (a
-    // Device node wired to it), and none of its state values or each one its type needs. A field that is not text is the
-    // config rule's below.
+    // Every node that declares an entity (an Entity node, a C# entity): a key of the form entity keys take. An Entity
+    // node: a type Home Assistant has, a name unless it is on a device (a Device node wired to it), and none of its state
+    // values or each one its type needs; a C# entity's code gives its type, name and state. A field that is not text is
+    // the config rule's below.
     if (entityGraph && spec.declares === 'entity') {
       const key = typed('key')
       if (key !== undefined) {
         if (!key.replace(blankEnds, '')) error(node.id, words.entityKeyMissing, 'key', undefined, 'definition.entityKey')
         else if (!matches(key, words.entityKeyPattern)) error(node.id, words.entityKey(key), 'key', undefined, 'definition.entityKey')
       }
+    }
+    if (entityGraph && isHub(spec)) {
       // A type left out is the config rule's; one given blank is said the same way.
       const domain = typed('domain')
       if (domain !== undefined && Object.hasOwn(node.config, 'domain')) {
@@ -1654,9 +1750,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
           else if (typeof value !== 'boolean') error(node.id, words.historyValue(member), 'history')
       if (Object.hasOwn(node.config, 'trackHistory')) error(node.id, words.historyNotTrack, 'history')
     }
-    // A Device node: a key of the form entity keys take, a name, a Part of of its shape, and a configuration URL Home
-    // Assistant takes. A field that is not text, or a Part of that is not an object, is the config rule's below; what Part
-    // of names, and its key among the others, are the graph's (`deviceRules`).
+    // A Device node and a C# device: a key of the form entity keys take, a name, a Part of of its shape; a Device node also
+    // a configuration URL Home Assistant takes (a C# device's code gives its own). A field that is not text, or a Part of
+    // that is not an object, is the config rule's below; what Part of names, and its key among the others, are the
+    // graph's (`deviceRules`).
     if (entityGraph && spec.declares === 'device') {
       const key = typed('key')
       if (key !== undefined) {
@@ -1667,7 +1764,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (name !== undefined && !name.replace(blankEnds, '')) error(node.id, words.deviceNameMissing, 'name', undefined, 'device.name')
       if (record(node.config.via) && !viaShaped(node.config.via)) error(node.id, words.viaShape, 'via', undefined, 'device.via')
       const url = typed('configurationUrl')
-      if (Object.hasOwn(node.config, 'configurationUrl') && url !== undefined && !configurationUrlTaken(url))
+      if (!isClassNode(spec) && Object.hasOwn(node.config, 'configurationUrl') && url !== undefined && !configurationUrlTaken(url))
         error(node.id, words.configurationUrl(words.stepName(node, catalog)), 'configurationUrl', undefined, 'device.configurationUrl')
     }
     if (entityGraph && node.kind === 'setting' && typeof node.config.key === 'string' && !definitionItems(catalog, 'settings').some(s => s.key === node.config.key))
@@ -1733,6 +1830,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     }
     if (Object.hasOwn(node.config, 'output')) error(node.id, words.exposedValue, 'output')
     if (spec.dynamicInputs === 'custom' && record(node.config.signature) && !wellFormedSignature(node.config.signature)) error(node.id, words.malformedSignature, 'source', undefined, 'custom.signature')
+    // A class node whose settings cannot be read has no setting pins; its code, applied again, writes them.
+    if (isClassNode(spec) && record(node.config.signature) && !classSignature(node, catalog)) error(node.id, words.unreadableSettings, 'signature', undefined, 'csharp.signature')
     if (node.kind === 'trigger') {
       const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
@@ -1838,7 +1937,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // wire comes from a Constant of an entity id type, whose entity is followed as chosen. The warning is the reader's own,
     // on no input: a wire into it is allowed (connectData), at the cost it names.
     const readers = new Set<string>()
-    for (const state of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity' && Object.keys(stateInputs(n, catalog)).some(p => supplied(n, p))).sort(byId))
+    for (const state of [...nodes.values()].filter(n => isHub(nodeSpec(n.kind)) && Object.keys(stateInputs(n, catalog)).some(p => supplied(n, p))).sort(byId))
       for (const reader of valueUpstream(state, nodes, data, pure, node => dataInputs(node))) {
         if (readers.has(reader.id)) continue
         const wired = Object.entries(dataInputs(reader)).find(([port, input]) => {
@@ -1849,13 +1948,14 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         readers.add(reader.id)
         errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(wired[1], wired[0])), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
       }
-    // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
-    // camera, a Show frame step that names it.
+    // Every node that declares an entity (an Entity node, a C# entity): a key no earlier one (in the graph's order)
+    // declares. An Entity node's: a step on each command's pin, and for a camera, a Show frame step that names it.
     const keys = new Map<string, GraphNode>()
     for (const hub of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity')) {
       const name = words.stepName(hub, catalog), key = choice(hub, 'key'), first = keys.get(key)
       if (key.replace(blankEnds, '') && first) error(hub.id, words.keyTaken(key, words.stepName(first, catalog)), 'key', undefined, 'definition.duplicateEntity')
       else if (key.replace(blankEnds, '')) keys.set(key, hub)
+      if (!isHub(nodeSpec(hub.kind))) continue
       const row = declaredDomain(hub, catalog)
       for (const command of Object.keys(record(row?.commands) ? row.commands : {}))
         if (!outgoing.get(hub.id)!.some(e => flowPort(hub, e) === `command:${command}`)) {
@@ -1872,7 +1972,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
    * The rules about Device nodes among each other, in the graph's order: a key no earlier Device node has; a Part of that
    * names a device (`{device: key}`, the first Device node of that key) this graph has, and does not come back to the node
    * it starts from (every device of such a circle is told, one part of itself included); and at least one entity wired to
-   * it, else a warning. Mirrors `VisualGraphValidator` `DeviceRules`.
+   * it, else a warning. A C# device is a device of these rules too (its key, its Part of, and the Part of of another), but
+   * its code adds its entities: it is never empty. Mirrors `VisualGraphValidator` `DeviceRules`.
    */
   function deviceRules() {
     const devices = [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'device')
@@ -1891,7 +1992,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         seen.add(next.id)
         if (next === node) { error(node.id, words.viaCycle(name), 'via', undefined, 'device.viaCycle'); break }
       }
-      if (!data.some(e => e.source === node.id && e.sourcePort === 'entities')) { errors.push({ nodeId: node.id, message: words.deviceEmpty(name), severity: 2, code: 'device.empty' }); origins.push(origin) }
+      if (!isClassNode(nodeSpec(node.kind)) && !data.some(e => e.source === node.id && e.sourcePort === 'entities')) { errors.push({ nodeId: node.id, message: words.deviceEmpty(name), severity: 2, code: 'device.empty' }); origins.push(origin) }
     }
   }
 }
@@ -1920,7 +2021,7 @@ export function valueSources(start: GraphNode, nodes: ReadonlyMap<string, GraphN
 export function entityScopes(nodes: ReadonlyMap<string, GraphNode>, data: readonly DataEdge[], outgoing: ReadonlyMap<string, readonly ExecutionEdge[]>, catalog: VisualCatalogSnapshot): GraphDiagnostic[] {
   const found: GraphDiagnostic[] = []
   const error = (nodeId: string, message: string, port: string, code: DiagnosticCode) => found.push({ nodeId, message, severity: 3, inputId: port, portId: port, code })
-  const declares = (node: GraphNode) => nodeSpec(node.kind, catalog)?.declares === 'entity'
+  const declares = (node: GraphNode) => isHub(nodeSpec(node.kind, catalog))
   // Its Device input reads no step: the Device node it is wired to is a declaration, not a flow's step.
   for (const hub of [...nodes.values()].filter(declares))
     for (const [port, input] of Object.entries(stateInputs(hub, catalog))) {
@@ -1978,7 +2079,7 @@ export function flowPins(nodes: ReadonlyMap<string, GraphNode>, outgoing: Readon
   }
   const pins: { root: GraphNode; port?: string; reached: Set<string> }[] = []
   for (const root of [...nodes.values()].filter(n => isRoot(n, catalog)))
-    if (nodeSpec(root.kind, catalog)?.declares === 'entity')
+    if (isHub(nodeSpec(root.kind, catalog)))
       for (const port of executionPorts(root, catalog)) pins.push({ root, port, reached: reached((outgoing.get(root.id) ?? []).filter(e => flowPort(root, e) === port)) })
     else pins.push({ root, reached: reached(outgoing.get(root.id) ?? []) })
   return pins
@@ -2014,8 +2115,13 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   for (const [key, value] of Object.entries(spec.inputs)) if (value.default !== undefined) storage[key] = structuredClone(value.default)
   // A step of an entity definition names the definition's only entity (or setting) it can name (ruling R12). An
   // Entity node names no other: it is named after its type, and keyed by that name past every key the definition has.
-  // A Device node is named Device, keyed past the keys of the graph's devices (not its entities': apart from them).
-  const named = spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
+  // A Device node is named Device, keyed past the keys of the graph's devices (not its entities': apart from them). A C#
+  // entity is keyed past the entity keys by its class's type (it has no name: its code names its entity); a C# device is
+  // keyed as a Device node is, and named by its class's title.
+  const signature = isClassNode(spec) && wellFormedClassSignature(config.signature) ? config.signature : undefined
+  const named = isClassNode(spec) && spec.declares === 'entity' ? { key: freeKey(entityKey(signature?.domain ?? ''), definitionEntityKeys(graph, catalog)) }
+    : isClassNode(spec) && spec.declares === 'device' ? { name: signature?.title || 'Device', key: freeKey('device', definitionDeviceKeys(graph, catalog)) }
+    : spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
     : spec.declares === 'device' ? { name: 'Device', key: freeKey('device', definitionDeviceKeys(graph, catalog)) }
     : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, definitionCatalog(catalog, graph)) : {}
   // A Custom C# node is titled by its method until someone names it; a node that declares an entity is named by it.

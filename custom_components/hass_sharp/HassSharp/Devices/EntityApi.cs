@@ -89,7 +89,7 @@ public partial class HassSharpManager
         var roots = DefinitionGraph.Roots(graph, snapshot);
         // An Entity node has one entry per flow it starts, named for its entity and its pin; every other root one of its own.
         var rootNodes = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot)).ToArray();
-        bool Hub(JsonObject node) => VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(node, snapshot), "entity");
+        bool Hub(JsonObject node) => VisualNodeCatalog.IsHub(VisualNodeCatalog.Spec(node, snapshot));
         var triggers = rootNodes.Where(n => !Hub(n))
             .ToDictionary(VisualNodeCatalog.EffectiveTriggerMethod, n => new VisualTrigger(VisualNodeCatalog.Text(n, "id"),
                 VisualNodeCatalog.Text(n, "label") is { Length: > 0 } label ? label : null, TrackHistory(n, snapshot)), StringComparer.Ordinal);
@@ -112,13 +112,15 @@ public partial class HassSharpManager
     /// <summary>
     /// The devices a graph's Device nodes declare, as its host hands them to Home Assistant, worked out from the graph again
     /// as its entities are (<see cref="DefinitionGraph.Devices"/>); one whose config is not a device's is left out, which a
-    /// saved graph, checked as it was saved, does not have.
+    /// saved graph, checked as it was saved, does not have. A C# device's entry (<see cref="VisualNodeCatalog.IsCSharpDevice"/>)
+    /// is left out too: its code makes its device, and its key, name and Part of make none.
     /// </summary>
-    static List<DefinitionDevice> GraphDevices(JsonObject graph, VisualCatalogSnapshot snapshot)
+    internal static List<DefinitionDevice> GraphDevices(JsonObject graph, VisualCatalogSnapshot snapshot)
     {
         List<DefinitionDevice> devices = [];
         foreach (var entry in DefinitionGraph.Devices(graph, snapshot.Root))
         {
+            if (VisualNodeCatalog.IsCSharpDevice(entry)) continue;
             try { if (entry.Deserialize<DefinitionDevice>(VisualStore.Json) is { Key: not null } device) devices.Add(device); }
             catch (JsonException) { }
         }

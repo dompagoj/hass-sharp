@@ -509,6 +509,12 @@ describe('devices in the right panel', () => {
     expect(wires(history.graph()).map(e => e.source)).toEqual(['spare'])
   })
 
+  it('the Device select offers a Device node and not a C# device, which adds its entities in its code', async () => {
+    const graph = add(add(devices(), 'csharp_device', 'code', { key: 'code', name: 'Code plug' }), 'device', 'desk', { key: 'desk', name: 'Desk' })
+    const { el } = mount(graph, 'relay')
+    expect([...select(el, 'device').options].map(o => o.textContent)).toEqual(['None', 'Hall plug', 'Hub', 'Hall plug', 'Device', 'Desk'])
+  })
+
   it('a Device node\'s fields edit its config', async () => {
     const { el, node, history } = mount(devices(), 'plug')
     const labels = [...el.querySelectorAll('.hs-inspector .hs-insp-main label.hs-insp-field__label')].map(label => label.textContent)

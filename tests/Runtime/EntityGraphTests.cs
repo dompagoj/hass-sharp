@@ -55,6 +55,7 @@ static class EntityGraphTests
             (nameof(ATriggerFlowInADefinitionCanSetState), ATriggerFlowInADefinitionCanSetState),
             (nameof(AnEntityNodeCreatesItsEntity), AnEntityNodeCreatesItsEntity),
             (nameof(APreviewWithoutAnyEntityAsksForOne), APreviewWithoutAnyEntityAsksForOne),
+            (nameof(AGraphWithOnlyACSharpNodeIsADefinition), AGraphWithOnlyACSharpNodeIsADefinition),
             (nameof(AnUnknownSourceIsWarnedOfInPreviewAndSave), AnUnknownSourceIsWarnedOfInPreviewAndSave),
             (nameof(AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried), AnInvalidGraphDefinitionReadsLikeAnAutomationAndIsNotRetried),
             (nameof(AnAutomationSentWithADefinitionStaysAnAutomation), AnAutomationSentWithADefinitionStaysAnAutomation),
@@ -1189,6 +1190,30 @@ static class EntityGraphTests
         var errors = preview["diagnostics"]!.AsArray().Where(d => d!["severity"]!.GetValue<int>() == 3).ToArray();
         Check(!preview["valid"]!.GetValue<bool>() && errors.Length == 1 && errors[0]!["code"]!.GetValue<string>() == "definition.entitiesRequired",
             "the one error asks for an entity: " + preview["diagnostics"]!.ToJsonString());
+    }
+
+    /// <summary>
+    /// A graph whose only node is a C# entity, or a C# device, declares what it makes: its preview does not ask for an
+    /// entity. Until such a node is compiled it cannot run, which the preview says on its code, as its one error; so it
+    /// cannot be saved yet.
+    /// </summary>
+    static async Task AGraphWithOnlyACSharpNodeIsADefinition()
+    {
+        await using var rig = await Rig.Start("csharp-only");
+        foreach (var node in new[] { EntityNodeTests.CSharpEntity("thermo", "thermometer"), EntityNodeTests.CSharpDevice("plug", "plug", "Plug") })
+        {
+            var id = Id(node);
+            var definition = Definition("Hall", Graph("Hall", [node]));
+            var preview = await rig.Ok(new { operation = "preview", definition });
+            var errors = preview["diagnostics"]!.AsArray().Where(d => d!["severity"]!.GetValue<int>() == 3).ToArray();
+            Check(!preview["valid"]!.GetValue<bool>() && !preview["diagnostics"]!.AsArray().Any(d => d!["code"]?.GetValue<string>() == "definition.entitiesRequired"),
+                $"a graph of only {id} is asked for no entity: " + preview["diagnostics"]!.ToJsonString());
+            Check(errors.Length == 1 && errors[0]!["nodeId"]!.GetValue<string>() == id && errors[0]!["inputId"]!.GetValue<string>() == "source"
+                && errors[0]!["message"]!.GetValue<string>() == "C# entity and C# device nodes cannot run yet",
+                $"its one error is on {id}'s code, that it cannot run yet: " + preview["diagnostics"]!.ToJsonString());
+            var saved = await rig.Request(new { operation = "save", id = "hall", expectedRevision = 0, definition });
+            Check(saved["error"]?["code"]?.GetValue<string>() == "validation", $"a graph of only {id} cannot be saved yet: " + saved.ToJsonString());
+        }
     }
 
     /// <summary>A source Home Assistant does not have is warned of, on its node, in the preview and in the save's answer; the definition still runs.</summary>

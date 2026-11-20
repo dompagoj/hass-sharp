@@ -91,7 +91,7 @@ internal static class DefinitionGraph
         var frames = new Dictionary<string, string>(StringComparer.Ordinal);
         var roots = (graph["nodes"] as JsonArray ?? []).OfType<JsonObject>().Where(n => VisualNodeCatalog.IsRoot(n, snapshot))
             .OrderBy(n => VisualNodeCatalog.Text(n, "id"), StringComparer.Ordinal).ToArray();
-        foreach (var node in roots.Where(n => VisualNodeCatalog.Declares(VisualNodeCatalog.Spec(n, snapshot), "entity")))
+        foreach (var node in roots.Where(n => VisualNodeCatalog.IsHub(VisualNodeCatalog.Spec(n, snapshot))))
             foreach (var flow in HubFlows(node, graph, snapshot))
                 switch (flow.Kind)
                 {
@@ -110,10 +110,12 @@ internal static class DefinitionGraph
     /// none), recorded when
     /// <c>config.history.state</c> is true; each command whose pin has a step order wire out of it, in its type's order,
     /// recorded unless <c>config.history.commands</c> is false; its frame, when that pin has one, recorded when
-    /// <c>config.history.frame</c> is true. None for a node of an unknown type.
+    /// <c>config.history.frame</c> is true. None for a node of an unknown type, and for one that is no Entity node (<see cref="VisualNodeCatalog.IsHub"/>).
     /// </summary>
     internal static IReadOnlyList<HubFlow> HubFlows(JsonObject node, JsonObject graph, VisualCatalogSnapshot snapshot)
     {
+        // Only an Entity node starts flows: a C# entity's code is its behaviour.
+        if (!VisualNodeCatalog.IsHub(VisualNodeCatalog.Spec(node, snapshot))) return [];
         var id = VisualNodeCatalog.Text(node, "id");
         var config = node["config"] as JsonObject;
         var key = VisualNodeCatalog.Text(config, "key");

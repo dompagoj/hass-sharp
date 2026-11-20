@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, type JSX } from 'solid-js'
-import { connectData, declaredDevices, declaredDomain, declaredEntities, deviceNodeOf, disconnectData, entityNodeName, entityTypeLabel, words, type ConfigSpec } from '../visual/contract'
+import { connectData, dataOutputs, declaredDevices, declaredDomain, deviceNodeOf, disconnectData, entityKeyHolders, entityNodeName, entityTypeLabel, words, type ConfigSpec } from '../visual/contract'
 import { keyProblem, keyRule, readNumber } from './definitionEdits'
 import { ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey } from './model'
@@ -42,7 +42,8 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
   }
   // The key no longer changes once Home Assistant has it.
   const fixed = () => key() !== '' && !!ctx.saved?.()?.keys.includes(key())
-  const others = () => declaredEntities(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.entity.key))
+  // Every other node's entity key, a C# entity's too: they share one namespace.
+  const others = () => entityKeyHolders(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.key))
   // A new type, as one change: what no longer fits it goes, and the notice says what.
   const retype = (value: string) => {
     const { graph, removed } = retypeNode(ctx.graph(), ctx.node().id, value, ctx.catalog())
@@ -51,13 +52,14 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     if (notice) ctx.onNotice?.(notice)
   }
   // The device it is on: the Device node wired to its Device pin. Each Device node is offered by its name (else its key,
-  // else Device) and chosen by its node, so two of one name are told apart by their place in the list.
+  // else Device) and chosen by its node, so two of one name are told apart by their place in the list. Only a device with
+  // an Entities pin is offered: a C# device adds its entities in its code, and none can be wired to it.
   const device = () => deviceNodeOf(ctx.graph(), ctx.node().id, ctx.catalog()) ?? ''
   const deviceChoices = (): Choice[] => [
     { value: '', label: 'None' },
-    ...declaredDevices(ctx.graph(), ctx.catalog()).map(d => {
+    ...declaredDevices(ctx.graph(), ctx.catalog()).flatMap(d => {
       const node = ctx.graph().nodes.find(n => n.id === d.nodeId)
-      return { value: d.nodeId, label: (node && entityNodeName(node, ctx.catalog())) || 'Device' }
+      return node && Object.hasOwn(dataOutputs(node, ctx.catalog()), 'entities') ? [{ value: d.nodeId, label: entityNodeName(node, ctx.catalog()) || 'Device' }] : []
     }),
   ]
   // One change: a wire from another device is replaced, None removes it.

@@ -1,11 +1,11 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, declaredDevices, definitionDeviceKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, classSignature, connectData, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
 import { addConnected } from '../src/visual/flow/autoConnect'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
-import { editorGraph, newGraphDefinition } from '../src/entities/model'
+import { editorGraph, newGraphDefinition, renameEntityKey } from '../src/entities/model'
 import { entityRemoval, renameDefinition } from '../src/entities/definitionEdits'
 import { refitNotice, retypeNode } from '../src/entities/refit'
 import { add, empty, lit } from './visual-fixture'
@@ -196,6 +196,138 @@ it('a new Device node is named and keyed', () => {
   expect(addGraphNode(deviceKeyed, 'entity', 'e', nodeCatalog).nodes.at(-1)!.config.key).toBe('binary_sensor')
   // Two devices of one name are fine: names need not be unique.
   expect(validateGraph(dropped).filter(d => d.severity === 3)).toEqual([])
+})
+
+it('a dropped C# entity or C# device is keyed past the keys it shares, and has no label', () => {
+  // A C# entity is keyed by its template's type, past every entity key (an Entity node's too); it has no name of its own.
+  let graph = addGraphNode(empty(), 'csharp_entity', 'a', nodeCatalog)
+  graph = add(graph, 'entity', 'e', { key: 'sensor_2', domain: 'sensor', name: 'Power' })
+  graph = addGraphNode(graph, 'csharp_entity', 'b', nodeCatalog)
+  const [a, , b] = graph.nodes
+  expect([a.config.key, b.config.key]).toEqual(['sensor', 'sensor_3'])
+  expect(a.config).not.toHaveProperty('name')
+  expect(a.config.source).toBe(nodeCatalog.nodes.csharp_entity.config.source.default)
+  expect(a.config.signature).toEqual(nodeCatalog.nodes.csharp_entity.config.signature.default)
+  expect(a.config.arguments).toEqual({})
+  // An Entity node (a binary sensor when dropped) is keyed past a C# entity's key.
+  const taken = add(graph, 'csharp_entity', 'g', { key: 'binary_sensor' })
+  expect(addGraphNode(taken, 'entity', 'f', nodeCatalog).nodes.at(-1)!.config.key).toBe('binary_sensor_2')
+  // A C# device is keyed as a Device node is, past every device key, and named by its template's title.
+  let devices = addGraphNode(empty(), 'device', 'd', nodeCatalog)
+  devices = addGraphNode(devices, 'csharp_device', 'p', nodeCatalog)
+  devices = addGraphNode(devices, 'csharp_device', 'q', nodeCatalog)
+  expect(devices.nodes.map(n => [n.config.key, n.config.name])).toEqual([['device', 'Device'], ['device_2', 'Plug'], ['device_3', 'Plug']])
+  expect(addGraphNode(devices, 'device', 'r', nodeCatalog).nodes.at(-1)!.config.key).toBe('device_4')
+  // Neither has a label: each is named by what it declares.
+  for (const node of [...graph.nodes, ...devices.nodes]) expect(node).not.toHaveProperty('label')
+  // Dropped from the palette, or from a wire dragged out of a Device node's Entities pin, alike.
+  const dropped = createNodeAt(graph, 'csharp_entity', { x: 400, y: 200 }, undefined, nodeCatalog)
+  expect(dropped.nodes.at(-1)!.config.key).toBe('sensor_4')
+  const hall = add(empty(), 'device', 'hall', { key: 'hall', name: 'Hall' })
+  const wired = addConnected(hall, 'csharp_entity', { x: 0, y: 0 }, { nodeId: 'hall', handle: 'data:entities', type: 'source' }, nodeCatalog, 'c')!.graph
+  expect(wired.nodes.find(n => n.id === 'c')!.config.key).toBe('sensor')
+  expect(deviceNodeOf(wired, 'c')).toBe('hall')
+})
+
+/** A Thermometer C# entity, a Plug C# device, a lamp Entity node and a Hall Device node the thermometer is on. */
+const withCSharp = () => {
+  let graph = add(empty(), 'csharp_entity', 'thermo', { key: 'thermometer', arguments: { Address: lit('string', 'http://192.168.1.60/temperature') } })
+  graph = add(graph, 'csharp_device', 'plug', { key: 'plug', name: 'Plug', via: null })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp', arguments: { is_on: lit('boolean', true) } })
+  graph = add(graph, 'device', 'hall', { key: 'hall', name: 'Hall' })
+  return connectData(graph, 'hall', 'entities', 'thermo', 'device')
+}
+
+it('a C# entity and a C# device are declarations, and no rule takes either for an Entity node', () => {
+  const graph = withCSharp()
+  const thermo = graph.nodes.find(n => n.id === 'thermo')!, plug = graph.nodes.find(n => n.id === 'plug')!
+  expect([isHub(nodeCatalog.nodes.entity), isHub(nodeCatalog.nodes.csharp_entity), isHub(nodeCatalog.nodes.csharp_device), isHub(nodeCatalog.nodes.device)]).toEqual([true, false, false, false])
+  expect([isClassNode(nodeCatalog.nodes.csharp_entity), isClassNode(nodeCatalog.nodes.csharp_device), isClassNode(nodeCatalog.nodes.custom), isClassNode(nodeCatalog.nodes.entity)]).toEqual([true, true, false, false])
+  expect([hasCode(nodeCatalog.nodes.custom), hasCode(nodeCatalog.nodes.csharp_entity), hasCode(nodeCatalog.nodes.csharp_device), hasCode(nodeCatalog.nodes.device)]).toEqual([true, true, true, false])
+  for (const node of [thermo, plug]) {
+    expect(isDeclaration(node.kind, nodeCatalog)).toBe(true)
+    expect([executionPorts(node), Object.keys(dataOutputs(node)), Object.keys(stateInputs(node, nodeCatalog))]).toEqual([[], [], []])
+    expect(isPure(node)).toBe(false)
+  }
+  // Its pins: a C# entity's Device pin (the Entity node's), then its settings; a C# device's settings alone.
+  expect(Object.keys(dataInputs(thermo))).toEqual(['device', 'Address'])
+  expect(dataInputs(thermo).device).toEqual(nodeCatalog.nodes.entity.inputs.device)
+  expect(dataInputs(thermo).Address).toEqual({ types: ['string'], required: false, label: 'Address', description: 'Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.', setting: { type: 'string', secret: false } })
+  expect(Object.keys(dataInputs(plug))).toEqual(['Address'])
+  // Each setting type takes the catalog type of its pin, and keeps its options and range.
+  const typed = { ...thermo, config: { ...thermo.config, signature: { title: 'Typed', description: '', domain: 'sensor', settings: [
+    { key: 'Mode', label: 'Mode', description: '', type: 'enum', secret: false, options: ['Fast', 'Slow'] },
+    { key: 'Count', label: 'Count', description: '', type: 'integer', secret: false, minimum: 1, maximum: 10 },
+    { key: 'Level', label: 'Level', description: '', type: 'number', secret: false },
+    { key: 'On', label: 'On', description: '', type: 'boolean', secret: false },
+    { key: 'Token', label: 'Token', description: '', type: 'string', secret: true }] } } }
+  expect(Object.entries(dataInputs(typed)).slice(1).map(([key, input]) => `${key}:${input.types[0]}`)).toEqual(['Mode:string', 'Count:number', 'Level:number', 'On:boolean', 'Token:string'])
+  expect([dataInputs(typed).Mode.setting, dataInputs(typed).Count.setting, dataInputs(typed).Token.setting?.secret]).toEqual([{ type: 'enum', secret: false, options: ['Fast', 'Slow'] }, { type: 'integer', secret: false, minimum: 1, maximum: 10 }, true])
+  // A signature that cannot be read, or whose setting would take a static pin's place, gives the static pins alone.
+  const unreadable = { ...thermo, config: { ...thermo.config, signature: { title: 5 } } }
+  expect([Object.keys(dataInputs(unreadable)), classSignature(unreadable)]).toEqual([['device'], undefined])
+  const clash = { ...thermo, config: { ...thermo.config, signature: { title: 'T', description: '', domain: 'sensor', settings: [{ key: 'device', label: 'Device', description: '', type: 'string', secret: false }] } } }
+  expect(classSignature(clash)).toBeUndefined()
+  for (const signature of [
+    { title: 'T', description: '', settings: [] },
+    { title: 'T', description: '', domain: 5, settings: [] },
+    { title: 'T', description: '', domain: null, settings: {} },
+    { title: 'T', description: '', domain: null, settings: [{ key: 'a b', label: 'A', description: '', type: 'string', secret: false }] },
+    { title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', type: 'string', secret: false }, { key: 'A', label: 'A', description: '', type: 'string', secret: false }] },
+    { title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', type: 'date', secret: false }] },
+    { title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', type: 'string' }] },
+    { title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', type: 'enum', secret: false, options: [1] }] },
+    { title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', type: 'integer', secret: false, minimum: '1' }] },
+  ]) expect(wellFormedClassSignature(signature), JSON.stringify(signature)).toBe(false)
+  expect(wellFormedClassSignature(nodeCatalog.nodes.csharp_entity.config.signature.default) && wellFormedClassSignature(nodeCatalog.nodes.csharp_device.config.signature.default)).toBe(true)
+  // Named by its class's title (a C# entity) or its name (a C# device).
+  expect([words.stepName(thermo), words.stepName(plug), entityNodeName(thermo), entityNodeName(plug)]).toEqual(['Thermometer', 'Plug', 'Thermometer', 'Plug'])
+  expect(words.stepName({ ...thermo, config: { ...thermo.config, signature: { ...thermo.config.signature as object, title: ' ' } } })).toBe('thermometer')
+  expect(words.stepName({ ...plug, config: { key: '', name: '' } })).toBe('C# device')
+  // The graph's entities are the Entity node's; its devices the Device node's, then the C# device's by its key, name and Part of.
+  expect(declaredEntities(graph).map(d => d.nodeId)).toEqual(['lamp'])
+  expect(definitionEntityKeys(graph)).toEqual(['thermometer', 'lamp'])
+  expect(entityKeyHolders(graph)).toEqual([{ nodeId: 'thermo', key: 'thermometer' }, { nodeId: 'lamp', key: 'lamp' }])
+  expect(declaredDevices(graph)).toEqual([{ nodeId: 'plug', device: { key: 'plug', name: 'Plug', via: null, csharp: true } }, { nodeId: 'hall', device: { key: 'hall', name: 'Hall' } }])
+  expect(definitionDeviceKeys(graph)).toEqual(['plug', 'hall'])
+  expect(derivedDevices(graph, nodeCatalog)).toEqual([{ key: 'hall', name: 'Hall' }, { key: 'plug', name: 'Plug', csharp: true }])
+  const lifted = withGraphTypes(nodeCatalog, graph).definition!
+  expect([lifted.devices, lifted.entities.map(e => e.key)]).toEqual([derivedDevices(graph, nodeCatalog), ['lamp']])
+  expect(deviceNodeOf(graph, 'thermo')).toBe('hall')
+  // Nothing derived carries a C# node's code, settings or their values.
+  for (const value of [lifted, declaredDevices(graph), derivedDevices(graph, nodeCatalog)])
+    for (const member of ['source', 'signature', 'arguments']) expect(JSON.stringify(value)).not.toContain(`"${member}"`)
+  // No name, domain, state or command is asked of the C# entity, and no entity of the C# device: the lamp's commands
+  // with no steps are the graph's only problems.
+  expect(validateGraph(graph).map(d => `${d.nodeId}:${d.code}`)).toEqual(['lamp:command.unhandled', 'lamp:command.unhandled'])
+  // A declaring kind the lists do not know is refused, never copied as it is.
+  const other = { ...nodeCatalog, nodes: { ...nodeCatalog.nodes, other: { ...nodeCatalog.nodes.device, declares: 'entity' as const } } }
+  expect(() => declaredEntities({ nodes: [{ id: 'o', kind: 'other', config: {} }] }, other)).toThrow('The kind other declares an entity that no list knows how to describe')
+  const otherDevice = { ...nodeCatalog, nodes: { ...nodeCatalog.nodes, other: { ...nodeCatalog.nodes.device } } }
+  expect(() => declaredDevices({ nodes: [{ id: 'o', kind: 'other', config: {} }] }, otherDevice)).toThrow('The kind other declares a device that no list knows how to describe')
+})
+
+it('a C# entity\'s Device pin sits in its header, and a type change leaves it alone', () => {
+  const graph = withCSharp()
+  const thermo = graph.nodes.find(n => n.id === 'thermo')!
+  const view = buildNodeView(thermo, { graph, catalog: nodeCatalog, diagnostics: [] })
+  expect(view.headerInput?.pin.id).toBe('data:device')
+  expect(view.headerInput?.pin.name).toBe('Device, connected to Hall')
+  expect(view.rows.map(row => row.input?.pin.id)).not.toContain('data:device')
+  expect(view.rows.map(row => row.input?.pin.label)).toContain('Address')
+  expect([view.execIn, view.next, view.title]).toEqual([undefined, undefined, 'Thermometer'])
+  // A C# device has no Device pin, and so no header pin.
+  expect(buildNodeView(graph.nodes.find(n => n.id === 'plug')!, { graph, catalog: nodeCatalog, diagnostics: [] }).headerInput).toBeUndefined()
+  // Its type is its code's: a type change is no change.
+  const { graph: retyped, removed } = retypeNode(graph, 'thermo', 'switch', nodeCatalog)
+  expect(retyped).toBe(graph)
+  expect(refitNotice(removed)).toBeUndefined()
+})
+
+it('a C# entity\'s key is an entity key: a rename does not take it', () => {
+  const graph = withCSharp()
+  expect(renameEntityKey(graph, 'lamp', 'thermometer', 'lamp')).toBe(graph)
+  expect(renameEntityKey(graph, 'lamp', 'desk', 'lamp').nodes.find(n => n.id === 'lamp')!.config.key).toBe('desk')
 })
 
 it('deleting a Device node asks nothing', () => {
@@ -573,7 +705,7 @@ it('a declaring node is named by its entity in messages and run names', () => {
 it('the old steps are gone from the catalog and the step library', () => {
   for (const kind of ['entity_state', 'entity_command', 'camera_frame']) expect(nodeCatalog.nodes).not.toHaveProperty(kind)
   const entity = catalogPalette(nodeCatalog, 'entity').filter(item => item.category === 'Entity').map(item => item.kind)
-  expect(entity.slice(0, 4)).toEqual(['entity', 'device', 'entity_setup', 'set_entity_state'])
+  expect(entity.slice(0, 6)).toEqual(['entity', 'device', 'csharp_entity', 'csharp_device', 'entity_setup', 'set_entity_state'])
   expect(diagnosticCodes).not.toContain('state.duplicate')
 })
 

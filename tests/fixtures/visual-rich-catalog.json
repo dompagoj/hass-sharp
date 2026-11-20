@@ -10418,6 +10418,161 @@
           "model"
         ]
       },
+      "csharp_entity": {
+        "label": "C# entity",
+        "category": "Entity",
+        "description": "An entity you write in C#: one class that derives from an entity class, such as SharpSwitch or SharpSensor. Its [Setting] properties are its inputs.",
+        "declares": "entity",
+        "declaration": true,
+        "documents": [
+          "entity"
+        ],
+        "minGraphVersion": 5,
+        "argumentStorage": "arguments",
+        "dynamicInputs": "settings",
+        "config": {
+          "key": {
+            "type": "string",
+            "label": "Key",
+            "description": "What the entity is called inside this definition and in its unique id."
+          },
+          "source": {
+            "type": "string",
+            "required": true,
+            "default": "using System.Globalization;\n\n/// \u003Csummary\u003EA thermometer that reads the temperature at its address every minute.\u003C/summary\u003E\npublic class Thermometer : SharpSensor\n{\n    /// \u003Csummary\u003EWhere the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.\u003C/summary\u003E\n    [Setting(\u0022Address\u0022)]\n    public string Address { get; set; } = \u0022\u0022;\n\n    /// \u003Csummary\u003EA temperature in degrees Celsius.\u003C/summary\u003E\n    public Thermometer()\n    {\n        DeviceClass = \u0022temperature\u0022;\n        Unit = \u0022\u00B0C\u0022;\n        StateClass = \u0022measurement\u0022;\n    }\n\n    /// \u003Csummary\u003EReads the temperature every minute while the definition runs.\u003C/summary\u003E\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () =\u003E Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "label": "Code",
+            "description": "The C# code: one public class that derives from an entity class, such as SharpSensor. Helper types can sit beside it."
+          },
+          "signature": {
+            "type": "object",
+            "required": true,
+            "default": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "label": "Settings",
+            "description": "The settings the code gives, its [Setting] properties, as worked out from the code."
+          },
+          "arguments": {
+            "type": "object",
+            "default": {},
+            "label": "Values",
+            "description": "The values given to its settings"
+          }
+        },
+        "inputs": {
+          "device": {
+            "types": [
+              "device"
+            ],
+            "structural": true,
+            "required": false,
+            "label": "Device",
+            "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+          }
+        },
+        "outputs": {},
+        "execution": [],
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "code",
+          "csharp",
+          "class",
+          "script",
+          "sensor",
+          "switch"
+        ]
+      },
+      "csharp_device": {
+        "label": "C# device",
+        "category": "Entity",
+        "description": "A device you write in C#: one class that derives from SharpDevice and adds its entities. Its [Setting] properties are its inputs.",
+        "declares": "device",
+        "declaration": true,
+        "documents": [
+          "entity"
+        ],
+        "minGraphVersion": 5,
+        "argumentStorage": "arguments",
+        "dynamicInputs": "settings",
+        "config": {
+          "key": {
+            "type": "string",
+            "label": "Key",
+            "description": "What the device is called inside this definition and in its identity in Home Assistant."
+          },
+          "name": {
+            "type": "string",
+            "label": "Name",
+            "description": "The name Home Assistant shows for it."
+          },
+          "via": {
+            "type": "object",
+            "nullable": true,
+            "label": "Part of",
+            "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+          },
+          "source": {
+            "type": "string",
+            "required": true,
+            "default": "/// \u003Csummary\u003EA plug whose relay is turned on and off over HTTP at its address.\u003C/summary\u003E\npublic class Plug : SharpDevice\n{\n    /// \u003Csummary\u003EWhere the plug answers, such as http://192.168.1.50.\u003C/summary\u003E\n    [Setting(\u0022Address\u0022)]\n    public string Address { get; set; } = \u0022\u0022;\n\n    readonly SharpSwitch relay;\n\n    /// \u003Csummary\u003EAdds the plug\u0027s relay, a switch.\u003C/summary\u003E\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\u0022relay\u0022, \u0022Relay\u0022) { DeviceClass = \u0022outlet\u0022, OnTurnOn = () =\u003E Turn(true), OnTurnOff = () =\u003E Turn(false) });\n    }\n\n    /// \u003Csummary\u003ETurns the relay on or off, and the switch with it.\u003C/summary\u003E\n    async Task Turn(bool on)\n    {\n        using var response = await Http.PostAsync($\u0022{Address}/relay?turn={(on ? \u0022on\u0022 : \u0022off\u0022)}\u0022, null, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "label": "Code",
+            "description": "The C# code: one public class that derives from SharpDevice and adds its entities. Helper types can sit beside it."
+          },
+          "signature": {
+            "type": "object",
+            "required": true,
+            "default": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "label": "Settings",
+            "description": "The settings the code gives, its [Setting] properties, as worked out from the code."
+          },
+          "arguments": {
+            "type": "object",
+            "default": {},
+            "label": "Values",
+            "description": "The values given to its settings"
+          }
+        },
+        "inputs": {},
+        "outputs": {},
+        "execution": [],
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "code",
+          "csharp",
+          "class",
+          "script",
+          "device",
+          "hub"
+        ]
+      },
       "entity_setup": {
         "label": "When started",
         "category": "Entity",

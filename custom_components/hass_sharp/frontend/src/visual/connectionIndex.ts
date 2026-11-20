@@ -10,6 +10,7 @@ import {
   dataOutputs,
   entityScopes,
   isAssignable,
+  isHub,
   isPure,
   nodeCatalog,
   serviceTargetDiagnostics,
@@ -100,7 +101,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   // An entity graph's Entity nodes: what a state value reads, and which flows a step reading a command's value runs in,
   // are worked out again for each wire (`entityScopes`), so none of those problems is carried over. Nor is a node's
   // request for its other state values, which connectData never refuses for.
-  const hubs = graphDocument(graph) === 'entity' && [...analysis.nodes.values()].some(n => Object.hasOwn(catalog.nodes, n.kind) && catalog.nodes[n.kind].declares === 'entity')
+  const hubs = graphDocument(graph) === 'entity' && [...analysis.nodes.values()].some(n => Object.hasOwn(catalog.nodes, n.kind) && isHub(catalog.nodes[n.kind]))
   const reworked = new Set(['entity.partialState', 'scope.stateSource', 'scope.flow'])
   // The scope problems the graph has, by step input and message.
   const oldScope = new Set(diagnostics.filter(d => d.code === 'scope.data').map(d => JSON.stringify([d.nodeId, d.inputId, d.message])))
@@ -198,7 +199,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
         const wrong = wireTypeError(source, output, target, input, targetPort, after, index.assignable)
         if (wrong) messages.add(wrong.message)
         // A state value of an Entity node gets scope.stateSource instead, as the validator has it.
-        const stateValue = spec.declares === 'entity'
+        const stateValue = isHub(spec)
         if (!stateValue && analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
         if (!stateValue && sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
       }
@@ -206,7 +207,7 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       // even through an input that takes no wire (the validator still follows the wire). A step's problem the graph
       // already has is no new problem.
       if (targetPure) for (const { via, reader, port } of stepReaders(target))
-        if (analysis.scopes.has(reader.id) && catalog.nodes[reader.kind]?.declares !== 'entity') for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
+        if (analysis.scopes.has(reader.id) && !isHub(catalog.nodes[reader.kind])) for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
     }
     // Into the input a Select property node reads: the wire changes the type of its output, and so of every wire from it
     // and from a Select property node reading it in turn. What the nodes say about their property never refuses it.

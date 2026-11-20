@@ -27,7 +27,13 @@ static class EntityNodeTests
             (nameof(TheOldStepsAreNotKinds), TheOldStepsAreNotKinds),
             (nameof(ADeviceNodeIsADeclaration), ADeviceNodeIsADeclaration),
             (nameof(DevicesAreDerivedFromTheirNodes), DevicesAreDerivedFromTheirNodes),
-            (nameof(ADevicesProblemsAreOnItsNode), ADevicesProblemsAreOnItsNode) })
+            (nameof(ADevicesProblemsAreOnItsNode), ADevicesProblemsAreOnItsNode),
+            (nameof(TheTemplatesCompileAndTheirSignaturesSayWhatTheCodeGives), TheTemplatesCompileAndTheirSignaturesSayWhatTheCodeGives),
+            (nameof(ACSharpNodeIsNoHub), ACSharpNodeIsNoHub),
+            (nameof(NothingDerivedCarriesCode), NothingDerivedCarriesCode),
+            (nameof(EveryDeclaringKindIsDerivedOnPurpose), EveryDeclaringKindIsDerivedOnPurpose),
+            (nameof(TheHostIsSentNoCSharpDeviceYet), TheHostIsSentNoCSharpDeviceYet),
+            (nameof(TheRuntimeNeverWalksACSharpNode), TheRuntimeNeverWalksACSharpNode) })
         {
             try
             {
@@ -180,8 +186,8 @@ static class EntityNodeTests
         var relay = Hub("r", "relay", "switch");
         Check(string.Join(",", VisualNodeCatalog.StateInputs(relay, catalog).Select(p => p.Key)) == "is_on", "a switch's state values are On alone");
         Check(string.Join(",", VisualNodeCatalog.DataInputs(relay).Select(p => p.Key)) == "device,is_on", "its inputs also have Device");
-        var group = catalog["nodes"]!.AsObject().Where(n => VisualNodeCatalog.Text(n.Value, "category") == "Entity").Select(n => n.Key).Take(3);
-        Check(string.Join(",", group) == "entity,device,entity_setup", "the catalog's Entity group begins Entity, Device, When started: " + string.Join(",", group));
+        var group = catalog["nodes"]!.AsObject().Where(n => VisualNodeCatalog.Text(n.Value, "category") == "Entity").Select(n => n.Key).Take(5);
+        Check(string.Join(",", group) == "entity,device,csharp_entity,csharp_device,entity_setup", "the catalog's Entity group begins Entity, Device, C# entity, C# device, When started: " + string.Join(",", group));
     }
 
     /// <summary>
@@ -260,5 +266,235 @@ static class EntityNodeTests
         string Of(VisualDiagnostic d) => $"{d.Code}@{d.NodeId}:{d.InputId}:{d.PortId}:{d.Severity}";
         Check(string.Join(",", found.Select(Of)) == "device.viaCycle@plug:via::3,device.viaCycle@hub:via::3,device.empty@desk:::2",
             "each device of the circle on its Part of, an empty one on the node as a warning: " + string.Join(",", found.Select(Of)));
+    }
+
+    /// <summary>A node of <paramref name="kind"/> as the editor drops one: its kind's defaults (its template's code and settings), then <paramref name="config"/>; no label.</summary>
+    internal static JsonObject Templated(string id, string kind, JsonObject config)
+    {
+        var node = VisualGraphContract.CreateNode(kind, id);
+        node.Remove("label");
+        foreach (var (name, value) in config) node["config"]![name] = value?.DeepClone();
+        return node;
+    }
+    /// <summary>A C# entity node of the key, its code and settings its kind's template's (a Thermometer, a sensor with an Address setting).</summary>
+    internal static JsonObject CSharpEntity(string id, string key, JsonObject? more = null)
+    {
+        var config = new JsonObject { ["key"] = key };
+        foreach (var (name, value) in more ?? []) config[name] = value?.DeepClone();
+        return Templated(id, "csharp_entity", config);
+    }
+    /// <summary>A C# device node of the key and name, its code and settings its kind's template's (a Plug with an Address setting and a relay).</summary>
+    internal static JsonObject CSharpDevice(string id, string key, string name, JsonObject? more = null)
+    {
+        var config = new JsonObject { ["key"] = key, ["name"] = name };
+        foreach (var (name2, value) in more ?? []) config[name2] = value?.DeepClone();
+        return Templated(id, "csharp_device", config);
+    }
+
+    /// <summary>
+    /// Each kind's template is code today's library compiles, as a node library would hold it, and its signature says
+    /// what the compiler derives from that code: the class's title and summary, its entity's type, and each setting's
+    /// key, label, summary, type and secret flag.
+    /// </summary>
+    static void TheTemplatesCompileAndTheirSignaturesSayWhatTheCodeGives()
+    {
+        var compiler = new NodeLibraryCompiler(new DiagnosticsProvider());
+        foreach (var (kind, type, what) in new[] { ("csharp_entity", "Thermometer", "entity"), ("csharp_device", "Plug", "device") })
+        {
+            var config = VisualNodeCatalog.GetNode(kind)!["config"]!;
+            var preview = compiler.Preview([new NodeLibrarySource("template", config["source"]!["default"]!.GetValue<string>(), 1)]);
+            Check(preview.Valid, $"the {kind} template compiles: " + string.Join(" | ", preview.Diagnostics.Select(d => $"{d.StartLine}:{d.StartColumn} {d.Message}")));
+            var derived = preview.Snapshot.EntityTypes.Values.Single();
+            var signature = config["signature"]!["default"]!;
+            Check(derived.Kind == what && derived.Title == VisualNodeCatalog.Text(signature, "title") && derived.Description == VisualNodeCatalog.Text(signature, "description")
+                && derived.Domain == (signature["domain"]?.GetValue<string>()) && derived.TypeExpression == "global::NodeLib." + type,
+                $"the {kind} template's class is the signature's: " + derived);
+            var settings = signature["settings"]!.AsArray();
+            Check(derived.Settings.Length == settings.Count && derived.Settings.Zip(settings).All(p => p.First.Key == VisualNodeCatalog.Text(p.Second, "key") && p.First.Label == VisualNodeCatalog.Text(p.Second, "label")
+                && p.First.Description == VisualNodeCatalog.Text(p.Second, "description") && p.First.Type == VisualNodeCatalog.Text(p.Second, "type") && p.First.Secret == p.Second!["secret"]!.GetValue<bool>()),
+                $"the {kind} template's settings are the signature's: " + string.Join(", ", derived.Settings));
+        }
+    }
+
+    /// <summary>
+    /// A C# entity and a C# device are declarations with code: no rule that is an Entity node's alone (a hub's) takes
+    /// them for one. The flows and roots of a graph with a hub and both are the hub's; its entities are the hub's; the C#
+    /// entity's pins are its Device pin and then its settings; and the C# device is among the graph's devices.
+    /// </summary>
+    static void ACSharpNodeIsNoHub()
+    {
+        var snapshot = VisualCatalogSnapshot.BuiltIn;
+        var address = new JsonObject { ["Address"] = Lit("string", "http://192.168.1.60/temperature") };
+        var lamp = Hub("lamp", "lamp", "light", values: new JsonObject { ["is_on"] = Lit("boolean", true) });
+        var thermo = CSharpEntity("thermo", "thermometer", new() { ["arguments"] = address.DeepClone() });
+        var plug = CSharpDevice("plug", "plug", "Plug", new() { ["arguments"] = address.DeepClone(), ["via"] = null });
+        var graph = Graph(null, lamp, thermo, plug);
+        graph["edges"] = new JsonArray(Flow("lamp", "command:turn_on", "log"));
+        graph["nodes"]!.AsArray().Add(N("log", "log", new { value = Lit("string", "On") }));
+
+        Check(VisualNodeCatalog.IsHub(VisualNodeCatalog.GetNode("entity")) && !VisualNodeCatalog.IsHub(VisualNodeCatalog.GetNode("csharp_entity"))
+            && !VisualNodeCatalog.IsHub(VisualNodeCatalog.GetNode("csharp_device")) && !VisualNodeCatalog.IsHub(VisualNodeCatalog.GetNode("device")), "only the Entity node is a hub");
+        Check(VisualNodeCatalog.IsClassNode(VisualNodeCatalog.GetNode("csharp_entity")) && VisualNodeCatalog.IsClassNode(VisualNodeCatalog.GetNode("csharp_device"))
+            && !VisualNodeCatalog.IsClassNode(VisualNodeCatalog.GetNode("custom")) && !VisualNodeCatalog.IsClassNode(VisualNodeCatalog.GetNode("entity")), "the two kinds are class nodes, a Custom C# step is not");
+        Check(VisualNodeCatalog.HasCode(VisualNodeCatalog.GetNode("custom")) && VisualNodeCatalog.HasCode(VisualNodeCatalog.GetNode("csharp_entity"))
+            && VisualNodeCatalog.HasCode(VisualNodeCatalog.GetNode("csharp_device")) && !VisualNodeCatalog.HasCode(VisualNodeCatalog.GetNode("device")), "each of the three holds code");
+        foreach (var node in new[] { thermo, plug })
+        {
+            var spec = VisualNodeCatalog.Spec(node);
+            Check(VisualNodeCatalog.Declaration(spec) && !VisualNodeCatalog.IsRoot(node, snapshot) && !VisualNodeCatalog.IsPure(node, spec), VisualNodeCatalog.Text(node, "id") + " is a declaration, no root and no value");
+            Check(VisualNodeCatalog.ExecutionPorts(node).Length == 0 && VisualNodeCatalog.DataOutputs(node).Count == 0, VisualNodeCatalog.Text(node, "id") + " has no execution pins and no outputs");
+            // Even with a value given to a setting, it starts no flow: it is no hub.
+            Check(DefinitionGraph.HubFlows(node, graph, snapshot).Count == 0, VisualNodeCatalog.Text(node, "id") + " has no flows of a hub");
+            Check(VisualNodeCatalog.CustomSignature(node, spec) == null, VisualNodeCatalog.Text(node, "id") + " has no Custom C# signature");
+        }
+
+        var roots = DefinitionGraph.Roots(graph, snapshot);
+        Check(roots.Setup == null && roots.States.SequenceEqual([VisualNodeCatalog.FlowMethod(lamp, "state")]) && string.Join(",", roots.StateEntities.Values) == "lamp"
+            && string.Join(",", roots.Commands.Keys) == "lamp:turn_on" && roots.Frames.Count == 0, "the roots are the hub's flows alone: " + string.Join(",", roots.States.Concat(roots.Commands.Keys)));
+        Check(string.Join(",", DefinitionGraph.Entities(graph, snapshot).Select(e => e!["key"])) == "lamp", "the graph's entities are the hub's alone: " + DefinitionGraph.Entities(graph, snapshot).ToJsonString());
+        Check(string.Join(",", VisualNodeCatalog.DeclaredEntities(graph, VisualNodeCatalog.Root).Select(d => d.NodeId)) == "lamp", "a C# entity is in no derived entity list yet");
+
+        var inputs = VisualNodeCatalog.DataInputs(thermo);
+        Check(string.Join(",", inputs.Select(p => p.Key)) == "device,Address", "the C# entity's pins are Device, then its settings: " + string.Join(",", inputs.Select(p => p.Key)));
+        Check(VisualNodeCatalog.Structural(inputs["device"]) && JsonNode.DeepEquals(inputs["device"], VisualNodeCatalog.GetNode("entity")!["inputs"]!["device"]), "its Device pin is the Entity node's");
+        Check(JsonNode.DeepEquals(inputs["Address"], JsonNode.Parse("""{"types":["string"],"required":false,"label":"Address","description":"Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.","setting":{"type":"string","secret":false}}""")),
+            "a setting pin is optional, of its setting's pin type, with the setting itself: " + inputs["Address"]!.ToJsonString());
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(plug).Select(p => p.Key)) == "Address", "the C# device's pins are its settings alone");
+        // Each setting type takes the catalog type of its pin, and keeps its options and range for the editor.
+        var typed = CSharpEntity("typed", "typed", new()
+        {
+            ["signature"] = JsonNode.Parse("""
+                {"title":"Typed","description":"","domain":"sensor","settings":[
+                {"key":"Mode","label":"Mode","description":"","type":"enum","secret":false,"options":["Fast","Slow"]},
+                {"key":"Count","label":"Count","description":"","type":"integer","secret":false,"minimum":1,"maximum":10},
+                {"key":"Level","label":"Level","description":"","type":"number","secret":false},
+                {"key":"On","label":"On","description":"","type":"boolean","secret":false},
+                {"key":"Token","label":"Token","description":"","type":"string","secret":true}]}
+                """),
+        });
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(typed).Skip(1).Select(p => p.Key + ":" + p.Value!["types"]![0])) == "Mode:string,Count:number,Level:number,On:boolean,Token:string",
+            "enum and string take text, integer and number a number, boolean true or false: " + VisualNodeCatalog.DataInputs(typed).ToJsonString());
+        Check(JsonNode.DeepEquals(VisualNodeCatalog.DataInputs(typed)["Mode"]!["setting"], JsonNode.Parse("""{"type":"enum","secret":false,"options":["Fast","Slow"]}"""))
+            && JsonNode.DeepEquals(VisualNodeCatalog.DataInputs(typed)["Count"]!["setting"], JsonNode.Parse("""{"type":"integer","secret":false,"minimum":1,"maximum":10}"""))
+            && VisualNodeCatalog.DataInputs(typed)["Token"]!["setting"]!["secret"]!.GetValue<bool>(), "a pin carries its setting's options, range and secret flag");
+        // A signature that cannot be read gives the static pins alone.
+        var unreadable = CSharpEntity("bad", "bad", new() { ["signature"] = new JsonObject { ["title"] = 5 } });
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(unreadable).Select(p => p.Key)) == "device" && VisualNodeCatalog.ClassSignature(unreadable, VisualNodeCatalog.Spec(unreadable)) == null,
+            "a signature that is not well formed gives no setting pins");
+        foreach (var (signature, why) in new (string, string)[] {
+            ("""{"title":"T","description":"","settings":[]}""", "no domain"),
+            ("""{"title":"T","description":"","domain":5,"settings":[]}""", "a domain that is not text or null"),
+            ("""{"title":"T","description":"","domain":null,"settings":{}}""", "settings that are not a list"),
+            ("""{"title":"T","description":"","domain":null,"settings":[{"key":"a b","label":"A","description":"","type":"string","secret":false}]}""", "a key that is no pin id"),
+            ("""{"title":"T","description":"","domain":null,"settings":[{"key":"A","label":"A","description":"","type":"string","secret":false},{"key":"A","label":"A","description":"","type":"string","secret":false}]}""", "a key twice"),
+            ("""{"title":"T","description":"","domain":null,"settings":[{"key":"A","label":"A","description":"","type":"date","secret":false}]}""", "a type a setting cannot have"),
+            ("""{"title":"T","description":"","domain":null,"settings":[{"key":"A","label":"A","description":"","type":"string"}]}""", "no secret flag"),
+            ("""{"title":"T","description":"","domain":null,"settings":[{"key":"A","label":"A","description":"","type":"enum","secret":false,"options":[1]}]}""", "options that are not texts"),
+            ("""{"title":"T","description":"","domain":null,"settings":[{"key":"A","label":"A","description":"","type":"integer","secret":false,"minimum":"1"}]}""", "a minimum that is not a number") })
+            Check(!VisualNodeCatalog.WellFormedClassSignature(JsonNode.Parse(signature)), "not well formed: " + why);
+        Check(VisualNodeCatalog.WellFormedClassSignature(VisualNodeCatalog.GetNode("csharp_entity")!["config"]!["signature"]!["default"])
+            && VisualNodeCatalog.WellFormedClassSignature(VisualNodeCatalog.GetNode("csharp_device")!["config"]!["signature"]!["default"]), "each template's signature is well formed");
+        // A C# entity's setting called device would take its Device pin's place: such a signature is not read.
+        var clash = CSharpEntity("clash", "clash", new() { ["signature"] = JsonNode.Parse("""{"title":"T","description":"","domain":"sensor","settings":[{"key":"device","label":"Device","description":"","type":"string","secret":false}]}""") });
+        Check(VisualNodeCatalog.ClassSignature(clash, VisualNodeCatalog.Spec(clash)) == null && VisualNodeCatalog.Structural(VisualNodeCatalog.DataInputs(clash)["device"]), "a setting named as a static pin is not read");
+
+        var devices = VisualNodeCatalog.DeclaredDevices(graph, VisualNodeCatalog.Root).ToList();
+        Check(devices.Count == 1 && devices[0].NodeId == "plug" && JsonNode.DeepEquals(devices[0].Device, JsonNode.Parse("""{"key":"plug","name":"Plug","via":null,"csharp":true}""")),
+            "the graph's devices list the C# device, by its key, name and Part of as its config has them: " + string.Join(",", devices.Select(d => d.Device.ToJsonString())));
+        var bare = Graph(null, CSharpDevice("bare", "bare", "Bare"));
+        bare["nodes"]![0]!["config"]!.AsObject().Remove("name");
+        Check(JsonNode.DeepEquals(VisualNodeCatalog.DeclaredDevices(bare, VisualNodeCatalog.Root).Single().Device, JsonNode.Parse("""{"key":"bare","csharp":true}""")),
+            "what its config does not have, it does not list");
+        Check(VisualNodeCatalog.DeviceOf(graph, "thermo", VisualNodeCatalog.Root) == null, "a C# entity without a wire is on no device");
+    }
+
+    /// <summary>
+    /// Nothing a graph derives carries a C# node's code, settings or their values: its devices (a C# device by its key,
+    /// name and Part of, marked <c>csharp</c>, after the Device nodes), its entities and the definition its catalog carries,
+    /// which the generated source embeds.
+    /// </summary>
+    static void NothingDerivedCarriesCode()
+    {
+        var address = new JsonObject { ["Address"] = Lit("string", "http://192.168.1.50") };
+        var graph = Graph(null,
+            CSharpDevice("plug", "plug", " Plug ", new() { ["via"] = new JsonObject { ["device"] = "hall" }, ["arguments"] = address.DeepClone() }),
+            N("hall", "device", new { key = "hall", name = "Hall plug" }), Hub("relay", "relay", "switch"),
+            CSharpEntity("thermo", "thermometer", new() { ["arguments"] = address.DeepClone() }),
+            CSharpDevice("desk", "desk", " ", new() { ["via"] = null }));
+        graph["edges"] = new JsonArray(D("hall", "relay", "device", "entities"), D("hall", "thermo", "device", "entities"));
+        var catalog = VisualNodeCatalog.Root;
+        var devices = DefinitionGraph.Devices(graph, catalog);
+        Check(JsonNode.DeepEquals(devices, JsonNode.Parse("""[{"key":"hall","name":"Hall plug"},{"key":"plug","name":" Plug ","via":{"device":"hall"},"csharp":true},{"key":"desk","csharp":true}]""")),
+            "a C# device is its key, name and Part of, blank texts and a null Part of left out, after the Device nodes: " + devices.ToJsonString());
+        var lifted = VisualNodeCatalog.WithGraphTypes(catalog, graph)["definition"]!;
+        Check(JsonNode.DeepEquals(lifted["devices"], devices), "the graph's catalog lists the same devices: " + lifted["devices"]!.ToJsonString());
+        var entities = DefinitionGraph.Entities(graph, VisualCatalogSnapshot.BuiltIn);
+        Check(string.Join(",", entities.Select(e => e!["key"] + "=" + e["device"])) == "relay=hall", "the entities are the hub's: " + entities.ToJsonString());
+        Check(VisualNodeCatalog.DeviceOf(graph, "thermo", catalog) == "hall", "a C# entity is on the Device node wired to it");
+        foreach (var (what, value) in new (string, JsonNode)[] { ("devices", devices), ("entities", entities), ("the graph's definition", lifted),
+            ("the declared devices", new JsonArray([.. VisualNodeCatalog.DeclaredDevices(graph, catalog).Select(d => (JsonNode)d.Device)])) })
+            foreach (var member in new[] { "source", "signature", "arguments" })
+                Check(!value.ToJsonString().Contains($"\"{member}\"", StringComparison.Ordinal), $"{what} carry no {member}: {value.ToJsonString()}");
+        // The generated source embeds the catalog's definition: it holds none of the code either.
+        var embedded = VisualGenerator.EmbeddedCatalog(graph, VisualCatalogSnapshot.BuiltIn);
+        Check(!embedded["definition"]!.ToJsonString().Contains("Thermometer", StringComparison.Ordinal) && !embedded["definition"]!.ToJsonString().Contains("SharpDevice", StringComparison.Ordinal),
+            "the embedded definition has no code: " + embedded["definition"]!.ToJsonString());
+    }
+
+    /// <summary>
+    /// Every kind that declares an entity or a device is one the derived lists know, and say on purpose what they make of
+    /// it; a declaring kind they do not know is refused, never copied as it is.
+    /// </summary>
+    static void EveryDeclaringKindIsDerivedOnPurpose()
+    {
+        var declaring = VisualNodeCatalog.Root["nodes"]!.AsObject().Where(n => VisualNodeCatalog.Text(n.Value, "declares") != "").Select(n => n.Key).ToList();
+        Check(string.Join(",", declaring) == "entity,device,csharp_entity,csharp_device", "the declaring kinds: " + string.Join(",", declaring));
+        var graph = Graph(null, [.. declaring.Select(kind => Templated(kind, kind, new() { ["key"] = kind }))]);
+        Check(VisualNodeCatalog.WithGraphTypes(VisualNodeCatalog.Root, graph)["definition"] is JsonObject, "a graph of one node of each derives its lists");
+        var patched = (JsonObject)VisualNodeCatalog.Root.DeepClone();
+        patched["nodes"]!["other"] = new JsonObject { ["label"] = "Other", ["declares"] = "device", ["config"] = new JsonObject(), ["inputs"] = new JsonObject(), ["outputs"] = new JsonObject() };
+        foreach (var what in new[] { "entity", "device" })
+        {
+            patched["nodes"]!["other"]!["declares"] = what;
+            var other = Graph(null, N("o", "other", new { key = "o" }));
+            try { VisualNodeCatalog.WithGraphTypes(patched, other); throw new Exception($"a kind that declares {what} the lists do not know was derived"); }
+            catch (InvalidOperationException) { }
+        }
+    }
+
+    /// <summary>
+    /// Until a C# device is set up by its own code, the host is handed none: the devices of a compiled graph definition
+    /// are its Device nodes', and a C# device's settings never make a plain device.
+    /// </summary>
+    static void TheHostIsSentNoCSharpDeviceYet()
+    {
+        var graph = Graph(null, N("hall", "device", new { key = "hall", name = "Hall plug", model = "P1" }), Hub("relay", "relay", "switch"),
+            CSharpDevice("plug", "plug", "Plug", new() { ["manufacturer"] = "Not mine" }));
+        graph["edges"] = new JsonArray(D("hall", "relay", "device", "entities"));
+        var sent = HassSharpManager.GraphDevices(graph, VisualCatalogSnapshot.BuiltIn);
+        Check(sent.Count == 1 && sent[0] is { Key: "hall", Name: "Hall plug", Model: "P1" }, "the host is handed the Device node alone: " + JsonSerializer.Serialize(sent, VisualStore.Json));
+        Check(DefinitionGraph.Devices(graph, VisualNodeCatalog.Root).Count == 2, "while the stored list has both");
+    }
+
+    /// <summary>
+    /// The runtime never walks a C# node, nor reads a wire into one: a run started at one is refused in its kind's words,
+    /// and the wires into its pins are no values it holds.
+    /// </summary>
+    static void TheRuntimeNeverWalksACSharpNode()
+    {
+        var graph = Graph(null, N("address", "setting", new { key = "address" }),
+            CSharpEntity("thermo", "hall_temperature"), CSharpDevice("plug", "plug", "Plug"), N("hall", "device", new { key = "hall", name = "Hall" }));
+        graph["definition"]!["settings"] = new JsonArray(new JsonObject { ["key"] = "address", ["type"] = "string" });
+        graph["edges"] = new JsonArray(D("address", "thermo", "Address"), D("address", "plug", "Address"), D("hall", "thermo", "device", "entities"));
+        // A run is one: each is started over a runtime of its own.
+        VisualRuntime Runtime() => new(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), [], TriggerPayload.Manual(), CancellationToken.None,
+            (_, _, _) => throw new InvalidOperationException("Unknown compiled node"));
+        var held = (System.Collections.IDictionary)typeof(VisualRuntime).GetField("data", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(Runtime())!;
+        Check(held.Count == 0, $"no wire into a declaration is a value the run reads: {held.Count} held");
+        foreach (var (id, words) in new[] { ("thermo", "Thermometer is an entity and is not part of the run order"), ("plug", "Plug is a device and is not part of the run order") })
+        {
+            try { Runtime().RunAsync(id).GetAwaiter().GetResult(); throw new Exception($"a run started at {id} ran"); }
+            catch (InvalidOperationException refused) { Check(refused.Message == words, $"a run started at {id} is refused in words: {refused.Message}"); }
+        }
     }
 }

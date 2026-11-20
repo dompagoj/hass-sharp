@@ -37,7 +37,7 @@ public static class VisualGraphValidator
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow",
-        "flow.pure", "flow.declaration", "pure.unused", "custom.signature", "property.unset", "property.unknown",
+        "flow.pure", "flow.declaration", "pure.unused", "custom.signature", "csharp.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
         "definition.deviceKey", "definition.duplicateDevice",
         "node.document", "node.singleton", "root.incoming",
@@ -105,11 +105,12 @@ public static class VisualGraphValidator
             : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
         /// <summary>
         /// An Entity node's entity as people read it, in the validator's messages and in its runs' names: its name, else its
-        /// key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device alike. Mirrored by
-        /// <c>entityNodeName</c> in <c>contract.ts</c>.
+        /// key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device and a C# device's
+        /// alike. A C# entity has no name of its own (its code names its entity): it is its class's title, else its key,
+        /// else its kind's label. Mirrored by <c>entityNodeName</c> in <c>contract.ts</c>.
         /// </summary>
         internal static string EntityName(JsonObject node, JsonNode? spec) =>
-            Trimmed(Text(node["config"], "name")) is { Length: > 0 } name ? name
+            (IsClassNode(spec) && Declares(spec, "entity") ? Trimmed(Text(ClassSignature(node, spec), "title")) : Trimmed(Text(node["config"], "name"))) is { Length: > 0 } name ? name
             : Trimmed(Text(node["config"], "key")) is { Length: > 0 } key ? key
             : KindName(node, spec);
         /// <summary>A step that execution never reaches, and what to do about it.</summary>
@@ -118,6 +119,11 @@ public static class VisualGraphValidator
         internal static string NotInFlow(string node) => $"{node} is a value and is not part of the run order";
         /// <summary>A step order wire into or out of a Device node.</summary>
         internal static string DeviceNotInFlow(string device) => $"{device} is a device and is not part of the run order";
+        /// <summary>A step order wire into or out of a C# entity.</summary>
+        internal static string EntityNotInFlow(string entity) => $"{entity} is an entity and is not part of the run order";
+        /// <summary>A step order wire into or out of a declaration, in the words of what it declares (<see cref="StepName"/>).</summary>
+        internal static string DeclarationNotInFlow(JsonObject node, JsonNode? spec) =>
+            Declares(spec, "entity") ? EntityNotInFlow(StepName(node, spec)) : DeviceNotInFlow(StepName(node, spec));
         /// <summary>A node on a cycle of value wires.</summary>
         internal static string OwnResult(string node) => $"{node} would depend on its own result";
         /// <summary>A value node none of whose outputs is connected.</summary>
@@ -129,6 +135,8 @@ public static class VisualGraphValidator
         internal const string MissingLibraryNode = "This step is no longer in its node library; delete it and add it again from the node library";
         /// <summary>A Custom C# node whose stored signature is not one the compiler writes.</summary>
         internal const string MalformedSignature = "The pins of this node cannot be read; open Edit code and apply it";
+        /// <summary>A C# entity or C# device node whose stored settings are not of the shape the compiler writes.</summary>
+        internal const string UnreadableSettings = "The settings of this node cannot be read; open Edit code and apply it";
         /// <summary>A Custom C# node whose stored signature is not what its code gives (the backend compiles it to know).</summary>
         internal const string StaleSignature = "The pins are out of date with the code: open Edit code and apply it";
         /// <summary>The things hand-written automations left behind, and what to do instead.</summary>
@@ -643,8 +651,8 @@ public static class VisualGraphValidator
                     {
                         if (Pure(nodes[source])) Error(source, Words.NotInFlow(Words.StepName(nodes[source], Spec(nodes[source]))), code: "flow.pure");
                         if (Pure(nodes[target]) && target != source) Error(target, Words.NotInFlow(Words.StepName(nodes[target], Spec(nodes[target]))), code: "flow.pure");
-                        if (Declared(nodes[source])) Error(source, Words.DeviceNotInFlow(Words.StepName(nodes[source], Spec(nodes[source]))), code: "flow.declaration");
-                        if (Declared(nodes[target]) && target != source) Error(target, Words.DeviceNotInFlow(Words.StepName(nodes[target], Spec(nodes[target]))), code: "flow.declaration");
+                        if (Declared(nodes[source])) Error(source, Words.DeclarationNotInFlow(nodes[source], Spec(nodes[source])), code: "flow.declaration");
+                        if (Declared(nodes[target]) && target != source) Error(target, Words.DeclarationNotInFlow(nodes[target], Spec(nodes[target])), code: "flow.declaration");
                         continue;
                     }
                     var node = nodes[source]; var port = FlowPort(node, edge);
@@ -688,7 +696,7 @@ public static class VisualGraphValidator
                         Error(Id(target), WrongDomain(target, tp, type) ?? (SelectsProperties(Spec(target), tp) && KnownType(type) ? Words.NoProperties(Root, type) : Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected)), tp, tp);
                     // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable. A state value
                     // of an Entity node reads no step in a flow at all, which scope.stateSource says instead.
-                    var stateValue = Declares(Spec(target), "entity");
+                    var stateValue = IsHub(Spec(target));
                     if (!stateValue && scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
                         Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
                     // A step reading a value node reads, in effect, every step output that value node uses.
@@ -756,19 +764,20 @@ public static class VisualGraphValidator
             // (StateDependencies.Of). The warning is the reader's own, on no input: a wire into it is allowed (connectData),
             // at the cost it names.
             var readers = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var state in nodes.Values.Where(n => Declares(Spec(n), "entity") && StateInputs(n, Root).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
+            foreach (var state in nodes.Values.Where(n => IsHub(Spec(n)) && StateInputs(n, Root).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
                 foreach (var reader in ValueUpstream(state, nodes, data, Pure, n => DataInputs(n)))
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
                         errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
-            // An Entity node's: a key no earlier node (in the graph's order) declares, a step on each command's pin, and for a
-            // camera, a Show frame step that names it.
+            // Every node that declares an entity (an Entity node, a C# entity): a key no earlier one (in the graph's order)
+            // declares. An Entity node's: a step on each command's pin, and for a camera, a Show frame step that names it.
             var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             foreach (var hub in nodes.Values.Where(n => Declares(Spec(n), "entity")))
             {
                 var name = Words.StepName(hub, Spec(hub));
                 if (Choice(hub, "key") is var key && Words.Trimmed(key).Length > 0 && !keys.TryAdd(key, hub))
                     Error(Id(hub), Words.KeyTaken(key, Words.StepName(keys[key], Spec(keys[key]))), "key", code: "definition.duplicateEntity");
+                if (!IsHub(Spec(hub))) continue;
                 foreach (var (command, entry) in DeclaredDomain(hub, Root)?["commands"] as JsonObject ?? [])
                     if (!outgoing[Id(hub)].Any(e => FlowPort(hub, e) == "command:" + command))
                         errors.Add(new(Id(hub), Words.NothingOn(name, Text(entry, "label", Words.KeyWords(command))), 2, PortId: "command:" + command, Code: "command.unhandled"));
@@ -782,7 +791,8 @@ public static class VisualGraphValidator
         /// The rules about Device nodes among each other, in the graph's order: a key no earlier Device node has; a Part of
         /// that names a device (<c>{device: key}</c>, the first Device node of that key) this graph has, and does not come
         /// back to the node it starts from (every device of such a circle is told, one part of itself included); and at
-        /// least one entity wired to it, else a warning. Mirrored by <c>deviceRules</c> in <c>contract.ts</c>.
+        /// least one entity wired to it, else a warning. A C# device is a device of these rules too (its key, its Part of, and
+        /// the Part of of another), but its code adds its entities: it is never empty. Mirrored by <c>deviceRules</c> in <c>contract.ts</c>.
         /// </summary>
         void DeviceRules()
         {
@@ -799,7 +809,7 @@ public static class VisualGraphValidator
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 for (var next = Parent(node); next != null && seen.Add(Id(next)); next = Parent(next))
                     if (ReferenceEquals(next, node)) { Error(Id(node), Words.ViaCycle(name), "via", code: "device.viaCycle"); break; }
-                if (!data.Any(e => Text(e, "source") == Id(node) && Text(e, "sourcePort") == "entities")) errors.Add(new(Id(node), Words.DeviceEmpty(name), 2, Code: "device.empty"));
+                if (!IsClassNode(Spec(node)) && !data.Any(e => Text(e, "source") == Id(node) && Text(e, "sourcePort") == "entities")) errors.Add(new(Id(node), Words.DeviceEmpty(name), 2, Code: "device.empty"));
             }
         }
         /// <summary>
@@ -810,7 +820,7 @@ public static class VisualGraphValidator
         void EntityScopes()
         {
             // Its Device input reads no step: the Device node it is wired to is a declaration, not a flow's step.
-            foreach (var hub in nodes.Values.Where(n => Declares(Spec(n), "entity")))
+            foreach (var hub in nodes.Values.Where(n => IsHub(Spec(n))))
                 foreach (var (port, input) in StateInputs(hub, Root))
                     if (StateSource(hub, port) is { } step)
                         Error(Id(hub), Words.StateSource(Words.PortLabel(input, port), Words.StepName(hub, Spec(hub)), Words.StepName(step, Spec(step))), port, port, "scope.stateSource");
@@ -823,7 +833,7 @@ public static class VisualGraphValidator
                 var read = Pure(source) ? PureSources(source) : DataOutputs(source)[Text(edge, "sourcePort")] is JsonObject output ? [(source, Text(edge, "sourcePort"), output)] : [];
                 foreach (var (hub, port, value) in read)
                 {
-                    if (!Declares(Spec(hub), "entity") || Text(value, "group") is not { Length: > 0 } own) continue;
+                    if (!IsHub(Spec(hub)) || Text(value, "group") is not { Length: > 0 } own) continue;
                     var other = pins.Find(p => p.Reached.Contains(Id(reader)) && !(p.Root == hub && p.Port == own));
                     if (other.Root == null) continue;
                     var also = pins.Any(p => p.Root == hub && p.Port == own && p.Reached.Contains(Id(reader)));
@@ -868,7 +878,7 @@ public static class VisualGraphValidator
             }
             var pins = new List<(JsonObject, string?, HashSet<string>)>();
             foreach (var root in nodes.Values.Where(n => IsRoot(n, snapshot)))
-                if (Declares(Spec(root), "entity")) foreach (var port in ExecutionPorts(root)) pins.Add((root, port, Reached(outgoing[Id(root)].Where(e => FlowPort(root, e) == port))));
+                if (IsHub(Spec(root))) foreach (var port in ExecutionPorts(root)) pins.Add((root, port, Reached(outgoing[Id(root)].Where(e => FlowPort(root, e) == port))));
                 else pins.Add((root, null, Reached(outgoing[Id(root)])));
             return pins;
         }
@@ -1062,14 +1072,16 @@ public static class VisualGraphValidator
             }
             // A text setting of an Entity or a Device node: "" when left out, null when it is not text (the config rule's below).
             string? TextSetting(string field) => !cfg.ContainsKey(field) ? "" : cfg[field] is JsonValue v && v.TryGetValue<string>(out var typed) ? typed : null;
-            // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless it is on a device
-            // (a Device node wired to it), and none of its state values or each one its type needs. A field that is not
-            // text is the config rule's below.
+            // Every node that declares an entity (an Entity node, a C# entity): a key of the form entity keys take. An Entity
+            // node: a type Home Assistant has, a name unless it is on a device (a Device node wired to it), and none of its
+            // state values or each one its type needs; a C# entity's code gives its type, name and state. A field that is
+            // not text is the config rule's below.
             if (EntityGraph && Declares(spec, "entity"))
-            {
                 if (TextSetting("key") is { } key)
                     if (Words.Trimmed(key).Length == 0) Error(id, Words.EntityKeyMissing, "key", code: "definition.entityKey");
                     else if (!Match(key, Words.EntityKeyPattern)) Error(id, Words.EntityKey(key), "key", code: "definition.entityKey");
+            if (EntityGraph && IsHub(spec))
+            {
                 // A type left out is the config rule's; one given blank is said the same way.
                 if (TextSetting("domain") is { } domain && cfg.ContainsKey("domain"))
                     if (Words.Trimmed(domain).Length == 0) Error(id, $"{ConfigLabel(spec["config"]?["domain"], "domain")} is required", "domain");
@@ -1088,9 +1100,10 @@ public static class VisualGraphValidator
                         else if (value is not JsonValue flag || !flag.TryGetValue<bool>(out _)) Error(id, Words.HistoryValue(member), "history");
                 if (cfg.ContainsKey("trackHistory")) Error(id, Words.HistoryNotTrack, "history");
             }
-            // A Device node: a key of the form entity keys take, a name, a Part of of its shape, and a configuration URL Home
-            // Assistant takes. A field that is not text, or a Part of that is not an object, is the config rule's below; what
-            // Part of names, and its key among the others, are the graph's (GraphRules).
+            // A Device node and a C# device: a key of the form entity keys take, a name, a Part of of its shape; a Device node
+            // also a configuration URL Home Assistant takes (a C# device's code gives its own). A field that is not text, or a
+            // Part of that is not an object, is the config rule's below; what Part of names, and its key among the others, are
+            // the graph's (GraphRules).
             if (EntityGraph && Declares(spec, "device"))
             {
                 if (TextSetting("key") is { } key)
@@ -1098,7 +1111,7 @@ public static class VisualGraphValidator
                     else if (!Match(key, Words.EntityKeyPattern)) Error(id, Words.DeviceKey(key), "key", code: "definition.deviceKey");
                 if (TextSetting("name") is { } name && Words.Trimmed(name).Length == 0) Error(id, Words.DeviceNameMissing, "name", code: "device.name");
                 if (cfg["via"] is JsonObject via && !ViaShaped(via)) Error(id, Words.ViaShape, "via", code: "device.via");
-                if (cfg.ContainsKey("configurationUrl") && TextSetting("configurationUrl") is { } url && !ConfigurationUrlTaken(url))
+                if (!IsClassNode(spec) && cfg.ContainsKey("configurationUrl") && TextSetting("configurationUrl") is { } url && !ConfigurationUrlTaken(url))
                     Error(id, Words.ConfigurationUrl(Words.StepName(node, spec)), "configurationUrl", code: "device.configurationUrl");
             }
             if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))
@@ -1175,6 +1188,8 @@ public static class VisualGraphValidator
             if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetRules(node, spec, cfg, id); }
             if (cfg.ContainsKey("output")) Error(id, Words.ExposedValue, "output");
             if (Text(spec, "dynamicInputs") == "custom" && cfg["signature"] is JsonObject signature && !WellFormedSignature(signature)) Error(id, Words.MalformedSignature, "source", code: "custom.signature");
+            // A class node whose settings cannot be read has no setting pins; its code, applied again, writes them.
+            if (IsClassNode(spec) && cfg["signature"] is JsonObject && ClassSignature(node, spec) == null) Error(id, Words.UnreadableSettings, "signature", code: "csharp.signature");
             if (kind == "trigger")
             {
                 var type = TriggerType(node, snapshot);

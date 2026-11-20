@@ -8,7 +8,7 @@ import { nodeCatalog } from '../src/visual/contract'
 import { add, empty } from './visual-fixture'
 
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
-const entityOnly = ['entity', 'device', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'show_frame']
+const entityOnly = ['entity', 'device', 'csharp_entity', 'csharp_device', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'show_frame']
 
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -115,11 +115,12 @@ it('an entity definition lists the Entity group first, then the catalog\'s order
   expect(kinds.slice(0, firstOther)).toEqual(entityKinds)
 })
 
-it('in the entity editor the Entity group begins Entity, Device, When started', () => {
-  expect(catalogPalette(nodeCatalog, 'entity').slice(0, 3).map(item => item.label)).toEqual(['Entity', 'Device', 'When started'])
+it('in the entity editor the Entity group begins Entity, Device, C# entity, C# device, When started', () => {
+  const first = ['Entity', 'Device', 'C# entity', 'C# device', 'When started']
+  expect(catalogPalette(nodeCatalog, 'entity').slice(0, 5).map(item => item.label)).toEqual(first)
   const root = host()
   dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
-  expect([...root.querySelectorAll('.hs-lib__item')].slice(0, 3).map(item => item.getAttribute('aria-label'))).toEqual(['Entity', 'Device', 'When started'])
+  expect([...root.querySelectorAll('.hs-lib__item')].slice(0, 5).map(item => item.getAttribute('aria-label'))).toEqual(first)
 })
 
 it('an automation keeps the catalog\'s order', () => {

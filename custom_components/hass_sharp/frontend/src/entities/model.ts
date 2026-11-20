@@ -1,4 +1,4 @@
-import { addGraphNode, declaredEntities, entityKey, slug, trimSeparators, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
+import { addGraphNode, declaredEntities, entityKey, entityKeyHolders, slug, trimSeparators, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
 import type { HomeAutomation, SourceRange } from '../visual/api'
 
 /**
@@ -290,7 +290,8 @@ export const definitionEntityKinds: readonly string[] = ['set_entity_state', 'se
 export function renameEntityKey(graph: Graph, from: string, to: string, nodeId: string): Graph {
   if (!record(graph.definition) || from === to || !entityKeyPattern.test(to)) return graph
   const declared = declaredEntities(graph)
-  const keys = declared.map(d => d.entity.key)
+  // A C# entity's key is an entity key too: none is given another's.
+  const keys = entityKeyHolders(graph).map(d => d.key)
   if (!declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from) || keys.includes(to)) return graph
   const follow = from !== '' && keys.filter(key => key === from).length === 1
   return {
