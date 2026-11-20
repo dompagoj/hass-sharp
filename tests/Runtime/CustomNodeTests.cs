@@ -25,8 +25,16 @@ static class CustomNodeTests
     static CustomNodeDescriptor Compiled(string source, string id = "c", NodeLibrarySource[]? libraries = null) =>
         new NodeLibraryCompiler(Diagnostics).Preview(libraries ?? [], [new CustomNodeSource(id, source)]).Snapshot.Custom[id];
     /// <summary>The code of a C# entity (<paramref name="kind"/> <c>csharp_entity</c>) or C# device (<c>csharp_device</c>) node, compiled as its node.</summary>
-    static CustomNodeDescriptor ClassCompiled(string kind, string source, string id = "c", NodeLibrarySource[]? libraries = null) =>
-        new NodeLibraryCompiler(Diagnostics).Preview(libraries ?? [], [new CustomNodeSource(id, source, kind)]).Snapshot.Custom[id];
+    /// <remarks>With <paramref name="provider"/>, against its entity classes (<see cref="NodeLibraryFixture.EntityProvider"/> has <c>LightEntity</c> and the rest).</remarks>
+    static CustomNodeDescriptor ClassCompiled(string kind, string source, string id = "c", NodeLibrarySource[]? libraries = null, DiagnosticsProvider? provider = null) =>
+        new NodeLibraryCompiler(provider ?? Diagnostics).Preview(libraries ?? [], [new CustomNodeSource(id, source, kind)]).Snapshot.Custom[id];
+    /// <summary>A provider with the captured schema's entity classes, so <c>LightEntity</c> and <c>SensorEntity</c> resolve.</summary>
+    static DiagnosticsProvider Entities => NodeLibraryFixture.EntityProvider;
+    /// <summary>The column a name starts at on a line (1-based) of the code.</summary>
+    static int Column(string source, int line, string name) => source.Split('\n')[line - 1].IndexOf(name, StringComparison.Ordinal) + 1;
+    /// <summary>The names of the properties a nullability warning (CS8618) names, in name order (the compiler's own order is no contract).</summary>
+    static string NullWarned(IEnumerable<NodeLibraryDiagnostic> diagnostics) => string.Join(",", diagnostics.Where(d => d.Severity == 2 && d.Message.StartsWith("Non-nullable property '", StringComparison.Ordinal))
+        .Select(d => d.Message["Non-nullable property '".Length..d.Message.IndexOf('\'', "Non-nullable property '".Length)]).Order(StringComparer.Ordinal));
     static string Messages(IEnumerable<NodeLibraryDiagnostic> diagnostics) => string.Join(" | ", diagnostics.Select(d => $"{d.StartLine}:{d.StartColumn} {d.Message}"));
     static string Messages(IEnumerable<VisualDiagnostic> diagnostics) => JsonSerializer.Serialize(diagnostics);
     static async Task<List<string>> Logged(JsonObject graph, VisualCatalogSnapshot? snapshot = null)
@@ -52,6 +60,7 @@ static class CustomNodeTests
             LibraryBaseSettings();
             ClassTitles();
             ClassProblems();
+            RequiredSettingsDrawNoWarning();
             TwoNodesOneClassName();
             NothingRuns();
             ClassNodesInAGraph();
@@ -251,7 +260,39 @@ static class CustomNodeTests
         var derived = ClassCompiled("csharp_entity", "public class Kitchen : HttpRelay\n{\n    [Setting] public bool Loud { get; set; }\n}", libraries: [library]);
         Check(derived.Valid && VisualGenerator.SameJson(derived.Signature, JsonNode.Parse("""{"title": "Kitchen", "description": "", "domain": "switch", "settings": [{"key": "Address", "label": "Address", "description": "", "type": "string", "secret": false}, {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false}]}""")),
             "a C# entity derives from a library's entity class, its settings first: " + Messages(derived.Diagnostics) + " " + derived.Signature?.ToJsonString());
-        Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range, a library base's first; a secret's value is never shown");
+        // A setting can be an entity handle: type entity, with the domain of a domain's class (none for Entity). A string or
+        // a handle that is not nullable and has no initializer is required; a nullable one, one with an initializer and a
+        // number are not, and say nothing of it.
+        var lamp = ClassCompiled("csharp_entity", """
+            public class Lamp : SharpLight
+            {
+                [Setting] public LightEntity Light { get; set; }
+                [Setting] public Entity? Any { get; set; }
+                [Setting] public string Host { get; set; }
+                [Setting] public string Zone { get; set; } = "UTC";
+                [Setting] public double Rate { get; set; }
+            }
+            """, provider: Entities);
+        string[] entries = [
+            """{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"light","required":true}""",
+            """{"key":"Any","label":"Any","description":"","type":"entity","secret":false}""",
+            """{"key":"Host","label":"Host","description":"","type":"string","secret":false,"required":true}""",
+            """{"key":"Zone","label":"Zone","description":"","type":"string","secret":false}""",
+            """{"key":"Rate","label":"Rate","description":"","type":"number","secret":false}""",
+        ];
+        Check(lamp.Valid && lamp.Signature!["settings"]!.AsArray().Select(s => s!.ToJsonString()).SequenceEqual(entries),
+            "an entity setting has its domain, and a string or entity setting without a ? or an initializer is required: " + Messages(lamp.Diagnostics) + " " + lamp.Signature?["settings"]?.ToJsonString());
+        // In code whose nullability is off, a string is not known to be non-nullable: it is not required.
+        var oblivious = ClassCompiled("csharp_device", "#nullable disable\npublic class Box : SharpDevice\n{\n    [Setting] public string Host { get; set; }\n}");
+        Check(oblivious.Valid && oblivious.Signature!["settings"]![0]!.ToJsonString() == """{"key":"Host","label":"Host","description":"","type":"string","secret":false}""",
+            "a string setting in code without nullability is not required: " + Messages(oblivious.Diagnostics) + " " + oblivious.Signature?.ToJsonString());
+        // What a stored signature is compared with: a setting's domain and whether it is required are part of it.
+        static JsonObject Signed(string setting) => JsonNode.Parse("""{"title":"Lamp","description":"","domain":"light","settings":[""" + setting + "]}")!.AsObject();
+        var light = Signed("""{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"light","required":true}""");
+        Check(VisualGenerator.SameSettings(light, Signed("""{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"light","required":true}""")), "a signature has the same settings as itself");
+        Check(!VisualGenerator.SameSettings(light, Signed("""{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"light"}""")), "a setting that is no longer required is a change of settings");
+        Check(!VisualGenerator.SameSettings(light, Signed("""{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"sensor","required":true}""")), "a setting of another domain is a change of settings");
+        Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range, a library base's first; a secret's value is never shown; an entity setting's domain and a required setting");
     }
 
     // A C# node whose class derives a concrete class of a node library has that class's [Setting]s in its signature, the
@@ -290,6 +331,18 @@ static class CustomNodeTests
         // The library alone reports it the same.
         var alone = new NodeLibraryCompiler(Diagnostics).Preview([broken]);
         Check(!alone.Valid && Where(alone.Diagnostics.Where(d => d.Severity == 3)) == wrong, "the library alone reports it at the property: " + Where(alone.Diagnostics));
+        // A library base's setting without an initializer is required in the node's signature, read from the library's own
+        // lines; an entity setting of a library's class is accepted as one of the node's. A setting the node's class declares
+        // again is as the node's class declares it: here without the base's initializer, so required.
+        var remotes = new NodeLibrarySource("remotes", "public abstract class Remote : SharpDevice\n{\n    [Setting] public string Host { get; set; }\n    [Setting] public SensorEntity Source { get; set; }\n    [Setting] public string Zone { get; set; } = \"UTC\";\n}", 1);
+        var box = ClassCompiled("csharp_device", "public class Box : Remote\n{\n    [Setting] public new string Zone { get; set; }\n}", libraries: [remotes], provider: Entities);
+        string[] inherited = [
+            """{"key":"Host","label":"Host","description":"","type":"string","secret":false,"required":true}""",
+            """{"key":"Source","label":"Source","description":"","type":"entity","secret":false,"domain":"sensor","required":true}""",
+            """{"key":"Zone","label":"Zone","description":"","type":"string","secret":false,"required":true}""",
+        ];
+        Check(box.Valid && box.Signature!["settings"]!.AsArray().Select(s => s!.ToJsonString()).SequenceEqual(inherited),
+            "a library base's setting without an initializer is required, its entity setting has its domain, and a setting declared again is the derived class's: " + Where(box.Diagnostics) + " " + box.Signature?["settings"]?.ToJsonString());
         Console.WriteLine("PASS class signatures: a C# node deriving a library's class has its settings in its signature, the library's first, and a bad [Setting] of the library's class is reported in the library at the property");
     }
 
@@ -353,13 +406,26 @@ static class CustomNodeTests
         // Code that does not compile has its compiler's errors, on its own lines, and no signature.
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    public Plug() { Missing(); }\n}", "The name 'Missing' does not exist in the current context", 3);
         // A setting's problem is the only error, at the property's name: line and column.
-        void Exactly(string kind, string source, string message, int line, int column)
+        void Exactly(string kind, string source, string message, int line, int column, DiagnosticsProvider? provider = null)
         {
-            var errors = ClassCompiled(kind, source).Diagnostics.Where(d => d.Severity == 3).ToArray();
+            var errors = ClassCompiled(kind, source, provider: provider).Diagnostics.Where(d => d.Severity == 3).ToArray();
             Check(errors.Length == 1 && errors[0] is { SourceId: "c" } only && only.Message == message && only.StartLine == line && only.StartColumn == column,
                 $"{kind}: expected only \"{message}\" at {line}:{column}: " + string.Join(" | ", errors.Select(d => $"{d.StartLine}:{d.StartColumn} {d.Message}")));
         }
-        Exactly("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", NodeLibraryCompiler.SettingTypeMessage("DateTime"), 3, 31);
+        Exactly("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", "A setting is a string, bool, int, long, double, enum or an entity class such as LightEntity; DateTime cannot be one", 3, 31);
+        Check(NodeLibraryCompiler.SettingTypeMessage("DateTime") == "A setting is a string, bool, int, long, double, enum or an entity class such as LightEntity; DateTime cannot be one", "the setting type sentence names the entity classes");
+        // An entity setting is one entity, never a secret, and takes no required modifier (one without a ? or an initializer
+        // is required already). Each is the only error, at the property's name.
+        const string secretLight = "public class Lamp : SharpLight\n{\n    [Setting(Secret = true)] public LightEntity Light { get; set; }\n}";
+        Exactly("csharp_entity", secretLight, "An entity setting cannot be secret", 3, Column(secretLight, 3, "Light {"), Entities);
+        Check(NodeLibraryCompiler.SettingSecretEntityMessage == "An entity setting cannot be secret", "the secret entity sentence");
+        const string lights = "public class Lamp : SharpLight\n{\n    [Setting] public LightEntity[] Lights { get; set; }\n}";
+        Exactly("csharp_entity", lights, "A setting is a string, bool, int, long, double, enum or an entity class such as LightEntity; LightEntity[] cannot be one", 3, Column(lights, 3, "Lights {"), Entities);
+        const string required = "public class Lamp : SharpLight\n{\n    [Setting] public required LightEntity Light { get; set; }\n}";
+        Exactly("csharp_entity", required, "A setting does not take the required modifier: one that is not nullable and has no initializer is required already", 3, Column(required, 3, "Light {"), Entities);
+        // A range is for a number, not an entity.
+        const string ranged = "public class Lamp : SharpLight\n{\n    [Setting(Minimum = 1)] public LightEntity Light { get; set; }\n}";
+        Exactly("csharp_entity", ranged, NodeLibraryCompiler.SettingRangeTypeMessage("LightEntity"), 3, Column(ranged, 3, "Light {"), Entities);
         Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] internal string Hidden { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Hidden"), 3, 31);
         Exactly("csharp_device", "public class Plug : SharpDevice\n{\n\n    [Setting] public string X { get; } = \"\";\n}", NodeLibraryCompiler.SettingSetterMessage, 4, 29);
         Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public static string Shared { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Shared"), 3, 36);
@@ -370,6 +436,44 @@ static class CustomNodeTests
         Check(ClassCompiled("csharp_entity", "public abstract class Base : SharpSwitch { }\npublic class Mine : Base { }").Valid, "an abstract base of an entity class is a helper");
         Check(ClassCompiled("csharp_device", "public class Plug : SharpDevice\n{\n    public class Relay : SharpSwitch { }\n}").Valid, "an entity class inside a device class is its helper");
         Console.WriteLine("PASS class problems: no class, several, a device in a C# entity, a class that cannot be created, a setting called device, the [Setting] sentences, all on the node's own lines");
+    }
+
+    // A required setting is given its value before Setup(), so its property draws no nullability warning (CS8618), with or
+    // without a constructor (which the compiler reports it at), in a C# entity's or C# device's code and in a library's
+    // class; a property that is no setting keeps it, and so does every property of a Custom C# step's code and of a
+    // library's class that is no SharpComponent.
+    static void RequiredSettingsDrawNoWarning()
+    {
+        foreach (var (kind, type, constructor) in new[] { ("csharp_entity", "SharpLight", ""), ("csharp_entity", "SharpLight", "    public Lamp() { }\n"), ("csharp_device", "SharpDevice", ""), ("csharp_device", "SharpDevice", "    public Lamp() { }\n") })
+        {
+            var source = "public class Lamp : " + type + "\n{\n" + constructor + "    [Setting] public LightEntity Light { get; set; }\n    [Setting] public string Host { get; set; }\n    public string Other { get; set; }\n}";
+            var compiled = ClassCompiled(kind, source, provider: Entities);
+            Check(compiled.Valid && NullWarned(compiled.Diagnostics) == "Other",
+                $"{kind}{(constructor.Length > 0 ? " with a constructor" : "")}: only the property that is no setting is warned of: " + Messages(compiled.Diagnostics));
+        }
+        // A library's classes: one deriving SharpComponent warns of no required setting, any other keeps every warning.
+        var library = new NodeLibraryCompiler(Entities).Preview([new("meters", """
+            public class Meter : SharpDevice
+            {
+                public Meter() { }
+                [Setting] public string Host { get; set; }
+                [Setting] public SensorEntity Source { get; set; }
+                public string Other { get; set; }
+            }
+            public abstract class Probe : SharpSensor
+            {
+                [Setting] public string Path { get; set; }
+            }
+            public class Plain
+            {
+                [Setting] public string Address { get; set; }
+            }
+            """, 1)]);
+        Check(library.Valid && NullWarned(library.Diagnostics) == "Address,Other", "a library's SharpComponent warns only of a property that is no setting, any other class of every property: " + Messages(library.Diagnostics));
+        // A Custom C# step's code is no class node's: a SharpComponent class in it keeps its warning.
+        var step = Compiled("public class Helper : SharpDevice\n{\n    [Setting] public string Host { get; set; }\n}\npublic static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(string value) { }\n}");
+        Check(step.Valid && NullWarned(step.Diagnostics) == "Host", "a Custom C# step's code keeps its nullability warnings: " + Messages(step.Diagnostics));
+        Console.WriteLine("PASS required settings: no nullability warning for a required setting of a C# entity, a C# device or a library's class, with or without a constructor; every other property keeps it");
     }
 
     // The types a node's code declares are its own: two nodes with a class of one name compile side by side, and another

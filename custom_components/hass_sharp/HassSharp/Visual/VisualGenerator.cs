@@ -220,12 +220,13 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     }
     /// <summary>
     /// Whether a C# entity's or C# device's stored signature has the settings its code gives in all that changes wires or
-    /// values: the same domain, the same setting keys in the same order, and for each its type, secret flag, options and
-    /// range. Its title, description and each setting's label and description are not compared.
+    /// values: the same domain, the same setting keys in the same order, and for each its type, secret flag, options,
+    /// range, entity domain and whether it is required. Its title, description and each setting's label and description
+    /// are not compared.
     /// </summary>
     internal static bool SameSettings(JsonObject stored,JsonObject compiled) {
         if(!SameJson(stored["domain"],compiled["domain"])||stored["settings"] is not JsonArray mine||compiled["settings"] is not JsonArray theirs||mine.Count!=theirs.Count)return false;
-        return mine.Zip(theirs).All(p=>p.First is JsonObject a&&p.Second is JsonObject b&&new[]{"key","type","secret","options","minimum","maximum"}.All(k=>SameJson(a[k],b[k])));
+        return mine.Zip(theirs).All(p=>p.First is JsonObject a&&p.Second is JsonObject b&&new[]{"key","type","secret","options","minimum","maximum","domain","required"}.All(k=>SameJson(a[k],b[k])));
     }
     /// <summary>
     /// Whether each property a Select property node of the graph reads, of a type the stored signature lists, has the

@@ -187,8 +187,26 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 if (model.GetDeclaredSymbol(node, cancellationToken) is { } declared) return declared;
             return null;
         }
+        var classes = new EntityClasses(frameworkAssembly, EntityPin, (location, message) => Report(location, message), cancellationToken);
+        // A required setting is given its value by the host before Setup(), so the warning that its property is null when
+        // a constructor ends (CS8618, at the property, or at a constructor that names it only in its message) is not the
+        // code's to fix: in a C# entity's or C# device's code, and in a library's class deriving SharpComponent. A Custom
+        // C# step's code keeps it, as does every other property.
+        bool UnsetRequiredSetting(Diagnostic diagnostic)
+        {
+            if (diagnostic.Location.SourceTree is not { } tree || !(trees.ContainsKey(tree) || customTrees.TryGetValue(tree, out var custom) && custom.IsClass)) return false;
+            var message = diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+            return DeclaredAt(diagnostic.Location) switch
+            {
+                IPropertySymbol property => classes.RequiredSetting(property),
+                IMethodSymbol { MethodKind: MethodKind.Constructor } constructor => constructor.ContainingType.GetMembers().OfType<IPropertySymbol>()
+                    .Any(p => message.Contains($"property '{p.Name}'", StringComparison.Ordinal) && classes.RequiredSetting(p)),
+                _ => false,
+            };
+        }
         foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
         {
+            if (diagnostic.Id == "CS8618" && UnsetRequiredSetting(diagnostic)) continue;
             if (diagnostic.Id is "CS1591" or "CS1573" && diagnostic.Location.SourceTree is { } tree && customTrees.ContainsKey(tree)) continue;
             if (diagnostic.Id == "CS1591" && !NodeMethod(DeclaredAt(diagnostic.Location))) continue;
             if (diagnostic.Id == "CS1573" && !NodeMethod(DeclaredAt(diagnostic.Location)?.ContainingSymbol)) continue;
@@ -532,7 +550,6 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             }
             customs.Add(new(custom.NodeId, signature == null ? null : descriptor, signature, own.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)).ToImmutableArray(), customErrors[custom.NodeId].ToImmutableArray()));
         }
-        var classes = new EntityClasses(frameworkAssembly, (location, message) => Report(location, message), cancellationToken);
         CheckLibrarySettings(classes, compilation, trees);
         foreach (var (tree, custom) in customTrees.Where(pair => pair.Value.IsClass))
         {
@@ -704,7 +721,14 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     }
 
     /// <summary>At a <c>[Setting]</c> property of a type a setting cannot have.</summary>
-    internal static string SettingTypeMessage(string type) => $"A setting is a string, bool, int, long, double or enum; {type} cannot be one";
+    internal static string SettingTypeMessage(string type) => $"A setting is a string, bool, int, long, double, enum or an entity class such as LightEntity; {type} cannot be one";
+    /// <summary>At a secret <c>[Setting]</c> property of an entity handle's type: an entity id is no secret.</summary>
+    internal const string SettingSecretEntityMessage = "An entity setting cannot be secret";
+    /// <summary>
+    /// At a <c>[Setting]</c> property with C#'s <c>required</c> modifier, which the host's <c>new T()</c> cannot satisfy:
+    /// a setting is required by its declaration alone.
+    /// </summary>
+    internal const string SettingRequiredMessage = "A setting does not take the required modifier: one that is not nullable and has no initializer is required already";
     /// <summary>At a <c>[Setting]</c> property without a public setter, which no value can be applied to.</summary>
     internal const string SettingSetterMessage = "A setting needs a public setter";
     /// <summary>At a <c>[Setting]</c> property that is static or not public, which is never a setting.</summary>
@@ -756,7 +780,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// for each C# entity and C# device node: the settings each class declares itself (checked once, each problem reported
     /// where the property is written), whether a definition can create a class, and its kind and domain.
     /// </summary>
-    sealed class EntityClasses(IAssemblySymbol hassSharp, Action<Location, string> report, CancellationToken cancellationToken)
+    /// <param name="entityPin">The pin of an entity handle's type (<c>entity_id</c>, <c>entity_id:light</c>); null for any other type.</param>
+    sealed class EntityClasses(IAssemblySymbol hassSharp, Func<ITypeSymbol, string?> entityPin, Action<Location, string> report, CancellationToken cancellationToken)
     {
         internal readonly INamedTypeSymbol? Component = hassSharp.GetTypeByMetadataName("HassSharp.SharpComponent");
         internal readonly INamedTypeSymbol? Device = hassSharp.GetTypeByMetadataName("HassSharp.SharpDevice");
@@ -778,6 +803,30 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             Derives(type, Device) ? ("device", null) : Derives(type, Entity) && Domain(type) is { } domain ? ("entity", domain) : null;
         internal IReadOnlyList<EntitySettingDescriptor> OwnSettings(ITypeSymbol type) => own.GetValueOrDefault(type) ?? [];
 
+        /// <summary>
+        /// Whether a setting of <paramref name="kind"/> is required, by its property's declaration alone: a string or an
+        /// entity handle, not nullable (in code whose nullability is off nothing is known to be), with no initializer. A
+        /// property with no syntax of its own (from an assembly) is not.
+        /// </summary>
+        bool Required(IPropertySymbol property, string kind)
+        {
+            if (kind is not ("string" or "entity") || property.Type.NullableAnnotation != NullableAnnotation.NotAnnotated) return false;
+            var declarations = property.DeclaringSyntaxReferences.Select(r => r.GetSyntax(cancellationToken)).ToArray();
+            return declarations.Length > 0 && declarations.All(d => d is PropertyDeclarationSyntax { Initializer: null });
+        }
+
+        /// <summary>
+        /// Whether <paramref name="property"/> is a required setting of a class deriving <see cref="SharpComponent"/>: one
+        /// <see cref="CheckSettings"/> would read (a public instance <c>[Setting]</c> property with a public setter, of a
+        /// type a setting can have, without the <c>required</c> modifier) and <see cref="Required"/>. The host gives it its
+        /// value before <c>Setup()</c>, so the compiler's warning that it is null when a constructor ends is not the code's.
+        /// </summary>
+        internal bool RequiredSetting(IPropertySymbol property) =>
+            !property.IsStatic && !property.IsIndexer && !property.IsRequired && property.DeclaredAccessibility == Accessibility.Public
+            && property.SetMethod is { DeclaredAccessibility: Accessibility.Public } && Derives(property.ContainingType, Component)
+            && property.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, Setting))
+            && SettingType(property.Type, entityPin) is { } shape && Required(property, shape.Kind);
+
         /// <summary>Reads the <c>[Setting]</c> properties of each class not read yet: one a setting cannot be is reported and left out.</summary>
         internal void CheckSettings(IEnumerable<INamedTypeSymbol> classes)
         {
@@ -797,18 +846,31 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                         report(location, SettingAccessMessage(property.Name));
                         continue;
                     }
+                    // The host creates the class with new T(), which a required member would refuse; a setting is required by its declaration.
+                    if (property.IsRequired)
+                    {
+                        report(location, SettingRequiredMessage);
+                        continue;
+                    }
                     var settable = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
-                    var form = SettingType(property.Type);
+                    var form = SettingType(property.Type, entityPin);
                     if (!settable) report(location, SettingSetterMessage);
                     if (form == null) report(location, SettingTypeMessage(property.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
                     if (!settable || form is not { } shape) continue;
+                    var secret = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true;
+                    // An entity id is shown wherever the entity is: it is no secret.
+                    if (secret && shape.Kind == "entity")
+                    {
+                        report(location, SettingSecretEntityMessage);
+                        continue;
+                    }
                     if (Range(attribute, property.Type, shape, location) is not { } range) continue;
                     var label = attribute.ConstructorArguments.FirstOrDefault().Value as string;
                     var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
                     if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
                     settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
-                        shape.Kind, attribute.NamedArguments.FirstOrDefault(a => a.Key == "Secret").Value.Value is true, shape.Options)
-                        { Minimum = range.Minimum, Maximum = range.Maximum });
+                        shape.Kind, secret, shape.Options)
+                        { Minimum = range.Minimum, Maximum = range.Maximum, Domain = shape.Domain, Required = Required(property, shape.Kind) });
                 }
             }
         }
@@ -816,7 +878,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         // The range a setting takes: its attribute's Minimum and Maximum (NaN for none, as a named argument must be a
         // constant), else the type's own (an int's). Null, with the problem reported, for a range on a property that is not
         // a number, upside down, or with a fraction on a whole number.
-        (double? Minimum, double? Maximum)? Range(AttributeData attribute, ITypeSymbol type, (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum) shape, Location location)
+        (double? Minimum, double? Maximum)? Range(AttributeData attribute, ITypeSymbol type, (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum, string? Domain) shape, Location location)
         {
             double? Given(string name) => attribute.NamedArguments.FirstOrDefault(a => a.Key == name).Value.Value is double value && !double.IsNaN(value) ? value : null;
             var (minimum, maximum) = (Given("Minimum"), Given("Maximum"));
@@ -901,6 +963,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 // An infinite bound is no bound, and JSON has no number for it.
                 if (s.Minimum is { } minimum && double.IsFinite(minimum)) entry["minimum"] = minimum;
                 if (s.Maximum is { } maximum && double.IsFinite(maximum)) entry["maximum"] = maximum;
+                // A domain's entity class only, and required only when it is: a signature without either reads as before.
+                if (s.Domain != null) entry["domain"] = s.Domain;
+                if (s.Required) entry["required"] = true;
                 return (JsonNode?)entry;
             })]),
         };
@@ -909,19 +974,23 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
 
     /// <summary>
     /// A setting's type for a property of <paramref name="type"/>, with an enum's member names and an <c>int</c>'s
-    /// range (none for a <c>long</c>, which every whole number fits); null for a type a setting cannot have.
+    /// range (none for a <c>long</c>, which every whole number fits); <c>entity</c> for an entity handle
+    /// (<paramref name="entityPin"/> gives its pin), with its domain (none for <c>Entity</c>); null for a type a setting
+    /// cannot have. A <c>?</c> does not change the type.
     /// </summary>
-    static (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum)? SettingType(ITypeSymbol type)
+    static (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum, string? Domain)? SettingType(ITypeSymbol type, Func<ITypeSymbol, string?> entityPin)
     {
         var scalar = Scalar(type);
-        if (scalar.TypeKind == TypeKind.Enum) return ("enum", [.. scalar.GetMembers().OfType<IFieldSymbol>().Where(f => f.IsConst).Select(f => f.Name)], null, null);
-        if (scalar.SpecialType == SpecialType.System_Int32) return ("integer", ImmutableArray<string>.Empty, int.MinValue, int.MaxValue);
+        if (entityPin(scalar.WithNullableAnnotation(NullableAnnotation.NotAnnotated)) is { } pin)
+            return ("entity", ImmutableArray<string>.Empty, null, null, pin.StartsWith("entity_id:", StringComparison.Ordinal) ? pin["entity_id:".Length..] : null);
+        if (scalar.TypeKind == TypeKind.Enum) return ("enum", [.. scalar.GetMembers().OfType<IFieldSymbol>().Where(f => f.IsConst).Select(f => f.Name)], null, null, null);
+        if (scalar.SpecialType == SpecialType.System_Int32) return ("integer", ImmutableArray<string>.Empty, int.MinValue, int.MaxValue, null);
         string? kind = scalar.SpecialType switch
         {
             SpecialType.System_String => "string", SpecialType.System_Boolean => "boolean",
             SpecialType.System_Int64 => "integer", SpecialType.System_Double => "number", _ => null,
         };
-        return kind == null ? null : (kind, ImmutableArray<string>.Empty, null, null);
+        return kind == null ? null : (kind, ImmutableArray<string>.Empty, null, null, null);
     }
     static string DocText(XElement? element) => element == null ? "" : string.Join(" ", element.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
     static string Category(ITypeSymbol type) => LiteralKind(type) switch { "boolean" => "Boolean", "number" or "integer" => "Number", "string" or "enum" => "String", "array" => "Array", _ => type is IArrayTypeSymbol ? "Array" : "Object" };

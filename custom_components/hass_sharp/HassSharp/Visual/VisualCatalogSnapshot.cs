@@ -61,7 +61,7 @@ public sealed record CustomNodeDescriptor(string NodeId, NodeMethodDescriptor? M
 /// <param name="Key">The property's name, as written.</param>
 /// <param name="Label">What the node's input is called: the attribute's label, else the property's name.</param>
 /// <param name="Description">The help under the field: the attribute's description, else the property's summary; null for none.</param>
-/// <param name="Type">The setting's type of the value: <c>string</c>, <c>boolean</c>, <c>integer</c>, <c>number</c> or <c>enum</c>.</param>
+/// <param name="Type">The setting's type of the value: <c>string</c>, <c>boolean</c>, <c>integer</c>, <c>number</c>, <c>enum</c> or <c>entity</c> (an entity handle, given by its id).</param>
 /// <param name="Secret">Whether the value is a secret, which only a Setting gives.</param>
 /// <param name="Options">The member names of an <c>enum</c> setting, in declaration order; empty for any other.</param>
 public sealed record EntitySettingDescriptor(string Key, string Label, string? Description, string Type, bool Secret, ImmutableArray<string> Options)
@@ -75,6 +75,18 @@ public sealed record EntitySettingDescriptor(string Key, string Label, string? D
     /// <summary>The largest value an <c>integer</c> or <c>number</c> setting takes, as <see cref="Minimum"/>.</summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public double? Maximum { get; init; }
+    /// <summary>
+    /// The domain of an <c>entity</c> setting whose property is a domain's class, such as <c>light</c> for
+    /// <c>LightEntity</c>; null for <c>Entity</c>, which takes any entity, and for every other type.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Domain { get; init; }
+    /// <summary>
+    /// Whether the setting must be given a value: its property is a string or an entity handle, not nullable, with no
+    /// initializer, so it would otherwise be null when <c>Setup()</c> runs. A number, bool or enum never is.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Required { get; init; }
 }
 /// <summary>
 /// The device or entity class of a C# entity or C# device node's code (deriving <see cref="SharpDevice"/>, or a typed
