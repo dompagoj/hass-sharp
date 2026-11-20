@@ -4,7 +4,7 @@ import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { Inspector } from '../src/visual/Inspector'
-import { addGraphNode, connectData, nodeCatalog, validateGraph, withFirstStateValue, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addGraphNode, connectData, nodeCatalog, validateGraph, withFirstStateValue, type ClassSetting, type ClassSignature, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { graphTypes } from '../src/visual/connectionIndex'
 import { connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
@@ -61,7 +61,7 @@ const registry = {
 }
 
 /** The inspector of one node over a graph history, as the editor wires them. */
-function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[] } = {}) {
+function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[]; onEditCode?: (id: string) => void } = {}) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
@@ -74,7 +74,7 @@ function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: {
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={hass as any}>
         <Inspector graph={history.graph()} catalog={catalog} diagnostics={options.diagnostics ?? []} commit={history.commit} onNotice={text => notices.push(text)}
-          selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} savedEntities={options.saved} />
+          selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} savedEntities={options.saved} onEditCode={options.onEditCode} />
       </HassCtx.Provider>
     </QueryClientProvider>
   ), el)
@@ -707,6 +707,181 @@ describe('devices in the right panel', () => {
     // No field for a device with no entities: listed, with nothing to go to.
     const empty = [...el.querySelectorAll('.hs-insp-problem')].find(item => item.textContent?.includes('has no entities'))!
     expect(empty.querySelector('button.hs-insp-problem__body')).toBeNull()
+  })
+
+  describe('a C# entity and a C# device', () => {
+    const setting = (key: string, type: ClassSetting['type'] = 'string', more: Partial<ClassSetting> = {}): ClassSetting =>
+      ({ key, label: key, description: `About ${key}.`, type, secret: false, ...more })
+    /** An address, a port of 1 to 65535, a ratio, a mode, a switch and a secret token. */
+    const settings = () => [setting('Address'), setting('Port', 'integer', { minimum: 1, maximum: 65535 }), setting('Ratio', 'number'),
+      setting('Mode', 'enum', { options: ['eco', 'comfort'] }), setting('Fast', 'boolean'), setting('Token', 'string', { secret: true })]
+    const signature = (title: string, domain: string | null): ClassSignature => ({ title, description: '', domain, settings: settings() })
+    /** The devices above, a C# entity Thermometer (key thermometer), C# devices Code plug (key code) and Bridge (key bridge), and a Setting of the token. */
+    const classNodes = (args: Record<string, unknown> = {}) => {
+      let graph = { ...devices(), definition: { settings: [{ key: 'token', label: 'Token', type: 'string', secret: true, value: null, hasValue: true }] } as never }
+      graph = add(graph, 'csharp_entity', 'thermo', { key: 'thermometer', signature: signature('Thermometer', 'sensor'), arguments: structuredClone(args) })
+      graph = add(graph, 'csharp_device', 'code', { key: 'code', name: 'Code plug', signature: signature('Plug', null), arguments: structuredClone(args) })
+      graph = add(graph, 'csharp_device', 'bridge', { key: 'bridge', name: 'Bridge', signature: signature('Bridge', null) })
+      return add(graph, 'setting', 'tok', { key: 'token' })
+    }
+    const argument = (node: () => { config: Record<string, unknown> }, key: string) => (node().config.arguments as Record<string, unknown> | undefined)?.[key]
+    const main = (el: Element) => el.querySelector('.hs-inspector .hs-insp-main')!
+    const fieldLabels = (el: Element) => [...main(el).querySelectorAll('label.hs-insp-field__label')].map(label => label.textContent)
+    const settingRow = (el: Element, key: string) => el.querySelector<HTMLElement>(`.hs-inspector section[aria-label="Settings"] [data-input-id="${key}"]`)!
+    const button = (el: Element, text: string) => [...el.querySelectorAll<HTMLButtonElement>('.hs-inspector button')].find(b => b.textContent?.trim() === text)!
+
+    it('a C# entity is named by its class in the header, then has its Key, Device, Edit code and settings, and no generic row', async () => {
+      const edits: string[] = []
+      const { el } = mount(classNodes(), 'thermo', nodeCatalog, { onEditCode: id => edits.push(id) })
+      // Its code names its entity: the header shows the class's title, and has no name to type in.
+      expect(el.querySelector('.hs-inspector .hs-insp-head input')).toBeNull()
+      expect(el.querySelector('.hs-inspector .hs-insp-title')!.textContent).toBe('Thermometer')
+      expect(el.querySelector('.hs-inspector .hs-insp-kind')!.textContent).toContain('C# entity')
+      expect(fieldLabels(el)).toEqual(['Key', 'Device'])
+      // Key, Device, Edit code, then the settings; no config key of the node shows as a generic row.
+      const order = [...main(el).querySelectorAll(':scope > [data-input-id], :scope > div > [data-input-id], :scope > section')].map(e => e.getAttribute('data-input-id') ?? e.getAttribute('aria-label'))
+      expect(order).toEqual(['key', 'device', 'source', 'Settings'])
+      for (const key of ['signature', 'arguments', 'name', 'via']) expect(el.querySelector(`.hs-inspector .hs-insp-main [data-input-id="${key}"]`), key).toBeNull()
+      expect(el.querySelector('.hs-inspector section[aria-label="Inputs"]')).toBeNull()
+      expect(field(el, 'key').textContent).toContain('Steps that use the entity follow it. It cannot change once saved.')
+      // Edit code opens its code.
+      button(el, 'Edit code').click()
+      expect(edits).toEqual(['thermo'])
+      // The settings in the class's order, each by its label.
+      const section = el.querySelector('.hs-inspector section[aria-label="Settings"]')!
+      expect(section.querySelector('h3')!.textContent).toBe('Settings')
+      expect([...section.querySelectorAll<HTMLElement>(':scope > [data-input-id]')].map(row => row.dataset.inputId)).toEqual(['Address', 'Port', 'Ratio', 'Mode', 'Fast', 'Token'])
+    })
+
+    it('a C# entity\'s Device select offers the Device nodes, not a C# device, and wires its Device pin', async () => {
+      const { el, history } = mount(classNodes(), 'thermo')
+      expect([...select(el, 'device').options].map(o => o.textContent)).toEqual(['None', 'Hall plug', 'Hub', 'Hall plug', 'Device'])
+      pick(select(el, 'device'), 'hub')
+      expect(history.graph().edges.filter(e => e.kind === 'data' && e.target === 'thermo')).toEqual([{ id: expect.any(String), kind: 'data', source: 'hub', sourcePort: 'entities', target: 'thermo', targetPort: 'device' }])
+      await vi.waitFor(() => expect(select(el, 'device').value).toBe('hub'))
+    })
+
+    it('edits each setting by its type: text, a whole number in its range, a number, one of its members and a switch', async () => {
+      const { el, node } = mount(classNodes(), 'thermo')
+      // Unset at first: each offers Set value.
+      for (const key of ['Address', 'Port', 'Ratio', 'Mode', 'Fast']) settingRow(el, key).querySelector<HTMLButtonElement>(`button[aria-label="Set ${key}"]`)!.click()
+      const input = (key: string) => settingRow(el, key).querySelector<HTMLInputElement>('input:not([type="checkbox"])')!
+      await vi.waitFor(() => expect(input('Address')).not.toBeNull())
+      typeInto(input('Address'), 'http://10.0.0.7')
+      expect(argument(node, 'Address')).toEqual(lit('string', 'http://10.0.0.7'))
+      // Cleared, the setting is unset: the class keeps its own value.
+      typeInto(input('Address'), '')
+      expect(argument(node, 'Address')).toEqual({ kind: 'unset' })
+      // A whole number: a fraction is refused in the field, and not written.
+      await vi.waitFor(() => expect(input('Port')).not.toBeNull())
+      typeInto(input('Port'), '1.5')
+      expect(argument(node, 'Port')).not.toEqual(lit('number', 1.5))
+      expect(settingRow(el, 'Port').textContent).toContain('Enter a whole number.')
+      typeInto(input('Port'), '8080')
+      expect(argument(node, 'Port')).toEqual(lit('number', 8080))
+      // Its range is said under it, as the class page says it.
+      expect(settingRow(el, 'Port').querySelector('.hs-field-hint')!.textContent).toBe('Between 1 and 65535. About Port.')
+      typeInto(input('Ratio'), '1.5')
+      expect(argument(node, 'Ratio')).toEqual(lit('number', 1.5))
+      // An enum: its members as the code names them, stored as text.
+      const mode = settingRow(el, 'Mode').querySelector('select')!
+      // Unset, the choice shows its placeholder, which cannot be picked.
+      expect([...mode.options].filter(o => !o.disabled).map(o => o.textContent)).toEqual(['eco', 'comfort'])
+      pickLabel(mode, 'comfort')
+      expect(argument(node, 'Mode')).toEqual({ kind: 'literal', type: 'string', value: 'comfort' })
+      const fast = settingRow(el, 'Fast').querySelector<HTMLInputElement>('input[role="switch"]')!
+      fast.click()
+      expect(argument(node, 'Fast')).toEqual(lit('boolean', true))
+    })
+
+    it('a secret setting has no editor, only its hint, and takes a Setting', async () => {
+      const wired = connectData(classNodes(), 'tok', 'value', 'code', 'Token')
+      const { el } = mount(wired, 'thermo')
+      const token = settingRow(el, 'Token')
+      expect(token.querySelector('input, select, textarea, .hs-input-editor')).toBeNull()
+      expect(token.querySelector('button')).toBeNull()
+      expect(token.querySelector('.hs-field-hint')!.textContent).toBe('A secret is not typed here: connect a Setting')
+      dispose?.(); document.body.innerHTML = ''
+      // Wired from a Setting, it shows where its value comes from, as any wired input does.
+      const other = mount(wired, 'code')
+      const pill = settingRow(other.el, 'Token').querySelector('.hs-insp-pill')!
+      expect(pill.textContent).toBe('From Setting · Value')
+      expect(settingRow(other.el, 'Token').querySelector('.hs-field-hint')).toBeNull()
+    })
+
+    it('a secret typed into a hand-made graph is never shown: its problem is, with a way to clear it', async () => {
+      const graph = classNodes({ Token: lit('string', 's3cr3t-token') })
+      const diagnostics = validateGraph(graph, nodeCatalog).filter(d => d.nodeId === 'thermo') as VisualDiagnostic[]
+      expect(diagnostics.map(d => d.message)).toEqual(['Token is a secret: connect a Setting instead of typing it here'])
+      const { el, node } = mount(graph, 'thermo', nodeCatalog, { diagnostics })
+      expect(el.querySelector('.hs-inspector .hs-insp-problems')!.textContent).toContain('Token is a secret: connect a Setting instead of typing it here')
+      expect(settingRow(el, 'Token').textContent).toContain('Token is a secret: connect a Setting instead of typing it here')
+      // Not in the panel, its stored data or any attribute.
+      expect(el.innerHTML).not.toContain('s3cr3t')
+      const clear = settingRow(el, 'Token').querySelector<HTMLButtonElement>('button[aria-label="Clear the value typed into Token"]')!
+      expect(clear.textContent).toBe('Clear value')
+      clear.click()
+      expect(argument(node, 'Token')).toEqual({ kind: 'unset' })
+    })
+
+    it('a C# device is named in the header, and has its Key, Part of, Edit code and settings', async () => {
+      const { el, node } = mount(classNodes(), 'code', nodeCatalog, { onEditCode: () => {} })
+      const name = el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!
+      expect(name.value).toBe('Code plug')
+      name.value = 'Desk plug'
+      name.dispatchEvent(new Event('input', { bubbles: true }))
+      expect(node().config.name).toBe('Desk plug')
+      expect(fieldLabels(el)).toEqual(['Key', 'Part of'])
+      const order = [...main(el).querySelectorAll(':scope > [data-input-id], :scope > div > [data-input-id], :scope > section')].map(e => e.getAttribute('data-input-id') ?? e.getAttribute('aria-label'))
+      expect(order).toEqual(['key', 'via', 'source', 'Settings'])
+      expect(field(el, 'key').textContent).toContain('Devices that are part of it follow it. It cannot change once saved.')
+      for (const key of ['signature', 'arguments', 'name', 'device']) expect(el.querySelector(`.hs-inspector .hs-insp-main [data-input-id="${key}"]`), key).toBeNull()
+    })
+
+    it('Part of a C# device offers the other devices of this definition, C# devices too, and a Device node\'s offers C# devices', async () => {
+      const { el, node } = mount(classNodes(), 'code')
+      pickLabel(select(el, 'via'), 'Another device of this definition')
+      const local = () => el.querySelector<HTMLElement>('.hs-inspector [data-field="viaLocal"]')
+      await vi.waitFor(() => expect(local()).not.toBeNull())
+      local()!.querySelector<HTMLInputElement>('input[role="combobox"]')!.click()
+      await vi.waitFor(() => expect(local()!.querySelector('[role="listbox"]')).not.toBeNull())
+      const options = [...local()!.querySelectorAll<HTMLElement>('[role="option"]')]
+      expect(texts(options)).toEqual(['Bridge · bridge', 'Hall plug · plug', 'Hall plug · twin', 'Hub · hub'])
+      options.find(o => o.firstElementChild?.textContent === 'Bridge')!.click()
+      expect(node().config.via).toEqual({ device: 'bridge' })
+      dispose?.(); document.body.innerHTML = ''
+      // A Device node may be part of a C# device.
+      const device = mount(classNodes(), 'hub')
+      pickLabel(select(device.el, 'via'), 'Another device of this definition')
+      const deviceLocal = () => device.el.querySelector<HTMLElement>('.hs-inspector [data-field="viaLocal"]')
+      await vi.waitFor(() => expect(deviceLocal()).not.toBeNull())
+      deviceLocal()!.querySelector<HTMLInputElement>('input[role="combobox"]')!.click()
+      await vi.waitFor(() => expect(deviceLocal()!.querySelector('[role="listbox"]')).not.toBeNull())
+      const offered = [...deviceLocal()!.querySelectorAll<HTMLElement>('[role="option"]')]
+      expect(texts(offered)).toEqual(['Bridge · bridge', 'Code plug · code', 'Hall plug · plug', 'Hall plug · twin'])
+      offered.find(o => o.firstElementChild?.textContent === 'Code plug')!.click()
+      expect(device.node().config.via).toEqual({ device: 'code' })
+    })
+
+    it('a saved C# entity\'s or C# device\'s key is read-only, and an unsaved one\'s can change', () => {
+      const saved = { keys: ['thermometer'], entityIds: {}, deviceKeys: ['code'] }
+      for (const [id, hint] of [['thermo', "The key is part of the entity's identity in Home Assistant and cannot change."], ['code', "The key is part of the device's identity in Home Assistant and cannot change."]] as const) {
+        const { el } = mount(classNodes(), id, nodeCatalog, { saved })
+        expect(control(el, 'Key').readOnly, id).toBe(true)
+        expect(field(el, 'key').textContent).toContain(hint)
+        dispose?.(); document.body.innerHTML = ''
+      }
+      const unsaved = mount(classNodes(), 'thermo', nodeCatalog, { saved: { keys: ['other'], entityIds: {}, deviceKeys: [] } })
+      expect(control(unsaved.el, 'Key').readOnly).toBe(false)
+      typeInto(control(unsaved.el, 'Key'), 'outside')
+      expect(unsaved.node().config.key).toBe('outside')
+      dispose?.(); document.body.innerHTML = ''
+      const device = mount(updateNode(classNodes(), 'bridge', { config: { ...configOf(classNodes(), 'bridge'), via: { device: 'code' } } }), 'code', nodeCatalog, { saved: { keys: [], entityIds: {}, deviceKeys: [] } })
+      typeInto(control(device.el, 'Key'), 'desk')
+      expect(device.node().config.key).toBe('desk')
+      // A device that is part of it follows.
+      expect(configOf(device.history.graph(), 'bridge').via).toEqual({ device: 'desk' })
+    })
   })
 })
 

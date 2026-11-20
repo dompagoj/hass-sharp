@@ -28,6 +28,7 @@ import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummar
 import { domainWords, typeColor, typeIsList, typeLabel } from '../typeLabels'
 import { comparedEnumInput, targetIds, widgetFor, type NameResolver, type StateEntity } from '../widgets'
 import type { VisualDiagnostic } from '../api'
+import type { DeviceEntity } from '../adapter'
 import { definitionEntityKinds } from '../../entities/model'
 import type { TraceEventStatus, TraceValue } from '../../types'
 
@@ -119,6 +120,12 @@ export interface NodeView {
   pure: boolean
   /** A declaration (a Device node): neither a step nor a value, never run, so a run trace says nothing of it. */
   declaration: boolean
+  /**
+   * A C# device's entities as Home Assistant has them (its code adds them), on a canvas that is told them
+   * (`ViewContext.deviceEntities`): empty before it has started once. Undefined for any other node, and on a canvas that
+   * is not told them (a run's).
+   */
+  entities?: DeviceEntity[]
   /** Accessible name of the whole card. */
   label: string
 }
@@ -221,6 +228,14 @@ export interface ViewContext {
   names?: SummaryNames
   /** A connection the adapter just refused, shown on its pin. */
   rejected?: { nodeId: string; handle: string; message: string }
+  /** The entities Home Assistant has of each C# device, by its key; undefined on a canvas that does not show them. */
+  deviceEntities?: Readonly<Record<string, readonly DeviceEntity[]>>
+}
+/** What a C# device's card lists of Home Assistant's entities for it: those of its key, none before it has started once. */
+const ownEntities = (node: GraphNode, ctx: ViewContext): DeviceEntity[] | undefined => {
+  if (node.kind !== 'csharp_device' || !ctx.deviceEntities) return undefined
+  const key = text(node.config.key)
+  return key && Object.hasOwn(ctx.deviceEntities, key) ? [...ctx.deviceEntities[key]] : []
 }
 
 const typeName = (types: string[], catalog: VisualCatalogSnapshot) => {
@@ -348,12 +363,13 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const errors = problems.filter(p => p.severity === 3).length
   const warnings = problems.filter(p => p.severity === 2).length
   const targetEntityIds = literalTargetEntities(node)
+  const entities = ownEntities(node, ctx)
   const problemText = errors || warnings ? `. ${[errors && `${errors} error${errors === 1 ? '' : 's'}`, warnings && `${warnings} warning${warnings === 1 ? '' : 's'}`].filter(Boolean).join(', ')}: ${problems.map(p => p.message).join('; ')}` : ''
   return {
     id: node.id, kind: node.kind, known, title, kindLabel: spec?.label ?? node.kind, summary, identity,
     execIn, ...(headerInput ? { headerInput } : {}), next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
-    problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure, declaration,
+    problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure, declaration, ...(entities ? { entities } : {}),
     // A value node says so: it has no place in the run order, which a sighted reader sees from its missing pins.
     label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary].filter(Boolean).join('. ')}${problemText}`,
   }
@@ -394,9 +410,11 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
     ? definitionSettings(definitionCatalog(catalog, graph)).find(s => s.key === node.config.key)?.label ?? null : undefined
   const diagnostics = ctx.diagnostics.filter(d => d.nodeId === node.id).map(d => [d.severity, d.message, d.inputId ?? '', d.portId ?? ''])
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
+  // A C# device lists the entities Home Assistant has of it, which change without the graph.
+  const entities = ownEntities(node, ctx)
   return JSON.stringify([
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
-    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null,
+    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null, entities ?? null,
   ])
 }
 

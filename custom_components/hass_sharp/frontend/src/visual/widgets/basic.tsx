@@ -58,6 +58,8 @@ export function NumberWidget(props: WidgetProps) {
         if (Number.isNaN(parsed)) return numberMessage(text, decimal())
         // A stored empty text is kept, with the error, until the person types or clears it (Clear in the menu).
         if (parsed === undefined && props.stale && text === displayValue(props.value)) return 'Enter a number.'
+        // A whole number only (a class's integer setting): a fraction is refused, as the class page refuses it.
+        if (props.widget.whole && parsed !== undefined && !Number.isInteger(parsed)) return 'Enter a whole number.'
         props.commit(parsed)
       }} />
     <Show when={unit()}><span class="hs-unit">{unit()}</span></Show>

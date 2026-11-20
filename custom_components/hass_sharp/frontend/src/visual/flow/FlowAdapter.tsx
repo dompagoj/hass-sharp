@@ -6,6 +6,7 @@ import flowStyles from '@dschz/solid-flow/styles?inline'
 import { Icon } from '../../components/Controls'
 import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
+import type { DeviceEntity } from '../adapter'
 import { HassCtx } from '../../context'
 import { useLoadedRegistry } from '../../registry'
 import { connectData, graphDocument, hasCode as kindHasCode, isRoot, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
@@ -73,6 +74,11 @@ export interface FlowAdapterProps {
    * against it (the person cancelled). Without it, steps are deleted at once.
    */
   onBeforeDelete?: (ids: string[], proceed: () => void) => void
+  /**
+   * The entities Home Assistant has of each C# device, by its key, which its card lists (an entity definition's editor;
+   * empty before its first save). Without it (a run's canvas) a C# device's card lists none.
+   */
+  deviceEntities?: Readonly<Record<string, readonly DeviceEntity[]>>
 }
 
 /** What the page may ask of the canvas: its own Duplicate, a cleared selection, a pan and its notice. */
@@ -174,7 +180,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   let cache = new Map<string, { key: string; view: NodeView }>()
   let cacheFor: [VisualCatalogSnapshot, SummaryNames | undefined] | undefined
   const views = createMemo(() => {
-    const ctx: ViewContext = { graph: graph(), catalog: catalog(), diagnostics: props.diagnostics ?? [], names: names(), rejected: rejected() }
+    const ctx: ViewContext = { graph: graph(), catalog: catalog(), diagnostics: props.diagnostics ?? [], names: names(), rejected: rejected(), deviceEntities: props.deviceEntities }
     if (!cacheFor || cacheFor[0] !== ctx.catalog || cacheFor[1] !== ctx.names) cache = new Map()
     cacheFor = [ctx.catalog, ctx.names]
     const index = connectionIndex(ctx.graph, ctx.catalog)
@@ -776,7 +782,8 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
                   touchDrag?.graph === props.graph && touchDrag.id === node.id
                     ? { ...nodes.find(n => n.id === node.id)!.position }
                     : { ...(moved.get(node.id) ?? basePosition(node, index)) },
-                domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace && !built.get(node.id)?.view.declaration ? `. Run: ${traceText(trace.nodes[node.id])}` : ''}` },
+                // What the card says of the run: "Not used" for a value node no step read, as its card has it.
+                domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace && !built.get(node.id)?.view.declaration ? `. Run: ${traceText(trace.nodes[node.id], built.get(node.id)?.view.pure)}` : ''}` },
                 selected: selectedSet().has(node.id),
               })),
               { key: 'id' },

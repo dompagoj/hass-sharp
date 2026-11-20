@@ -8,6 +8,7 @@ import { typeLabel } from '../visual/typeLabels'
 import { stateField } from '../visual/widgets'
 import { SearchSelect, type SearchOption } from '../visual/widgets/SearchSelect'
 import type { SavedEntities } from '../visual/adapter'
+import { CSharpNodeSection } from './CSharpNodeSection'
 import { DeviceNodeSection } from './DeviceNodeSection'
 import { deviceFields } from './DeviceForm'
 import { EntityNodeSection } from './EntityNodeSection'
@@ -171,6 +172,11 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: EntityNodeSection },
   // A Device node: its whole device but its name (the header's).
   device: { keys: ['key', 'name', ...deviceFields.map(field => field.member), 'via'], Section: DeviceNodeSection },
+  // A C# entity: its key and device; its code (Edit code), its class's signature and its settings (its inputs) are shown
+  // apart, and its class names it.
+  csharp_entity: { keys: ['key', 'name', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
+  // A C# device: its key and Part of; its name is the header's, and its code, signature and settings are shown apart.
+  csharp_device: { keys: ['key', 'name', 'via', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
 }
 
 /** Under a Set state's value, when its type has more than one: what leaving it empty does. */

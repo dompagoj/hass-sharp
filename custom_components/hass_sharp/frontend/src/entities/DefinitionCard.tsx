@@ -10,7 +10,7 @@ import { Glyph } from '../visual/Glyph'
 import { icons } from '../visual/icons'
 import { entityTexts } from './adapter'
 import type { LiveState, LiveStates } from './liveState'
-import type { HomeDefinition } from './model'
+import { cardEntities, shownEntities, type CardEntity, type HomeDefinition } from './model'
 
 /** The switch's tooltips: the editor's, so the two say the same. */
 const switchTitles = { on: entityTexts.enabledOn, off: entityTexts.enabledOff }
@@ -18,8 +18,6 @@ const switchTitles = { on: entityTexts.enabledOn, off: entityTexts.enabledOff }
 const notActive = 'Not active'
 /** Beside "Class" when the classes could not be read. */
 const classNameFailed = 'Could not load the class’s name.'
-/** How many of a definition's entities its card lists before "and N more". */
-export const shownEntities = 6
 
 export type DefinitionTone = 'running' | 'starting' | 'failed' | 'stopped' | 'off'
 /**
@@ -40,52 +38,8 @@ export function definitionStatus(item: Pick<HomeDefinition, 'enabled' | 'activat
 const tint = (status: ReturnType<typeof definitionStatus>) =>
   status.tone === 'failed' || status.tone === 'stopped' ? 'attention' : status.stale ? 'warning' : undefined
 
-/** An entity of a definition as its card lists it; `device`, the key of the C# device whose code added it, else none. */
-export interface CardEntity { key: string; name: string; domain: string; entityId: string | null; disabled: boolean; device?: string }
-const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
-/**
- * What follows a definition's id in one of its entities' unique ids: `<key>` for an entity it declares (an Entity node's,
- * a C# entity's, a class's), `<device key>:<key>` for one a C# device's code added. Keys hold no colon, so the tail is
- * read whole: never as a key split at its first colon alone, which would take `plug:relay` for the entity `plug`.
- */
-function uniqueIdTail(definitionId: string, uniqueId: string): { key: string; device?: string } {
-  const prefix = `${definitionId}:`
-  const tail = uniqueId.startsWith(prefix) ? uniqueId.slice(prefix.length) : uniqueId
-  const parts = tail.split(':')
-  return parts.length === 2 && parts[0] && parts[1] ? { device: parts[0], key: parts[1] } : { key: tail }
-}
-/**
- * A definition's entities: those it registered while running (or failed), else Home Assistant's entity registry's,
- * which keeps them while it is off or not loaded; a class definition that never started has neither, nor do a C#
- * device's entities before it has run. Whether Home Assistant has one disabled always comes from the registry. Each is
- * named by its name (its own, else the one the definition gives it: an Entity node's, else a C# entity's class's
- * title), else its key, else its entity id; a C# device's entity by its own name, else its key. The entities the
- * definition declares come first, then each C# device's, in the order of its nodes (one whose node is gone last);
- * in each, enabled ones come first, each group by name.
- */
-export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'> & { logic?: HomeDefinition['logic'] }): CardEntity[] {
-  const graphNodes = item.logic?.kind === 'graph' && Array.isArray(item.logic.graph?.nodes) ? item.logic.graph.nodes : []
-  const csharpNodes = graphNodes.filter(node => node.kind === 'csharp_entity' || node.kind === 'csharp_device')
-  const keyOf = (node: (typeof graphNodes)[number]) => (typeof node.config?.key === 'string' ? node.config.key : undefined)
-  // A C# entity's stored name is null (its class names it): its class's title, as its node shows it.
-  const titles = new Map(csharpNodes.filter(node => node.kind === 'csharp_entity').map(node => {
-    const title = (node.config?.signature as { title?: unknown } | undefined)?.title
-    return [keyOf(node), typeof title === 'string' ? title : undefined] as const
-  }))
-  const declared = new Map((item.entities ?? []).map(entity => [entity.key, entity.name || (entity.csharp === true ? titles.get(entity.key) : undefined)]))
-  const deviceOrder = csharpNodes.filter(node => node.kind === 'csharp_device').map(keyOf).filter((key): key is string => key !== undefined)
-  const registry = new Map(item.registeredEntities.map(entry => [entry.uniqueId, entry]))
-  const entity = (uniqueId: string, name: string | null | undefined, domain: string, entityId: string | null, disabled: boolean): CardEntity => {
-    const { key, device } = uniqueIdTail(item.id, uniqueId)
-    return { key, name: name || (device === undefined ? declared.get(key) : undefined) || key || entityId || '', domain, entityId, disabled, ...(device === undefined ? {} : { device }) }
-  }
-  const listed = item.liveEntities.length
-    ? item.liveEntities.map(e => entity(e.uniqueId, e.name, e.domain, e.entityId, registry.get(e.uniqueId)?.disabled === true))
-    : item.registeredEntities.map(e => entity(e.uniqueId, e.name, e.domain, e.entityId, e.disabled))
-  const group = (e: CardEntity) => (e.device === undefined ? -1 : deviceOrder.includes(e.device) ? deviceOrder.indexOf(e.device) : deviceOrder.length)
-  return listed.sort((a, b) => group(a) - group(b) || (group(a) === deviceOrder.length ? collator.compare(a.device!, b.device!) : 0)
-    || Number(a.disabled) - Number(b.disabled) || collator.compare(a.name, b.name))
-}
+// A definition's entities as its card lists them, and as a C# device's card on the canvas lists its own.
+export { cardEntities, shownEntities, type CardEntity }
 /** The entity ids whose states a card shows: its listed entities that Home Assistant has enabled. */
 export const watchedEntityIds = (item: HomeDefinition) =>
   cardEntities(item).slice(0, shownEntities).flatMap(e => (e.entityId && !e.disabled ? [e.entityId] : []))

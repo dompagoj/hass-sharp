@@ -611,6 +611,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             onEditCode={editCode}
             label={texts.canvasLabel}
             onBeforeDelete={beforeDelete}
+            deviceEntities={adapter.savedEntities ? savedEntities()?.deviceEntities ?? {} : undefined}
           />
         </div>
         <Inspector

@@ -92,6 +92,12 @@
 .hs-app .hs-flow .hs-card :is(input, select, textarea, button):focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-card__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: start; }
 .hs-app .hs-card__row--footer { margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--hs-line); }
+/* A C# device's entities, under its settings and set apart from them as the error row is: each name, then its entity id. */
+.hs-app .hs-card__entities-area { display: grid; gap: 4px; }
+.hs-app .hs-card__entities-area:not(:first-child) { margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--hs-line); }
+.hs-app .hs-card__entities { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-card__entity { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); column-gap: 8px; align-items: center; min-height: 24px; }
+.hs-app .hs-card__none, .hs-app .hs-card__more { margin: 0; color: var(--hs-muted); font-size: 12px; }
 /* A Select property node's property choice spans the card under its pins. */
 .hs-app .hs-card__row--property { grid-template-columns: minmax(0, 1fr); }
 .hs-app .hs-card__row--property .hs-card-editor { max-width: none; }

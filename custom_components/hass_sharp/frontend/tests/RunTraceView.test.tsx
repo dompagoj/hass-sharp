@@ -755,6 +755,33 @@ it('says a Device node of a definition\'s run is not a step, and draws it as out
   expect(panel(root).querySelector('.hs-insp-note')!.textContent).toBe('This step did not run.')
 })
 
+it('says a C# entity or C# device of a definition\'s run is not a step, draws it as outside the run, and still shows its code', async () => {
+  const signature = (title: string, domain: string | null) => ({ title, description: '', domain, settings: [{ key: 'Address', label: 'Address', description: '', type: 'string', secret: false }] })
+  // A C# entity Thermometer and a C# device Code plug, in the definition as stored and in the run's graph alike.
+  const withCSharp = <T extends Graph>(graph: T): T => ({
+    ...graph,
+    nodes: [...graph.nodes,
+      { id: 'thermo', kind: 'csharp_entity', config: { key: 'thermometer', source: 'public class Thermometer : SharpSensor { }', signature: signature('Thermometer', 'sensor') }, position: { x: 60, y: 700 } },
+      { id: 'code', kind: 'csharp_device', config: { key: 'code', name: 'Code plug', source: 'public class Plug : SharpDevice { }', signature: signature('Plug', null) }, position: { x: 60, y: 900 } }],
+  })
+  const base = definitionResponse()
+  const { root } = mountDefinition(async () => ({ ...base, snapshot: { ...base.snapshot!, graph: withCSharp(storedGraph()) } }), {
+    prepare: fixture => fixture.entities.seed('plug', { ...plugBody(), logic: { kind: 'graph', graph: withCSharp(plugGraph()) } }),
+  })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  for (const [id, title, sentence] of [['thermo', 'Thermometer', 'A C# entity is not a step: it does not run.'], ['code', 'Code plug', 'A C# device is not a step: it does not run.']] as const) {
+    const drawn = () => card(root, id).querySelector('.hs-card')!
+    expect(drawn().classList, id).not.toContain('hs-card--unreached')
+    expect(drawn().querySelector('.hs-card__trace'), id).toBeNull()
+    // Its code can still be read.
+    expect(drawn().querySelector('.hs-card__code')!.getAttribute('aria-label')).toBe(`View code of ${title}`)
+    drawn().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe(title))
+    expect(panel(root).querySelector('.hs-insp-note')!.textContent).toBe(sentence)
+    expect(panel(root).textContent).not.toContain('did not run')
+  }
+})
+
 it('titles a definition\'s run by its root step when it carries that step\'s generated method name', async () => {
   const { root } = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'relay', cause: 'Command', actionLabel: turnOn(), trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))

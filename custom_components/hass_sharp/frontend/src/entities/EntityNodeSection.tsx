@@ -40,36 +40,12 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     else next[field] = value
     ctx.onChange(next)
   }
-  // The key no longer changes once Home Assistant has it.
-  const fixed = () => key() !== '' && !!ctx.saved?.()?.keys.includes(key())
-  // Every other node's entity key, a C# entity's too: they share one namespace.
-  const others = () => entityKeyHolders(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.key))
   // A new type, as one change: what no longer fits it goes, and the notice says what.
   const retype = (value: string) => {
     const { graph, removed } = retypeNode(ctx.graph(), ctx.node().id, value, ctx.catalog())
     ctx.onGraphChange(graph)
     const notice = refitNotice(removed)
     if (notice) ctx.onNotice?.(notice)
-  }
-  // The device it is on: the Device node wired to its Device pin. Each Device node is offered by its name (else its key,
-  // else Device) and chosen by its node, so two of one name are told apart by their place in the list. Only a device with
-  // an Entities pin is offered: a C# device adds its entities in its code, and none can be wired to it.
-  const device = () => deviceNodeOf(ctx.graph(), ctx.node().id, ctx.catalog()) ?? ''
-  const deviceChoices = (): Choice[] => [
-    { value: '', label: 'None' },
-    ...declaredDevices(ctx.graph(), ctx.catalog()).flatMap(d => {
-      const node = ctx.graph().nodes.find(n => n.id === d.nodeId)
-      return node && Object.hasOwn(dataOutputs(node, ctx.catalog()), 'entities') ? [{ value: d.nodeId, label: entityNodeName(node, ctx.catalog()) || 'Device' }] : []
-    }),
-  ]
-  // One change: a wire from another device is replaced, None removes it.
-  const wire = (nodeId: string) => {
-    try {
-      ctx.onGraphChange(nodeId ? connectData(ctx.graph(), nodeId, 'entities', ctx.node().id, 'device', ctx.catalog()) : disconnectData(ctx.graph(), ctx.node().id, 'device', ctx.catalog()))
-    } catch (error) {
-      // Refused: the wire would cause a problem, which the notice names; nothing changes.
-      ctx.onNotice?.(error instanceof Error ? error.message : String(error))
-    }
   }
   const types = () => Object.keys(ctx.catalog().entityDomains ?? {})
   const typeChoices = () => [
@@ -105,25 +81,12 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     (event.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId }, bubbles: true, composed: true }))
   return (
     <>
-      <At id="key">
-        <Show when={!fixed()} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
-          <TextField name="key" label="Key" text={key()} hint={`${keyRule} Steps that use the entity follow it. It cannot change once saved.`} errors={ctx.errorsFor('key')}
-            commit={value => {
-              if (value === key()) return
-              const problem = keyProblem(value, others())
-              if (problem) return problem
-              ctx.onGraphChange(renameEntityKey(ctx.graph(), key(), value, ctx.node().id))
-            }} />
-        </Show>
-      </At>
+      <EntityKeyField ctx={ctx} />
       <At id="domain">
         <SelectField name="domain" label="Type" value={domain()} choices={typeChoices()} errors={ctx.errorsFor('domain')} onChange={retype}
           hint="Steps that use the entity follow its type." />
       </At>
-      <At id="device">
-        <SelectField name="device" label="Device" value={device()} choices={deviceChoices()} errors={ctx.errorsFor('device')} onChange={wire}
-          hint="An entity on a device is listed on that device's page. None: it stands alone." />
-      </At>
+      <EntityDeviceField ctx={ctx} />
       <At id="deviceClass">
         <TextField name="deviceClass" label="Device class" text={text(config().deviceClass)} placeholder="None" errors={ctx.errorsFor('deviceClass')}
           hint="A Home Assistant device class, for example motion." commit={value => set('deviceClass', value.trim() ? value.trim() : undefined)} />
@@ -167,6 +130,63 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
         )}
       </Show>
     </>
+  )
+}
+
+/**
+ * An entity's key (an Entity node's or a C# entity's): read only once saved. Renamed, the steps that use an Entity
+ * node's entity follow it; every other node's entity key, a C# entity's too, is taken (they share one namespace).
+ */
+export function EntityKeyField(props: { ctx: StepPickerContext }) {
+  const ctx = props.ctx
+  const key = () => text(ctx.node().config.key)
+  // The key no longer changes once Home Assistant has it.
+  const fixed = () => key() !== '' && !!ctx.saved?.()?.keys.includes(key())
+  const others = () => entityKeyHolders(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id).map(d => text(d.key))
+  return (
+    <At id="key">
+      <Show when={!fixed()} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
+        <TextField name="key" label="Key" text={key()} hint={`${keyRule} Steps that use the entity follow it. It cannot change once saved.`} errors={ctx.errorsFor('key')}
+          commit={value => {
+            if (value === key()) return
+            const problem = keyProblem(value, others())
+            if (problem) return problem
+            ctx.onGraphChange(renameEntityKey(ctx.graph(), key(), value, ctx.node().id))
+          }} />
+      </Show>
+    </At>
+  )
+}
+
+/**
+ * The device an entity is on (an Entity node's or a C# entity's): the Device node wired to its Device pin. Each Device
+ * node is offered by its name (else its key, else Device) and chosen by its node, so two of one name are told apart by
+ * their place in the list. Only a device with an Entities pin is offered: a C# device adds its entities in its code, and
+ * none can be wired to it. One change: a wire from another device is replaced, None removes it.
+ */
+export function EntityDeviceField(props: { ctx: StepPickerContext }) {
+  const ctx = props.ctx
+  const device = () => deviceNodeOf(ctx.graph(), ctx.node().id, ctx.catalog()) ?? ''
+  const deviceChoices = (): Choice[] => [
+    { value: '', label: 'None' },
+    ...declaredDevices(ctx.graph(), ctx.catalog()).flatMap(d => {
+      const node = ctx.graph().nodes.find(n => n.id === d.nodeId)
+      return node && Object.hasOwn(dataOutputs(node, ctx.catalog()), 'entities') ? [{ value: d.nodeId, label: entityNodeName(node, ctx.catalog()) || 'Device' }] : []
+    }),
+  ]
+  const wire = (nodeId: string) => {
+    try {
+      ctx.onGraphChange(nodeId ? connectData(ctx.graph(), nodeId, 'entities', ctx.node().id, 'device', ctx.catalog()) : disconnectData(ctx.graph(), ctx.node().id, 'device', ctx.catalog()))
+    } catch (error) {
+      // Refused: the wire would cause a problem, which the notice names; nothing changes.
+      ctx.onNotice?.(error instanceof Error ? error.message : String(error))
+    }
+  }
+  return (
+    <At id="device">
+      <SelectField name="device" label="Device" value={device()} choices={deviceChoices()} errors={ctx.errorsFor('device')} onChange={wire}
+        hint="An entity on a device is listed on that device's page. None: it stands alone." />
+    </At>
   )
 }
 

@@ -1,4 +1,4 @@
-import { customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -255,6 +255,13 @@ function kindText(ctx: Context): string | undefined {
     }
     // A Device node: its key (its name is its title).
     case 'device': { const key = text(config.key); return key ? `Device · ${key}` : undefined }
+    // A C# entity: the type its class derives from and its key, as an Entity node (its class's title is its title).
+    case 'csharp_entity': {
+      const domain = text(classSignature(node, catalog)?.domain), key = text(config.key)
+      return [domain ? entityTypeLabel(catalog, domain) : '', key].filter(Boolean).join(' · ') || undefined
+    }
+    // A C# device: its key (its name is its title).
+    case 'csharp_device': { const key = text(config.key); return key ? `C# device · ${key}` : undefined }
     // A setting by its label; never its value, which may be a secret.
     case 'setting': {
       const key = text(config.key)

@@ -7,6 +7,7 @@ import { EntityDefinitionView } from '../src/views/EntityDefinitionView'
 import { EntityRunTraceView } from '../src/views/RunTraceView'
 import { nodeCatalog } from '../src/visual/contract'
 import { newGraphDefinition, type DefinitionBody } from '../src/entities/model'
+import { entityAdapter } from '../src/entities/adapter'
 import { visualFixture } from './visual-fixture'
 import { icons } from '../src/visual/icons'
 import { dropStep, libraryItem } from './library'
@@ -766,6 +767,57 @@ it('keeps the key of an Entity node added to a saved definition open until the s
   expect(fixture.entities.documents.get('plug')!.entities!.map(e => e.key)).toEqual(['relay', 'power', 'meter'])
   await selectNode(root, added)
   await vi.waitFor(() => expect(control(inspector(root), 'key').readOnly).toBe(true))
+})
+
+/** The plug, with an Entity node Outlet keyed plug, a C# entity Thermometer and a C# device Code plug keyed plug too. */
+const csharpPlug = (): DefinitionBody => {
+  const body = plugBody()
+  const signature = (title: string, domain: string | null) => ({ title, description: '', domain, settings: [{ key: 'Address', label: 'Address', description: '', type: 'string', secret: false }] })
+  const graph = body.logic.kind === 'graph' ? body.logic.graph : undefined
+  return { ...body, logic: { kind: 'graph', graph: { ...graph!, nodes: [...graph!.nodes,
+    { id: 'outlet', kind: 'entity', config: { key: 'plug', domain: 'switch', name: 'Outlet' }, position: { x: 400, y: 100 } },
+    { id: 'thermo', kind: 'csharp_entity', config: { key: 'thermometer', source: 'public class Thermometer : SharpSensor { }', signature: signature('Thermometer', 'sensor') }, position: { x: 400, y: 500 } },
+    { id: 'code', kind: 'csharp_device', config: { key: 'plug', name: 'Code plug', source: 'public class Plug : SharpDevice { }', signature: signature('Plug', null) }, position: { x: 400, y: 900 } }] } } }
+}
+/** What Home Assistant has of the C# plug: its declared entities, and two its C# device's code added. */
+const csharpPlugLive = [
+  { uniqueId: 'plug:relay', key: 'relay', domain: 'switch', name: 'Relay', entityId: 'switch.plug_relay' },
+  { uniqueId: 'plug:plug', key: 'plug', domain: 'switch', name: 'Outlet', entityId: 'switch.plug_plug' },
+  { uniqueId: 'plug:thermometer', key: 'thermometer', domain: 'sensor', name: 'Thermometer', entityId: 'sensor.plug_thermometer' },
+  { uniqueId: 'plug:plug:relay', key: 'relay', domain: 'switch', name: 'Code relay', entityId: 'switch.code_plug_relay' },
+  { uniqueId: 'plug:plug:power', key: 'power', domain: 'sensor', name: null, entityId: 'sensor.code_plug_power' },
+]
+
+it('fixes the key of a saved C# entity and C# device, and lists on the C# device\'s card the entities its code added', async () => {
+  const { root } = await openPlug(f => f.entities.seed('plug', csharpPlug(), { liveEntities: csharpPlugLive }))
+  await selectNode(root, 'thermo')
+  expect(control(inspector(root), 'key').readOnly).toBe(true)
+  expect(control(inspector(root), 'key').value).toBe('thermometer')
+  await selectNode(root, 'code')
+  expect(control(inspector(root), 'key').readOnly).toBe(true)
+  // Its own entities, by name (else key) and entity id: never the Entity node keyed like it, nor the relay of the same key.
+  const list = card(root, 'code').querySelector('.hs-card__entities')!
+  expect([...list.querySelectorAll('li')].map(li => [li.querySelector('.hs-pin-label')!.textContent, li.querySelector('code')!.textContent]))
+    .toEqual([['Code relay', 'switch.code_plug_relay'], ['power', 'sensor.code_plug_power']])
+  // The Entity node keyed plug is still its own entity, with its entity id.
+  await selectNode(root, 'outlet')
+  expect(inspector(root).textContent).toContain('switch.plug_plug')
+})
+
+it('takes the keys a saved definition fixes from its graph, whatever its stored list of entities holds', () => {
+  const adapter = entityAdapter({ callWS: async () => ({}) } as never)
+  const graph = csharpPlug().logic.graph!
+  const document = { id: 'plug', entities: [{ key: 'relay' }, { key: 'power' }], liveEntities: csharpPlugLive, registeredEntities: [], logic: { kind: 'graph', type: null, graph }, graph }
+  const saved = adapter.savedEntities!({ document, catalog: nodeCatalog } as never)!
+  // Every entity key of the graph, the C# entity's too, in the graph's order; the devices' keys as before.
+  expect(saved.keys).toEqual(['relay', 'power', 'plug', 'thermometer'])
+  expect(saved.deviceKeys).toEqual(['plug'])
+  expect(saved.entityIds).toEqual({ relay: 'switch.plug_relay', plug: 'switch.plug_plug', thermometer: 'sensor.plug_thermometer' })
+  expect(saved.deviceEntities).toEqual({ plug: [{ name: 'Code relay', entityId: 'switch.code_plug_relay' }, { name: 'power', entityId: 'sensor.code_plug_power' }] })
+  // Of a graph of Entity and Device nodes only, the same keys as its stored entities.
+  const plain = plugBody().logic.graph!
+  expect(adapter.savedEntities!({ document: { ...document, liveEntities: [], logic: { kind: 'graph', type: null, graph: plain }, graph: plain }, catalog: nodeCatalog } as never)!)
+    .toEqual({ keys: ['relay', 'power'], entityIds: {}, deviceKeys: [], deviceEntities: {} })
 })
 
 it('saves a definition named New under another id than the new one\'s address (ruling R17)', async () => {

@@ -1383,3 +1383,165 @@ describe('the Device pin and the Device card', () => {
     await vi.waitFor(() => expect(card().querySelector('.hs-card__title')!.textContent).toBe('Device'))
   })
 })
+
+describe('the C# entity and C# device cards', () => {
+  const setting = (key: string, type: contract.ClassSetting['type'] = 'string', more: Partial<contract.ClassSetting> = {}): contract.ClassSetting =>
+    ({ key, label: key, description: '', type, secret: false, ...more })
+  /** A Thermometer's settings: an address, a port of 1 to 65535, a mode, a switch and a secret token. */
+  const settings = () => [setting('Address'), setting('Port', 'integer', { minimum: 1, maximum: 65535 }), setting('Mode', 'enum', { options: ['eco', 'comfort'] }),
+    setting('Fast', 'boolean'), setting('Token', 'string', { secret: true })]
+  const signature = (title: string, domain: string | null, list = settings()): contract.ClassSignature => ({ title, description: '', domain, settings: list })
+  /** A Device node Hall (key hall), a C# entity Thermometer (key thermometer) on it, and a C# device Plug (key plug). */
+  const nodes = (args: Record<string, unknown> = {}) => {
+    let graph: VisualGraph = { ...empty('Plug'), definition: { settings: [{ key: 'token', label: 'Token', type: 'string', secret: true, value: null, hasValue: true }] } as never }
+    graph = add(graph, 'device', 'hall', { key: 'hall', name: 'Hall' })
+    graph = add(graph, 'csharp_entity', 'thermo', { key: 'thermometer', signature: signature('Thermometer', 'sensor'), arguments: structuredClone(args) })
+    graph = add(graph, 'csharp_device', 'plug', { key: 'plug', name: 'Hall plug', signature: signature('Plug', null), arguments: structuredClone(args) })
+    return contract.connectData(graph, 'hall', 'entities', 'thermo', 'device')
+  }
+  const card = (el: Element, id: string) => el.querySelector(`[data-id="${id}"] .hs-card`)!
+  const rowLabels = (el: Element, id: string) => [...card(el, id).querySelectorAll('.hs-card__body [data-input-id]')].map(row => [row.getAttribute('data-input-id'), row.querySelector('.hs-pin-label')!.textContent])
+
+  it('a C# entity card is titled by its class, says its type and key, has the Device pin in its header and a row per setting', () => {
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={nodes()} onSelect={() => {}} onChange={() => {}} onEditCode={() => {}} />), el)
+    const thermo = card(el, 'thermo')
+    expect(thermo.querySelector('.hs-card__title')!.textContent).toBe('Thermometer')
+    expect(thermo.querySelector('.hs-card__summary')!.textContent).toBe('Sensor · thermometer')
+    // The Device pin is the header's, with the device it is on beside it; none among the rows.
+    const pin = thermo.querySelector<HTMLElement>('.hs-card__head [data-handleid="data:device"].target')!
+    expect(pin.getAttribute('aria-label')).toBe('Device, connected to Hall')
+    expect(thermo.querySelector('.hs-card__device')!.textContent).toBe('Hall')
+    expect(thermo.querySelector('.hs-card__body [data-handleid="data:device"]')).toBeNull()
+    expect(rowLabels(el, 'thermo')).toEqual([['Address', 'Address'], ['Port', 'Port'], ['Mode', 'Mode'], ['Fast', 'Fast'], ['Token', 'Token']])
+    // Its code is edited from the card.
+    expect(thermo.querySelector('.hs-card__code')!.getAttribute('aria-label')).toBe('Edit code of Thermometer')
+    // A declaration: no step pins.
+    for (const handle of ['in', 'next', 'error']) expect(thermo.querySelector(`[data-handleid="${handle}"]`), handle).toBeNull()
+  })
+
+  it('a C# device card is titled by its name, says C# device and its key, and has a row per setting and no Device pin', () => {
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={nodes()} onSelect={() => {}} onChange={() => {}} onEditCode={() => {}} />), el)
+    const plug = card(el, 'plug')
+    expect(plug.querySelector('.hs-card__title')!.textContent).toBe('Hall plug')
+    expect(plug.querySelector('.hs-card__summary')!.textContent).toBe('C# device · plug')
+    expect(plug.querySelector('[data-handleid="data:device"]')).toBeNull()
+    expect(rowLabels(el, 'plug').map(([id]) => id)).toEqual(['Address', 'Port', 'Mode', 'Fast', 'Token'])
+    expect(plug.querySelector('.hs-card__code')!.getAttribute('aria-label')).toBe('Edit code of Hall plug')
+  })
+
+  it('shows a typed value as other cards do, a wired setting as wired, and a secret never: not even as dots', async () => {
+    const el = host()
+    const typed = { Address: lit('string', 'http://10.0.0.7'), Port: lit('number', 8080), Mode: lit('string', 'comfort'), Token: lit('string', 's3cr3t-token') }
+    let graph = add(nodes(typed), 'setting', 'tok', { key: 'token' })
+    const plug = graph.nodes.find(n => n.id === 'plug')!
+    graph = updateNode(graph, 'plug', { config: { ...plug.config, arguments: { Address: lit('string', 'http://10.0.0.8') } } })
+    graph = contract.connectData(graph, 'tok', 'value', 'plug', 'Token')
+    // A bare adapter: values are chips, as on a read-only canvas.
+    dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} />, el)
+    const chip = (id: string, port: string) => card(el, id).querySelector(`[data-input-id="${port}"] .hs-value-chip`)?.textContent
+    expect(chip('thermo', 'Address')).toBe('http://10.0.0.7')
+    expect(chip('thermo', 'Port')).toBe('8080')
+    // An enum's member as the code names it.
+    expect(chip('thermo', 'Mode')).toBe('comfort')
+    // The typed secret of the hand-made C# entity: no value, no editor, nothing that shows how long it is.
+    const token = card(el, 'thermo').querySelector('[data-input-id="Token"]')!
+    expect(token.querySelector('.hs-value-chip')).toBeNull()
+    expect(token.querySelector('.hs-card-editor')).toBeNull()
+    expect(token.textContent).toBe('Token')
+    // The C# device's secret is wired from the Setting: it shows its source, as a wired input does.
+    const wired = card(el, 'plug').querySelector('[data-input-id="Token"]')!
+    expect(wired.classList).toContain('hs-pin-cell--connected')
+    expect(wired.querySelector('.hs-source-chip')!.textContent).toBe('Setting · Value')
+    // Not anywhere on the canvas, in an attribute either.
+    expect(el.innerHTML).not.toContain('s3cr3t')
+    expect(el.innerHTML).not.toContain('••')
+  })
+
+  it('offers no editor for a secret on an editable card, and the editors of the others by their type', async () => {
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={nodes({ Token: lit('string', 's3cr3t-token') })} onSelect={() => {}} onChange={() => {}} />), el)
+    const row = (port: string) => card(el, 'thermo').querySelector(`[data-input-id="${port}"]`)!
+    // An unset optional setting offers Set; a secret does not.
+    for (const port of ['Address', 'Port', 'Mode', 'Fast']) expect(row(port).querySelector('button.hs-pin-set')?.getAttribute('aria-label'), port).toBe(`Set ${port}`)
+    expect(row('Token').querySelector('button.hs-pin-set')).toBeNull()
+    expect(row('Token').querySelector('.hs-card-editor')).toBeNull()
+    expect(el.innerHTML).not.toContain('s3cr3t')
+    // Opened, the enum's editor is a choice of its members.
+    row('Mode').querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+    await vi.waitFor(() => expect(row('Mode').querySelector('select')).not.toBeNull())
+    expect([...row('Mode').querySelector('select')!.options].filter(o => !o.disabled).map(o => o.textContent)).toEqual(['eco', 'comfort'])
+  })
+
+  it('shows a setting relabelled by applied code on the card at once', async () => {
+    const el = host()
+    const [graph, setGraph] = createSignal(nodes())
+    dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+    const relabelled = settings().map(s => (s.key === 'Address' ? { ...s, label: 'Host address' } : s))
+    const thermo = graph().nodes.find(n => n.id === 'thermo')!
+    setGraph(updateNode(graph(), 'thermo', { config: { ...thermo.config, signature: signature('Thermometer', 'sensor', relabelled) } }))
+    await vi.waitFor(() => expect(card(el, 'thermo').querySelector('[data-input-id="Address"] .hs-pin-label')!.textContent).toBe('Host address'))
+  })
+
+  it('lists the entities Home Assistant has for a C# device, by name and entity id, and says when it has none yet', async () => {
+    const el = host()
+    const [entities, setEntities] = createSignal<Record<string, { name: string; entityId: string | null }[]>>({
+      plug: [{ name: 'Relay', entityId: 'switch.plug_relay' }, { name: 'Power', entityId: 'sensor.plug_power' }],
+    })
+    dispose = render(() => <FlowAdapter graph={nodes()} onSelect={() => {}} deviceEntities={entities()} />, el)
+    const list = () => card(el, 'plug').querySelector('.hs-card__entities')
+    const listed = () => [...list()!.querySelectorAll('li')].map(li => [li.querySelector('.hs-pin-label')!.textContent, li.querySelector('code')?.textContent ?? null])
+    expect(list()!.getAttribute('aria-label')).toBe('Entities of Hall plug')
+    expect(listed()).toEqual([['Relay', 'switch.plug_relay'], ['Power', 'sensor.plug_power']])
+    // Under its settings.
+    const body = card(el, 'plug').querySelector('.hs-card__body')!
+    expect(body.lastElementChild!.contains(list())).toBe(true)
+    // The C# entity is no device: it lists nothing.
+    expect(card(el, 'thermo').querySelector('.hs-card__entities, .hs-card__none')).toBeNull()
+    // None yet: it says when they appear.
+    setEntities({})
+    await vi.waitFor(() => expect(list()).toBeNull())
+    expect(card(el, 'plug').querySelector('.hs-card__none')!.textContent).toBe('Its entities appear here after it has started once')
+    // Many: the first six, as the Entities page's card lists them, and how many more.
+    setEntities({ plug: Array.from({ length: 8 }, (_, i) => ({ name: `Outlet ${i + 1}`, entityId: `switch.plug_outlet_${i + 1}` })) })
+    await vi.waitFor(() => expect(list()).not.toBeNull())
+    expect(listed().map(([name]) => name)).toEqual(['Outlet 1', 'Outlet 2', 'Outlet 3', 'Outlet 4', 'Outlet 5', 'Outlet 6'])
+    expect(card(el, 'plug').querySelector('.hs-card__more')!.textContent).toBe('and 2 more')
+  })
+
+  it('lists no entities on a canvas that is not told them (a run\'s)', () => {
+    const el = host()
+    dispose = render(() => <FlowAdapter graph={nodes()} readOnly onSelect={() => {}} />, el)
+    expect(card(el, 'plug').querySelector('.hs-card__entities, .hs-card__none')).toBeNull()
+  })
+
+  it('draws C# nodes in a run trace as outside it, as a Device node: never as not reached', async () => {
+    const el = host()
+    const graph = add(nodes(), 'log', 'stray', { value: lit('string', 'Hi') })
+    const trace: FlowTrace = { nodes: {}, edges: new Set() }
+    dispose = render(() => <FlowAdapter graph={graph} readOnly trace={trace} onSelect={() => {}} />, el)
+    await vi.waitFor(() => expect(el.querySelector('[data-id="plug"] .hs-card')).not.toBeNull())
+    expect(card(el, 'stray').classList).toContain('hs-card--unreached')
+    for (const id of ['thermo', 'plug']) {
+      const drawn = card(el, id)
+      for (const name of ['hs-card--unreached', 'hs-card--traced', 'hs-card--unreachable']) expect(drawn.classList, `${id} ${name}`).not.toContain(name)
+      expect(drawn.querySelector('.hs-card__trace'), id).toBeNull()
+      expect(el.querySelector(`[data-id="${id}"]`)!.getAttribute('aria-label'), id).not.toContain('Run:')
+    }
+  })
+})
+
+it('names a value node no step read "Not used" to a screen reader, as its card says', async () => {
+  const el = host()
+  let graph = addNode(addNode(createGraph('Values'), 'constant', 'spare'), 'log', 'say')
+  graph = updateNode(graph, 'spare', { config: { type: 'number', value: lit('number', 3) } })
+  graph = connectNodes(graph, 'service-1', 'say')
+  const trace: FlowTrace = { nodes: { 'trigger-1': { status: 'ok', runs: 1 } }, edges: new Set() }
+  dispose = render(() => <FlowAdapter graph={graph} readOnly trace={trace} onSelect={() => {}} />, el)
+  await vi.waitFor(() => expect(el.querySelector('[data-id="spare"] .hs-card')).not.toBeNull())
+  expect(el.querySelector('[data-id="spare"] .hs-card__trace-word')!.textContent).toBe('Not used')
+  expect(el.querySelector('[data-id="spare"]')!.getAttribute('aria-label')).toMatch(/\. Run: Not used$/)
+  // A step that did not run is still not reached.
+  expect(el.querySelector('[data-id="say"]')!.getAttribute('aria-label')).toMatch(/\. Run: Not reached$/)
+})

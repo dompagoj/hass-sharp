@@ -2,14 +2,14 @@ import { createComponent } from 'solid-js'
 import type { HomeAssistant } from '../types'
 import type { EditorAdapter, EditorTexts } from '../visual/adapter'
 import type { VisualGraph } from '../visual/graph'
-import { definitionDeviceKeys } from '../visual/contract'
+import { definitionDeviceKeys, definitionEntityKeys } from '../visual/contract'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
 import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
 import { icons } from '../visual/icons'
 import { copyNotice, entityRemoval, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
 import { EntityHelp } from './EntityHelp'
-import { definitionBody, definitionId, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
+import { definitionBody, definitionId, deviceEntities, draftGraph, editorGraph, newGraphDefinition, type EntityDocument } from './model'
 
 /** A saved graph definition as the editor holds it: the answer, with its editor graph (the whole definition in it). */
 export type EntityEditorDocument = EntityDocument & { graph: VisualGraph }
@@ -109,13 +109,18 @@ export function entityAdapter(
     texts: entityTexts,
     runGroup: context => createComponent(DefinitionRunNow, { context }),
     overview: context => createComponent(DefinitionOverview, { context }),
-    // An Entity node's key is fixed once saved; the line under it gives the entity id Home Assistant gave it. So is a
-    // Device node's: the saved devices are the Device nodes of the graph as last read or saved.
+    // An Entity node's or a C# entity's key is fixed once saved; the line under an Entity node's gives the entity id Home
+    // Assistant gave it. So is a Device node's or a C# device's: the saved entities and devices are those the nodes of
+    // the graph as last read or saved declare, whatever the stored list of entities holds. A C# device's card lists the
+    // entities its code added.
     savedEntities: context => {
       const document = context.document
       if (!document) return undefined
       const entityIds = Object.fromEntries(liveEntitiesOf(document).flatMap(e => (e.entityId ? [[e.key, e.entityId] as const] : [])))
-      return { keys: (document.entities ?? []).map(e => e.key), entityIds, deviceKeys: definitionDeviceKeys(document.graph, context.catalog) }
+      return {
+        keys: definitionEntityKeys(document.graph, context.catalog), entityIds, deviceKeys: definitionDeviceKeys(document.graph, context.catalog),
+        deviceEntities: deviceEntities(document),
+      }
     },
     overviewIcon: icons.entity,
     // A problem about no step and no row of the form is listed at the form's top.

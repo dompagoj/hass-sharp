@@ -210,6 +210,83 @@ it('a device sits before the entities wired to it', () => {
   expect(applyLayout(tidied, tidyLayout(tidied))).toBe(tidied)
 })
 
+/**
+ * The devices' graph above, and a Setting of the definition wired into the relay's state, a Constant into the fan's:
+ * an entity definition of every kind but the C# nodes.
+ */
+const mixed = () => {
+  let graph: VisualGraph = { ...empty(), definition: { settings: [{ key: 'on', label: 'On', type: 'boolean', value: true }] } as never }
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  graph = add(graph, 'entity', 'power', { key: 'power', domain: 'sensor', name: 'Power' })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  graph = add(graph, 'entity', 'fan', { key: 'fan', domain: 'switch', name: 'Fan' })
+  graph = add(graph, 'entity', 'alone', { key: 'alone', domain: 'switch', name: 'Alone' })
+  graph = add(graph, 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  graph = add(graph, 'device', 'desk', { key: 'desk', name: 'Desk' })
+  graph = add(graph, 'device', 'spare', { key: 'spare', name: 'Spare' })
+  graph = add(graph, 'log', 'log', { value: lit('string', 'On') })
+  graph = connectNodes(graph, 'lamp', 'log', 'command:turn_on')
+  graph = add(graph, 'entity_setup', 'start')
+  graph = add(graph, 'set_entity_state', 'set', { entity: 'alone', is_on: lit('boolean', true) })
+  graph = connectNodes(graph, 'start', 'set')
+  for (const [device, entity] of [['plug', 'relay'], ['plug', 'power'], ['desk', 'lamp'], ['desk', 'fan']]) graph = connectData(graph, device, 'entities', entity, 'device')
+  graph = add(graph, 'setting', 'on', { key: 'on' })
+  graph = connectData(graph, 'on', 'value', 'relay', 'is_on')
+  graph = add(graph, 'constant', 'yes', { type: 'boolean', value: lit('boolean', true) })
+  return connectData(graph, 'yes', 'value', 'fan', 'is_on')
+}
+
+it('lays out an entity definition without C# nodes where it did before they came', () => {
+  // Recorded from the layout before C# entities and C# devices were placed, with and without measured sizes.
+  const sizes: Record<string, { width: number; height: number }> = { relay: { width: 300, height: 200 }, plug: { width: 260, height: 160 }, log: { width: 240, height: 90 }, on: { width: 200, height: 80 } }
+  expect(Object.fromEntries(tidyLayout(mixed()))).toEqual({
+    plug: { x: 60, y: 100 }, relay: { x: 420, y: 100 }, power: { x: 420, y: 260 }, on: { x: 420, y: 420 }, desk: { x: 60, y: 620 }, lamp: { x: 420, y: 620 },
+    fan: { x: 420, y: 780 }, yes: { x: 420, y: 940 }, log: { x: 780, y: 620 }, start: { x: 60, y: 1140 }, set: { x: 420, y: 1140 }, alone: { x: 60, y: 1340 }, spare: { x: 380, y: 1340 },
+  })
+  expect(Object.fromEntries(tidyLayout(mixed(), undefined, { sizes: id => sizes[id] }))).toEqual({
+    plug: { x: 60, y: 100 }, relay: { x: 420, y: 100 }, power: { x: 420, y: 340 }, on: { x: 420, y: 500 }, desk: { x: 60, y: 660 }, lamp: { x: 420, y: 660 },
+    fan: { x: 420, y: 820 }, yes: { x: 420, y: 980 }, log: { x: 780, y: 680 }, start: { x: 60, y: 1180 }, set: { x: 420, y: 1180 }, alone: { x: 60, y: 1380 }, spare: { x: 380, y: 1380 },
+  })
+})
+
+it('places a C# entity after its device, as an Entity node, and a Setting wired into a C# node before it', () => {
+  // The Device node and the Setting come first in the graph, as when the C# entity is added to them.
+  let graph: VisualGraph = { ...empty(), definition: { settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }] } as never }
+  graph = add(graph, 'device', 'hall', { key: 'hall', name: 'Hall' })
+  graph = add(graph, 'setting', 'host', { key: 'host' })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  graph = add(graph, 'csharp_entity', 'thermo', { key: 'thermometer' })
+  graph = add(graph, 'csharp_device', 'plug', { key: 'plug', name: 'Plug' })
+  graph = add(graph, 'setting', 'plug_host', { key: 'host' })
+  graph = connectData(graph, 'hall', 'entities', 'thermo', 'device')
+  graph = connectData(graph, 'hall', 'entities', 'lamp', 'device')
+  graph = connectData(graph, 'host', 'value', 'thermo', 'Address')
+  graph = connectData(graph, 'plug_host', 'value', 'plug', 'Address')
+  const positions = tidyLayout(graph)
+  const x = (id: string) => positions.get(id)!.x
+  // Both sources of the C# entity in earlier columns; the C# entity in the column after its device, with the Entity node on it.
+  expect(x('hall')).toBeLessThan(x('thermo'))
+  expect(x('host')).toBeLessThan(x('thermo'))
+  expect(x('thermo')).toBe(x('lamp'))
+  // A C# device's Setting before it.
+  expect(x('plug_host')).toBeLessThan(x('plug'))
+  expect([...positions.keys()].sort()).toEqual(graph.nodes.map(n => n.id).sort())
+  noOverlaps(positions)
+  // Alone with its device and its Setting, the same: never stacked in one column with them.
+  let small: VisualGraph = { ...empty(), definition: { settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }] } as never }
+  small = add(small, 'device', 'hall', { key: 'hall', name: 'Hall' })
+  small = add(small, 'setting', 'host', { key: 'host' })
+  small = add(small, 'csharp_entity', 'thermo', { key: 'thermometer' })
+  small = connectData(connectData(small, 'hall', 'entities', 'thermo', 'device'), 'host', 'value', 'thermo', 'Address')
+  const placed = tidyLayout(small)
+  expect(placed.get('hall')!.x).toBeLessThan(placed.get('thermo')!.x)
+  expect(placed.get('host')!.x).toBeLessThan(placed.get('thermo')!.x)
+  noOverlaps(placed)
+  // Tidying a tidy graph changes nothing.
+  const tidied = applyLayout(small, placed)
+  expect(applyLayout(tidied, tidyLayout(tidied))).toBe(tidied)
+})
+
 it('lays out a flow without a trigger the same way whatever the stored positions', () => {
   let graph = createGraph('Loose')
   graph = { ...graph, nodes: [], edges: [] }

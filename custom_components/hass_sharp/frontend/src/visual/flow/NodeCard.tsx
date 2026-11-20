@@ -8,6 +8,7 @@ import { PropertyPicker } from '../selectProperty'
 import { icons } from '../icons'
 import { displayValue, keepsNull, valueSummary, widgetFor, withStates } from '../widgets'
 import { Pin } from './Pin'
+import { shownEntities } from '../../entities/model'
 import { durationLabel, traceStatusLabel, traceText, useFlow, type InputView, type PinView, type RowView, type TraceStatus } from './flowModel'
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -126,7 +127,10 @@ export function NodeCard(props: NodeProps) {
       return literal() === undefined ? '' : valueSummary(withStates(widget(), view()?.targetEntityIds ?? [], flow.entities()), literal(), flow.names())
     }
     const traced = () => trace()?.value?.(id, input().port, 'in')
-    const canEdit = () => !flow.readOnly() && flow.editable()
+    // A class's secret setting takes a Setting only: nothing is typed into it here, and a value typed into it elsewhere
+    // (a hand-made graph) is never shown, not even as dots that would tell its length.
+    const secret = () => input().spec.setting?.secret === true
+    const canEdit = () => !flow.readOnly() && flow.editable() && !secret()
     // An unset optional input shows its label only; "Set <label>" opens its editor in the row until left unset.
     const [expanded, setExpanded] = createSignal(false)
     const muted = () => input().mode === 'muted'
@@ -215,7 +219,7 @@ export function NodeCard(props: NodeProps) {
     }
     /** Read-only value chips. Traced values when the run recorded one; else what is configured; never a placeholder for a connected input. */
     const shown = (): { text: string; title?: string; muted?: boolean } | undefined => {
-      if (showEditor()) return undefined
+      if (showEditor() || secret()) return undefined
       const value = traced()
       if (value) return { text: `${clip(displayValue(value.v as never) || '—')}${value.trunc ? ' …' : ''}`, title: input().source, muted: value.muted }
       if (input().mode === 'connected' || input().mode === 'wire') return undefined
@@ -463,7 +467,7 @@ export function NodeCard(props: NodeProps) {
             </Show>
             <Show when={current().next}>{pin => <Pin nodeId={id} pin={pin()} errors={pinErrors(pin(), pin().id)} describedBy={errorsId} />}</Show>
           </header>
-          <Show when={rowIds().length || current().footer}>
+          <Show when={rowIds().length || current().footer || current().entities}>
             <div class="hs-card__body">
               <For each={rowIds()}>
                 {rowId => (
@@ -492,6 +496,28 @@ export function NodeCard(props: NodeProps) {
                   <div class="hs-card__row hs-card__row--footer">
                     <span />
                     <OutputCell pin={pin()} />
+                  </div>
+                )}
+              </Show>
+              {/* A C# device's entities, which its code adds: as Home Assistant has them, the first few as on the Entities page. */}
+              <Show when={current().entities}>
+                {entities => (
+                  <div class="hs-card__entities-area">
+                    <Show when={entities().length} fallback={<p class="hs-card__none">Its entities appear here after it has started once</p>}>
+                      <ul class="hs-card__entities" aria-label={`Entities of ${current().title}`}>
+                        <For each={entities().slice(0, shownEntities)}>
+                          {entity => (
+                            <li class="hs-card__entity">
+                              <span class="hs-pin-label" title={entity.name}>{entity.name}</span>
+                              <Show when={entity.entityId}>{entityId => <code class="hs-value-chip" title={entityId()}>{entityId()}</code>}</Show>
+                            </li>
+                          )}
+                        </For>
+                      </ul>
+                      <Show when={entities().length > shownEntities}>
+                        <p class="hs-card__more">and {entities().length - shownEntities} more</p>
+                      </Show>
+                    </Show>
                   </div>
                 )}
               </Show>

@@ -34,10 +34,13 @@ export interface EditorDocument {
 
 /**
  * What Home Assistant has of a saved document's entities: the keys of the saved entities (each part of its entity's
- * identity there, so it no longer changes), the entity id it gave each one, by key, and the keys of the saved devices
- * (each part of its device's identity, so it no longer changes either).
+ * identity there, so it no longer changes), the entity id it gave each one, by key, the keys of the saved devices
+ * (each part of its device's identity, so it no longer changes either), and by the key of each device whose code adds its
+ * entities (a C# device's), the entities Home Assistant has of it.
  */
-export interface SavedEntities { keys: string[]; entityIds: Record<string, string>; deviceKeys: string[] }
+export interface SavedEntities { keys: string[]; entityIds: Record<string, string>; deviceKeys: string[]; deviceEntities?: Record<string, DeviceEntity[]> }
+/** An entity a device's code added, as its card lists it: its name and the entity id Home Assistant gave it (none yet). */
+export interface DeviceEntity { name: string; entityId: string | null }
 
 /** What a save answers. */
 export interface EditorSaveResult<D extends EditorDocument = EditorDocument> {

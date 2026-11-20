@@ -15,6 +15,10 @@ import { hiddenReason, inputLabel, inputOption, inputOrder, inputSource, outputL
 import { useLoadedRegistry } from '../../registry'
 import { statusIcon } from './Timeline'
 
+/** What a run's panel says of a declaration, by its kind: it is no step, so it never ran. */
+const declarationNote = (kind: string) =>
+  kind === 'csharp_entity' ? 'A C# entity is not a step: it does not run.' : kind === 'csharp_device' ? 'A C# device is not a step: it does not run.' : 'A device is not a step: it does not run.'
+
 export const runTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
 export const runDuration = (ms: number | null | undefined) => (ms === null || ms === undefined ? '—' : durationLabel(ms))
 
@@ -156,7 +160,7 @@ function StepValues(props: {
   const frameLabel = () => props.model?.frameLabel(props.frame) ?? ''
   // A value node is worked out each time a step reads it; one no step read was not used.
   const pure = () => isPure(props.node, props.catalog)
-  // A declaration (a Device node) is neither a step nor a value: it never runs.
+  // A declaration (a Device node, a C# entity, a C# device) is neither a step nor a value: it never runs.
   const declaration = () => isDeclaration(props.node.kind, props.catalog)
   // Values that were too large to record take their wires' highlight with them.
   const readsValues = () => props.graph.edges.some(e => e.kind === 'data' && e.target === props.node.id)
@@ -199,7 +203,7 @@ function StepValues(props: {
       </Show>
       <Show when={props.model && props.event} fallback={
         <p class="hs-insp-note">
-          {declaration() ? 'A device is not a step: it does not run.'
+          {declaration() ? declarationNote(props.node.kind)
             : !props.model ? 'No values were recorded for this run.'
             : pure() ? (runs().length && !whole() ? `Not used in ${frameLabel()}: no step read this value there.` : 'Not used: no step read this value.')
               : runs().length && !whole() ? `This step did not run in ${frameLabel()}.` : 'This step did not run.'}

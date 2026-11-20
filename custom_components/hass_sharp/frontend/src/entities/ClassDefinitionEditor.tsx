@@ -22,26 +22,13 @@ import { problemRow, readNumber } from './definitionEdits'
 import { deviceMemory, DeviceSection } from './DeviceForm'
 import { FieldErrors } from './formFields'
 import { liveState } from './liveState'
-import { maskedSetting, type DefinitionSetting, type EntityDocument, type EntityType, type EntityTypeSetting } from './model'
+import { maskedSetting, rangeHint, type DefinitionSetting, type EntityDocument, type EntityType, type EntityTypeSetting } from './model'
 import { SecretValue } from './SettingRows'
 
 /** `library:<source id>:<class>`: the node library that declared a class, and the class's own name. */
 const typeParts = (id: string) => {
   const match = /^library:([^:]+):(.+)$/.exec(id)
   return match ? { sourceId: match[1], name: match[2].split('.').at(-1) ?? match[2] } : { sourceId: undefined, name: id }
-}
-/**
- * The range a number setting declares, as its hint says it: "At least 1.", "At most 60." or "Between 1 and 3600."; none
- * without one. An `int`'s own bounds, which the `types` answer gives for a side it does not declare, are no range.
- */
-function rangeHint(setting: EntityTypeSetting): string | undefined {
-  if (setting.type !== 'integer' && setting.type !== 'number') return
-  const whole = setting.type === 'integer'
-  const minimum = setting.minimum !== undefined && !(whole && setting.minimum <= -2147483648) ? setting.minimum : undefined
-  const maximum = setting.maximum !== undefined && !(whole && setting.maximum >= 2147483647) ? setting.maximum : undefined
-  if (minimum !== undefined && maximum !== undefined) return `Between ${minimum} and ${maximum}.`
-  if (minimum !== undefined) return `At least ${minimum}.`
-  if (maximum !== undefined) return `At most ${maximum}.`
 }
 const kindLabel = (type: EntityType) => (type.kind === 'device' ? 'Device' : 'Single entity')
 

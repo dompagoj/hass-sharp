@@ -167,6 +167,84 @@ export interface EntityTypeSetting {
   minimum?: number
   maximum?: number
 }
+/**
+ * The range a number setting declares, as its hint says it: "At least 1.", "At most 60." or "Between 1 and 3600."; none
+ * without one. An `int`'s own bounds, which the `types` answer gives for a side it does not declare, are no range. A
+ * class definition's settings and a C# node's settings say it alike.
+ */
+export function rangeHint(setting: Pick<EntityTypeSetting, 'type' | 'minimum' | 'maximum'>): string | undefined {
+  if (setting.type !== 'integer' && setting.type !== 'number') return
+  const whole = setting.type === 'integer'
+  const minimum = setting.minimum !== undefined && !(whole && setting.minimum <= -2147483648) ? setting.minimum : undefined
+  const maximum = setting.maximum !== undefined && !(whole && setting.maximum >= 2147483647) ? setting.maximum : undefined
+  if (minimum !== undefined && maximum !== undefined) return `Between ${minimum} and ${maximum}.`
+  if (minimum !== undefined) return `At least ${minimum}.`
+  if (maximum !== undefined) return `At most ${maximum}.`
+}
+/** How many of a definition's entities its card lists before "and N more"; a C# device's card on the canvas lists as many of its own. */
+export const shownEntities = 6
+/** An entity of a definition as its card lists it; `device`, the key of the C# device whose code added it, else none. */
+export interface CardEntity { key: string; name: string; domain: string; entityId: string | null; disabled: boolean; device?: string }
+const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
+/**
+ * What follows a definition's id in one of its entities' unique ids: `<key>` for an entity it declares (an Entity node's,
+ * a C# entity's, a class's), `<device key>:<key>` for one a C# device's code added. Keys hold no colon, so the tail is
+ * read whole: never as a key split at its first colon alone, which would take `plug:relay` for the entity `plug`.
+ */
+function uniqueIdTail(definitionId: string, uniqueId: string): { key: string; device?: string } {
+  const prefix = `${definitionId}:`
+  const tail = uniqueId.startsWith(prefix) ? uniqueId.slice(prefix.length) : uniqueId
+  const parts = tail.split(':')
+  return parts.length === 2 && parts[0] && parts[1] ? { device: parts[0], key: parts[1] } : { key: tail }
+}
+/**
+ * A definition's entities: those it registered while running (or failed), else Home Assistant's entity registry's,
+ * which keeps them while it is off or not loaded; a class definition that never started has neither, nor do a C#
+ * device's entities before it has run. Whether Home Assistant has one disabled always comes from the registry. Each is
+ * named by its name (its own, else the one the definition gives it: an Entity node's, else a C# entity's class's
+ * title), else its key, else its entity id; a C# device's entity by its own name, else its key. The entities the
+ * definition declares come first, then each C# device's, in the order of its nodes (one whose node is gone last);
+ * in each, enabled ones come first, each group by name.
+ */
+export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'> & { logic?: HomeDefinition['logic'] }): CardEntity[] {
+  const graphNodes = item.logic?.kind === 'graph' && Array.isArray(item.logic.graph?.nodes) ? item.logic.graph.nodes : []
+  const csharpNodes = graphNodes.filter(node => node.kind === 'csharp_entity' || node.kind === 'csharp_device')
+  const keyOf = (node: (typeof graphNodes)[number]) => (typeof node.config?.key === 'string' ? node.config.key : undefined)
+  // A C# entity's stored name is null (its class names it): its class's title, as its node shows it.
+  const titles = new Map(csharpNodes.filter(node => node.kind === 'csharp_entity').map(node => {
+    const title = (node.config?.signature as { title?: unknown } | undefined)?.title
+    return [keyOf(node), typeof title === 'string' ? title : undefined] as const
+  }))
+  const declared = new Map((item.entities ?? []).map(entity => [entity.key, entity.name || (entity.csharp === true ? titles.get(entity.key) : undefined)]))
+  const deviceOrder = csharpNodes.filter(node => node.kind === 'csharp_device').map(keyOf).filter((key): key is string => key !== undefined)
+  const registry = new Map(item.registeredEntities.map(entry => [entry.uniqueId, entry]))
+  const entity = (uniqueId: string, name: string | null | undefined, domain: string, entityId: string | null, disabled: boolean): CardEntity => {
+    const { key, device } = uniqueIdTail(item.id, uniqueId)
+    return { key, name: name || (device === undefined ? declared.get(key) : undefined) || key || entityId || '', domain, entityId, disabled, ...(device === undefined ? {} : { device }) }
+  }
+  const listed = item.liveEntities.length
+    ? item.liveEntities.map(e => entity(e.uniqueId, e.name, e.domain, e.entityId, registry.get(e.uniqueId)?.disabled === true))
+    : item.registeredEntities.map(e => entity(e.uniqueId, e.name, e.domain, e.entityId, e.disabled))
+  const group = (e: CardEntity) => (e.device === undefined ? -1 : deviceOrder.includes(e.device) ? deviceOrder.indexOf(e.device) : deviceOrder.length)
+  return listed.sort((a, b) => group(a) - group(b) || (group(a) === deviceOrder.length ? collator.compare(a.device!, b.device!) : 0)
+    || Number(a.disabled) - Number(b.disabled) || collator.compare(a.name, b.name))
+}
+/**
+ * The entities each C# device's code added, by the device's key, as the definition's card lists them ({@link
+ * cardEntities}): only those whose unique id is `<definition id>:<device key>:<key>`, each by its name (else its key)
+ * and entity id. None for a device Home Assistant has none of yet.
+ */
+export function deviceEntities(item: Parameters<typeof cardEntities>[0]): Record<string, { name: string; entityId: string | null }[]> {
+  // Only this definition's own unique ids: one of another definition's is never taken for a device's. As the card reads
+  // them: the running entities, else (nothing runs) the registry's; the registry also says which are disabled, listed last.
+  const prefix = `${item.id}:`
+  const own = <T extends { uniqueId: string }>(list: readonly T[]) => list.filter(entry => entry.uniqueId.startsWith(prefix))
+  const live = own(item.liveEntities)
+  const listed = cardEntities({ ...item, liveEntities: live, registeredEntities: live.length || !item.liveEntities.length ? own(item.registeredEntities) : [] })
+  const byDevice: Record<string, { name: string; entityId: string | null }[]> = {}
+  for (const entity of listed) if (entity.device !== undefined) (byDevice[entity.device] ??= []).push({ name: entity.name, entityId: entity.entityId })
+  return byDevice
+}
 /** A device or entity class a node library declares, which a class definition creates (`types`). */
 export interface EntityType {
   /** `library:<source id>:<namespace-qualified name>`. */
@@ -290,17 +368,20 @@ export function definitionId(name: string, taken: string[]): string {
 export const definitionEntityKinds: readonly string[] = ['set_entity_state', 'set_entity_available', 'show_frame']
 
 /**
- * Renames the entity the Entity node `nodeId` declares, and every step whose `entity` names it
- * ({@link definitionEntityKinds}). The same graph when that node does not declare `from`, `to` is not an entity key, or
- * another entity already has it. The steps stay with `from` while another node keeps it (two nodes declared the same key).
+ * Renames the entity the Entity node or C# entity `nodeId` declares, and every step whose `entity` names an Entity node's
+ * ({@link definitionEntityKinds}; no step names a C# entity). The same graph when that node does not declare `from`, `to`
+ * is not an entity key, or another entity already has it. The steps stay with `from` while another node keeps it (two
+ * nodes declared the same key).
  */
 export function renameEntityKey(graph: Graph, from: string, to: string, nodeId: string): Graph {
   if (!record(graph.definition) || from === to || !entityKeyPattern.test(to)) return graph
   const declared = declaredEntities(graph)
   // A C# entity's key is an entity key too: none is given another's.
   const keys = entityKeyHolders(graph).map(d => d.key)
-  if (!declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from) || keys.includes(to)) return graph
-  const follow = from !== '' && keys.filter(key => key === from).length === 1
+  const hub = declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from)
+  const csharp = graph.nodes.some(node => node.id === nodeId && node.kind === 'csharp_entity' && (record(node.config) ? node.config.key ?? '' : '') === from)
+  if ((!hub && !csharp) || keys.includes(to)) return graph
+  const follow = hub && from !== '' && keys.filter(key => key === from).length === 1
   return {
     ...graph,
     nodes: graph.nodes.map(node => node.id === nodeId ? { ...node, config: { ...node.config, key: to } }

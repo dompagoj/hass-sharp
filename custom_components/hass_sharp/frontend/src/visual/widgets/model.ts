@@ -25,6 +25,8 @@ export interface Widget {
   max?: number
   /** A widget increment only; never a validation rule (C3). */
   step?: number
+  /** number: only a whole number is taken, a fraction typed in is refused (a class's integer setting). */
+  whole?: boolean
   unit?: string
   /** text: several lines. */
   multiline?: boolean
@@ -98,11 +100,13 @@ function options(input: InputSpec, config: Record<string, unknown> | undefined):
   })
 }
 function numberWidget(input: InputSpec, config: Record<string, unknown> | undefined, slider: boolean): Widget {
-  const min = input.min ?? num(config?.min), max = input.max ?? num(config?.max)
+  // A class's setting carries its own range, and an integer one takes whole numbers only.
+  const setting = input.setting, whole = setting?.type === 'integer'
+  const min = input.min ?? setting?.minimum ?? num(config?.min), max = input.max ?? setting?.maximum ?? num(config?.max)
   const widget: Widget = { kind: 'number', multiple: false, slider: slider && min !== undefined && max !== undefined }
-  const step = input.step ?? num(config?.step) ?? (input.integer ? 1 : undefined)
+  const step = input.step ?? num(config?.step) ?? (input.integer || whole ? 1 : undefined)
   const unit = input.unit ?? str(config?.unit_of_measurement)
-  return Object.assign(widget, min !== undefined && { min }, max !== undefined && { max }, step !== undefined && { step }, unit !== undefined && { unit })
+  return Object.assign(widget, min !== undefined && { min }, max !== undefined && { max }, step !== undefined && { step }, unit !== undefined && { unit }, whole && { whole })
 }
 const kindOrder: ValueKind[] = ['text', 'number', 'boolean', 'json']
 /** The value kind of a type's literals, from its root (`entity_id` is text, `target` is an object). */
@@ -137,6 +141,8 @@ const acceptsKind = (input: InputSpec, kind: ValueKind, catalog: VisualCatalogSn
 export function widgetFor(input: InputSpec, catalog: VisualCatalogSnapshot = nodeCatalog): Widget {
   // A Select property node's value comes from a wire: nothing can be typed in.
   if (input.wireOnly) return { kind: 'none', multiple: false }
+  // A class's enum setting: one of its members, each as the code names it, stored as text.
+  if (input.setting?.type === 'enum') return { kind: 'select', multiple: false, options: (input.setting.options ?? []).map(value => ({ value, label: value })) }
   const selector = selectorOf(input)
   if (selector) {
     const [name, config] = selector, multiple = config.multiple === true

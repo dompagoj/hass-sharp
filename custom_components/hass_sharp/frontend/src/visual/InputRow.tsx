@@ -6,6 +6,7 @@ import { inputValue, resolveTypeSpec, setInput, words, type GraphNode, type Inpu
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
 import type { Widget } from './widgets'
 import { csharpText, CSharpTypeText } from './typeDefinition'
+import { rangeHint } from '../entities/model'
 
 type Options = { coalesce?: string }
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -137,12 +138,23 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
   const wired = () => input()?.mode === 'connected'
   const [setting, setSetting] = createSignal(false)
   const hintId = `${createUniqueId()}-hint`
+  // A class's secret setting takes a Setting only: it has no editor, and a value typed into it elsewhere (a hand-made
+  // graph) is never shown; the validator's problem says so, and it can be cleared here.
+  const secret = () => inputSpec()?.setting?.secret === true
+  const typedSecret = () => secret() && operand()?.kind === 'literal'
   const unsetHint = () => row.description ?? inputSpec()?.description
   // A service's target and the fields added on purpose always show their editor.
-  const muted = () => !wired() && !setting() && !row.ready && input()?.mode === 'muted' && !(ctx.node().kind === 'service' && (row.port === 'target' || row.port.startsWith('field:')))
+  const muted = () => !wired() && !secret() && !setting() && !row.ready && input()?.mode === 'muted' && !(ctx.node().kind === 'service' && (row.port === 'target' || row.port.startsWith('field:')))
   const errors = () => input()?.errors ?? []
   const chip = () => inputTypeChip(input(), inputSpec(), ctx.catalog())
-  const editSpec = (): InputSpec | undefined => { const s = inputSpec(); return s && row.description !== undefined ? { ...s, description: row.description } : s }
+  const editSpec = (): InputSpec | undefined => {
+    const s = inputSpec()
+    if (!s || secret()) return undefined
+    // A class's number setting says its range before its own description, as the class page says it.
+    const range = s.setting ? rangeHint(s.setting) : undefined
+    const description = row.description ?? s.description
+    return range ? { ...s, description: [range, description].filter(Boolean).join(' ') } : row.description !== undefined ? { ...s, description: row.description } : s
+  }
   // A wire-only type that accepts null (a nullable C# type) can still be left empty without a wire.
   const nullable = () => input()?.mode === 'wire' && !!inputSpec()?.types.length && inputSpec()!.types.every(t => resolveTypeSpec(t, ctx.catalog())?.nullable === true)
   const isNull = () => { const o = operand(); return o?.kind === 'literal' && o.value === null }
@@ -188,6 +200,13 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
             <Errors list={errors()} />
           </>
         )}
+      </Show>
+      <Show when={!wired() && secret()}>
+        <small class="hs-field-hint">A secret is not typed here: connect a Setting</small>
+        <Show when={typedSecret()}>
+          <button type="button" class="hs-button hs-button--ghost" aria-label={`Clear the value typed into ${label()}`} onClick={() => change({ kind: 'unset' })}>Clear value</button>
+        </Show>
+        <Errors list={errors()} />
       </Show>
       <Show when={!wired() && nullable()}>
         <label class="hs-insp-toggle hs-insp-null">

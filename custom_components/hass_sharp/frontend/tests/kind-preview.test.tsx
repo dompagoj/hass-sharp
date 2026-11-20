@@ -171,6 +171,23 @@ it('Escape inside the details ends them as Close details does, and gives focus b
   await vi.waitFor(() => expect(document.activeElement).toBe(root.querySelector('.hs-lib__item')))
 })
 
+it('shows a C# entity\'s and a C# device\'s template settings as their inputs, and none of their config', () => {
+  const graph = { version: 5, name: 'Hall', nodes: [], edges: [], definition: { settings: [] } } as never
+  for (const kind of ['csharp_entity', 'csharp_device']) {
+    const root = mount({ preview: kind, graph })
+    const panel = root.querySelector('[aria-label="Step details"]')!
+    const template = (nodeCatalog.nodes[kind].config.signature.default as { settings: { label: string; description: string }[] }).settings
+    // The C# entity's Device pin, then each setting of its template; a C# device has no Device pin.
+    expect(rows(panel, 'Inputs')).toEqual([...(kind === 'csharp_entity' ? [['Device', 'Device', nodeCatalog.nodes.csharp_entity.inputs.device.description]] : []),
+      ...template.map(s => [s.label, 'Text', s.description])])
+    expect(template.length).toBeGreaterThan(0)
+    expect(panel.querySelector('[aria-label="Outputs"]')).toBeNull()
+    // No field of its config (its code, settings, values or key).
+    expect(panel.querySelectorAll('.hs-insp-field, [data-input-id]')).toHaveLength(0)
+    dispose?.(); document.body.innerHTML = ''
+  }
+})
+
 it('as a sheet, Close panel gives focus back to the library item that showed the kind; with a step selected, to the canvas', async () => {
   const [kind, setKind] = createSignal<string | undefined>('delay')
   const root = mount({ get preview() { return kind() }, docked: false, onPreviewClose: () => { setKind(undefined); root.querySelector('.hs-lib__item')!.setAttribute('aria-pressed', 'false') } }, { pressed: true })

@@ -16,7 +16,7 @@ const localChoice = 'local'
 /** A field of the section, under the config key that a problem names (`data-input-id`), so the problem's row focuses it. */
 const At = (props: { id: string; children: JSX.Element }) => <div data-input-id={props.id}>{props.children}</div>
 
-/** The graph with the device key `from` renamed `to` on the Device node `nodeId`, and on each other Device node that is part of it. */
+/** The graph with the device key `from` renamed `to` on the device node `nodeId`, and on each other device node that is part of it. */
 function renameDeviceKey(graph: VisualGraph, nodeId: string, from: string, to: string, devices: readonly string[]): VisualGraph {
   return {
     ...graph,
@@ -37,16 +37,65 @@ function renameDeviceKey(graph: VisualGraph, nodeId: string, from: string, to: s
 export function DeviceNodeSection(props: { ctx: StepPickerContext }) {
   const ctx = props.ctx
   const config = () => ctx.node().config
-  const key = () => text(config().key)
   const set = (field: string, value: unknown) => {
     const next = { ...config() }
     if (value === undefined) delete next[field]
     else next[field] = value
     ctx.onChange(next)
   }
+  return (
+    <>
+      <DeviceKeyField ctx={ctx} />
+      <For each={deviceFields}>
+        {field => (
+          <At id={field.member}>
+            <TextField name={field.member} label={field.label} hint={field.hint} type={field.type} placeholder="Not set" text={text(config()[field.member])}
+              errors={ctx.errorsFor(field.member)} commit={value => set(field.member, value.trim() || undefined)} />
+          </At>
+        )}
+      </For>
+      <DevicePartOfField ctx={ctx} />
+    </>
+  )
+}
+
+/** The other devices of the definition than the node's own: its Device nodes and C# devices. */
+const otherDevices = (ctx: StepPickerContext) => declaredDevices(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id)
+
+/**
+ * A device's key (a Device node's or a C# device's): read only once the saved document has that device; renamed, each
+ * other device that is part of it follows.
+ */
+export function DeviceKeyField(props: { ctx: StepPickerContext }) {
+  const ctx = props.ctx
+  const key = () => text(ctx.node().config.key)
   // The key no longer changes once Home Assistant has the device.
   const fixed = () => key() !== '' && !!ctx.saved?.()?.deviceKeys.includes(key())
-  const others = () => declaredDevices(ctx.graph(), ctx.catalog()).filter(d => d.nodeId !== ctx.node().id)
+  const others = () => otherDevices(ctx)
+  return (
+    <At id="key">
+      <Show when={!fixed()} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
+        <TextField name="key" label="Key" text={key()} hint={`${keyRule} Devices that are part of it follow it. It cannot change once saved.`} errors={ctx.errorsFor('key')}
+          commit={value => {
+            if (value === key()) return
+            const problem = keyProblem(value, others().map(d => text(d.device.key)))
+            if (problem) return problem
+            ctx.onGraphChange(renameDeviceKey(ctx.graph(), ctx.node().id, key(), value, others().map(d => d.nodeId)))
+          }} />
+      </Show>
+    </At>
+  )
+}
+
+/**
+ * What a device (a Device node or a C# device) is part of: nothing, another device of this definition (a Device node or
+ * a C# device, by its key, so one without a key cannot be chosen), or a Home Assistant device other than the ones this
+ * definition's own entities are on. Cleared, `via` is left out of the node's config.
+ */
+export function DevicePartOfField(props: { ctx: StepPickerContext }) {
+  const ctx = props.ctx
+  const config = () => ctx.node().config
+  const others = () => otherDevices(ctx)
   const via = (): PartOfVia | null => (record(config().via) ? config().via as PartOfVia : null)
   const nodeName = (nodeId: string) => { const node = ctx.graph().nodes.find(n => n.id === nodeId); return (node && entityNodeName(node, ctx.catalog())) ?? '' }
   /** The other Device nodes that have a key, each by its name (else its key), in node order. */
@@ -72,30 +121,16 @@ export function DeviceNodeSection(props: { ctx: StepPickerContext }) {
     },
   }
   const ownEntityIds = () => Object.values(ctx.saved?.()?.entityIds ?? {})
+  // Cleared, Part of is left out of the config.
+  const setVia = (next: PartOfVia | null) => {
+    const config = { ...ctx.node().config }
+    if (next) config.via = next
+    else delete config.via
+    ctx.onChange(config)
+  }
   return (
-    <>
-      <At id="key">
-        <Show when={!fixed()} fallback={<ReadOnlyField name="key" label="Key" text={key()} hint={savedKeyHint} />}>
-          <TextField name="key" label="Key" text={key()} hint={`${keyRule} Devices that are part of it follow it. It cannot change once saved.`} errors={ctx.errorsFor('key')}
-            commit={value => {
-              if (value === key()) return
-              const problem = keyProblem(value, others().map(d => text(d.device.key)))
-              if (problem) return problem
-              ctx.onGraphChange(renameDeviceKey(ctx.graph(), ctx.node().id, key(), value, others().map(d => d.nodeId)))
-            }} />
-        </Show>
-      </At>
-      <For each={deviceFields}>
-        {field => (
-          <At id={field.member}>
-            <TextField name={field.member} label={field.label} hint={field.hint} type={field.type} placeholder="Not set" text={text(config()[field.member])}
-              errors={ctx.errorsFor(field.member)} commit={value => set(field.member, value.trim() || undefined)} />
-          </At>
-        )}
-      </For>
-      <At id="via">
-        <PartOf via={via()} ownEntityIds={ownEntityIds()} parents={parents} errors={ctx.errorsFor('via')} onChange={next => set('via', next ?? undefined)} />
-      </At>
-    </>
+    <At id="via">
+      <PartOf via={via()} ownEntityIds={ownEntityIds()} parents={parents} errors={ctx.errorsFor('via')} onChange={setVia} />
+    </At>
   )
 }

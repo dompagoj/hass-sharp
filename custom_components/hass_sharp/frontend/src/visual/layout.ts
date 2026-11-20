@@ -1,4 +1,4 @@
-import { executionPorts, isDeclaration, isRoot, nodeCatalog, scopePorts, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { executionPorts, isClassNode, isDeclaration, isRoot, nodeCatalog, scopePorts, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { outputPort, type VisualGraph } from './graph'
 
 type Point = { x: number; y: number }
@@ -32,7 +32,9 @@ const scopePort = (node: GraphNode, port: string, catalog: VisualCatalogSnapshot
  * Within a band, execution wires decide the columns: every node sits one column after the furthest step that runs it
  * (longest path), and what runs after a loop or a parallel step sits right of every step inside it. A node with only
  * data wires (a value node) sits in the column before its first reader: the one in the leftmost column; so does a
- * declaration (a Device node), before the first of the entities wired to it. Within a column the order follows execution (a branch's
+ * declaration (a Device node), before the first of the entities wired to it. A C# entity or C# device is placed as an Entity
+ * node is, in the column after its Device node, and a value only C# nodes read (a Setting wired into their settings) in the
+ * column before the first of them. Within a column the order follows execution (a branch's
  * ports top to bottom), then a few barycentre sweeps reduce crossings. Each card is placed level with the steps that
  * feed it where there is room, and never overlaps another: columns are as wide as their widest card and cards in a
  * column are stacked. The result depends only on the graph, the sizes and the order of the bands' roots, so the
@@ -74,6 +76,10 @@ export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = 
   const onExec = (id: string) => exec.get(id)!.length > 0 || execIn.get(id)!.length > 0
   // Not a step nor a value: what the graph declares (a Device node), placed before the entities wired to it.
   const declaration = (id: string) => isDeclaration(byId.get(id)!.kind, catalog)
+  // A C# entity or C# device: a declaration that is fed (its device, its settings), placed as an Entity node is.
+  const classNode = (id: string) => { const kind = byId.get(id)!.kind; return isClassNode(Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined) }
+  // Off the execution wires and read by C# nodes only (a Setting wired into their settings): placed before them.
+  const feedsClassNodes = (id: string) => !onExec(id) && dataOut.get(id)!.length > 0 && dataOut.get(id)!.every(classNode)
   // Column order: execution wires, plus "after everything inside" for what runs after a loop or parallel step.
   const after = new Map<string, string[]>(ids.map(id => [id, [...exec.get(id)!]]))
   const afterIn = new Map<string, string[]>(ids.map(id => [id, [...execIn.get(id)!]]))
@@ -156,12 +162,24 @@ export function tidyLayout(graph: VisualGraph, catalog: VisualCatalogSnapshot = 
       if (!changed) break
     }
     // Left over: fed only (the column after their producers) or not connected at all (the first column). A declaration
-    // (a Device node) whose entities have no column yet waits for them, so they are not placed after it here.
-    for (const id of members) if (!layer.has(id) && !declaration(id)) {
+    // (a Device node) whose entities have no column yet waits for them, so they are not placed after it here; so does a
+    // value read only by C# nodes (a Setting wired into their settings), which goes before them once they have a column.
+    for (const id of members) if (!layer.has(id) && !declaration(id) && !feedsClassNodes(id)) {
       const producers = dataIn.get(id)!.filter(source => layer.has(source))
       layer.set(id, producers.length ? Math.max(...producers.map(p => layer.get(p)! + 1)) : 0)
     }
-    // Then each such declaration: the column before the first of its entities (the leftmost), as a value node.
+    // Then each such declaration: the column before the first of its entities (the leftmost), as a value node. A C# node
+    // waits: it is fed (by its device and its Settings), not only read.
+    for (const id of members) if (!layer.has(id) && !classNode(id) && !feedsClassNodes(id)) {
+      const readers = dataOut.get(id)!.filter(target => layer.has(target))
+      layer.set(id, readers.length ? Math.min(...readers.map(target => layer.get(target)!)) - 1 : 0)
+    }
+    // A C# node: as an Entity node, the column after what feeds it that has one (a C# entity's Device node), else the first.
+    for (const id of members) if (!layer.has(id) && classNode(id)) {
+      const producers = dataIn.get(id)!.filter(source => layer.has(source))
+      layer.set(id, producers.length ? Math.max(...producers.map(p => layer.get(p)! + 1)) : 0)
+    }
+    // Last, what only C# nodes read: the column before the first of them (the leftmost), as a value node.
     for (const id of members) if (!layer.has(id)) {
       const readers = dataOut.get(id)!.filter(target => layer.has(target))
       layer.set(id, readers.length ? Math.min(...readers.map(target => layer.get(target)!)) - 1 : 0)

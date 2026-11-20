@@ -14,7 +14,7 @@ import { RemoveWire } from './RemoveWire'
 import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
 import { entityStateContext } from './entityStateContext'
-import { customSignature, executionPorts, graphDocument, hasCode, isClassNode, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, executionPorts, graphDocument, hasCode, isClassNode, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { stepDescription, updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
@@ -37,6 +37,8 @@ const kindConfig: Record<string, string[]> = {
   ...Object.fromEntries(Object.entries(stepPickers).map(([kind, picker]) => [kind, picker.keys])),
 }
 const own = <T,>(map: Record<string, T>, key: string) => (Object.hasOwn(map, key) ? map[key] : undefined)
+/** What the stored data shows in place of a value typed into a secret setting. */
+const hiddenSecret = 'A typed secret, not shown'
 
 export interface NodeConfigProps {
   node: GraphNode
@@ -69,7 +71,7 @@ export interface NodeConfigProps {
  */
 export function NodeConfig(props: NodeConfigProps) {
   let root!: HTMLDivElement
-  let title!: HTMLInputElement
+  let title!: HTMLElement
   const descriptionId = createUniqueId(), nameErrorsId = `${descriptionId}-name-errors`
   const spec = createMemo(() => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind] : undefined))
   const view = createMemo(() => buildNodeView(props.node, { graph: props.graph, catalog: props.catalog, diagnostics: props.diagnostics ?? [] }))
@@ -84,6 +86,8 @@ export function NodeConfig(props: NodeConfigProps) {
   const kind = () => props.node.kind
   /** What the node declares (an entity, a device): it is named by it, so its header edits that name, not a label of the node. */
   const declares = () => spec()?.declares
+  /** A C# entity's code names its entity: its header shows the class's title (`nodeTitle`), with nothing to type in. */
+  const codeNamed = () => declares() === 'entity' && isClassNode(spec())
   const nameLabel = () => (declares() === 'device' ? 'Device name' : declares() ? 'Entity name' : 'Node label')
   const kindLabel = () => spec()?.label ?? words.key(kind())
   /** A Custom C# node's pins, title and description, as its code gives them. */
@@ -249,9 +253,31 @@ export function NodeConfig(props: NodeConfigProps) {
     { label: 'Copy node ID', onSelect: () => copy(props.node.id, 'Node ID copied') },
     ...(props.onDelete ? [{ label: 'Delete', onSelect: () => props.onDelete?.(), danger: true }] : []),
   ]
+  const inputsHeading = () => (isClassNode(spec()) ? 'Settings' : 'Inputs')
+  /** Edit code, for a node that holds code, and what its code gives it. */
+  const code = () => (
+    <div class="hs-insp-field hs-insp-code" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>
+      <Show when={props.onEditCode}>
+        <button type="button" class="hs-button hs-button--primary hs-insp-code__edit" onClick={() => props.onEditCode?.()}>
+          <Glyph paths={icons.code} />Edit code
+        </button>
+      </Show>
+      <small class="hs-field-hint">{isClassNode(spec()) ? 'Its settings come from the code.' : 'Its inputs and outputs come from the code.'}</small>
+      <Errors list={errorsFor('source')} />
+    </div>
+  )
   const description = () => signature()?.description
     || (spec() ? stepDescription(kind(), spec()!.description, graphDocument(props.graph)) : 'This kind of step is not available. Its settings are kept.')
-  const stored = () => JSON.stringify({ kind: props.node.kind, ...(props.node.label ? { label: props.node.label } : {}), config: props.node.config }, null, 2)
+  /** The config as stored, but for a value typed into a class's secret setting (a hand-made graph), which is never shown. */
+  const storedConfig = () => {
+    const secrets = new Set((classSignature(props.node, props.catalog)?.settings ?? []).filter(s => s.secret).map(s => s.key))
+    const values = props.node.config.arguments
+    if (!secrets.size || !values || typeof values !== 'object' || Array.isArray(values)) return props.node.config
+    const shown = Object.fromEntries(Object.entries(values).map(([key, value]) =>
+      [key, secrets.has(key) && (value as { kind?: unknown } | null)?.kind === 'literal' ? hiddenSecret : value]))
+    return { ...props.node.config, arguments: shown }
+  }
+  const stored = () => JSON.stringify({ kind: props.node.kind, ...(props.node.label ? { label: props.node.label } : {}), config: storedConfig() }, null, 2)
   const loop = () => !!spec()?.config.carry
 
   return (
@@ -259,12 +285,14 @@ export function NodeConfig(props: NodeConfigProps) {
       <header class="hs-insp-head" classList={{ 'hs-insp-head--trigger': kind() === 'trigger' }}>
         <span class="hs-insp-head__icon" title={view().identity.label}><Glyph paths={view().identity.icon} /></span>
         <div class="hs-insp-head__titles">
-          <input ref={title} class="hs-insp-title" aria-label={nameLabel()}
-            aria-describedby={describedBy(descriptionId, declares() && errorsFor('name').length > 0 && nameErrorsId)}
-            data-input-id={declares() ? 'name' : undefined} aria-invalid={(declares() && errorsFor('name').length > 0) || undefined}
-            value={declares() ? (typeof props.node.config.name === 'string' ? props.node.config.name : '') : props.node.label ?? ''}
-            placeholder={declares() ? 'Not set' : unnamed()} onInput={e => retitle(e.currentTarget.value)}
-            onBlur={commitTitle} onKeyDown={e => { if (e.key === 'Enter') commitTitle() }} />
+          <Show when={!codeNamed()} fallback={<h2 ref={el => (title = el)} class="hs-insp-title" tabindex="-1" aria-describedby={descriptionId}>{view().title}</h2>}>
+            <input ref={el => (title = el)} class="hs-insp-title" aria-label={nameLabel()}
+              aria-describedby={describedBy(descriptionId, declares() && errorsFor('name').length > 0 && nameErrorsId)}
+              data-input-id={declares() ? 'name' : undefined} aria-invalid={(declares() && errorsFor('name').length > 0) || undefined}
+              value={declares() ? (typeof props.node.config.name === 'string' ? props.node.config.name : '') : props.node.label ?? ''}
+              placeholder={declares() ? 'Not set' : unnamed()} onInput={e => retitle(e.currentTarget.value)}
+              onBlur={commitTitle} onKeyDown={e => { if (e.key === 'Enter') commitTitle() }} />
+          </Show>
           <small class="hs-insp-kind">{kindLabel() === view().identity.label ? kindLabel() : `${kindLabel()} · ${view().identity.label}`}</small>
         </div>
         <Menu label="Node actions" items={menu()} />
@@ -312,25 +340,18 @@ export function NodeConfig(props: NodeConfigProps) {
               if (result.notice) props.onNotice?.(result.notice)
             }} />
         </Show>
-        <Show when={hasCode(spec())}>
-          <div class="hs-insp-field hs-insp-code" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>
-            <Show when={props.onEditCode}>
-              <button type="button" class="hs-button hs-button--primary hs-insp-code__edit" onClick={() => props.onEditCode?.()}>
-                <Glyph paths={icons.code} />Edit code
-              </button>
-            </Show>
-            <small class="hs-field-hint">{isClassNode(spec()) ? 'Its settings come from the code.' : 'Its inputs and outputs come from the code.'}</small>
-            <Errors list={errorsFor('source')} />
-          </div>
-        </Show>
+        {/* A Custom C# step's code comes first; a C# entity's or C# device's after its key and device, right above its settings. */}
+        <Show when={hasCode(spec()) && !isClassNode(spec())}>{code()}</Show>
         <Show when={own(stepPickers, kind())}>{picker => <Dynamic component={picker().Section} ctx={pickers} />}</Show>
+        <Show when={isClassNode(spec())}>{code()}</Show>
         <For each={configFields()}>{name => <ConfigField name={name} rule={spec()!.config[name]} />}</For>
         <Show when={kind() === 'parallel'}><Branches ctx={structure} /></Show>
         <Show when={kind() === 'object_create'}><ObjectFields ctx={structure} /></Show>
         <Show when={kind() === 'array_create'}><ArrayItems ctx={structure} /></Show>
         <Show when={kind() !== 'service' && kind() !== 'trigger' && ports().length}>
-          <section class="hs-insp-section" aria-label="Inputs">
-            <h3 class="hs-insp-heading">Inputs</h3>
+          {/* A C# entity's or C# device's inputs are its class's settings, as its code editor calls them. */}
+          <section class="hs-insp-section" aria-label={inputsHeading()}>
+            <h3 class="hs-insp-heading">{inputsHeading()}</h3>
             <For each={ports()}>{port => <InputRow port={port} ctx={rows} {...rowFor(port)} />}</For>
           </section>
         </Show>
