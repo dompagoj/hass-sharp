@@ -319,6 +319,7 @@ function Pins(props: { signature?: CustomSignature; catalog: VisualCatalogSnapsh
 /** A setting's type in words, for the settings panel. */
 const settingTypeWords = (setting: ClassSetting) =>
   setting.type === 'enum' ? (setting.options?.length ? `One of ${setting.options.join(', ')}` : 'A choice')
+    : setting.type === 'entity' ? (setting.domain === undefined ? 'Entity' : `Entity (${setting.domain})`)
     : ({ string: 'Text', integer: 'Whole number', number: 'Number', boolean: 'True or false' } as Partial<Record<ClassSetting['type'], string>>)[setting.type]
 
 /** The settings a class's code gives, as the node's inputs will be: each [Setting] property's label, type and whether it is secret. */

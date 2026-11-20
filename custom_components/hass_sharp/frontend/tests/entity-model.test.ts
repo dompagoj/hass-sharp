@@ -287,7 +287,7 @@ describe('the range a C# node\'s setting declares', () => {
     // A decimal setting has no bounds of its own: the int's are a range like any other.
     expect(range('number', -2147483648, 2147483647)).toBe('Between -2147483648 and 2147483647.')
     // Only a number has a range.
-    for (const type of ['string', 'boolean', 'enum'] as const) expect(range(type, 1, 10), type).toBeUndefined()
+    for (const type of ['string', 'boolean', 'enum', 'entity'] as const) expect(range(type, 1, 10), type).toBeUndefined()
   })
 })
 

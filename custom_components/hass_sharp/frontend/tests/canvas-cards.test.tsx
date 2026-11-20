@@ -1474,6 +1474,36 @@ describe('the C# entity and C# device cards', () => {
     expect([...row('Mode').querySelector('select')!.options].filter(o => !o.disabled).map(o => o.textContent)).toEqual(['eco', 'comfort'])
   })
 
+  it('marks a required entity setting as other required inputs are, shows its problem while empty, and picks a light for a LightEntity', async () => {
+    const el = host()
+    const entitySettings = [setting('Lamp', 'entity', { domain: 'light', required: true }), setting('Source', 'entity')]
+    let graph = add(nodes(), 'csharp_entity', 'dimmer', { key: 'dimmer', signature: signature('Dimmer', 'switch', entitySettings) })
+    graph = contract.connectData(graph, 'hall', 'entities', 'dimmer', 'device')
+    const diagnostics = contract.validateGraph(graph, contract.nodeCatalog).filter(d => d.nodeId === 'dimmer')
+    expect(diagnostics.map(d => d.message)).toEqual(['Lamp is required'])
+    const known = ['light.kitchen', 'light.porch', 'switch.fan'].map(entity_id => ({ entity_id, name: null, domain: entity_id.split('.')[0], area_id: null, device_id: null, device_class: null,
+      supported_features: null, unit: null, icon: null, disabled: false, state_options: null }))
+    const fixture = visualFixture()
+    const callWS = (message: any) => (message.type === 'hass_sharp/get_entities' ? Promise.resolve({ entities: known, areas: [], floors: [], labels: [], devices: [] }) : fixture.callWS(message))
+    const [current, setCurrent] = createSignal(graph)
+    dispose = render(() => providers(() => <FlowAdapter graph={current()} onSelect={() => {}} onChange={setCurrent} diagnostics={diagnostics as never} />, { ...fixture, callWS } as never), el)
+    const row = (port: string) => card(el, 'dimmer').querySelector(`[data-input-id="${port}"]`)!
+    // The required mark and the pin's name say it is required; the optional Source has neither.
+    expect(row('Lamp').querySelector('.hs-required')!.getAttribute('title')).toBe('Required')
+    expect(row('Lamp').querySelector('[data-handleid="data:Lamp"]')!.getAttribute('aria-label')).toContain(', required,')
+    expect(row('Source').querySelector('.hs-required')).toBeNull()
+    expect(row('Source').querySelector('[data-handleid="data:Source"]')!.getAttribute('aria-label')).not.toContain('required')
+    // Its problem is the card's.
+    expect(card(el, 'dimmer').classList).toContain('hs-flow-card--error')
+    expect(card(el, 'dimmer').querySelector('.hs-node-errors')!.textContent).toContain('Lamp is required')
+    // The Lamp's picker offers the lights only, and stores the one chosen as a light's id.
+    row('Lamp').querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const options = () => [...document.querySelectorAll<HTMLButtonElement>('dialog[open] [role="option"]')]
+    await vi.waitFor(() => expect(options().map(o => o.querySelector('small')!.textContent)).toEqual(['light.kitchen', 'light.porch']))
+    options()[0].click()
+    await vi.waitFor(() => expect((current().nodes.find(n => n.id === 'dimmer')!.config.arguments as Record<string, unknown>).Lamp).toEqual(lit('entity_id:light', 'light.kitchen')))
+  })
+
   it('shows a setting relabelled by applied code on the card at once', async () => {
     const el = host()
     const [graph, setGraph] = createSignal(nodes())

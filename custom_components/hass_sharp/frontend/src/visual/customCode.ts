@@ -104,11 +104,14 @@ export function applyCustomCode(graph: VisualGraph, nodeId: string, source: stri
 
 /**
  * Whether a typed value can stay in a setting: it is not secret (a secret is given by a Setting only), and the value is
- * one of its type: a text (for an enum, one of its options), a finite number (for an integer, a whole one), true or false.
+ * one of its type: a text (for an enum, one of its options), a finite number (for an integer, a whole one), true or false,
+ * or, for an entity, an entity id of the setting's domain when it has one (whatever the value was typed as: it is kept
+ * typed as the setting's pin).
  */
 function valueFits(setting: ClassSetting, value: Record<string, unknown>): boolean {
   if (setting.secret) return false
   const type = settingPinType(setting), v = value.value
+  if (setting.type === 'entity') return typeof v === 'string' && /^[a-z0-9_]+\.[a-z0-9_]+$/.test(v) && (setting.domain === undefined || v.startsWith(`${setting.domain}.`))
   if (typeof value.type === 'string' && value.type !== type) return false
   if (type === 'string') return typeof v === 'string' && (setting.type !== 'enum' || !Array.isArray(setting.options) || setting.options.includes(v))
   if (type === 'number') return typeof v === 'number' && Number.isFinite(v) && (setting.type !== 'integer' || Number.isInteger(v))
@@ -118,8 +121,9 @@ function valueFits(setting: ClassSetting, value: Record<string, unknown>): boole
 /**
  * Writes a C# entity's or C# device's new code and the class signature the compiler gave it, as one new graph (one undo
  * step), and fits the node's settings to it. A typed value stays while its setting is still there, is not secret and
- * takes it (an integer setting no fraction, an enum only one of its options); a wire stays while its setting is still
- * there and takes the type of what feeds it (a wire into a secret setting stays: a Setting gives it). The kind's own pins
+ * takes it (an integer setting no fraction, an enum only one of its options, an entity only an entity id of its domain,
+ * kept typed as the setting's pin); a wire stays while its setting is still there and takes the type of what feeds it
+ * (a wire into a secret setting stays: a Setting gives it). The kind's own pins
  * (a C# entity's Device) are left alone, and so is a changed entity type: no step names a C# entity's type. What is
  * removed is named, by the settings' labels before the change, in the Custom C# step's words (`notices`, each a sentence
  * without its full stop). A signature the node cannot have (not as the compiler writes it, or with a setting keyed as one
@@ -141,7 +145,9 @@ export function applyClassCode(graph: VisualGraph, nodeId: string, source: strin
   for (const [port, value] of Object.entries(record(node.config.arguments) ? node.config.arguments : {})) {
     const setting = settings.get(port)
     const literal = record(value) && value.kind === 'literal'
-    if (Object.hasOwn(own, port) || (setting && (!literal || valueFits(setting, value)))) kept[port] = value
+    if (Object.hasOwn(own, port) || (setting && (!literal || valueFits(setting, value))))
+      // An entity id kept is typed as its setting's pin now takes it (a light's id under an Entity as any entity's).
+      kept[port] = literal && setting?.type === 'entity' && !Object.hasOwn(own, port) ? { ...value, type: settingPinType(setting) } : value
     else if (literal) cleared.push(label(port))
   }
   const types = withGraphTypes(catalog, graph)

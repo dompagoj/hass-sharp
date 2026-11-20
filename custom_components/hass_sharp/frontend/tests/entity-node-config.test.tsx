@@ -830,6 +830,35 @@ describe('devices in the right panel', () => {
       expect(argument(node, 'Fast')).toEqual(lit('boolean', true))
     })
 
+    it('an entity setting picks an entity, a light only for a LightEntity; a required one shows its editor and its problem while empty', async () => {
+      const lights = { ...registry, entities: [...registry.entities, registryEntity('light.kitchen', 'Kitchen'), registryEntity('light.porch', 'Porch')] }
+      const entitySettings = [setting('Lamp', 'entity', { domain: 'light', required: true }), setting('Source', 'entity')]
+      const graph = add(devices(), 'csharp_entity', 'dimmer', { key: 'dimmer', signature: { title: 'Dimmer', description: '', domain: 'switch', settings: entitySettings } })
+      const diagnostics = validateGraph(graph, nodeCatalog).filter(d => d.nodeId === 'dimmer') as VisualDiagnostic[]
+      expect(diagnostics.map(d => [d.message, d.inputId])).toEqual([['Lamp is required', 'Lamp']])
+      const { el, node, history } = mount(graph, 'dimmer', nodeCatalog, { registry: lights, diagnostics })
+      // Required, the Lamp shows its picker at once and its problem; the optional Source is offered to set.
+      expect(el.querySelector('.hs-inspector .hs-insp-problems')!.textContent).toContain('Lamp is required')
+      expect(settingRow(el, 'Lamp').textContent).toContain('Lamp is required')
+      expect(settingRow(el, 'Lamp').querySelector('button[aria-label="Set Lamp"]')).toBeNull()
+      expect(settingRow(el, 'Source').querySelector('button[aria-label="Set Source"]')).not.toBeNull()
+      const options = () => [...document.querySelectorAll<HTMLButtonElement>('dialog[open] [role="option"]')]
+      const ids = () => options().map(o => o.querySelector('small')!.textContent)
+      settingRow(el, 'Lamp').querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+      await vi.waitFor(() => expect(ids()).toEqual(['light.kitchen', 'light.porch']))
+      options()[0].click()
+      expect(argument(node, 'Lamp')).toEqual({ kind: 'literal', type: 'entity_id:light', value: 'light.kitchen' })
+      // An Entity takes any entity.
+      settingRow(el, 'Source').querySelector<HTMLButtonElement>('button[aria-label="Set Source"]')!.click()
+      await vi.waitFor(() => expect(settingRow(el, 'Source').querySelector('.hs-picker-field')).not.toBeNull())
+      settingRow(el, 'Source').querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+      await vi.waitFor(() => expect(ids()).toHaveLength(lights.entities.length))
+      options().find(o => o.querySelector('small')!.textContent === 'climate.living')!.click()
+      expect(argument(node, 'Source')).toEqual({ kind: 'literal', type: 'entity_id', value: 'climate.living' })
+      // Chosen, the Lamp has no problem left.
+      expect(validateGraph(history.graph(), nodeCatalog).filter(d => d.nodeId === 'dimmer')).toEqual([])
+    })
+
     it('a secret setting has no editor, only its hint, and takes a Setting', async () => {
       const wired = connectData(classNodes(), 'tok', 'value', 'code', 'Token')
       const { el } = mount(wired, 'thermo')

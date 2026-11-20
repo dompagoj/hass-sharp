@@ -156,6 +156,20 @@ describe('widgetFor', () => {
     expect(widgetFor(spec(Object.keys(nodeCatalog.types)))).toMatchObject({ kind: 'mixed', kinds: ['text', 'number', 'boolean', 'json'], defaultKind: 'text' })
     expect(widgetFor(spec(['global::HassSharp.EntityStateSnapshot'])).kind).toBe('none')
   })
+  it('picks an entity for a C# node\'s entity setting, of its domain only when it has one, and stores it as a Custom C# step\'s entity pin does', () => {
+    const settings = [{ key: 'Lamp', label: 'Lamp', description: '', type: 'entity', domain: 'light', required: true, secret: false }, { key: 'Source', label: 'Source', description: '', type: 'entity', secret: false }]
+    const node: GraphNode = { id: 'relay', kind: 'csharp_entity', config: { key: 'relay', signature: { title: 'Relay', description: '', domain: 'switch', settings } } }
+    const inputs = dataInputs(node, undefined, nodeCatalog)
+    expect(widgetFor(inputs.Lamp, nodeCatalog)).toEqual({ kind: 'entity', multiple: false, domains: ['light'] })
+    expect(widgetFor(inputs.Source, nodeCatalog)).toEqual({ kind: 'entity', multiple: false, domains: [] })
+    expect(commitLiteral(inputs.Lamp, 'light.kitchen', undefined, nodeCatalog)).toEqual({ kind: 'literal', type: 'entity_id:light', value: 'light.kitchen' })
+    expect(commitLiteral(inputs.Source, 'sensor.outside', undefined, nodeCatalog)).toEqual({ kind: 'literal', type: 'entity_id', value: 'sensor.outside' })
+    // A Custom C# step's LightEntity parameter takes the same value the same way.
+    const step: GraphNode = { id: 'code', kind: 'custom', config: { source: '', signature: { title: 'Dim', description: '', pure: false, inputs: { lamp: { types: ['entity_id:light'], required: true, label: 'Lamp', description: '' } }, outputs: {}, types: {} } } }
+    const pin = dataInputs(step, undefined, nodeCatalog).lamp
+    expect(widgetFor(pin, nodeCatalog)).toEqual(widgetFor(inputs.Lamp, nodeCatalog))
+    expect(commitLiteral(pin, 'light.kitchen', undefined, nodeCatalog)).toEqual(commitLiteral(inputs.Lamp, 'light.kitchen', undefined, nodeCatalog))
+  })
   it('says which widgets are light enough for a node card', () => {
     const light: Widget[] = [{ kind: 'toggle', multiple: false }, { kind: 'number', multiple: false, slider: true }, { kind: 'text', multiple: false },
       { kind: 'select', multiple: false }, { kind: 'entity', multiple: false }, { kind: 'area', multiple: false }, { kind: 'state', multiple: false },

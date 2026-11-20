@@ -768,6 +768,50 @@ it('applyClassCode needs no refit for a changed type, and changes nothing for a 
   expect(applyClassCode(device, 'plug', 'code', classSig([setting('device')]), catalog).graph.nodes.at(-1)!.config.signature).toEqual(classSig([setting('device')]))
 })
 
+it('applyClassCode keeps an entity id its entity setting still takes, typed as the setting\'s pin, and clears one of another domain or a text', () => {
+  const lamp = (more: Partial<ClassSetting> = {}) => setting('Lamp', 'entity', { domain: 'light', ...more })
+  const relay = (settings: ClassSetting[], value: unknown) =>
+    add(definitionGraph(), 'csharp_entity', 'relay', { key: 'relay', signature: classSig(settings, 'switch', 'Relay'), arguments: { Lamp: value } })
+  const apply = (settings: ClassSetting[], value: unknown, after: ClassSetting[]) => applyClassCode(relay(settings, value), 'relay', 'code', classSig(after, 'switch', 'Relay'), catalog)
+  const kitchen = lit('entity_id:light', 'light.kitchen')
+  // A property retyped from string to LightEntity: the address typed in is no light's id, and is cleared by its label.
+  const retyped = apply([setting('Lamp', 'string', { label: 'Lamp address' })], lit('string', '192.168.1.20'), [lamp()])
+  expect(argumentsOf(retyped.graph, 'relay')).toEqual({})
+  expect(retyped.notices).toEqual(['Cleared a value that no longer fits: Lamp address'])
+  // A text that is a light's id fits the LightEntity, and is typed as one.
+  const id = apply([setting('Lamp')], lit('string', 'light.porch'), [lamp()])
+  expect(argumentsOf(id.graph, 'relay')).toEqual({ Lamp: lit('entity_id:light', 'light.porch') })
+  expect(id.notices).toEqual([])
+  // From LightEntity to SwitchEntity: a light is no switch.
+  const other = apply([lamp()], kitchen, [setting('Lamp', 'entity', { domain: 'switch' })])
+  expect(argumentsOf(other.graph, 'relay')).toEqual({})
+  expect(other.notices).toEqual(['Cleared a value that no longer fits: Lamp'])
+  // From LightEntity to Entity: any entity fits, and the value is typed as any entity's id.
+  const plain = apply([lamp()], kitchen, [setting('Lamp', 'entity')])
+  expect(argumentsOf(plain.graph, 'relay')).toEqual({ Lamp: lit('entity_id', 'light.kitchen') })
+  expect(plain.notices).toEqual([])
+  // From Entity back to LightEntity, a light's id stays and is typed as a light's again.
+  expect(argumentsOf(apply([setting('Lamp', 'entity')], lit('entity_id', 'light.kitchen'), [lamp()]).graph, 'relay')).toEqual({ Lamp: kitchen })
+  // The same LightEntity, now required: the value stays as it was.
+  const required = apply([lamp()], kitchen, [lamp({ required: true })])
+  expect(argumentsOf(required.graph, 'relay')).toEqual({ Lamp: kitchen })
+  expect(required.notices).toEqual([])
+  // A value that is no entity id's shape fits no entity setting.
+  for (const value of [lit('entity_id:light', 'light'), lit('entity_id:light', 'Light.Kitchen'), lit('entity_id:light', 3)])
+    expect(apply([lamp()], value, [setting('Lamp', 'entity')]).notices, String(value.value)).toEqual(['Cleared a value that no longer fits: Lamp'])
+  // A value typed as an entity's id fits no text setting, as before.
+  expect(apply([lamp()], kitchen, [setting('Lamp')]).notices).toEqual(['Cleared a value that no longer fits: Lamp'])
+})
+
+it('applyClassCode removes the wire from a text Setting into a setting that became an entity', () => {
+  let graph = add(definitionGraph(), 'csharp_entity', 'relay', { key: 'relay', signature: classSig([setting('Lamp')], 'switch', 'Relay') })
+  graph = connectData(graph, 'host', 'value', 'relay', 'Lamp')
+  expect(wiresInto(graph, 'relay')).toEqual(['host.value->Lamp'])
+  const result = applyClassCode(graph, 'relay', 'code', classSig([setting('Lamp', 'entity', { domain: 'light', required: true })], 'switch', 'Relay'), catalog)
+  expect(wiresInto(result.graph, 'relay')).toEqual([])
+  expect(result.notices).toEqual(['Removed 1 connection that no longer fits: Lamp'])
+})
+
 /** A C# device's code: Plug, with the settings Address and Token. */
 const plugCode = (token = '[Setting("Token")]') => `/// <summary>A plug.</summary>
 public class Plug : SharpDevice
@@ -842,6 +886,20 @@ it('opens a C# device\'s code from its card and its panel, headed by its kind, w
   await vi.waitFor(() => expect(dialog()).toBeNull())
   // A Setting node has no code.
   expect(card(host, 'host').querySelector('.hs-card__code')).toBeNull()
+})
+
+it('names an entity setting\'s type in the code editor\'s Settings: Entity, with its domain when it has one', async () => {
+  // The check gives a class with a LightEntity, an Entity and a string setting.
+  const signature = classSig([setting('Lamp', 'entity', { domain: 'light', required: true }), setting('Source', 'entity'), setting('Address')])
+  const { host } = mountDefinition(plugDefinition(), { callWS: message => message.request?.operation === 'custom_preview'
+    ? Promise.resolve({ version: 1, ok: true, result: { valid: true, diagnostics: [], signature } }) : undefined })
+  await vi.waitFor(() => expect(card(host, 'plug')).toBeTruthy())
+  button(card(host, 'plug'), 'Edit code of Plug')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  editors[0].change(`${plugCode()}\n`)
+  await vi.waitFor(() => expect(settingNames()).toEqual(['Lamp', 'Source', 'Address']))
+  const meta = () => [...dialog()!.querySelectorAll('[aria-label="Settings"] .hs-code-pin__meta')].map(el => el.textContent)
+  expect(meta()).toEqual(['Entity (light)', 'Entity', 'Text'])
 })
 
 it('applies a C# device\'s code as one undo step: the wire into a setting it dropped and the value typed into one now secret go, with both notices', async () => {
