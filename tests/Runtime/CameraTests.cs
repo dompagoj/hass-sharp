@@ -167,6 +167,7 @@ static class CameraTests
             await Replaced(api, Ok);
             await Snapshots(api, home, Ok);
             await Cancellable(api, home, Ok);
+            OnlyACamera();
             await Options(api, home, Ok);
             await Recovered(api, home);
             await WithoutTheLibrary(api, home);
@@ -697,6 +698,30 @@ static class CameraTests
         try { await plain.WaitAsync(TimeSpan.FromSeconds(5)); throw new Exception("the wait without a token answered a picture"); }
         catch (OperationCanceledException) { }
         Console.WriteLine("PASS camera: CameraSnapshot with a token ends its wait as the token is cancelled; without one it waits for the picture or the definition's stop, as before");
+    }
+
+    /// <summary>Taking a picture of another camera is a camera's: a sensor's class and a device's class cannot name it.</summary>
+    static void OnlyACamera()
+    {
+        const string sensor = """
+            public class Counter : SharpSensor
+            {
+                protected override async Task Start() => Value = (await CameraSnapshot("camera.porch")).Width;
+            }
+            """;
+        const string device = """
+            public class Station : SharpDevice
+            {
+                public Station() { Add(new SharpCamera("view") { OnFrame = async () => await CameraSnapshot("camera.porch", Stopping) }); }
+            }
+            """;
+        foreach (var (kind, source) in new[] { ("csharp_entity", sensor), ("csharp_device", device) })
+        {
+            var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
+            var errors = descriptor.Diagnostics.Where(d => d.Severity == 3).Select(d => d.Message).ToArray();
+            Check(!descriptor.Valid && errors.Length == 1 && errors[0].Contains("'CameraSnapshot' does not exist"), $"a {kind} that is no camera cannot take a picture: " + string.Join(" | ", errors));
+        }
+        Console.WriteLine("PASS camera: CameraSnapshot is a camera's alone; a sensor's class and a device's class that call it do not compile");
     }
 
     static async Task Options(HassSharpManager api, EntityTestHome home, Func<object, Task<JsonObject>> ok)

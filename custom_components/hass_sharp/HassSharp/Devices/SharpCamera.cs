@@ -63,6 +63,32 @@ public class SharpCamera : SharpEntity
     /// </summary>
     protected virtual Task<SharpImage?> Frame() => OnFrame?.Invoke() ?? Task.FromResult<SharpImage?>(null);
 
+    /// <summary>
+    /// Takes a picture with one of Home Assistant's cameras, such as a doorbell's, as Home Assistant's own snapshot does: a
+    /// JPEG, within 10 seconds. Draw on it and show it, or pass it on as it is. Not a camera of this definition itself,
+    /// which would wait for itself. Also from <see cref="SharpComponent.Stop"/>, as
+    /// <see cref="SharpComponent.CallService"/>: the wait ends only when stopping the definition stops waiting for its code.
+    /// </summary>
+    /// <param name="entityId">The camera, such as <c>camera.front_door</c>.</param>
+    /// <exception cref="InvalidOperationException">Home Assistant gave no picture; the message says why.</exception>
+    protected Task<SharpImage> CameraSnapshot(string entityId) =>
+        HassCameras.SnapshotAsync(Host?.DefinitionId ?? "", entityId, Host?.Calls ?? CancellationToken.None);
+
+    /// <summary>
+    /// Takes a picture with one of Home Assistant's cameras, as <see cref="CameraSnapshot(string)"/> does, and stops waiting
+    /// for it as soon as <paramref name="cancellation"/> is cancelled, such as <see cref="SharpComponent.Stopping"/> as the
+    /// definition stops.
+    /// </summary>
+    /// <param name="entityId">The camera, such as <c>camera.front_door</c>.</param>
+    /// <param name="cancellation">Ends the wait; the picture Home Assistant still sends is then dropped.</param>
+    /// <exception cref="InvalidOperationException">Home Assistant gave no picture; the message says why.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellation"/> was cancelled before the picture came.</exception>
+    protected async Task<SharpImage> CameraSnapshot(string entityId, CancellationToken cancellation)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(Host?.Calls ?? CancellationToken.None, cancellation);
+        return await HassCameras.SnapshotAsync(Host?.DefinitionId ?? "", entityId, linked.Token);
+    }
+
     /// <summary>Whether the camera makes its frames when they are needed: it overrides <see cref="Frame"/>, or has <see cref="OnFrame"/>.</summary>
     internal bool MakesFrames => OnFrame != null || (overridden ??= GetType().GetMethod(nameof(Frame), BindingFlags.Instance | BindingFlags.NonPublic, Type.EmptyTypes)?.DeclaringType != typeof(SharpCamera));
 

@@ -753,9 +753,6 @@ they had (see [restored state](#http-downloads-and-restored-state)) unless
 - **`State(entityId)`** reads an entity's state now; **`CallService(service, target,
   data, returnResponse)`** calls a service, also from `Stop()`; **`Log(message,
   level)`** writes to the Home Assistant log.
-- **`CameraSnapshot(entityId)`**, or **`CameraSnapshot(entityId, cancellation)`**
-  to stop waiting when a token is cancelled, takes a picture with one of Home
-  Assistant's cameras as a `SharpImage`, within 10 seconds.
 
 `Every`, `Track`, `Http` and `Files` work from `Setup()` on (start timers and tracks in
 `Start()`); in the constructor they throw.
@@ -785,6 +782,13 @@ color, size, background)`, each of which returns the same image, and gives its
 bytes with `ToJpeg()`. Colours are `SharpColor.Red` (the default), `Green`, `Blue`,
 `Yellow`, `Orange`, `White`, `Black` or `SharpColor.FromRgb(r, g, b)`. A picture is
 for one flow at a time: hand another thread a `Copy()`.
+
+A class that derives from `SharpCamera` takes a picture with one of Home Assistant's
+cameras, as a `SharpImage` and within 10 seconds, with **`CameraSnapshot(entityId)`**,
+or **`CameraSnapshot(entityId, cancellation)`** to stop waiting when a token is
+cancelled. Only a camera class has it: a sensor, a switch or a `SharpDevice` does
+not, so a camera that shows another camera's picture is a C# entity node of its
+own, not a camera a C# device adds.
 
 This is the code of a C# entity that is a camera:
 
