@@ -289,6 +289,14 @@ it('a C# entity and a C# device are declarations, and no rule takes either for a
     { title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', type: 'integer', secret: false, minimum: '1' }] },
   ]) expect(wellFormedClassSignature(signature), JSON.stringify(signature)).toBe(false)
   expect(wellFormedClassSignature(nodeCatalog.nodes.csharp_entity.config.signature.default) && wellFormedClassSignature(nodeCatalog.nodes.csharp_device.config.signature.default)).toBe(true)
+  // A setting keyed __proto__ (a legal C# identifier) is a pin like any other: the ports have no prototype to set.
+  const proto = { ...thermo, config: { ...thermo.config, signature: { title: 'T', description: '', domain: 'sensor', settings: [
+    { key: '__proto__', label: 'Proto', description: '', type: 'string', secret: false }, { key: 'Level', label: 'Level', description: '', type: 'number', secret: false }] } } }
+  const protoPorts = dataInputs(proto)
+  expect(Object.keys(protoPorts)).toEqual(['device', '__proto__', 'Level'])
+  expect(Object.getPrototypeOf(protoPorts)).toBeNull()
+  expect(Object.getOwnPropertyDescriptor(protoPorts, '__proto__')?.value).toEqual({ types: ['string'], required: false, label: 'Proto', description: '', setting: { type: 'string', secret: false } })
+  expect([protoPorts.device, protoPorts.Level]).toEqual([nodeCatalog.nodes.entity.inputs.device, { types: ['number'], required: false, label: 'Level', description: '', setting: { type: 'number', secret: false } }])
   // Named by its class's title (a C# entity) or its name (a C# device).
   expect([words.stepName(thermo), words.stepName(plug), entityNodeName(thermo), entityNodeName(plug)]).toEqual(['Thermometer', 'Plug', 'Thermometer', 'Plug'])
   expect(words.stepName({ ...thermo, config: { ...thermo.config, signature: { ...thermo.config.signature as object, title: ' ' } } })).toBe('thermometer')
@@ -590,6 +598,11 @@ it('a Device node\'s device is the members a device has, and only the C# device 
   // Listed among the Device nodes, in node order, and the C# device after them.
   expect(derivedDevices(graph, nodeCatalog)).toEqual([{ key: 'stray', name: 'Stray' }, full, { key: 'hub', name: 'Hub' }, { key: 'plug', name: 'Plug', csharp: true }])
   expect(withGraphTypes(nodeCatalog, graph).definition!.devices).toEqual(derivedDevices(graph, nodeCatalog))
+  // A config out of the catalog's order keeps its own: the generated source is the one a copy of the whole config gave.
+  const unordered = { name: 'Hall plug', suggestedArea: 'Hall', key: 'plug', via: { deviceId: 'zigbee' }, colour: 'red', model: 'P1', manufacturer: 'Acme' }
+  const out = { ...empty(), nodes: [{ id: 'plug', kind: 'device', config: unordered }] }
+  expect(Object.keys(declaredDevices(out)[0].device)).toEqual(['name', 'suggestedArea', 'key', 'via', 'model', 'manufacturer'])
+  expect(Object.keys(derivedDevices(out, nodeCatalog)[0])).toEqual(['name', 'suggestedArea', 'key', 'via', 'model', 'manufacturer'])
 })
 
 it('a text left blank and Part of nothing are no part of a listed device, and a device without a key is none', () => {

@@ -1,4 +1,4 @@
-import { addGraphNode, declaredEntities, entityKey, entityKeyHolders, slug, trimSeparators, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
+import { addGraphNode, classSignature, declaredEntities, entityKey, entityKeyHolders, slug, trimSeparators, type ClassSetting, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
 import type { HomeAutomation, SourceRange } from '../visual/api'
 
 /**
@@ -168,11 +168,11 @@ export interface EntityTypeSetting {
   maximum?: number
 }
 /**
- * The range a number setting declares, as its hint says it: "At least 1.", "At most 60." or "Between 1 and 3600."; none
- * without one. An `int`'s own bounds, which the `types` answer gives for a side it does not declare, are no range. A
- * class definition's settings and a C# node's settings say it alike.
+ * The range a number setting of a class's signature declares, as its hint says it: "At least 1.", "At most 60." or
+ * "Between 1 and 3600."; none without one. An `int`'s own bounds, given for a side the setting does not declare, are
+ * no range. A C# node's settings and a class definition's say it alike.
  */
-export function rangeHint(setting: Pick<EntityTypeSetting, 'type' | 'minimum' | 'maximum'>): string | undefined {
+export function rangeHint(setting: Pick<ClassSetting, 'type' | 'minimum' | 'maximum'>): string | undefined {
   if (setting.type !== 'integer' && setting.type !== 'number') return
   const whole = setting.type === 'integer'
   const minimum = setting.minimum !== undefined && !(whole && setting.minimum <= -2147483648) ? setting.minimum : undefined
@@ -189,11 +189,13 @@ const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: tr
 /**
  * What follows a definition's id in one of its entities' unique ids: `<key>` for an entity it declares (an Entity node's,
  * a C# entity's, a class's), `<device key>:<key>` for one a C# device's code added. Keys hold no colon, so the tail is
- * read whole: never as a key split at its first colon alone, which would take `plug:relay` for the entity `plug`.
+ * read whole: never as a key split at its first colon alone, which would take `plug:relay` for the entity `plug`. A
+ * unique id without the definition's prefix is no C# device's entity: it is its own key, whole.
  */
 function uniqueIdTail(definitionId: string, uniqueId: string): { key: string; device?: string } {
   const prefix = `${definitionId}:`
-  const tail = uniqueId.startsWith(prefix) ? uniqueId.slice(prefix.length) : uniqueId
+  if (!uniqueId.startsWith(prefix)) return { key: uniqueId }
+  const tail = uniqueId.slice(prefix.length)
   const parts = tail.split(':')
   return parts.length === 2 && parts[0] && parts[1] ? { device: parts[0], key: parts[1] } : { key: tail }
 }
@@ -321,13 +323,25 @@ export function definitionBody(graph: Graph): DefinitionBody {
 
 /**
  * The graph a browser draft keeps: every secret setting without its value (`hasValue` as stored), and of the definition
- * nothing else (not a device an earlier build's draft kept). Never changes its argument.
+ * nothing else (not a device an earlier build's draft kept); every C# node without a value typed into a secret setting
+ * pin (one a hand-made or pasted graph may hold: the validators refuse it, and a Setting gives it). Never changes its
+ * argument.
  */
 export function draftGraph(graph: Graph): Graph {
-  if (!record(graph.definition)) return { ...graph }
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes.map(withoutTypedSecrets) : graph.nodes
+  if (!record(graph.definition)) return { ...graph, nodes }
   const definition = editorDefinition(graph)
   const settings = (definition.settings ?? []).map(setting => (setting.secret ? { ...setting, value: null } : setting))
-  return { ...graph, definition: { settings } as unknown as GraphDefinition }
+  return { ...graph, nodes, definition: { settings } as unknown as GraphDefinition }
+}
+/** A C# node without the values typed into its secret settings' pins, by its class signature; any other node as it is. */
+function withoutTypedSecrets(node: Graph['nodes'][number]): Graph['nodes'][number] {
+  const secrets = new Set(classSignature(node)?.settings.filter(setting => setting.secret).map(setting => setting.key))
+  const config = node.config as Record<string, unknown> | undefined
+  const typed = record(config?.arguments) ? Object.entries(config.arguments) : []
+  const secret = ([key, value]: [string, unknown]) => secrets.has(key) && record(value) && value.kind === 'literal'
+  if (!typed.some(secret)) return node
+  return { ...node, config: { ...config, arguments: Object.fromEntries(typed.filter(entry => !secret(entry))) } }
 }
 
 export { entityKey }

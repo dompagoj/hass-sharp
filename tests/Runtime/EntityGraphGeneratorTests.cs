@@ -120,7 +120,8 @@ static class EntityGraphGeneratorTests
             (nameof(AnEntityNodesFlowsBecomeActions), AnEntityNodesFlowsBecomeActions),
             (nameof(ATriggerInAnEntityGraphKeepsItsOwnAction), ATriggerInAnEntityGraphKeepsItsOwnAction),
             (nameof(AutomationSourceIsUnchanged), () => { AutomationSourceIsUnchanged(); return Task.CompletedTask; }),
-            (nameof(AnEntityGraphWithoutCSharpNodesKeepsItsSource), () => { AnEntityGraphWithoutCSharpNodesKeepsItsSource(); return Task.CompletedTask; }) })
+            (nameof(AnEntityGraphWithoutCSharpNodesKeepsItsSource), () => { AnEntityGraphWithoutCSharpNodesKeepsItsSource(); return Task.CompletedTask; }),
+            (nameof(ADeviceNodeOutOfCatalogOrderKeepsItsSource), () => { ADeviceNodeOutOfCatalogOrderKeepsItsSource(); return Task.CompletedTask; }) })
             try { await test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"Entity graph generator: {failures.Count} failing:\n" + string.Join("\n", failures));
@@ -692,5 +693,34 @@ static class EntityGraphGeneratorTests
             Check(changed.Length == 0, "the source of each is unchanged:\n  " + string.Join("\n  ", changed));
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
+    }
+
+    /// <summary>
+    /// The source a Device node whose config is not in the catalog's order (its name before its key, its suggested area
+    /// and Part of before its model) gives its graph, as it was before C# nodes: recorded from the generator that copied
+    /// a Device node's whole config as it has it.
+    /// </summary>
+    const string DeviceOutOfOrderSource = "b97c7505c8c4561208e46e38034cff9f25509f7858ef86bfd72cf19264428862";
+
+    /// <summary>
+    /// A Device node's device keeps its config's order: the derived entry lists its members as the config has them, and
+    /// the graph's source is the one it was before C# nodes.
+    /// </summary>
+    static void ADeviceNodeOutOfCatalogOrderKeepsItsSource()
+    {
+        var plug = N("plug", "device", new JsonObject
+        {
+            ["name"] = "Hall plug", ["suggestedArea"] = "Hall", ["key"] = "plug", ["via"] = new JsonObject { ["deviceId"] = "zigbee" },
+            ["model"] = "P1", ["manufacturer"] = "Acme",
+        });
+        var graph = new JsonObject { ["version"] = 5, ["name"] = "Hall", ["nodes"] = new JsonArray(plug, Lamp()), ["edges"] = new JsonArray(D("plug", "lamp", "device", "entities")) };
+        var device = VisualNodeCatalog.DeclaredDevices(graph, VisualNodeCatalog.Root).Single().Device;
+        Same([.. device.Select(m => m.Key)], ["name", "suggestedArea", "key", "via", "model", "manufacturer"], "the derived entry's members, in the config's order");
+        var body = Body([(JsonObject)plug.DeepClone(), Lamp()], [D("plug", "lamp", "device", "entities")]);
+        body.Logic.Graph!["edges"]![0]!["id"] = "plug:entities:lamp:device";
+        var preview = Previewed(body);
+        Check(preview.Valid, "the graph previews valid: " + Shown(preview.Diagnostics));
+        var hash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(preview.Source)));
+        Check(hash == DeviceOutOfOrderSource, $"the source is the one before C# nodes: expected {DeviceOutOfOrderSource}, got {hash}");
     }
 }

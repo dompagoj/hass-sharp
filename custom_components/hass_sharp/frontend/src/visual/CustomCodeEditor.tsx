@@ -5,7 +5,7 @@ import { Dialog, openModal, trapTab } from '../components/Dialog'
 import { createLoader, LoadFailed } from '../components/LazyLoad'
 import { Menu, type MenuItem } from '../components/Menu'
 import type { CustomCodeHandle } from '../components/Editor/CustomCode'
-import { classSignature, customSignature, isClassNode, wellFormedClassSignature, wellFormedSignature, type ClassSetting, type ClassSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, isClassNode, settingPinTypes, wellFormedClassSignature, wellFormedSignature, type ClassSetting, type ClassSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
 import { exampleSource } from './customCode'
 import { nodeTitle } from './flow/flowModel'
 import { Glyph } from './Glyph'
@@ -320,8 +320,6 @@ function Pins(props: { signature?: CustomSignature; catalog: VisualCatalogSnapsh
 const settingTypeWords = (setting: ClassSetting) =>
   setting.type === 'enum' ? (setting.options?.length ? `One of ${setting.options.join(', ')}` : 'A choice')
     : ({ string: 'Text', integer: 'Whole number', number: 'Number', boolean: 'True or false' } as const)[setting.type]
-/** The catalog type of a setting's pin, as the node's input takes it. */
-const settingPinTypes: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
 
 /** The settings a class's code gives, as the node's inputs will be: each [Setting] property's label, type and whether it is secret. */
 function Settings(props: { signature?: ClassSignature; catalog: VisualCatalogSnapshot; outdated: boolean }) {

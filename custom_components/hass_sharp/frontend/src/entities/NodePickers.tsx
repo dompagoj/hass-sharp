@@ -174,7 +174,7 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   device: { keys: ['key', 'name', ...deviceFields.map(field => field.member), 'via'], Section: DeviceNodeSection },
   // A C# entity: its key and device; its code (Edit code), its class's signature and its settings (its inputs) are shown
   // apart, and its class names it.
-  csharp_entity: { keys: ['key', 'name', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
+  csharp_entity: { keys: ['key', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
   // A C# device: its key and Part of; its name is the header's, and its code, signature and settings are shown apart.
   csharp_device: { keys: ['key', 'name', 'via', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
 }

@@ -4,7 +4,7 @@ import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { serializeGraph } from '../src/visual/graph'
 import {
-  definitionBody, definitionEntityKinds, definitionId, draftGraph, editorGraph, newGraphDefinition, renameEntityKey,
+  cardEntities, definitionBody, definitionEntityKinds, definitionId, draftGraph, editorGraph, newGraphDefinition, renameEntityKey,
   type DefinitionBody, type DefinitionSetting,
 } from '../src/entities/model'
 
@@ -213,6 +213,21 @@ describe('secret settings', () => {
     expect(setting(draft, 'token')).toEqual({ key: 'token', value: null, label: 'Token', type: 'string', secret: true })
     expect(definitionBody(draft).settings![2]).toEqual({ key: 'token', value: null, label: 'Token', type: 'string', secret: true })
   })
+  it('drops a value typed into a C# node\'s secret setting pin from a draft, and keeps the rest of its values', () => {
+    // A pasted graph whose plug holds its token as typed text, beside a value of a setting that is not secret.
+    const graph = fixtureGraph('code setting.secretLiteral: a typed secret') as Graph
+    const plug = graph.nodes.find(n => n.id === 'plug')!
+    const address = { kind: 'literal', type: 'string', value: 'http://192.168.1.50' }
+    ;(plug.config.arguments as Record<string, unknown>).Address = address
+    const draft = draftGraph(graph)
+    expect(JSON.stringify(draft)).not.toContain('s3cr3t-token')
+    expect(draft.nodes.find(n => n.id === 'plug')!.config.arguments).toEqual({ Address: address })
+    // The graph itself keeps it, and every other part of the node is as it was.
+    expect((plug.config.arguments as Record<string, any>).Token.value).toBe('s3cr3t-token')
+    const { arguments: _kept, ...rest } = draft.nodes.find(n => n.id === 'plug')!.config
+    const { arguments: _own, ...own } = plug.config
+    expect(rest).toEqual(own)
+  })
   it('gives a draft of a graph with no definition as a copy', () => {
     const graph = plugGraph()
     expect(draftGraph(graph)).toEqual(graph)
@@ -248,6 +263,17 @@ describe('a new graph definition', () => {
   })
   it('validates as an empty entity graph', () => {
     expect(contract.validateGraph(editorGraph(newGraphDefinition('Any motion')))).toEqual([])
+  })
+})
+
+describe('a definition card\'s entities', () => {
+  it('reads a unique id without the definition\'s prefix whole, as a key and not as a C# device\'s entity', () => {
+    const live = (uniqueId: string, name: string | null) => ({ uniqueId, key: uniqueId, domain: 'switch', name, entityId: `switch.${uniqueId.replaceAll(':', '_')}` })
+    const listed = cardEntities({ id: 'hall', entities: [], registeredEntities: [], liveEntities: [live('hall:plug:relay', 'Relay'), live('plug:relay', 'Stray')] })
+    expect(listed).toEqual([
+      { key: 'plug:relay', name: 'Stray', domain: 'switch', entityId: 'switch.plug_relay', disabled: false },
+      { key: 'relay', name: 'Relay', domain: 'switch', entityId: 'switch.hall_plug_relay', disabled: false, device: 'plug' },
+    ])
   })
 })
 

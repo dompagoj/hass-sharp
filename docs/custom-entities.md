@@ -459,9 +459,9 @@ as this section does.
 
 The code is one public class, not abstract or generic, with a public constructor
 that takes nothing. Helper types can sit beside it and `using` lines go at the top.
-Each node's code is compiled on its own, so a type one node declares cannot be named
-in another node's code: declare it in both, or in a [node library](node-libraries.md),
-which every node's code can use. Its title is its name in words ("Smart plug"), or
+Each node's class is its own: a type one node declares is not for another node's
+code, so declare it in both, or in a [node library](node-libraries.md), which every
+node's code can use. Its title is its name in words ("Smart plug"), or
 the title of a `[Node("…")]` on the class, and its summary comment is its
 description.
 
@@ -633,11 +633,13 @@ public class Thermometer : SharpSensor
 
 As a document, a C# entity node's `config` is
 <!-- config: csharp_entity -->
-`{key, source, signature?, arguments?}` and a C# device node's is
+`{key, source, signature, arguments?}` and a C# device node's is
 <!-- config: csharp_device -->
-`{key, name, via?, source, signature?, arguments?}`: `source` is the code,
+`{key, name, via?, source, signature, arguments?}`: `source` is the code,
 `signature` the settings worked out from it (the panel writes it when you apply the
-code), and `arguments` the values typed into its settings. A C# device's `via` is
+code; only a request that sends `deriveSignatures: true`, as the MCP tools do, may
+leave it out, and it is then written from the code), and `arguments` the values typed
+into its settings. A C# device's `via` is
 as a Device node's.
 
 ### Settings as inputs
@@ -690,13 +692,13 @@ underscores, and cannot change once saved.
   which returns it so it can be kept in a field; after that `Add` throws. Its
   `Manufacturer`, `Model`, `SwVersion`, `HwVersion`, `ConfigurationUrl` and
   `SuggestedArea` are read once, after `Setup()`.
-- **`SharpEntity`** is the base of the typed entities. A C# entity's class derives
-  from one of them; inside a device, create them with a key of their own: a
+- **`SharpEntity`** is the base of the entity classes. A C# entity's class derives
+  from an entity class; inside a device, create each entity with a key of its own: a
   lower-case letter, then up to 39 lower-case letters, digits or underscores. Each
   has `Key`, `Name`, `Icon`, `DeviceClass`, `Category` (`EntityCategory.Config` or
   `Diagnostic`), `EnabledByDefault`, `Available`, `Attributes` (extra attributes
   Home Assistant shows with the state), `RestoreState` and `Publish()`.
-- **The typed entities** are the classes of the [table](#entity-types). Setting a
+- **The entity classes** are those of the [table](#entity-types). Setting a
   state property (`IsOn`, `Value`, `Option`, `Brightness`, `IsClosed`, `Position`)
   publishes the new state; null is unknown. A command is handled by overriding its
   method (`TurnOn`, `TurnOff`, `Press`, `SetValue`, `SelectOption`, `Open`, `Close`,
@@ -805,8 +807,8 @@ public class BoxedDoor : SharpCamera
 
 A class from a node library can still be used as a whole definition for now, but
 write new C# as C# nodes. Such a class is public, concrete and not generic, has a
-public constructor that takes nothing, and derives from `SharpDevice` or from one of
-the typed entities; it is offered when you choose **Entities → New entity
+public constructor that takes nothing, and derives from `SharpDevice` or from an
+entity class; it is offered when you choose **Entities → New entity
 definition**, enter a name, choose **Use a class from the node library** and select
 **Continue**. Under **Class**, choose it; under **Settings**, fill in its settings;
 select **Save**. Its **Device** fields override what the class sets when you fill

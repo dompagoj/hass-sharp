@@ -775,8 +775,9 @@ describe('devices in the right panel', () => {
       // A whole number: a fraction is refused in the field, and not written.
       await vi.waitFor(() => expect(input('Port')).not.toBeNull())
       typeInto(input('Port'), '1.5')
-      expect(argument(node, 'Port')).not.toEqual(lit('number', 1.5))
-      expect(settingRow(el, 'Port').textContent).toContain('Enter a whole number.')
+      // Nothing is stored: the pin stays as it was, without a value, and the field says why.
+      expect(argument(node, 'Port')).toBeUndefined()
+      expect(settingRow(el, 'Port').querySelector('.hs-error')!.textContent).toBe('Enter a whole number.')
       typeInto(input('Port'), '8080')
       expect(argument(node, 'Port')).toEqual(lit('number', 8080))
       // Its range is said under it, as the class page says it.

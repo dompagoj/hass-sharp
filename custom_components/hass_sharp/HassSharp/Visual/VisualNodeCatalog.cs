@@ -191,11 +191,15 @@ public static class VisualNodeCatalog
     static IEnumerable<string> DeviceMembers => (Root["nodes"]?["device"]?["config"] as JsonObject ?? []).Select(member => member.Key);
     /// <summary>The members of a C# device's config its device lists: its code gives the rest.</summary>
     static readonly string[] CSharpDeviceMembers = ["key", "name", "via"];
-    /// <summary>A copy of the <paramref name="members"/> the config has, as it has them; empty when it is not an object.</summary>
+    /// <summary>
+    /// A copy of the <paramref name="members"/> the config has, as it has them and in its own order (a Device node's
+    /// source is the one it was when its whole config was copied); empty when it is not an object.
+    /// </summary>
     static JsonObject Picked(JsonNode? config, IEnumerable<string> members)
     {
         var picked = new JsonObject();
-        if (config is JsonObject own) foreach (var member in members) if (own.TryGetPropertyValue(member, out var value)) picked[member] = value?.DeepClone();
+        var wanted = members.ToHashSet(StringComparer.Ordinal);
+        if (config is JsonObject own) foreach (var (member, value) in own) if (wanted.Contains(member)) picked[member] = value?.DeepClone();
         return picked;
     }
     /// <summary>

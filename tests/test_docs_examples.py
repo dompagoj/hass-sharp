@@ -165,6 +165,21 @@ class DocsExamplesTests(unittest.TestCase):
             with self.subTest(name, said=True):
                 self.assertIn(sentence, texts[name])
 
+    def test_a_graph_of_only_csharp_nodes_needs_no_entity_node(self):
+        # A graph whose only declarations are a C# entity or a C# device is a definition: no text says an Entity node is
+        # needed, and the ones that name the refusal say a C# node is enough.
+        texts = {doc.name: " ".join(doc.read_text(encoding="utf-8").split()) for doc in (GUIDE, MCP, ROOT / "docs/backend/entity-definitions.md")}
+        for name, text in texts.items():
+            with self.subTest(name):
+                self.assertIsNone(re.search(r"Entity nodes \(kind `entity`, at least one\)|no Entity node gets|A graph with no Entity node is", text))
+        said = {
+            MCP.name: "One with no Entity node, C# entity node or C# device node gets `definition.entitiesRequired`",
+            "entity-definitions.md": "A graph with no Entity node, C# entity node or C# device node (whose code makes its entities) is refused with `definition.entitiesRequired`",
+        }
+        for name, sentence in said.items():
+            with self.subTest(name, said=True):
+                self.assertIn(sentence, texts[name])
+
     def test_the_config_check_reads_a_list(self):
         # The parts the check above stands on: a list read with its marks, and a list that leaves a member out differs.
         self.assertEqual(members("`{key, name, manufacturer?,\n  via?}`"), ["key", "name", "manufacturer", "via"])

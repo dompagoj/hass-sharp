@@ -314,9 +314,9 @@ export function declaredDevices(graph: unknown, catalog: VisualCatalogSnapshot =
 const deviceMembers = () => Object.keys(nodeCatalog.nodes.device?.config ?? {})
 /** The members of a C# device's config its device lists: its code gives the rest. */
 const csharpDeviceMembers = ['key', 'name', 'via']
-/** A copy of the `members` the config has, as it has them; empty when it is not an object. */
+/** A copy of the `members` the config has, as it has them and in its own order; empty when it is not an object. */
 const picked = (config: unknown, members: readonly string[]): Record<string, unknown> =>
-  record(config) ? structuredClone(Object.fromEntries(members.filter(member => Object.hasOwn(config, member)).map(member => [member, config[member]]))) : {}
+  record(config) ? structuredClone(Object.fromEntries(Object.entries(config).filter(([member]) => members.includes(member)))) : {}
 /** The keys a graph already gives its devices: those its Device nodes and C# devices have, each text key once; none without either. */
 export function definitionDeviceKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const keys = declaredDevices(graph, catalog).map(d => d.device.key)
@@ -616,8 +616,8 @@ export const hasCode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === '
 export interface ClassSetting { key: string; label: string; description: string; type: 'string' | 'integer' | 'number' | 'boolean' | 'enum'; secret: boolean; options?: string[]; minimum?: number; maximum?: number }
 /** What a class node's code gives, as the compiler writes it into `config.signature`: its title, its description, its entity's type (a C# entity's) and its settings. */
 export interface ClassSignature { title: string; description: string; domain: string | null; settings: ClassSetting[] }
-/** The types a class's setting can have, and the pin type of each. */
-const settingPinTypes: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
+/** The types a class's setting can have, and the catalog type of each one's pin: text for a string or an enum, a number for an integer or a number. */
+export const settingPinTypes: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
 /**
  * Whether a class node's signature is one the compiler writes: a text `title` and `description`, a `domain` that is a
  * text or null, and `settings`, a list. Each setting has an identifier for its `key`, no key twice, a text `label` and

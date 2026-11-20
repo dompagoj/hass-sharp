@@ -3462,6 +3462,8 @@ static class EntityGraphTests
             ("picky", "public class Picky : SharpSensor { [Setting(\"Level\")] public int Level { get => 0; set => throw new InvalidOperationException(\"the level is out of reach\"); } }", "Picky",
                 new JsonObject { ["Level"] = Lit("number", 4711) }, "Bomb: {0}: the level is out of reach"),
             ("faulty", "public class Faulty : SharpSensor { protected override Task Setup() => throw new InvalidOperationException(\"no answer\"); }", "Faulty", null, "Bomb: {0}: no answer"),
+            // A cancellation of its own (as an HttpClient time-out is) while the host is not stopping is a failure like any other.
+            ("cancelled", "public class Cancelled : SharpSensor { protected override Task Setup() => Task.FromCanceled(new CancellationToken(true)); }", "Cancelled", null, "Bomb: {0}: A task was canceled."),
             ("hang", "public class Hang : SharpSensor { protected override Task Setup() => Task.Delay(Timeout.Infinite, Stopping); }", "Hang", null, "Bomb: {0}: Setup() did not finish within 0.3 s") })
         {
             var node = CSharp("csharp_entity", id, id, source, arguments);

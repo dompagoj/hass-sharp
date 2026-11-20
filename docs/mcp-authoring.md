@@ -287,9 +287,9 @@ envelope; validation, conflicts and revisions work as above.
    definition's `source`. A graph definition that carries `entities`, even an empty
    list, is refused with the server's own sentence, `definition.entitiesNotAllowed`:
    "Entities are Entity nodes in the graph now: leave entities out and add one Entity
-   node for each". One with no Entity node gets `definition.entitiesRequired`, "Add
-   an Entity node: an entity definition creates the entities on its canvas, and has
-   none".
+   node for each". One with no Entity node, C# entity node or C# device node gets
+   `definition.entitiesRequired`, "Add an Entity node: an entity definition creates
+   the entities on its canvas, and has none".
 5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
    creates or updates its entities, returning `saved`, `document` (as
    `entities_read` gives it, without `source` and `sourceMap`), `active`,
@@ -455,9 +455,9 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   entity's. A C# device's derives from `SharpDevice` and adds its entities with
   `Add(new SharpSwitch("relay", "Relay") { OnTurnOn = …, OnTurnOff = … })` in its
   constructor or `Setup()`. It is public, not abstract or generic, with a public
-  constructor that takes nothing; helper types may sit beside it. Each node's code
-  is compiled in a namespace of its own: a type it declares cannot be named by
-  another node's code (declare it there too, or in a node library). The members a
+  constructor that takes nothing; helper types may sit beside it. Each node's class
+  is its own: a type one node's code declares is not for another node's code
+  (declare it there too, or in a node library). The members a
   class has are in [custom entities](custom-entities.md#c-nodes).
 - **The signature.** `config.signature`, `{title, description, domain, settings:
   [{key, label, description, type, secret, options?, minimum?, maximum?}]}`, is worked

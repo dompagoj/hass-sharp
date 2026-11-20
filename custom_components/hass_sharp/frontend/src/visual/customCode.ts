@@ -1,4 +1,4 @@
-import { classSignature, dataOutputs, isAssignable, isClassNode, isPure, nodeCatalog, resolveTypeSpec, validLiteral, wellFormedClassSignature, wellFormedSignature, withGraphTypes, type ClassSetting, type ClassSignature, type CustomSignature, type ExecutionEdge, type VisualCatalogSnapshot } from './contract'
+import { classSignature, dataOutputs, isAssignable, isClassNode, isPure, nodeCatalog, resolveTypeSpec, settingPinTypes, validLiteral, wellFormedClassSignature, wellFormedSignature, withGraphTypes, type ClassSetting, type ClassSignature, type CustomSignature, type ExecutionEdge, type VisualCatalogSnapshot } from './contract'
 import { connectNodes, edgePort, nodeInputs, removeEdge, updateNode, type VisualGraph } from './graph'
 import { nodeTitle } from './flow/flowModel'
 
@@ -102,15 +102,13 @@ export function applyCustomCode(graph: VisualGraph, nodeId: string, source: stri
   return { graph: next, notice: notes.length ? `${notes.join('. ')}.` : undefined }
 }
 
-/** The catalog type of a setting's pin (as `contract`'s setting pins take): text for a string or an enum, a number for an integer or a number. */
-const settingPinType: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
 /**
  * Whether a typed value can stay in a setting: it is not secret (a secret is given by a Setting only), and the value is
  * one of its type: a text (for an enum, one of its options), a finite number (for an integer, a whole one), true or false.
  */
 function valueFits(setting: ClassSetting, value: Record<string, unknown>): boolean {
   if (setting.secret) return false
-  const type = settingPinType[setting.type], v = value.value
+  const type = settingPinTypes[setting.type], v = value.value
   if (typeof value.type === 'string' && value.type !== type) return false
   if (type === 'string') return typeof v === 'string' && (setting.type !== 'enum' || !Array.isArray(setting.options) || setting.options.includes(v))
   if (type === 'number') return typeof v === 'number' && Number.isFinite(v) && (setting.type !== 'integer' || Number.isInteger(v))
@@ -156,7 +154,7 @@ export function applyClassCode(graph: VisualGraph, nodeId: string, source: strin
     const setting = settings.get(edge.targetPort)
     const sourceNode = graph.nodes.find(n => n.id === edge.source)
     const type = sourceNode ? dataOutputs(sourceNode, types)[edge.sourcePort]?.type : undefined
-    if (setting && type !== undefined && isAssignable(type, settingPinType[setting.type], types)) continue
+    if (setting && type !== undefined && isAssignable(type, settingPinTypes[setting.type], types)) continue
     next = removeEdge(next, edge.id, types)
     removed.push(label(edge.targetPort))
   }

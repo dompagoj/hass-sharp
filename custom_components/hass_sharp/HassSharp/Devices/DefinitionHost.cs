@@ -234,8 +234,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                 TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default).Unwrap();
             bool ended;
             try { ended = await Within(setup, clock); }
-            // Its message is user code, read once here.
-            catch (Exception failure) when (named && failure is not OperationCanceledException) { throw new InvalidOperationException($"{who}: {Text(failure)}", failure); }
+            // Its message is user code, read once here. A cancellation is the host's stop only while the host is stopping;
+            // one of its own (an HttpClient time-out) is a failure like any other.
+            catch (Exception failure) when (named && !(failure is OperationCanceledException && Stopping.IsCancellationRequested))
+            { throw new InvalidOperationException($"{who}: {Text(failure)}", failure); }
             if (!ended)
                 throw new TimeoutException($"{who}: Setup() did not finish within {Seconds(SetupTimeout)} s");
         }
@@ -979,8 +981,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// graph's Device nodes; a class definition's own device, keyed <see cref="MainDevice"/> and named after the
     /// definition. That one is a class's device, each field replaced by the document's when it gives one; for a class's
     /// entity, the document's device alone; none when there is neither. A graph has no device of its own
-    /// (<see cref="CompiledDefinition.Device"/> is null, and its host sets no <c>device</c>), so its Device nodes and then
-    /// its C# devices (<see cref="ClassDevices"/>) are all it gets, one keyed <c>main</c> too, ordered over both kinds.
+    /// (<see cref="CompiledDefinition.Device"/> is null, and its host sets no <c>device</c>): it gets its Device nodes and
+    /// then its C# devices (<see cref="ClassDevices"/>), ordered over both kinds, and one of them may be keyed
+    /// <c>main</c>, since no main device takes that key.
     /// </summary>
     List<DefinitionDevice> Devices()
     {

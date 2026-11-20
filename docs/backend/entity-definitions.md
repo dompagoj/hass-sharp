@@ -58,7 +58,7 @@ definition envelope"), `storage` (the file could not be read or written) and
 - `logic`: `{kind:"graph", graph}` with a version 5 graph, or
   `{kind:"class", type}` with a type id from `types`, such as
   `library:example_plug:NodeLib.SmartPlug`. A class's entities come from its code.
-- A graph's entities are its Entity nodes (kind `entity`, at least one), each with
+- A graph's entities are its Entity nodes (kind `entity`, any number), each with
   `config` `{key, domain, name?, icon?, deviceClass?, entityCategory?,
   enabledByDefault?, options?, history?, arguments?}`. `key` matches
   `^[a-z][a-z0-9_]{0,39}$` and is unique; `domain` is one of the ten in the node
@@ -67,10 +67,9 @@ definition envelope"), `storage` (the file could not be read or written) and
   values as data outputs `command:<command>:<value>`; a camera has `frame`) and
   `options`; `entityCategory` is `config` or `diagnostic`. An entity on no device
   needs a `name`; a name that is blank once trimmed is no name (the entity has
-  none). A graph with no Entity node is
-  refused with `definition.entitiesRequired`, "Add an Entity node: an entity
-  definition creates the entities on its canvas, and has none", unless it has a C#
-  entity node or a C# device node, whose code makes its entities. The answered document lists them under
+  none). A graph with no Entity node, C# entity node or C# device node (whose code
+  makes its entities) is refused with `definition.entitiesRequired`, "Add an Entity
+  node: an entity definition creates the entities on its canvas, and has none". The answered document lists them under
   `entities`, for reading only, then its C# entities (see below); a class's entities
   are in `registeredEntities`.
 - A graph's devices are its Device nodes (kind `device`, any number), each with
