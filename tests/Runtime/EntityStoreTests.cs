@@ -428,6 +428,14 @@ static class EntityStoreTests
         DefinitionBody Settings(List<DefinitionSetting> settings) => GraphBody(LevelGraph(), null, settings, "Level");
 
         Only(GraphBody(Graph("Empty", []), null), "definition.entitiesRequired", null);
+        // A graph whose nodes are not a list is told so by the validator, not told to add an Entity node.
+        {
+            var shapeless = Graph("Shapeless", []);
+            shapeless["nodes"] = "none";
+            var preview = generator.Preview(GraphBody(shapeless, null), snapshot);
+            Check(!preview.Valid && preview.Diagnostics.Any(d => d.Code == "graph.shape") && preview.Diagnostics.All(d => d.Code != "definition.entitiesRequired"),
+                "nodes that are not a list: the shape problem, not entitiesRequired: " + Codes(preview));
+        }
         Only(GraphBody(null, null), "definition.graph", null);
         // The options of each type: of its type, those a type needs, a min below the max, a pattern.
         OnNode(One("button", new { unit = "W" }), "unit", "Entity e has the option unit, but a button takes no options; remove it");

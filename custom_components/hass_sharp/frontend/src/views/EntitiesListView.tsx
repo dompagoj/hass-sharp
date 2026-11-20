@@ -27,7 +27,7 @@ const byName = (a: HomeDefinition, b: HomeDefinition) => a.name.localeCompare(b.
  * switch and its menu; "New entity definition" names a draft and opens it in the editor, built with nodes or from a
  * class. The list is read as the automations page reads its own: again while a run is going or a definition starts,
  * and after a switch or a delete. A definition file the backend cannot read is listed apart, by its id and why, with
- * Delete (at revision 0) its only action.
+ * Delete (at revision 0) its only action, or, for one a delete cannot remove, how to remove it by hand.
  */
 export const EntitiesListView = (_props: RouteSectionProps) => {
   const hass = useContext(HassCtx)!
@@ -87,7 +87,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   // deleting a file that cannot be read, to the next such row, else the previous one, else as after a card.
   const focusAfter = (id: string) => {
     const neighbour = (list: string[]) => { const at = list.indexOf(id); return at < 0 ? undefined : list[at + 1] ?? list[at - 1] }
-    const rows = unreadable().map(item => item.id), row = neighbour(rows), next = neighbour(ids())
+    const rows = unreadable().filter(item => item.deletable).map(item => item.id), row = neighbour(rows), next = neighbour(ids())
     const find = (attribute: string, value: string) => [...page.querySelectorAll<HTMLElement>(`[${attribute}]`)].find(found => found.getAttribute(attribute) === value)
     return () => focusSoon(() => row !== undefined ? find('data-unreadable', row)?.querySelector<HTMLElement>('button')
       : next ? find('data-definition', next)?.querySelector<HTMLElement>('.hs-home-card__link') : page.querySelector<HTMLElement>('.hs-home-new'), page)
@@ -250,8 +250,11 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
                     <code class="hs-ent-unreadable__id">{item.id}</code>
                     <span class="hs-ent-unreadable__reason">{item.reason}</span>
                   </span>
-                  <Show when={admin()}>
-                    <Button variant="danger" disabled={deleting()} aria-label={`Delete ${item.id}`} onClick={() => askDelete({ id: item.id, name: item.id, revision: 0 })}>Delete</Button>
+                  {/* A file whose name is not a definition id, or that could not be opened, cannot be deleted here. */}
+                  <Show when={item.deletable} fallback={<span class="hs-ent-unreadable__by-hand">Remove this file from Home Assistant's .storage/hass_sharp folder by hand.</span>}>
+                    <Show when={admin()}>
+                      <Button variant="danger" disabled={deleting()} aria-label={`Delete ${item.id}`} onClick={() => askDelete({ id: item.id, name: item.id, revision: 0 })}>Delete</Button>
+                    </Show>
                   </Show>
                 </li>
               )}

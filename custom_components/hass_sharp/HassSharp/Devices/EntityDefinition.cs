@@ -102,10 +102,12 @@ public sealed class DefinitionValidationException(DefinitionPreview preview) : E
 }
 
 /// <summary>
-/// A definition file that cannot be read, as a list names it: its id and why (for one an earlier development build saved,
-/// <see cref="EntityDefinitionStore.EarlierBuild"/>). It is deleted at revision 0.
+/// A definition file that cannot be read, as a list names it: its id, why (for one an earlier development build saved,
+/// <see cref="EntityDefinitionStore.EarlierBuild"/>) and whether a delete at revision 0 can remove it
+/// (<paramref name="Deletable"/>: its name is a definition id and it could be opened, only its content is wrong). One that
+/// is not deletable is removed by hand, from Home Assistant's <c>.storage/hass_sharp</c> folder.
 /// </summary>
-public sealed record UnreadableDefinition(string Id, string Reason);
+public sealed record UnreadableDefinition(string Id, string Reason, bool Deletable);
 
 /// <summary>
 /// The entity definitions, one <c>&lt;id&gt;.json</c> file each in a directory. Every change checks the revision the
@@ -181,7 +183,9 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
                         ArgumentException => new ArgumentException(message, ex),
                         _ => new JsonException(message, ex),
                     };
-                    unreadable?.Add(new(id, ex.Message));
+                    // Delete(id, 0) removes a file whose content is the problem (Read threw JsonException), not one whose name
+                    // is not an id (ArgumentException) or that could not be opened.
+                    unreadable?.Add(new(id, ex.Message, ex is JsonException));
                     if (Skipped.TryGetValue(path, out var logged) && logged == ex.Message) continue;
                     Skipped[path] = ex.Message;
                     Logger.Error($"Skipping entity definition {path}: {ex.Message}");

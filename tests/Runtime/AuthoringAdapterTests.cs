@@ -138,12 +138,6 @@ static class AuthoringAdapterTests
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration=previous; Directory.Delete(path,true); }
     }
 
-    /// <summary>
-    /// The example definitions <c>get_capabilities</c> gives for an entity document, in their order: each previews with no
-    /// diagnostics at all, with and without the service schemas (with its library compiled into the snapshot when it has
-    /// one), lays out every step and carries no secret's value; together they use every kind an author is shown by them;
-    /// the class example's library compiles alone and declares a device with a setting, which the definition creates.
-    /// </summary>
     /// <summary>The entities each graph example creates, as its preview derives them from its Entity nodes (each member given must match).</summary>
     static readonly Dictionary<string,string> DerivedEntities=new()
     {
@@ -153,6 +147,12 @@ static class AuthoringAdapterTests
         ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic"}]""",
     };
 
+    /// <summary>
+    /// The example definitions <c>get_capabilities</c> gives for an entity document, in their order: each previews with no
+    /// diagnostics at all, with and without the service schemas (with its library compiled into the snapshot when it has
+    /// one), lays out every step and carries no secret's value; together they use every kind an author is shown by them;
+    /// the class example's library compiles alone and declares a device with a setting, which the definition creates.
+    /// </summary>
     static void ExampleDefinitions(JsonArray definitions,DiagnosticsProvider diagnostics,VisualCatalogSnapshot builtIn,ServiceSchemaCatalog services)
     {
         string[] titles=["Motion in either room","Plug over HTTP","Camera with a box","File at setup","Plug from a class"];

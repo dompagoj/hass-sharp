@@ -609,13 +609,15 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # A file the server cannot read (one an earlier build saved, or any other) is named apart, with why, so that a model
         # can say so and delete it at revision 0; the readable ones are summarised as ever.
         earlier='saved by an earlier development build; delete it and build it again'
-        unreadable=[{'id':'hall','reason':earlier},{'id':'broken','reason':'Invalid entity definition envelope'}]
+        unreadable=[{'id':'hall','reason':earlier,'deletable':True},{'id':'broken','reason':'Invalid entity definition envelope','deletable':True},
+                    {'id':'Hall','reason':'Invalid definition ID','deletable':False}]
         self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(id='motion',device=None)],'unreadable':unreadable})
         listed=(await self.call('entities_list',{})).data
         self.assertEqual(listed['unreadable'],unreadable)
         self.assertEqual([d['id'] for d in listed['result']],['motion'])
         description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
-        self.assertIn('unreadable [{id, reason}]',description)
+        self.assertIn('unreadable [{id, reason, deletable}]',description)
+        self.assertIn("removed by hand from Home Assistant's .storage/hass_sharp folder",description)
         self.assertIn('entities_delete with expectedRevision 0',description)
 
     async def test_entities_list_says_whether_a_definition_makes_a_device(self):
@@ -778,7 +780,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         for name in ('entities_preview','entities_save'):
             self.assertNotIn('entities?',self.adapter.TOOLS[name][1])
             self.assertIn('{name, device?, settings?, logic}' if name=='entities_preview' else 'definition is what entities_preview takes',self.adapter.TOOLS[name][1])
-        self.assertIn('The definition you send is {name, device, settings, logic}',self.adapter.SEMANTICS['definitions'])
+        self.assertIn('The definition you send is {name, device?, settings?, logic}',self.adapter.SEMANTICS['definitions'])
 
     async def test_the_wrong_kind_of_document_is_refused_in_words(self):
         # Each way a document reaches the wrong tool, or a definition the wrong shape: the phrases its refusal must hold,
@@ -792,7 +794,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         entities=self.LISTED
         def save(definition): return {'id':'x','expectedRevision':0,'definition':definition}
         def in_logic(graph): return {**self.DEFINITION,'logic':{'kind':'graph','graph':graph}}
-        use_save='entities_save takes a definition: {name, device?, settings, logic: {kind: "graph", graph}}; for an automation use save'
+        use_save='entities_save takes a definition: {name, device?, settings?, logic: {kind: "graph", graph}}; for an automation use save'
         to_entities='save takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_save'
         hints=('takes a definition','takes an automation graph','inside logic','Send as definition only','entities_read','at the top','logic.kind is','run trace')
         broken_node={**self.GRAPH,'nodes':[{**self.GRAPH['nodes'][0],'id':5}]}
@@ -803,7 +805,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         rows=(
             # 1. An automation graph as the definition (nodes and edges at the top, beside its own name and version).
             ('entities_save',save(automation),[use_save],['entities_read','inside logic']),
-            ('entities_preview',{'definition':automation},['entities_preview takes a definition: {name, device?, settings, logic: {kind: "graph", graph}}; for an automation use preview'],['entities_read']),
+            ('entities_preview',{'definition':automation},['entities_preview takes a definition: {name, device?, settings?, logic: {kind: "graph", graph}}; for an automation use preview'],['entities_read']),
             # 2. An automation's read document (its graph at the top, no name), or save's own argument.
             ('entities_save',save(read),[use_save],['Send as definition only','inside logic']),
             ('entities_save',{'id':'x','expectedRevision':0,'graph':automation},[use_save],['inside logic']),
@@ -824,7 +826,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             ('entities_save',{'id':'x','expectedRevision':0,'graph':self.DEFINITION},['send it as definition, not graph'],['for an automation']),
             # A definition and a separate graph argument: the graph goes inside the definition's logic.
             ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph'}},'graph':self.GRAPH},
-             ["entities_save takes a definition: {name, device?, settings, logic: {kind: \"graph\", graph}}: the graph goes inside the definition's logic"],['for an automation','send it as definition']),
+             ["entities_save takes a definition: {name, device?, settings?, logic: {kind: \"graph\", graph}}: the graph goes inside the definition's logic"],['for an automation','send it as definition']),
             # A graph, or its nodes and edges, beside a logic that has none.
             ('entities_save',save({**self.DEFINITION,'logic':{'kind':'graph'},'graph':self.GRAPH}),['the graph goes inside logic'],['for an automation']),
             ('entities_save',save({**self.DEFINITION,'logic':{'kind':'class','type':'library:p:NodeLib.P'},'nodes':[],'edges':[]}),
@@ -1069,7 +1071,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         definitions=result['semantics']['definitions']
         for phrase in ('Entity node (kind entity)','command:<command>','command:<command>:<value>','config.arguments.<name>','targetPort <name>',
                        'execution output frame','config.history {state, commands, frame}','rootPort','entity.name','entity.partialState',
-                       'scope.stateSource','scope.flow','command.unhandled','camera.no_frame','{name, device, settings, logic}',
+                       'scope.stateSource','scope.flow','command.unhandled','camera.no_frame','{name, device?, settings?, logic}',
                        'set_entity_state','entityDomains[domain].commands','entityDomains[domain].state','30 s','Stop','setting',
                        'trackHistory','permanent','new','JPEG','8 s','own camera','hasValue','via'):
             self.assertIn(phrase,definitions)

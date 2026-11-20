@@ -356,7 +356,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                     // An Entity node's state is worked out at startup and again whenever an entity it reads changes, a newer
                     // change restarting it; its commands run each in turn; its frame runs when its camera's host asks, one frame
                     // at a time (the host never asks again while one runs). None is run by hand.
-                    (mode,startup,manual)=hubFlow.Kind switch{"state"=>("Restart",true,false),"command"=>("Queued",false,false),_=>("Single",false,false)};
+                    (mode,startup,manual)=hubFlow.Kind switch{"state"=>("Restart",true,false),"command"=>("Queued",false,false),"frame"=>("Single",false,false),
+                        var other=>throw new InvalidOperationException($"An Entity node has no flow of the kind {other}")};
                     if(hubFlow.Kind=="state")entities=References(StateDependencies.Of(graph,current,snapshot));
                 }
                 else if(Text(root,"kind") is var rootKind&&rootKind!="trigger") {

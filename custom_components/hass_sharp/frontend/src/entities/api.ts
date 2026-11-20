@@ -26,7 +26,8 @@ export interface EntityEnabledResult {
  * development build saved, "saved by an earlier development build; delete it and build it again"). It can only be
  * deleted, at revision 0.
  */
-export interface UnreadableDefinition { id: string; reason: string }
+/** A definition file the list cannot read: its id, why, and whether a delete at revision 0 can remove it. */
+export interface UnreadableDefinition { id: string; reason: string; deletable: boolean }
 
 type Envelope<T> = { version: 1; ok: true; result: T; unreadable?: UnreadableDefinition[] } | { version: 1; ok: false; error: { code: string; detail: unknown } }
 

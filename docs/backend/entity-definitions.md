@@ -64,7 +64,8 @@ definition envelope"), `storage` (the file could not be read or written) and
   node's inputs), commands (its execution outputs `command:<command>`, with their
   values as data outputs `command:<command>:<value>`; a camera has `frame`) and
   `options`; `entityCategory` is `config` or `diagnostic`. An entity of a
-  definition without a device needs a `name`. A graph with no Entity node is
+  definition without a device needs a `name`; a name that is blank once trimmed is
+  no name (the entity has none). A graph with no Entity node is
   refused with `definition.entitiesRequired`, "Add an Entity node: an entity
   definition creates the entities on its canvas, and has none". The answered
   document lists them under `entities`, for reading only; a class's entities are in
@@ -73,8 +74,8 @@ definition envelope"), `storage` (the file could not be read or written) and
   even an empty list or null, is refused with that one problem,
   `definition.entitiesNotAllowed` on input `entities`: "Entities are Entity nodes in
   the graph now: leave entities out and add one Entity node for each". Its name is
-  checked first, so a name's problem is answered beside it; its graph, settings and
-  Entity nodes are not checked. A class
+  checked first, so a name's problem is answered beside it; its graph, settings,
+  Entity nodes and Home Assistant triggers are not checked. A class
   definition may send an empty list; one that lists an entity is refused with "A
   class definition's entities come from its code".
 - `device`: null for none, or, for a class, null for the class's own (a
@@ -103,11 +104,14 @@ id answers `invalid_request` with that sentence, and `delete` with
 
 Every `list` answer, with or without `view`, names each definition file it cannot
 read beside its `result`: `{version: 1, ok: true, result: [...], unreadable: [{id,
-reason}]}`, sorted by id, empty when every file reads. `reason` is "saved by an
-earlier development build; delete it and build it again" for a version 1 graph
+reason, deletable}]}`, sorted by id, empty when every file reads. `reason` is "saved
+by an earlier development build; delete it and build it again" for a version 1 graph
 document, and otherwise what reading the file met (such as "Invalid entity
 definition envelope"). Such a definition can only be deleted, with
-`expectedRevision` 0. Until it is, the entities it made stay in Home Assistant as
+`expectedRevision` 0, when it is `deletable`: its file name is a definition id and
+the file could be opened, only its content is wrong. One that is not (a file named
+`Hall.json`, or one the process may not read) cannot be deleted through the API:
+remove it from Home Assistant's `.storage/hass_sharp` folder by hand. Until it is, the entities it made stay in Home Assistant as
 unavailable (startup keeps its id, so they are not pruned), and a node library save,
 which checks every definition, is refused with `Cannot read entity definition
 <path>: <reason>`. The **Entities** page lists it apart, with its id, its reason and
@@ -201,7 +205,8 @@ A graph definition's runs are read with the run history commands of
 `{type:"hass_sharp/run_trace",runId}`. Besides an automation's causes, a run's
 `cause` can be `Command` (an Entity node's command), `Setup` (When started) or
 `Frame` (When a frame is needed); an Entity node's state run is `Entity`. An Entity
-node's `config.history` (`{state, commands, frame}`) says whether its runs are
+node's `config.history` (`{state, commands, frame}`, each true or false and no
+other member; an Entity node with `trackHistory` is refused) says whether its runs are
 recorded: its commands' unless `commands` is false, its state's and its frame's only
 when `state` or `frame` is true. Another step's runs are recorded by its
 `trackHistory`; when it is not set: on for When started, off for a Trigger. A run

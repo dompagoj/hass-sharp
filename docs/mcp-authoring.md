@@ -244,8 +244,11 @@ envelope; validation, conflicts and revisions work as above.
    `logic` is `"graph"` or the class's type id; `device` whether it makes a device:
    it gives device details, or its class derives from `SharpDevice` (for a class no
    node library offers any more, whether it gives device details). Beside the
-   result, `unreadable: [{id, reason}]` names each definition file that cannot be
-   read, which only `entities_delete` with `expectedRevision` 0 removes (see step 6).
+   result, `unreadable: [{id, reason, deletable}]` names each definition file that
+   cannot be read; one that is `deletable` only `entities_delete` with
+   `expectedRevision` 0 removes (see step 6), and one that is not (its file name is
+   not a definition id, or it could not be opened) is removed by hand from Home
+   Assistant's `.storage/hass_sharp` folder.
    `entities_read({id})` returns one complete document, with its `revision`,
    `source`, `automationId` and `registeredEntities`, and, for a graph,
    `entities`, the entities its Entity nodes declare, for reading only (a class's
@@ -285,21 +288,24 @@ envelope; validation, conflicts and revisions work as above.
    wrong. Until it is deleted, its entities stay as unavailable and `library_save`
    is refused with `Cannot read entity definition <path>: <reason>`. Delete it with
    `expectedRevision` 0 (the user can also do so on the **Entities** page) and save
-   it again.
+   it again; one listed with `deletable` false cannot be deleted so, and the user
+   removes its file from Home Assistant's `.storage/hass_sharp` folder by hand.
 7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
    one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
    command runs when the entity's service is called, an Entity node's state follows
    the entities it reads, and When started runs when the definition starts.
 8. `entities_history({id, status?, offset?, limit?})` returns the definition's runs
    as `history` does an automation's; `trace` reads any run of either. An Entity
-   node's `config.history` (`{state, commands, frame}`) says which of its runs are
+   node's `config.history` (`{state, commands, frame}`, each true or false and no
+   other member; an Entity node takes no `trackHistory`) says which of its runs are
    recorded: its commands' unless `commands` is false, its state's and its frame's
    only when `state` or `frame` is true. When started records its runs unless its
    `trackHistory` is false, a Trigger only when it is true (the opposite of an
    automation's default); a run started with `entities_run` is always recorded. An
    Entity node's runs are named `Relay: State`, `Relay: Turn on` or `Relay: When a
-   frame is needed` (its entity's name, else its key, and the pin), and their trace
-   has the node as `rootNodeId` and the pin as `rootPort` (`state` for its state).
+   frame is needed` (its entity's name, else its key, else `Entity`, and the pin),
+   and their trace has the node as `rootNodeId` and the pin as `rootPort` (`state`
+   for its state).
    A graph that `trace` returns with `graph: true` carries the definition without
    its settings' values: it is not a definition to save.
 

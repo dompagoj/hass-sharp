@@ -142,7 +142,7 @@ class ScriptSyncRunner
         // An Entity node's state flow fails routinely (a source missing while Home Assistant starts): its host
         // says so once per reason, so its failure is not logged here.
         var state = host?.IsState(methodInfo.Name) == true;
-        // What a failing State's run threw, which its host words and logs.
+        // What a failing state flow's run threw, which its host words and logs.
         Exception? stateFailure = null;
         try
         {

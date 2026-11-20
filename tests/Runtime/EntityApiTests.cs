@@ -118,10 +118,16 @@ static class EntityApiTests
         // The list names it apart from the readable ones, with why; so it does any other file it cannot read, in Read's words.
         var broken = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "broken.json");
         File.WriteAllText(broken, """{"version":2}""");
+        // A file whose name is not a definition id cannot be deleted through the API: the list says so.
+        var hall = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "Hall.json");
+        File.WriteAllText(hall, """{"version":2}""");
         var answer = await Entity(new { operation = "list" });
-        Check(answer["result"] is JsonArray && !answer["result"]!.AsArray().Any(d => d!["id"]!.GetValue<string>() is "door" or "broken"), "the readable ones are the result: " + answer.ToJsonString());
-        Check(JsonNode.DeepEquals(answer["unreadable"], JsonNode.Parse($$"""[{"id":"broken","reason":"Invalid entity definition envelope"},{"id":"door","reason":"{{earlier}}"}]""")),
-            "the list names each unreadable file with its reason: " + answer["unreadable"]?.ToJsonString());
+        Check(answer["result"] is JsonArray && !answer["result"]!.AsArray().Any(d => d!["id"]!.GetValue<string>() is "door" or "broken" or "Hall"), "the readable ones are the result: " + answer.ToJsonString());
+        Check(JsonNode.DeepEquals(answer["unreadable"], JsonNode.Parse($$"""[{"id":"Hall","reason":"Invalid definition ID","deletable":false},{"id":"broken","reason":"Invalid entity definition envelope","deletable":true},{"id":"door","reason":"{{earlier}}","deletable":true}]""")),
+            "the list names each unreadable file with its reason and whether a delete can remove it: " + answer["unreadable"]?.ToJsonString());
+        var refused = await Entity(new { operation = "delete", id = "Hall", expectedRevision = 0 });
+        Check(refused["ok"]?.GetValue<bool>() == false && File.Exists(hall), "a delete of it is refused, as the list says: " + refused.ToJsonString());
+        File.Delete(hall);
         var homeView = await Entity(new { operation = "list", view = "home", todayUtc = "2026-11-20T00:00:00Z" });
         Check(homeView["unreadable"]!.AsArray().Count == 2, "the entities page's list names them too: " + homeView["unreadable"]?.ToJsonString());
         var removals = home.Removals().Length;

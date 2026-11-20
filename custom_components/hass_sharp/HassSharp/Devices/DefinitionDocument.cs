@@ -34,8 +34,9 @@ internal static class DefinitionDocument
         if (body.Logic!.Graph == null) error("definition.graph", "Give the definition a graph: its logic is a graph of nodes, and none was given", null);
         var domains = catalog["entityDomains"] as JsonObject ?? [];
         var nodes = body.Logic!.Graph is { } graph ? VisualNodeCatalog.DeclaredEntities(graph, catalog).ToList() : [];
-        // A document with no graph is told to give one, and no more.
-        if (body.Logic.Graph != null && nodes.Count == 0) error("definition.entitiesRequired", "Add an Entity node: an entity definition creates the entities on its canvas, and has none", null);
+        // A document with no graph is told to give one, and no more; one whose nodes are not a list is the validator's
+        // to tell (graph.shape).
+        if (body.Logic.Graph?["nodes"] is JsonArray && nodes.Count == 0) error("definition.entitiesRequired", "Add an Entity node: an entity definition creates the entities on its canvas, and has none", null);
         // Options that are not an object are the node's Options field's problem, said by the validator.
         foreach (var (nodeId, entity) in nodes)
             if (IsText(entity["domain"], out var domain) && domains[domain] is JsonObject spec && (entity["options"] is JsonObject || !entity.ContainsKey("options")))

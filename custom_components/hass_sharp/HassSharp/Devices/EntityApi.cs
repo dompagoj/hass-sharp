@@ -370,7 +370,7 @@ public partial class HassSharpManager
     /// what that removed is answered as warnings, and a preview answers the graph with those pins as <c>graph</c>.
     /// </summary>
     /// <param name="requestJson">The request: <c>operation</c> and that operation's fields.</param>
-    /// <returns><c>{version, ok: true, result}</c> (for a list, also <c>unreadable: [{id, reason}]</c>), or <c>{version, ok: false, error: {code, detail}}</c>.</returns>
+    /// <returns><c>{version, ok: true, result}</c> (for a list, also <c>unreadable: [{id, reason, deletable}]</c>), or <c>{version, ok: false, error: {code, detail}}</c>.</returns>
     public async Task<string> EntityRequest(string requestJson)
     {
         await _visualGate.WaitAsync();

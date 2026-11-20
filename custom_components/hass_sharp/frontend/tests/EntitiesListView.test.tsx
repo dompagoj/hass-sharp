@@ -533,6 +533,19 @@ it('after deleting a file that cannot be read, focus goes to the next such file,
   await vi.waitFor(() => expect(document.activeElement?.textContent).toContain('New entity definition'))
 })
 
+it('offers no Delete for a file a delete cannot remove, and says to remove it by hand', async () => {
+  const { root } = setup({ prepare: f => { f.entities.unreadable.set('Hall', 'Invalid definition ID'); f.entities.unreadable.set('broken', 'Invalid entity definition envelope') } })
+  await loaded(root)
+  const hall = root.querySelector<HTMLElement>('[data-unreadable="Hall"]')!
+  expect(hall.querySelector('.hs-ent-unreadable__reason')?.textContent).toBe('Invalid definition ID')
+  expect(hall.querySelector('button')).toBeNull()
+  expect(hall.textContent).toContain('Remove this file from Home Assistant\'s .storage/hass_sharp folder by hand.')
+  // One whose content is the problem can be deleted, as before.
+  const broken = root.querySelector<HTMLElement>('[data-unreadable="broken"]')!
+  expect(broken.querySelector('button[aria-label="Delete broken"]')).not.toBeNull()
+  expect(broken.textContent).not.toContain('by hand')
+})
+
 it('lists a file that cannot be read beside the cards of the readable definitions', async () => {
   const { root } = setup({ prepare: f => { three(f); f.entities.unreadable.set('broken', 'Invalid entity definition envelope') } })
   await loaded(root)

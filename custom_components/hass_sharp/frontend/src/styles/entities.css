@@ -95,6 +95,7 @@
 .hs-app .hs-ent-unreadable__text { display: grid; gap: 2px; min-width: 0; }
 .hs-app .hs-ent-unreadable__id { overflow-wrap: anywhere; font-weight: 650; }
 .hs-app .hs-ent-unreadable__reason { color: var(--hs-muted); font-size: 13px; overflow-wrap: anywhere; }
+.hs-app .hs-ent-unreadable__by-hand { color: var(--hs-muted); font-size: 13px; overflow-wrap: anywhere; }
 
 @media (max-width: 700px) {
   /* One column: an entity's state goes under its name; the two ways to start stack. */

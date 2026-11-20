@@ -80,6 +80,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.dotnet_threads = set()
         self.refuse = None  # an error envelope .NET answers instead, for the next request
         self.documents = {}  # what .NET's documents of these ids carry besides its own fields, such as their logic
+        self.preview = None  # what .NET's preview answers instead of its valid preview with one warning
         self.registry = Registry([
             entry('switch.porch_plug', 'plug:relay', original_name='Relay'),
             entry('sensor.plug_power', 'plug:power', name='Power use', original_name='Power', disabled_by='user'),
@@ -122,7 +123,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
             'types': lambda: {'types': [], 'generation': 'g1'},
             'list': lambda: [document('lonely'), document('plug'), document('plug2')],
             'read': lambda: {**document(request['id']), 'source': 'class Plug {}', 'sourceMap': []},
-            'preview': lambda: {'valid': True, 'diagnostics': [copy.deepcopy(WARNING)], 'source': 'class Plug {}', 'sourceMap': []},
+            'preview': lambda: copy.deepcopy(self.preview) if self.preview is not None else {'valid': True, 'diagnostics': [copy.deepcopy(WARNING)], 'source': 'class Plug {}', 'sourceMap': []},
             'save': lambda: {'id': request['id'], 'saved': True, 'document': document(request['id']), 'active': False,
                              'activationError': 'Not active'},
             'set_enabled': lambda: {'id': request['id'], 'enabled': request['enabled'], 'active': False, 'activationError': None},
@@ -193,6 +194,22 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
                                **({} if body is None else {'definition': body})}
                     await self.send(request)
                     self.assertEqual(self.requests, [request])
+        self.assertEqual(self.validated, [])
+
+    async def test_a_graph_request_listing_entities_has_nothing_else_checked(self):
+        # .NET refuses a graph definition sent with entities and checks nothing else; its triggers are not checked either.
+        listed = {'code': 'definition.entitiesNotAllowed', 'nodeId': None, 'inputId': 'entities', 'severity': 3,
+                  'message': 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each'}
+        self.preview = {'valid': False, 'diagnostics': [listed], 'source': '', 'sourceMap': []}
+        body = {**definition(nodes=[trigger('poll', {'trigger': 'state'})]), 'entities': []}
+        answer = await self.send({'operation': 'preview', 'definition': body})
+        self.assertEqual(answer, {'version': 1, 'ok': True, 'result': {'valid': False, 'diagnostics': [listed], 'source': '', 'sourceMap': []}})
+        self.assertEqual(self.validated, [])
+        # A save is refused the same way, and .NET never stores it.
+        self.requests.clear()
+        answer = await self.send({'operation': 'save', 'id': 'plug', 'expectedRevision': 0, 'definition': body})
+        self.assertEqual(answer['error'], {'code': 'validation', 'detail': {'valid': False, 'diagnostics': [listed], 'source': '', 'sourceMap': []}})
+        self.assertEqual([r['operation'] for r in self.requests], ['preview'])
         self.assertEqual(self.validated, [])
 
     async def test_documents_list_their_registered_entities(self):

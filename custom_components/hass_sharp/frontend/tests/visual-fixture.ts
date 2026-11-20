@@ -247,7 +247,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     if (body.logic?.kind !== 'graph') return problems
     if (listed !== undefined) return [...problems, problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities')]
     const nodes = declaredEntities(body.logic.graph)
-    if (!nodes.length) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
+    // A graph whose nodes are not a list is the validator's to tell (graph.shape), as the server has it.
+    if (!nodes.length && Array.isArray((body.logic.graph as { nodes?: unknown } | undefined)?.nodes)) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
     for (const { nodeId, entity } of nodes) {
       const domain = entity.domain, options = entity.options
       if (typeof domain !== 'string' || !Object.hasOwn(nodeCatalog.entityDomains ?? {}, domain) || (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options)))) continue
@@ -487,7 +488,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
         // Beside the result, as EntityApi answers it: each file that cannot be read, with why.
         return { ...ok(sorted().map(document => view === 'home'
           ? { ...summary(document), recentRuns: [], runsToday: 0, failedLastDay: 0, lastRunUtc: null, ...structuredClone(runs.get(document.id) ?? {}) }
-          : summary(document))), unreadable: [...unreadable].sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, reason]) => ({ id, reason })) }
+          : summary(document))), unreadable: [...unreadable].sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, reason]) => ({ id, reason, deletable: /^[a-z0-9][a-z0-9_-]{0,79}$/.test(id) })) }
       }
       case 'preview': return ok(preview(definitionOf(request)))
       case 'save': return save(request)
