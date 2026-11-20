@@ -22,7 +22,10 @@ public sealed record CompiledDefinition(string Id, string Name, IReadOnlyList<De
     /// <see cref="DefinitionDevice.Name"/>, in node order (<see cref="DefinitionGraph.Devices"/>).
     /// </summary>
     internal IReadOnlyList<DefinitionDevice> Devices { get; init; } = [];
-    /// <summary>The methods of its graph's When started step and of its Entity nodes' flows.</summary>
+    /// <summary>
+    /// The methods of its graph's When started step and of its Entity nodes' flows, which a compiled definition always has;
+    /// null, as a host test may leave it, for none: no flow then runs.
+    /// </summary>
     internal DefinitionRoots? Roots { get; init; }
     /// <summary>
     /// Its C# entity and C# device nodes, in node order, each with its settings resolved

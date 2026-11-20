@@ -43,18 +43,18 @@ internal interface IComponentHost
 public sealed record EntityChange(string EntityId, EntityStateSnapshot To, EntityStateSnapshot? From);
 
 /// <summary>
-/// Marks a property of a custom device or entity as a setting: a value the user fills in for each definition, such as
-/// a host name or a token, applied before <see cref="SharpComponent.Setup"/> runs.
+/// Marks a property of a custom device or entity as a setting: an input of its C# node, which takes a value typed into
+/// the node or a Setting, such as a host name or a token, applied before <see cref="SharpComponent.Setup"/> runs.
 /// </summary>
-/// <param name="label">What the settings form calls it; the property name when null.</param>
+/// <param name="label">What the node's input is called; the property name when null.</param>
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class SettingAttribute(string? label = null) : Attribute
 {
-    /// <summary>What the settings form calls it; the property name when null.</summary>
+    /// <summary>What the node's input is called; the property name when null.</summary>
     public string? Label { get; } = label;
-    /// <summary>A line of help under the field in the settings form.</summary>
+    /// <summary>A line of help under the input's field.</summary>
     public string? Description { get; set; }
-    /// <summary>Whether the value is a secret, such as a password or token: the form hides it and logs never show it.</summary>
+    /// <summary>Whether the value is a secret, such as a password or token: only a Setting gives it, and logs never show it.</summary>
     public bool Secret { get; set; }
     /// <summary>
     /// The smallest value an <c>int</c>, <c>long</c> or <c>double</c> setting takes, such as <c>1</c> for a poll interval in

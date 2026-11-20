@@ -744,7 +744,7 @@ static class CameraTests
         never.SetResult();
         await EntityTestHome.Until(() => !camera.Frames.Busy, "the hung flow has ended");
 
-        // What a graph's frame flow is given: the host runs it before answering, under the same rule as a class's Frame().
+        // What a graph's frame flow is given: the host runs it before answering, under the same rule as a C# camera's Frame().
         var flows = 0;
         host.FrameNeeded("lens", () => { Interlocked.Increment(ref flows); host.SetFrame("lens", SharpImage.Blank(12, 8, SharpColor.Red)); return Task.CompletedTask; });
         await Task.Delay(250);

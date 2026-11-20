@@ -446,7 +446,7 @@ def definition_hints(definition, operation):
                             if operation.endswith("save") else "entities_preview takes only the definition")
                          + ("; a graph definition's entities are its Entity nodes, one node of kind entity for each" if "entities" in stored else ""))
     sentences += graph_hints(definition)
-    # Any other kind, the class kind among them: the server's sentence (definition.logic) for one that reached it.
+    # A logic whose kind is not graph: the sentence the server answers it with (definition.logic).
     if isinstance(logic, dict) and logic.get("kind") != "graph":
         sentences.append('A definition is built from nodes: logic is {kind: "graph", graph}. Write C# in a C# entity or C# device node')
     return sentences

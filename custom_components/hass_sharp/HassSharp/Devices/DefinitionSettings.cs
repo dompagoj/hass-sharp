@@ -4,12 +4,12 @@ using System.Text.Json.Nodes;
 
 namespace HassSharp;
 
-/// <summary>Sets the values a definition stores for its <c>[Setting]</c> properties on the component it builds.</summary>
+/// <summary>Sets the values a C# node is given for its class's <c>[Setting]</c> properties on the component made from it.</summary>
 internal static class DefinitionSettings
 {
     // The saved check of the settings can be stale once a library changes, so a setting that no longer fits fails here
     // rather than leaving the definition to run on defaults.
-    /// <param name="name">The definition's name, which a failure starts with.</param>
+    /// <param name="name">What a failure starts with: the definition's name and the node's.</param>
     internal static void Apply(string name, IReadOnlyList<DefinitionSetting> settings, SharpComponent root)
     {
         var type = root.GetType();

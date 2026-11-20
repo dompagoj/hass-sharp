@@ -110,7 +110,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
 
     /// <summary>
     /// The setting a C# entity's or C# device's signature lists (well formed: <see cref="VisualNodeCatalog.WellFormedClassSignature"/>),
-    /// as the compiler describes a library class's, so that its values are checked and phrased alike: its options when
+    /// as the compiler describes a <c>[Setting]</c> of the node's class, so that its values are checked and phrased alike: its options when
     /// it lists them, and its range when it has one.
     /// </summary>
     internal static EntitySettingDescriptor Described(JsonObject setting)

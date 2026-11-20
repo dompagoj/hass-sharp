@@ -119,10 +119,11 @@ wires between two Custom C# nodes match through types both can name. Any numeric
 type goes into any other (`number` and every CLR numeric type), except a nullable
 one into a pin that cannot hold null; a value the pin cannot hold fails the step
 when it runs, naming the step and pin, and a literal that cannot fit is refused
-when validating. A type one Custom C# node declares is its own: another node's
-code that names it is refused ("… belongs to the Custom C# node make; declare the
-type in this code or in a node library to use it here"); a wire can still carry it
-into an `object` pin or a pin of an interface it implements.
+when validating. A type one Custom C# node declares is its own and is not for
+another node's code: another node whose pin has that type is refused ("… belongs to
+the Custom C# node make; declare the type in this code or in a node library to use
+it here"); a wire can still carry it into an `object` pin or a pin of an interface
+it implements.
 
 A signature that is not well formed is refused by both validators with code
 `custom.signature`. The backend compiles the code and compares what the code
@@ -146,9 +147,9 @@ code of a C# entity or C# device node is one class, and its `signature` is the c
 signature `{title, description, domain, settings}` read from it (its `[Node]` title
 else its name in words, its summary, an entity's domain or null, and each `[Setting]`
 property with its type, `secret`, an enum's `options` and its range). The class is
-never created to read it. A C# node's code, like a Custom C# node's, cannot name a
-type another node's code declares; the problem names the type in full and that
-node's kind and id: "`NodeLib.Custom_plug.Speed` belongs to the C# device node
+never created to read it. A type another node's code declares is not for a C#
+node's code either, as for a Custom C# node's: a setting of that type is refused, and
+the problem names the type in full and that node's kind and id: "`NodeLib.Custom_plug.Speed` belongs to the C# device node
 `plug`; declare the type in this code or in a node library to use it here" (C#
 entity node, C# device node or Custom C# node). A class
 in a node library is in reach, and a node's class may derive from it.

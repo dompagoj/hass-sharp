@@ -227,7 +227,7 @@ static class CustomNodeTests
         Check(VisualGenerator.SameJson(expected, compiled.Signature), "an entity's settings, base classes first, with their types, secret flag, options and ranges: " + compiled.Signature?.ToJsonString());
         Check(VisualNodeCatalog.WellFormedClassSignature(compiled.Signature), "the signature is well formed: " + compiled.Signature?.ToJsonString());
         Check(!compiled.Signature!.ToJsonString().Contains("hunter2") && !Messages(compiled.Diagnostics).Contains("hunter2"), "a secret's initial value is in neither the signature nor a diagnostic");
-        // An int setting without a range keeps an int's, as the class kind's settings form has it.
+        // An int setting without a range keeps an int's.
         var plain = ClassCompiled("csharp_device", "public class Box : SharpDevice\n{\n    [Setting] public int Channel { get; set; }\n}");
         Check(plain.Valid && VisualGenerator.SameJson(plain.Signature!["settings"]![0], JsonNode.Parse("""{"key": "Channel", "label": "Channel", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647}""")),
             "an int setting without a range has an int's: " + plain.Signature?.ToJsonString());
@@ -340,7 +340,7 @@ static class CustomNodeTests
         Refused("csharp_device", "public abstract class Plug : SharpDevice { }", "Plug" + Uncreatable, 1);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    public Plug(string host) { }\n}", "Plug" + Uncreatable, 1);
         Refused("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public string device { get; set; } = \"\";\n}", "A setting cannot be called device: that is the pin the entity's device connects to", 3);
-        // The class kind's setting sentences, word for word, on the property's line.
+        // The [Setting] sentences, word for word, on the property's line.
         Refused("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", NodeLibraryCompiler.SettingTypeMessage("DateTime"), 3);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n\n    [Setting] public string X { get; } = \"\";\n}", NodeLibraryCompiler.SettingSetterMessage, 4);
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public static string Shared { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Shared"), 3);
@@ -364,7 +364,7 @@ static class CustomNodeTests
         // A class of the right kind beside an abstract helper base, or a nested helper of another kind, is the one.
         Check(ClassCompiled("csharp_entity", "public abstract class Base : SharpSwitch { }\npublic class Mine : Base { }").Valid, "an abstract base of an entity class is a helper");
         Check(ClassCompiled("csharp_device", "public class Plug : SharpDevice\n{\n    public class Relay : SharpSwitch { }\n}").Valid, "an entity class inside a device class is its helper");
-        Console.WriteLine("PASS class problems: no class, several, a device in a C# entity, a class that cannot be created, a setting called device, the class kind's setting sentences, all on the node's own lines");
+        Console.WriteLine("PASS class problems: no class, several, a device in a C# entity, a class that cannot be created, a setting called device, the [Setting] sentences, all on the node's own lines");
     }
 
     // The types a node's code declares are its own: two nodes with a class of one name compile side by side, and another

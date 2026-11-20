@@ -57,12 +57,12 @@ public sealed record CustomNodeDescriptor(string NodeId, NodeMethodDescriptor? M
     /// <summary>The class of a valid C# entity or C# device as generated code names it, such as <c>global::NodeLib.Custom_plug.Plug</c>; null otherwise.</summary>
     public string? TypeExpression { get; init; }
 }
-/// <summary>One setting of a custom device or entity type: a <c>[Setting]</c> property the user fills in for each definition.</summary>
+/// <summary>One setting of a custom device or entity class: a <c>[Setting]</c> property, an input of its C# node.</summary>
 /// <param name="Key">The property's name, as written.</param>
-/// <param name="Label">What the settings form calls it: the attribute's label, else the property's name.</param>
+/// <param name="Label">What the node's input is called: the attribute's label, else the property's name.</param>
 /// <param name="Description">The help under the field: the attribute's description, else the property's summary; null for none.</param>
-/// <param name="Type">The form's type of the value: <c>string</c>, <c>boolean</c>, <c>integer</c>, <c>number</c> or <c>enum</c>.</param>
-/// <param name="Secret">Whether the value is a secret the form hides.</param>
+/// <param name="Type">The setting's type of the value: <c>string</c>, <c>boolean</c>, <c>integer</c>, <c>number</c> or <c>enum</c>.</param>
+/// <param name="Secret">Whether the value is a secret, which only a Setting gives.</param>
 /// <param name="Options">The member names of an <c>enum</c> setting, in declaration order; empty for any other.</param>
 public sealed record EntitySettingDescriptor(string Key, string Label, string? Description, string Type, bool Secret, ImmutableArray<string> Options)
 {

@@ -705,9 +705,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
 
     /// <summary>At a <c>[Setting]</c> property of a type a setting cannot have.</summary>
     internal static string SettingTypeMessage(string type) => $"A setting is a string, bool, int, long, double or enum; {type} cannot be one";
-    /// <summary>At a <c>[Setting]</c> property the settings form could not set.</summary>
+    /// <summary>At a <c>[Setting]</c> property without a public setter, which no value can be applied to.</summary>
     internal const string SettingSetterMessage = "A setting needs a public setter";
-    /// <summary>At a <c>[Setting]</c> property that is static or not public, which the settings form never shows.</summary>
+    /// <summary>At a <c>[Setting]</c> property that is static or not public, which is never a setting.</summary>
     internal static string SettingAccessMessage(string property) => $"Setting {property} must be a public instance property";
     /// <summary>At a <c>[Setting]</c> property with a <c>Minimum</c> or <c>Maximum</c> that is not a number.</summary>
     internal static string SettingRangeTypeMessage(string type) => $"Minimum and Maximum are for an int, long or double setting; {type} cannot have them";
@@ -791,7 +791,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     if (property.IsIndexer || property.Type.TypeKind == TypeKind.Error) continue;
                     if (property.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, Setting)) is not { } attribute) continue;
                     var location = property.Locations.FirstOrDefault() ?? Location.None;
-                    // The settings form fills public instance properties only: another one would be left out without a word.
+                    // Only a public instance property is a setting: another one would be left out without a word.
                     if (property.IsStatic || property.DeclaredAccessibility != Accessibility.Public)
                     {
                         report(location, SettingAccessMessage(property.Name));
@@ -908,8 +908,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     }
 
     /// <summary>
-    /// A setting's form type for a property of <paramref name="type"/>, with an enum's member names and an <c>int</c>'s
-    /// range (none for a <c>long</c>, which every whole number of the form fits); null for a type a setting cannot have.
+    /// A setting's type for a property of <paramref name="type"/>, with an enum's member names and an <c>int</c>'s
+    /// range (none for a <c>long</c>, which every whole number fits); null for a type a setting cannot have.
     /// </summary>
     static (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum)? SettingType(ITypeSymbol type)
     {

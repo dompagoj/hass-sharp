@@ -365,7 +365,7 @@ class GuidanceTests(unittest.TestCase):
         csharp = {example['title']: [node['kind'] for node in example['definition']['logic']['graph']['nodes'] if node['kind'].startswith('csharp_')]
                   for example in examples['definitions']}
         self.assertEqual({title: kinds for title, kinds in csharp.items() if kinds},
-                         {'Plug from a class': ['csharp_device'], 'Thermometer over HTTP': ['csharp_entity']})
+                         {'Plug in C#': ['csharp_device'], 'Thermometer over HTTP': ['csharp_entity']})
 
     def test_each_csharp_node_example_takes_its_settings_from_a_setting_or_a_value(self):
         # A C# node's setting pin takes a value typed in or a wire from a Setting step; no secret is typed in an example.
@@ -410,7 +410,7 @@ class GuidanceTests(unittest.TestCase):
         for edge in (edge for edge in graph['edges'] if edge['source'] == plug['id']):
             self.assertEqual((edge.get('kind'), edge.get('sourcePort'), edge.get('targetPort')), ('data', 'entities', 'device'), edge['id'])
         # The plug written in C# is a C# device node: its own device, with no Device node beside it.
-        plug = graphs['Plug from a class']['logic']['graph']
+        plug = graphs['Plug in C#']['logic']['graph']
         self.assertEqual([node['kind'] for node in plug['nodes'] if node['kind'] in ('device', 'csharp_device')], ['csharp_device'])
 
     def test_the_guidance_describes_a_device_as_a_node(self):

@@ -1,10 +1,10 @@
 # HassSharp
 
 HassSharp is a Home Assistant custom integration for building automations as
-graphs, and entities of your own whose behaviour comes from a graph or a C#
-class. It runs .NET inside the Home Assistant process through Python.NET: each
-saved graph is turned into C#, compiled with Roslyn and loaded without restarting
-Home Assistant.
+graphs, and entities of your own whose behaviour comes from a graph, in which an
+entity can be a C# class. It runs .NET inside the Home Assistant process through
+Python.NET: each saved graph is turned into C#, compiled with Roslyn and loaded
+without restarting Home Assistant.
 
 Guides: [Writing visual automations](docs/writing-visual-automations.md) ·
 [Custom entities](docs/custom-entities.md) ·
@@ -25,10 +25,10 @@ Open **HassSharp** in the sidebar. It has three pages:
   the node editor on a new draft.
 - **Entities** shows a card for each entity definition. A definition creates
   entities in Home Assistant (binary sensors, sensors, switches, buttons, numbers,
-  selects, texts, lights, covers and cameras), optionally grouped as a device, and
-  works out what they do with steps or with a C# class from a node library.
-  **New entity definition** asks for a name and which of the two. See
-  [Custom entities](docs/custom-entities.md).
+  selects, texts, lights, covers and cameras), optionally grouped into devices, and
+  works out what they do with a graph of steps, in which an entity or a device can
+  also be written as one C# class. **New entity definition** asks for a name and
+  opens the node editor. See [Custom entities](docs/custom-entities.md).
 - **Node library** holds your own C# files of reusable nodes and entity classes.
 
 ## The node editor

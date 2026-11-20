@@ -28,7 +28,7 @@ public abstract partial class SharpEntity : SharpComponent
     string? name;
     readonly ConcurrentDictionary<string, object?> attributes = new();
 
-    /// <summary>An entity whose key is <c>main</c>: the one entity of a definition without a device.</summary>
+    /// <summary>An entity whose key is <c>main</c>: such as a C# entity node's class, which the host gives its node's key (<see cref="Adopt"/>).</summary>
     protected SharpEntity() : this("main") { }
 
     /// <summary>An entity with its own key, unique within its device.</summary>

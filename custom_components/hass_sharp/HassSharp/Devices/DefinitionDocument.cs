@@ -156,7 +156,8 @@ internal static class DefinitionDocument
         Number(rule["min"]) is { } min && Number(rule["max"]) is { } max && (number < min || number > max) ? $"a number from {Shown(min)} to {Shown(max)}" : null;
 
     static bool Required(JsonObject rule) => rule["required"] is JsonValue flag && flag.GetValueKind() == JsonValueKind.True;
-    // Read through its JSON text, as Fits reads it: a class's default may be held as an int.
+    // Read through its JSON text, as Fits reads it: an entity class's default option (SharpDomains.DefaultOptions) may
+    // be held as an int.
     static double? Number(JsonNode? node) =>
         node is JsonValue value && value.GetValueKind() == JsonValueKind.Number && double.TryParse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
     static string Shown(double number) => number.ToString(CultureInfo.InvariantCulture);
@@ -169,8 +170,8 @@ internal static class DefinitionDocument
 
     /// <summary>
     /// Whether a value is a text, true or false, or a finite number, as <paramref name="type"/> (<c>string</c>,
-    /// <c>boolean</c>, <c>number</c>) says; null always fits (no value), and any other type never does. A class
-    /// definition's settings of these types are checked by it too.
+    /// <c>boolean</c>, <c>number</c>) says; null always fits (no value), and any other type never does. A C# node's
+    /// setting of these types is checked by it too (<see cref="DefinitionGenerator.Fits"/>).
     /// </summary>
     internal static bool Fits(string type, JsonNode? value)
     {

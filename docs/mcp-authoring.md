@@ -266,8 +266,8 @@ envelope; validation, conflicts and revisions work as above.
    `{kind:"graph", graph}`, its devices Device nodes in the graph (one sent with a
    `device` that is not null is refused with `definition.deviceNotAllowed`, which says
    to use Device nodes). A `logic` of another kind is refused before it reaches the
-   server: "A definition is built from nodes: logic is {kind: "graph", graph}. Write
-   C# in a C# entity or C# device node". It returns `valid`,
+   server: `A definition is built from nodes: logic is {kind: "graph", graph}. Write
+   C# in a C# entity or C# device node`. It returns `valid`,
    `diagnostics` and `graph` with each Custom C# step's pins and each
    C# node's signature worked out (no settings come back). Unlike the panel's API, it leaves out the generated
    `source` and `sourceMap`, and so does a refusal for errors (`validation`) from it
@@ -488,10 +488,10 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   and `Stop()` when it stops or is replaced. Each save makes new instances, whose
   entities take back their last states.
 
-The example *Plug from a class* is one C# device whose Address takes the
+The example *Plug in C#* is one C# device whose Address takes the
 definition's `address` setting (its code, given here as `…`, is in the example):
 
-<!-- example: Plug from a class, its nodes -->
+<!-- example: Plug in C#, its nodes -->
 ```json
 {
   "nodes": [

@@ -556,7 +556,7 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
   expect(sheet.dataset.peek).toBe('true')
 })
 
-it('opens an old link to a new class definition in the node editor with its name, ignoring what it does not know', async () => {
+it('opens a new-definition link with logic and type in its query in the node editor with its name, ignoring what it does not know', async () => {
   const { root, fixture } = setup('/entities/new?logic=class&type=x&name=Plug')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   expect(root.querySelector('section[aria-label="Entity definition editor"]')).not.toBeNull()
@@ -566,7 +566,7 @@ it('opens an old link to a new class definition in the node editor with its name
   expect(graph.definition).toEqual({ settings: [] })
   expect(graph.nodes.map((n: any) => [n.kind, n.config.key, n.config.domain, n.config.name])).toEqual([['entity', 'plug', 'binary_sensor', 'Plug']])
   expect(root.querySelector('section.hs-cdef')).toBeNull()
-  // Nothing is asked of the entity API: no classes, no read.
+  // Nothing is asked of the entity API: no list, no read.
   expect(fixture.entities.requests).toEqual([])
 })
 

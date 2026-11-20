@@ -98,7 +98,7 @@ def tool_names():
 class DocsExamplesTests(unittest.TestCase):
     def test_the_code_of_each_csharp_node_shown_is_the_examples_word_for_word(self):
         # The plug's C# device and the thermometer's C# entity: the code the guide shows is the node's source.
-        for title, kind in (("Plug from a class", "csharp_device"), ("Thermometer over HTTP", "csharp_entity")):
+        for title, kind in (("Plug in C#", "csharp_device"), ("Thermometer over HTTP", "csharp_entity")):
             with self.subTest(title):
                 block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), f"<!-- example: {title} -->", "csharp")
                 self.assertEqual(block, class_node(title, kind)["config"]["source"])
@@ -107,7 +107,7 @@ class DocsExamplesTests(unittest.TestCase):
         # Each node and edge a document shows of a C# node example is the example's of the same id, word for word, but
         # that a C# node's source may be written as … for the code the guide shows; every node and edge of the graph is shown.
         canonical = lambda value: json.dumps(value, sort_keys=True)
-        for doc, title in ((GUIDE, "Plug from a class"), (MCP, "Plug from a class"), (MCP, "Thermometer over HTTP")):
+        for doc, title in ((GUIDE, "Plug in C#"), (MCP, "Plug in C#"), (MCP, "Thermometer over HTTP")):
             graph = example_definition(title)["definition"]["logic"]["graph"]
             shown = json.loads(fenced_block_after(doc.read_text(encoding="utf-8"), f"<!-- example: {title}, its nodes -->", "json"))
             with self.subTest(doc.name, title=title):

@@ -452,11 +452,12 @@ values, to each item a For each takes (naming the item), and to Convert. Compare
 works in a type that holds both sides exactly, never rounding one side to the
 other's type, and its trace shows the values as given. Less than, at most, greater
 than and at least take any number type on either side; with a nullable side that is
-null they are false. A type that one Custom C# node declares belongs to that node:
-another node's code cannot name it (declare the type in a node library to share it),
-though a wire can carry it into `object` or an interface it implements. The same
-holds for a type a C# entity or C# device declares, and the problem names the kind
-of node that has it: "NodeLib.Custom_thermometer.Level belongs to the C# entity node
+null they are false. A type that one Custom C# node declares belongs to that node and
+is not for another node's code (declare the type in a node library to share it):
+another node whose pin has that type is refused, though a wire can carry it into
+`object` or an interface it implements. The same holds for a type a C# entity or C#
+device declares (another node's pin or setting of that type is refused), and the problem
+names the kind of node that has it: "NodeLib.Custom_thermometer.Level belongs to the C# entity node
 thermometer; declare the type in this code or in a node library to use it here".
 
 Between two Custom C# nodes, a type that only Custom C# code uses (not the catalog
@@ -594,14 +595,6 @@ public abstract class HttpRelay : SharpSwitch
 
 A C# entity's code is then `public class KitchenRelay : HttpRelay { … }`, and the
 node has the Address input with the settings of its own class after it.
-
-A public, concrete, non-generic top-level library class with a public constructor
-that takes nothing can still be used as a whole definition for now: it is offered
-under **Use a class from the node library** when a definition is created, by the
-type id `library:<source id>:` and the class's full name, such as
-`library:example_plug:NodeLib.SmartPlug` (a class in a namespace of its own is
-`NodeLib.<namespace>.<type>`), and its `[Setting]` properties are the values each
-such definition fills in.
 
 [C# nodes](custom-entities.md#c-nodes) has complete classes, the base classes,
 settings, the life cycle (`Setup`, `Start`, `Stop`), timers, entity tracks, HTTP,

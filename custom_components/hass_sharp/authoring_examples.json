@@ -1689,10 +1689,10 @@
       }
     },
     {
-      "title": "Plug from a class",
+      "title": "Plug in C#",
       "description": "The plug over HTTP written as one C# class, in a C# device node: SmartPlug is a SharpDevice with an Address setting, a relay switch and a power sensor, which it polls every 10 seconds with Every and turns on and off over Http. The node's Address pin is connected to a Setting step, so the address is the definition's Address setting. While the plug does not answer, both entities are unavailable, and the definition will not start without an address that begins with http:// or https://. The node is the plug's device in Home Assistant, Smart plug, with its two entities on it; they are listed once the definition has started.",
       "definition": {
-        "name": "Plug from a class",
+        "name": "Plug in C#",
         "settings": [
           {
             "key": "address",
@@ -1705,7 +1705,7 @@
           "kind": "graph",
           "graph": {
             "version": 5,
-            "name": "Plug from a class",
+            "name": "Plug in C#",
             "nodes": [
               {
                 "id": "address",

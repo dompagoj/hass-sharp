@@ -151,7 +151,7 @@ static class AuthoringAdapterTests
         ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet","device":"plug"},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"},"device":"plug"}]""",
         ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","options":{"frame_interval":2},"device":null}]""",
         ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic","device":null}]""",
-        ["Plug from a class"]="[]",
+        ["Plug in C#"]="[]",
         ["Thermometer over HTTP"]="""[{"key":"thermometer","domain":"sensor","name":null,"device":null,"csharp":true}]""",
     };
 
@@ -162,14 +162,14 @@ static class AuthoringAdapterTests
         ["Plug over HTTP"]="""[{"key":"plug","name":"Plug over HTTP","model":"Smart plug","suggestedArea":"Living room"}]""",
         ["Camera with a box"]="[]",
         ["File at setup"]="[]",
-        ["Plug from a class"]="""[{"key":"plug","name":"Smart plug","csharp":true}]""",
+        ["Plug in C#"]="""[{"key":"plug","name":"Smart plug","csharp":true}]""",
         ["Thermometer over HTTP"]="[]",
     };
 
     /// <summary>What each C# node of an example is given when the definition starts, by node id: each setting's key and value (<c>DefinitionGraph.Components</c>), a wired Setting's saved value included.</summary>
     static readonly Dictionary<string,string> ComponentSettings=new()
     {
-        ["Plug from a class"]="""{"plug":{"Address":"http://192.168.1.50/rpc"}}""",
+        ["Plug in C#"]="""{"plug":{"Address":"http://192.168.1.50/rpc"}}""",
         ["Thermometer over HTTP"]="""{"thermometer":{"Address":"http://192.168.1.60/temperature","Interval":60}}""",
     };
 
@@ -178,11 +178,11 @@ static class AuthoringAdapterTests
     /// diagnostics at all, with and without the service schemas, lays out every step and carries no secret's value; each
     /// C# node's stored signature is the one its code gives; each lists the entities and devices a save stores, and gives
     /// its C# nodes their settings; together they use every kind an author is shown by them, a C# entity and a C# device
-    /// among them. None is a class definition: a C# class is written in a node of the graph.
+    /// among them. Each is a graph: a C# class is written in a node of it.
     /// </summary>
     static void ExampleDefinitions(JsonArray definitions,DiagnosticsProvider diagnostics,VisualCatalogSnapshot builtIn,ServiceSchemaCatalog services)
     {
-        string[] titles=["Motion in either room","Plug over HTTP","Camera with a box","File at setup","Plug from a class","Thermometer over HTTP"];
+        string[] titles=["Motion in either room","Plug over HTTP","Camera with a box","File at setup","Plug in C#","Thermometer over HTTP"];
         VisualExecutionTests.Check(definitions.Select(d=>d!["title"]!.GetValue<string>()).SequenceEqual(titles),"the example definitions are the six, in order: "+string.Join(", ",definitions.Select(d=>d!["title"])));
         var kinds=new HashSet<string>(StringComparer.Ordinal);
         foreach(var example in definitions)

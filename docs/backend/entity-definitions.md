@@ -2,8 +2,8 @@
 
 An entity definition creates Home Assistant entities, optionally grouped into
 devices, whose behaviour comes from a graph (version 5), in which an entity or a
-device can also be one C# class: a C# entity node or a C# device node. A class from
-a node library can still be the whole definition for now (a class definition). The guide is [custom entities](../custom-entities.md); the MCP tools that
+device can also be one C# class: a C# entity node or a C# device node. The guide is
+[custom entities](../custom-entities.md); the MCP tools that
 call this API are in [MCP authoring](../mcp-authoring.md). The graph contract,
 the library API and the authoring gate are those of
 [visual automations](visual-automations.md).
@@ -24,8 +24,7 @@ request failed; check integration logs".
 
 | Operation | Request fields | Result |
 |---|---|---|
-| types | none | `{types,generation}`: the classes the saved libraries offer, sorted by id |
-| list | view?: `"home"`, todayUtc? | Document array without `source`, `sourceMap` and `device`, with `devices` a count (a graph's Device nodes and C# device nodes; a class's 1 when it gives device details or its class is a `SharpDevice`, else 0); `home` adds `recentRuns` (at most 10, newest last), `runsToday`, `failedLastDay` and `lastRunUtc` to each |
+| list | view?: `"home"`, todayUtc? | Document array without `source` and `sourceMap`, with `devices` a count (its Device nodes and C# device nodes); `home` adds `recentRuns` (at most 10, newest last), `runsToday`, `failedLastDay` and `lastRunUtc` to each |
 | read | id | Complete document |
 | preview | definition, deriveSignatures? | `{valid,diagnostics,source,sourceMap}`, and `graph` when `deriveSignatures` is true |
 | save | id, expectedRevision, definition, enabled?, deriveSignatures? | `{id,saved:true,document,active,activationError,diagnostics?}` |
@@ -50,14 +49,13 @@ definition envelope"), `storage` (the file could not be read or written) and
 
 ```text
 {name, settings?, logic: {kind:"graph", graph}}
-{name, device?, settings?, logic: {kind:"class", type}}
 ```
 
-- `name`: 1 to 120 characters. It names a class definition's device, and a class's
-  entity without a name of its own on a standalone definition.
-- `logic`: `{kind:"graph", graph}` with a version 5 graph, or
-  `{kind:"class", type}` with a type id from `types`, such as
-  `library:example_plug:NodeLib.SmartPlug`. A class's entities come from its code.
+- `name`: 1 to 120 characters.
+- `logic`: `{kind:"graph", graph}` with a version 5 graph. A `logic` of any other
+  kind, or none, is refused with that one problem beside the name's,
+  `definition.logic`: `A definition is built from nodes: logic is {kind: "graph",
+  graph}. Write C# in a C# entity or C# device node`.
 - A graph's entities are its Entity nodes (kind `entity`, any number), each with
   `config` `{key, domain, name?, icon?, deviceClass?, entityCategory?,
   enabledByDefault?, options?, history?, arguments?}`. `key` matches
@@ -70,8 +68,7 @@ definition envelope"), `storage` (the file could not be read or written) and
   none). A graph with no Entity node, C# entity node or C# device node (whose code
   makes its entities) is refused with `definition.entitiesRequired`, "Add an Entity
   node: an entity definition creates the entities on its canvas, and has none". The answered document lists them under
-  `entities`, for reading only, then its C# entities (see below); a class's entities
-  are in `registeredEntities`.
+  `entities`, for reading only, then its C# entities (see below).
 - A graph's devices are its Device nodes (kind `device`, any number), each with
   `config`
   <!-- config: device -->
@@ -114,33 +111,22 @@ definition envelope"), `storage` (the file could not be read or written) and
   node's, `{key, name, via?, csharp: true}`. The entities a C# device's code adds are
   in neither: they are known only once its class has run, in `liveEntities` and
   `registeredEntities`.
-- `entities` is not part of a request. A graph definition that has the key at all,
+- `entities` is not part of a request. A definition that has the key at all,
   even an empty list or null, is refused with that one problem,
   `definition.entitiesNotAllowed` on input `entities`: "Entities are Entity nodes in
   the graph now: leave entities out and add one Entity node for each". Its name is
   checked first, so a name's problem is answered beside it; its graph, settings,
-  Entity nodes and Home Assistant triggers are not checked. A class
-  definition may send an empty list; one that lists an entity is refused with "A
-  class definition's entities come from its code".
-- `device` is a class definition's only: a graph definition is not a device, and
-  its devices are its Device nodes. A graph request whose `device` is not null is
+  Entity nodes and Home Assistant triggers are not checked.
+- `device` is not part of a request either: a definition is not a device, and its
+  devices are its Device nodes. A request whose `device` is not null is
   refused with that one problem, `definition.deviceNotAllowed` on input `device`:
   "Devices are Device nodes in the graph now: leave device out, add a Device node
   and connect its Entities pin to each entity's Device pin", after the name check
   and with nothing else checked (one with `entities` too is refused for `entities`
-  alone). `device: null`, as a read answer has it, is no device. A graph document
+  alone). `device: null` is no device. A document
   stored with a device is read without it.
-- `device`, for a class definition: null for the class's own (a `SharpDevice`
-  class always makes its device, a class of one entity then has none), or
-  `{manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
-  suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` (the device of
-  another class definition that makes one; a graph definition is not a device) or `{deviceId:"<Home Assistant device id>"}`. Each field
-  given overrides the class's own. `via` is not checked on save, and a cycle is not
-  refused either; when the device is set up, a parent Home Assistant does not have
-  is left out.
-- `settings`: for a graph `{key, label?, type, value, secret?}` with `type`
-  `string`, `boolean` or `number`; for a class `{key, value}`, one per `[Setting]`
-  property the class declares (a value null leaves the property's own).
+- `settings`: `{key, label?, type, value, secret?}` with `type` `string`, `boolean`
+  or `number`.
 
 The server never trusts a `definition` key a client puts inside `graph` (the graph
 is stored without one), fills in missing node positions, and answers the document
@@ -149,10 +135,8 @@ with `version`, `id`, `revision`, `source`, `sourceMap`,
 
 A save writes the document as `version: 3`, with the devices its Device nodes and
 C# device nodes declare under `devices` and the entities its Entity nodes and C#
-entity nodes declare under `entities`, as the derived lists above give them (a
-class document has no `devices`). A version 1 or 2 document whose logic is a
-class loads as it is. A version 1 or 2 graph document, from an earlier development
-build, does not load:
+entity nodes declare under `entities`, as the derived lists above give them. A
+version 1 or 2 graph document, from an earlier development build, does not load:
 `list` leaves it out of `result` and logs `Skipping entity definition <path>: saved
 by an earlier development build; delete it and build it again` once, `read` of its
 id answers `invalid_request` with that sentence, and `delete` with
@@ -179,9 +163,8 @@ new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing
 key makes a new entity; an entity a C# device node's class adds is
 `<definition id>:<device key>:<entity key>`, so two C# devices of one class are two
 devices with entities of their own. A Device node's or a C# device's device is `<definition id>:<device key>`
-in Home Assistant (a class definition's device is `<definition id>:main`; a graph
-definition is not a device itself, and the device `<definition id>` an earlier build
-made for it is removed at the next sync), so
+in Home Assistant (a definition is not a device itself, and the device
+`<definition id>` an earlier build made for it is removed at the next sync), so
 changing a device key makes a new device, and an entity moved to another device
 keeps its registry entry, entity id and history. Creation uses expectedRevision 0; updates and deletes need the
 stored revision, and expectedRevision 0 deletes a corrupt file. `enabled` may be
@@ -219,17 +202,11 @@ A document answered by `list`, `read` and `save` adds how the definition runs no
 - `liveEntities`: `[{uniqueId,key,domain,name,entityId}]` of the running definition.
 - `registeredEntities`: `[{uniqueId,entityId,domain,name,disabled}]`, its entries
   in Home Assistant's entity registry, which has them while it is off or failed too.
-- `triggers`: its Trigger steps, `[{triggerId,method,manual,runnable}]`, none for a
-  class. `runnable` is true only while the saved revision runs, its status is
+- `triggers`: its Trigger steps, `[{triggerId,method,manual,runnable}]`.
+  `runnable` is true only while the saved revision runs, its status is
   `running` and the Trigger permits manual runs.
 
 ## Operations
-
-**types.** Each type is `{id, sourceId, typeExpression, kind, domain, title,
-description, settings}`. `kind` is `device` (a `SharpDevice`) or `entity` (a typed
-entity, whose `domain` it gives). `settings` are `{key, label, description, type,
-secret, options, minimum?, maximum?}` with `type` `string`, `boolean`, `integer`,
-`number` or `enum` (`options` lists an enum's members).
 
 **preview** validates and generates the definition without storing or running
 anything. A graph's Home Assistant triggers are checked as an automation's are, and
@@ -265,11 +242,10 @@ off), replacing the revision running. It waits up to 5 seconds for the
 definition's `Start()`; one still starting is answered with status `setup`. The
 answer's `diagnostics` are the preview's warnings.
 
-A graph's C# entity and C# device nodes run beside its Entity nodes, each as a
-class definition's class runs: created, its settings applied (a typed value, or the
-saved value of the Setting wired to it), its entities' last states restored, its
-`Setup()` run, all of them within one set-up time, before Home Assistant is told of
-any entity. Setting up creates the graph's own entities, then every C# node with its
+A graph's C# entity and C# device nodes run beside its Entity nodes: each node's
+class is created, its settings applied (a typed value, or the saved value of the
+Setting wired to it), its entities' last states restored and its `Setup()` run, all
+of them within one set-up time, before Home Assistant is told of any entity. Setting up creates the graph's own entities, then every C# node with its
 `Setup()`, then runs the When started flow. There are two clocks: creating every C#
 node and running its `Setup()` share the definition's set-up time (`SetupTimeout`,
 60 seconds), and the When started flow has a set-up time of its own after them. Once
@@ -298,10 +274,9 @@ states, and the entities and the devices in Home Assistant. Removing the entitie
 30 seconds; a failure is logged ("Cannot remove the entities of deleted entity
 definition …") and the delete still succeeds.
 
-**run** starts one Trigger step of a graph definition by hand, as `run` does for an
+**run** starts one Trigger step of a definition by hand, as `run` does for an
 automation. An unknown definition is `not_found`; otherwise it is refused with
-`invalid_request`, in this order: a class definition ("A class definition
-has no steps to run"), one that is off ("The entity definition is off"), one whose
+`invalid_request`, in this order: one that is off ("The entity definition is off"), one whose
 saved revision is not running ("The saved revision of this entity definition is
 not running: …"), an unknown step ("Trigger not found"), a step that is not a
 Trigger ("Only a Trigger step can be run by hand; … is not one"), and a Trigger
@@ -309,7 +284,7 @@ whose manual runs are off ("Trigger does not permit manual execution").
 
 ## Runs and traces
 
-A graph definition's runs are read with the run history commands of
+A definition's runs are read with the run history commands of
 [run history](run-history.md), by the document's `automationId`:
 `{type:"hass_sharp/run_history",automationId,offset?,limit?,status?}`, then
 `{type:"hass_sharp/run_trace",runId}`. Besides an automation's causes, a run's
@@ -320,8 +295,7 @@ other member; an Entity node with `trackHistory` is refused) says whether its ru
 recorded: its commands' unless `commands` is false, its state's and its frame's only
 when `state` or `frame` is true. Another step's runs are recorded by its
 `trackHistory`; when it is not set: on for When started, off for a Trigger. A run
-started with `run` is always recorded. A class definition records no runs, nor
-does the code of a C# node.
+started with `run` is always recorded. The code of a C# node records no runs.
 
 A trace's graph is the composed graph: it carries the definition under
 `definition`, with no setting values. It is not a body to save; `read` gives that.
@@ -329,7 +303,7 @@ A trace's graph is the composed graph: it carries the definition under
 ## Node library answers
 
 A library `save` or `delete` checks and rebuilds every entity definition as it does
-every automation (each class definition and graph embeds the libraries). Its answer
+every automation (each embeds the libraries). Its answer
 adds `definitions`, one `{id,saved,document,active,activationError,enabled}` per
 definition rebuilt, and `invalidDefinitions`, `{id,name,diagnostics,running,message}`
 for each that already had errors and was left as it is. A save that would break a

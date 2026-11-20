@@ -123,7 +123,7 @@ static class EntityGraphTests
             (nameof(ACSharpEntityRunsBesideAHub), ACSharpEntityRunsBesideAHub),
             (nameof(ACSharpEntityTakesItsCommands), ACSharpEntityTakesItsCommands),
             (nameof(TwoPlugsOfOneClassAreTwoDevices), TwoPlugsOfOneClassAreTwoDevices),
-            (nameof(AGraphWithCSharpNodesHasNoMainDevice), AGraphWithCSharpNodesHasNoMainDevice),
+            (nameof(AGraphWithCSharpNodesHasNoDeviceOfItsOwn), AGraphWithCSharpNodesHasNoDeviceOfItsOwn),
             (nameof(ADeviceCanBePartOfACSharpDeviceDeclaredLater), ADeviceCanBePartOfACSharpDeviceDeclaredLater),
             (nameof(ACSharpEntityOnADeviceTakesItsName), ACSharpEntityOnADeviceTakesItsName),
             (nameof(ACSharpEntityAloneIsCalledItsTitle), ACSharpEntityAloneIsCalledItsTitle),
@@ -2747,8 +2747,8 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A graph's command is refused as a class's is when the entity does not take its data, before any flow runs and with
-    /// the class's message: a number beyond its maximum, a brightness for a light that cannot be dimmed, an option not in
+    /// A graph's command is refused as a C# entity's is when the entity does not take its data, before any flow runs and
+    /// with the message its class gives: a number beyond its maximum, a brightness for a light that cannot be dimmed, an option not in
     /// the list. Nothing is pushed and no run is recorded.
     /// </summary>
     static async Task ACommandsDataIsCheckedAsAClassChecksIt()
@@ -2941,7 +2941,7 @@ static class EntityGraphTests
 
     /// <summary>
     /// A frame flow whose picture cannot be taken leaves the last good frame as the answer, logged once for the reason, as
-    /// a class's Frame() is (the flow's failure is not logged a second time), and once when it works again.
+    /// a C# camera's Frame() is (the flow's failure is not logged a second time), and once when it works again.
     /// </summary>
     static async Task AFrameFlowWhoseSourceFailsGivesTheLastGoodFrame()
     {
@@ -3229,7 +3229,7 @@ static class EntityGraphTests
         await rig.Until("hall:relay", s => Is(s, "is_on", true), "the hub's Turn on runs its flow");
     }
 
-    /// <summary>A command for a C# switch reaches its class, as a class definition's does: no flow is looked for.</summary>
+    /// <summary>A command for a C# switch reaches its class: no flow is looked for.</summary>
     static async Task ACSharpEntityTakesItsCommands()
     {
         await using var rig = await Rig.Start("csharp-commands");
@@ -3274,12 +3274,12 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// An Entity node wired to no Device node, beside a C# device, stands alone: the graph has no device of its own (no
-    /// <c>main</c>), and Home Assistant gets the C# device alone.
+    /// An Entity node wired to no Device node, beside a C# device, stands alone: the graph has no device of its own, and
+    /// Home Assistant gets the C# device alone.
     /// </summary>
-    static async Task AGraphWithCSharpNodesHasNoMainDevice()
+    static async Task AGraphWithCSharpNodesHasNoDeviceOfItsOwn()
     {
-        await using var rig = await Rig.Start("csharp-no-main");
+        await using var rig = await Rig.Start("csharp-no-own-device");
         var definition = Relay();
         Nodes(definition)["nodes"]!.AsArray().Add(CSharp("csharp_device", "plug", "plug", PlugSource, name: "Plug"));
         await rig.Save("hall", definition);
@@ -3427,7 +3427,7 @@ static class EntityGraphTests
 
     /// <summary>
     /// A hub and a C# switch, both turned on, then a new revision: the new class is set up and synced, then the old one
-    /// stopped, then the new one started (as a class definition's hot replace); the hub's state is carried over and the
+    /// stopped, then the new one started; the hub's state is carried over and the
     /// C# switch's restored from what it last showed. After a restart both come back on.
     /// </summary>
     static async Task ACSharpEntityIsRestoredAndAHubCarriedOver()
