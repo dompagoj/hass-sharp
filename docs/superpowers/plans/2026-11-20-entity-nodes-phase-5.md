@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-19-entity-nodes-design.md` (decision 6 "Class-from-library kind is deleted", phase 5). Deletion map for this phase: `docs/superpowers/plans/2026-11-20-entity-nodes-phase-5-map.md` (written at `122b347`, before phase 4's Tasks 8 and 9 landed): every pointer in it is a place to look, with line numbers that have moved; find the symbol. Where the map and the code disagree the code wins.
 
+> **Amendment (owner, 2026-11-20, after Task 3):** no backwards compatibility for the class kind. A class file on disk gets no handling of its own: Task 6 does not make the store answer `EarlierBuild` for a class document and writes no tests of class files; the three older-class-document tests are deleted, not rewritten. Wherever this plan says a class document "is listed as unreadable" (the "No migration" constraint, Review Focus 1, Task 6's Store bullet and Step 1, Rulings 3 and 8), this amendment wins. A request whose `logic.kind` is not `graph` is still refused with `definition.logic`. Task 6's commit subject becomes `An entity definition is a node graph: the class kind is deleted.`
+
 ## Global Constraints
 
 - **Class kind against class nodes.** "Class kind" is a definition with `logic.kind: "class"`. "Class nodes" are the kinds `csharp_entity` and `csharp_device` (`IsClassNode`, `isClassNode`, `ClassSignature`, `CustomNodeSource.IsClass`): they are the graph kind and nothing of them is removed or changed in behaviour.
