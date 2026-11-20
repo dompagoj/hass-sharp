@@ -9,9 +9,13 @@ internal static class DefinitionSettings
 {
     // The saved check of the settings can be stale once a library changes, so a setting that no longer fits fails here
     // rather than leaving the definition to run on defaults.
+    // A required setting that has no value (a Setting wired to it whose definition setting has none) fails before any
+    // value is set, so that no setter and no Setup() runs on a class that cannot start.
     /// <param name="name">What a failure starts with: the definition's name and the node's.</param>
-    internal static void Apply(string name, IReadOnlyList<DefinitionSetting> settings, SharpComponent root)
+    /// <param name="unset">The labels of the class's required settings that have no value (<see cref="DefinitionComponent.Unset"/>).</param>
+    internal static void Apply(string name, IReadOnlyList<DefinitionSetting> settings, IReadOnlyList<string> unset, SharpComponent root)
     {
+        if (unset.Count > 0) throw new InvalidOperationException($"{name}: the setting {unset[0]} has no value");
         var type = root.GetType();
         foreach (var setting in settings)
         {
@@ -54,6 +58,8 @@ internal static class DefinitionSettings
         };
     }
 
+    // An entity handle is made from its id by its class's (string) constructor, as EntityJsonConverter makes one: an id the
+    // constructor refuses (no id, or one of another domain) does not fit.
     static bool TryConvert(JsonNode node, Type type, out object? value)
     {
         value = null;
@@ -63,6 +69,9 @@ internal static class DefinitionSettings
         switch (json.ValueKind)
         {
             case JsonValueKind.String when target == typeof(string): value = json.GetString(); return true;
+            case JsonValueKind.String when typeof(Entities.Entity).IsAssignableFrom(target):
+                try { value = Activator.CreateInstance(target, json.GetString()); return true; }
+                catch (TargetInvocationException) { return false; }
             case JsonValueKind.String when target.IsEnum && Enum.GetNames(target).Contains(json.GetString(), StringComparer.Ordinal):
                 value = Enum.Parse(target, json.GetString()!); return true;
             case JsonValueKind.True or JsonValueKind.False when target == typeof(bool): value = json.GetBoolean(); return true;

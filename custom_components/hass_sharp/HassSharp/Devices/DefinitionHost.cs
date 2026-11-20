@@ -185,13 +185,15 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// restores the state each entity last showed, before any <c>Setup()</c> that may see it; runs <c>Setup()</c> on the
     /// device, then on each entity, one added in a <c>Setup()</c> too, all within <see cref="SetupTimeout"/> on the clock
     /// the definition's set-up shares (the first makes it; the caller ends it); then seals a device. A <c>[Setting]</c>
-    /// setter or a <c>Setup()</c> that throws fails after <paramref name="who"/>, as every failure of it does.
+    /// setter or a <c>Setup()</c> that throws fails after <paramref name="who"/>, as every failure of it does; so does a
+    /// required setting that has no value (<paramref name="unset"/>), before any setting is applied.
     /// </summary>
     /// <param name="who">What its failures start with: the definition's name and the node's.</param>
+    /// <param name="unset">The labels of its required settings that have no value (<see cref="DefinitionComponent.Unset"/>).</param>
     /// <returns>Its entities: the entity, or the device's in the order it added them.</returns>
-    async Task<SharpEntity[]> SetUpComponent(SharpComponent root, string who, IReadOnlyList<DefinitionSetting> settings, Action<SharpEntity>? adopt = null)
+    async Task<SharpEntity[]> SetUpComponent(SharpComponent root, string who, IReadOnlyList<DefinitionSetting> settings, IReadOnlyList<string> unset, Action<SharpEntity>? adopt = null)
     {
-        try { DefinitionSettings.Apply(who, settings, root); }
+        try { DefinitionSettings.Apply(who, settings, unset, root); }
         // A setter that throws (user code: its message, read once here, never with the value) after the node's name;
         // Apply's own sentences already start with it.
         catch (Exception failure) when (Text(failure) is var message && !(failure is InvalidOperationException && message.StartsWith(who + ": ", StringComparison.Ordinal)))

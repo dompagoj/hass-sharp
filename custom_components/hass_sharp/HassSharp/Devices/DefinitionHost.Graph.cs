@@ -163,7 +163,7 @@ internal sealed partial class DefinitionHost
                 var root = await CreateNode(node, who);
                 nodes[root] = node;
                 var standalone = node.Device == null;
-                var all = await SetUpComponent(root, who, node.Settings, entity => entity.Adopt(node.Key, standalone ? node.Title : null));
+                var all = await SetUpComponent(root, who, node.Settings, node.Unset, entity => entity.Adopt(node.Key, standalone ? node.Title : null));
                 made.Add(new(node, root, all));
             }
         }

@@ -36,6 +36,7 @@ static class SharpEntityTests
     sealed class Poller : SharpDevice
     {
         public void Schedule() { Every(TimeSpan.FromSeconds(10), () => Task.CompletedTask); Track("binary_sensor.door", _ => Task.CompletedTask); }
+        public IDisposable Follow(HassSharp.Entities.Entity? entity) => Track(entity!, _ => Task.CompletedTask);
         public void Write(string message) => Log(message, PyLogLevel.Warn);
         public string Read(string entityId) => State(entityId).State;
         public Task<JsonElement?> Call(string service, JsonNode? target, JsonObject? data) => CallService(service, target, data);
@@ -221,6 +222,11 @@ static class SharpEntityTests
         var poller = new Poller { Host = host };
         poller.Schedule(); poller.Write("hello");
         Check(host.Calls.SequenceEqual(["every 10 True", "track binary_sensor.door", "log Warn hello"]), "timers, tracks and logs go to the host: " + string.Join(", ", host.Calls));
+        // A handle is tracked by its id; no handle is refused, naming the parameter.
+        poller.Follow(new HassSharp.Entities.Entity("light.kitchen"));
+        Check(host.Calls.Last() == "track light.kitchen", "a handle's track goes to the host by its id: " + string.Join(", ", host.Calls));
+        var none = Throws<ArgumentNullException>(() => poller.Follow(null), "a track of no handle");
+        Check(none.ParamName == "entity" && host.Calls.Count == 4, $"no handle is refused before the host is asked: {none.ParamName} " + string.Join(", ", host.Calls));
         Check(poller.Read("sensor.outdoor") == "fresh", "State reads the entity from Home Assistant");
 
         var calls = new List<string>(); var previous = PyInterop.CallService;

@@ -444,6 +444,21 @@ static class EntityGraphGeneratorTests
         // A C# entity on no device, and a Setting with no value saved, which leaves its pin out.
         var alone = DefinitionGraph.Components(DefinitionGraph.Compose(Body([N("address", "setting", new { key = "address" }), CSharp("csharp_entity", "temp", "thermometer", ThermometerSource)], [D("address", "temp", "Address")], Setting("address", "string", null))), BuiltIn, [Setting("address", "string", null)]);
         Same(alone.Select(Of).ToList(), ["temp entity thermometer - - - Thermometer []"], "a C# entity alone, its Setting without a value left out");
+        Check(components.All(c => c.Unset.Count == 0) && alone.Single().Unset.Count == 0, "a component without a required setting has nothing unset");
+
+        // A typed entity arrives as its id. A required setting that has no value, its pin unset and unwired, or wired to
+        // a Setting whose definition setting has none, is listed in Unset by its label (its key when it has none), in its
+        // class's order; an optional one that has none is not.
+        const string meter = "public class Meter : SharpDevice\n{\n    [Setting(\"Main light\")] public LightEntity Light { get; set; }\n    [Setting] public SensorEntity Source { get; set; }\n"
+            + "    [Setting(\"Wired host\")] public string Host { get; set; }\n    [Setting] public Entity? Spare { get; set; }\n    [Setting] public string? Note { get; set; }\n}";
+        var node = CSharp("csharp_device", "meter", "meter", meter, new JsonObject { ["Light"] = Lit("entity_id:light", "light.kitchen") }, provider: NodeLibraryFixture.EntityProvider);
+        var signature = node["config"]!["signature"]!["settings"]!.AsArray();
+        Check(signature.Count(s => s!["required"]?.GetValue<bool>() == true) == 3, "the signature marks Light, Source and Host required: " + signature.ToJsonString());
+        var meters = DefinitionGraph.Components(DefinitionGraph.Compose(Body([node, N("host", "setting", new { key = "host" })], [D("host", "meter", "Host")], Setting("host", "string", null))),
+            BuiltIn, [Setting("host", "string", null)]);
+        var made = meters.Single();
+        Same(made.Settings.Select(s => s.Key + "=" + s.Value?.ToJsonString()).ToList(), ["Light=\"light.kitchen\""], "a typed entity arrives as its id text");
+        Same([.. made.Unset], ["Source", "Wired host"], "the required settings without a value, by label, in class order; not the optional ones");
     }
 
     /// <summary>

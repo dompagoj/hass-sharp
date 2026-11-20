@@ -132,7 +132,11 @@ static class EntityGraphTests
             (nameof(ACSharpEntityIsRestoredAndAHubCarriedOver), ACSharpEntityIsRestoredAndAHubCarriedOver),
             (nameof(TwoEntitiesWithOneUniqueIdAreRefused), TwoEntitiesWithOneUniqueIdAreRefused),
             (nameof(TheAnswersListWhatTheCSharpNodesMake), TheAnswersListWhatTheCSharpNodesMake),
-            (nameof(ACSharpEntityGivenAnotherDomainIsForgotten), ACSharpEntityGivenAnotherDomainIsForgotten) })
+            (nameof(ACSharpEntityGivenAnotherDomainIsForgotten), ACSharpEntityGivenAnotherDomainIsForgotten),
+            (nameof(AClassFollowsTheEntityItIsGiven), AClassFollowsTheEntityItIsGiven),
+            (nameof(AHandleOfAMissingEntityThrowsWhenRead), AHandleOfAMissingEntityThrowsWhenRead),
+            (nameof(ARequiredSettingWithoutAValueStopsTheStart), ARequiredSettingWithoutAValueStopsTheStart),
+            (nameof(AHandleSettingWaitsForTheEntityClasses), AHandleSettingWaitsForTheEntityClasses) })
         {
             try
             {
@@ -239,10 +243,11 @@ static class EntityGraphTests
             await rig.Api.Init();
             return rig;
         }
-        /// <summary>Home Assistant reloads the entry: a second manager over the same directory.</summary>
-        public async Task Restart()
+        /// <summary>Home Assistant reloads the entry: a second manager over the same directory, after <paramref name="between"/> (run while none is loaded).</summary>
+        public async Task Restart(Action? between = null)
         {
             await Api.UnloadAsync();
+            between?.Invoke();
             Api = new(Home.Root);
             await Api.Init();
         }
@@ -3151,16 +3156,17 @@ static class EntityGraphTests
         PyInterop.BeginSyncEntities = (json, ok, fail) => { calls.Enqueue("sync"); sync(json, ok, fail); };
     }
     /// <summary>The signature the compiler derives from the code of a node of the kind, as the editor stores it.</summary>
-    static JsonObject Signature(string kind, string source)
+    /// <param name="provider">What the code compiles with; <see cref="NodeLibraryFixture.EntityProvider"/> for entity classes such as <c>SensorEntity</c>.</param>
+    static JsonObject Signature(string kind, string source, DiagnosticsProvider? provider = null)
     {
-        var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
+        var descriptor = new NodeLibraryCompiler(provider ?? Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
         Check(descriptor.Valid, $"the {kind} code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
         return (JsonObject)descriptor.Signature!.DeepClone();
     }
     /// <summary>A C# entity or C# device node of the code, with the signature its code gives and <paramref name="arguments"/> (typed values) under arguments.</summary>
-    static JsonObject CSharp(string kind, string id, string key, string source, JsonObject? arguments = null, string? name = null)
+    static JsonObject CSharp(string kind, string id, string key, string source, JsonObject? arguments = null, string? name = null, DiagnosticsProvider? provider = null)
     {
-        var more = new JsonObject { ["source"] = source, ["signature"] = Signature(kind, source), ["arguments"] = arguments ?? new JsonObject() };
+        var more = new JsonObject { ["source"] = source, ["signature"] = Signature(kind, source, provider), ["arguments"] = arguments ?? new JsonObject() };
         return kind == "csharp_entity" ? EntityNodeTests.CSharpEntity(id, key, more) : EntityNodeTests.CSharpDevice(id, key, name ?? key, more);
     }
     static JsonObject Nodes(JsonObject definition) => definition["logic"]!["graph"]!.AsObject();
@@ -3592,5 +3598,170 @@ static class EntityGraphTests
         Check(!ids.Contains("hall:lamp") && !ids.Contains("hall:plug"), "the C# entity and the Entity node given another domain are forgotten: " + string.Join(", ", ids));
         Check(ids.Contains("hall:fan") && ids.Contains("hall:plug:relay"), "the C# switch of the same domain and the C# device's relay keep theirs: " + string.Join(", ", ids));
         Check(saved["document"]!["entities"]!.AsArray().Single(e => e!["key"]!.GetValue<string>() == "lamp")!["domain"]!.GetValue<string>() == "sensor", "the C# entity is a sensor now: " + saved.ToJsonString());
+    }
+
+    // ---- Entity handles and required values in C# nodes' settings ----
+
+    static string EntityComponents => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-entity-components.json"));
+    static string SchemaFile(Rig rig) => Path.Combine(rig.Home.Root, ".storage", "hass_sharp", "entity_schema.json");
+    /// <summary>A rig whose manager has Home Assistant's entity classes, as a running Home Assistant pushes them.</summary>
+    static async Task<Rig> HandleRig(string name, params (string Entity, string State)[] states)
+    {
+        var rig = await Rig.Start(name, states);
+        rig.Api.SetEntityDescriptions(EntityComponents, started: true);
+        await rig.Api.RetriesDone();
+        return rig;
+    }
+    /// <summary>A C# node of the code, its signature from the code compiled with Home Assistant's entity classes.</summary>
+    static JsonObject Handled(string kind, string id, string source, JsonObject? arguments = null, string? name = null) =>
+        CSharp(kind, id, id, source, arguments, name, NodeLibraryFixture.EntityProvider);
+
+    /// <summary>
+    /// A sensor that follows the sensor it is given: a track of its handle sets its value to that sensor's state, and a
+    /// timer notes the state it reads.
+    /// </summary>
+    static readonly string FollowerSource = $$"""
+        public class Follower : SharpSensor
+        {
+            {{NoteMethod}}
+            [Setting] public SensorEntity Source { get; set; }
+            protected override Task Start()
+            {
+                Track(Source, change => { Value = Source.NumericState; return Task.CompletedTask; });
+                Every(TimeSpan.FromMilliseconds(20), () => { Note("timer " + Source.NumericState?.ToString(System.Globalization.CultureInfo.InvariantCulture)); return Task.CompletedTask; }, immediately: false);
+                return Task.CompletedTask;
+            }
+        }
+        """;
+
+    /// <summary>
+    /// Review Focus 4: a class given a sensor's handle reads the state the sensor has now in a track of that handle and in
+    /// a timer: after two changes, the second, not the state at start nor the first.
+    /// </summary>
+    static async Task AClassFollowsTheEntityItIsGiven()
+    {
+        await using var rig = await HandleRig("csharp-follower", ("sensor.a", "1.5"));
+        var calls = Calls();
+        var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [Handled("csharp_entity", "follower", FollowerSource, new JsonObject { ["Source"] = Lit("entity_id:sensor", "sensor.a") })])));
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+        await rig.Started("hall");
+        await rig.Change("sensor.a", "2.5");
+        await rig.Change("sensor.a", "3.5");
+        await rig.Flush();
+        var last = rig.Pushed("hall:follower").Last();
+        Check(Is(last, "value", 3.5), "the track read the second state: " + string.Join(" ", rig.Pushed("hall:follower").Select(s => s.ToJsonString())));
+        await EntityTestHome.Until(() => calls.Contains("timer 3.5"), "the timer reads the second state: " + string.Join(", ", calls.TakeLast(5)));
+    }
+
+    /// <summary>
+    /// Review Focus 2: an id of the right domain that Home Assistant does not have: the definition starts, and reading the
+    /// handle in the class throws the sentence a missing entity's read throws.
+    /// </summary>
+    static async Task AHandleOfAMissingEntityThrowsWhenRead()
+    {
+        await using var rig = await HandleRig("csharp-missing");
+        var calls = Calls();
+        var source = $$"""
+            public class Prober : SharpSensor
+            {
+                {{NoteMethod}}
+                [Setting] public SensorEntity Source { get; set; }
+                protected override Task Start()
+                {
+                    try { Note("read " + Source.RawState); }
+                    catch (InvalidOperationException error) { Note("failed " + error.Message); }
+                    return Task.CompletedTask;
+                }
+            }
+            """;
+        var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [Handled("csharp_entity", "prober", source, new JsonObject { ["Source"] = Lit("entity_id:sensor", "sensor.missing") })])));
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null && Status(saved["document"]!.AsObject()) == "running", "the definition starts: " + saved.ToJsonString());
+        await rig.Started("hall");
+        Check(calls.SequenceEqual(["failed Entity 'sensor.missing' is unavailable."]), "the read throws: " + string.Join(", ", calls));
+    }
+
+    /// <summary>
+    /// Review Focus 3: a required setting wired to a Setting whose definition setting has no value. The save is accepted,
+    /// the definition does not run: its status and its warning say the setting has no value, after the node; the class
+    /// was created, and its <c>Setup()</c> never ran. A C# device alike, beside a C# entity that has all it needs: the
+    /// whole definition fails, and nothing of it is registered.
+    /// </summary>
+    static async Task ARequiredSettingWithoutAValueStopsTheStart()
+    {
+        await using var rig = await Rig.Start("csharp-required");
+        var calls = Calls();
+        string[] Warnings() => rig.Home.Logs(PyLogLevel.Warn).Where(l => l.StartsWith("Entity definition ", StringComparison.Ordinal)).ToArray();
+        var source = $$"""
+            public class Pinger : SharpSensor
+            {
+                {{NoteMethod}}
+                [Setting("Host")] public string Host { get; set; }
+                public Pinger() { Note("created"); }
+                protected override Task Setup() { Note("setup " + Host); return Task.CompletedTask; }
+            }
+            """;
+        var node = CSharp("csharp_entity", "pinger", "pinger", source);
+        var title = node["config"]!["signature"]!["title"]!.GetValue<string>();
+        Check(node["config"]!["signature"]!["settings"]![0]!["required"]?.GetValue<bool>() == true, "the signature marks Host required: " + node["config"]!["signature"]!.ToJsonString());
+        JsonNode[] settings = [new JsonObject { ["key"] = "host", ["label"] = "Host", ["type"] = "string" }];
+        var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [N("host", "setting", new { key = "host" }), node], Data("host", "pinger", "Host")), settings));
+        var expected = $"Hall: {title}: the setting Host has no value";
+        Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == expected && Status(saved["document"]!.AsObject()) == "failed"
+            && saved["document"]!["activationError"]?.GetValue<string>() == expected, $"the save is accepted and the start fails ({expected}): " + saved.ToJsonString());
+        Check(Warnings().SequenceEqual([$"Entity definition \"Hall\" (hall) cannot start: {expected}"]), "the warning: " + Lines(rig.Home.Logs()));
+        Check(calls.SequenceEqual(["created"]), "the class was created and its Setup() never ran: " + string.Join(", ", calls));
+        Check(rig.Home.Syncs("hall").Length == 0, "nothing of it is registered");
+
+        var gateway = $$"""
+            public class Gateway : SharpDevice
+            {
+                {{NoteMethod}}
+                [Setting("Address")] public string Address { get; set; }
+                public Gateway() { Add(new SharpSwitch("relay", "Relay")); }
+                protected override Task Setup() { Note("gateway setup " + Address); return Task.CompletedTask; }
+            }
+            """;
+        while (calls.TryDequeue(out _)) { }
+        var both = Graph("Shelf", [CSharp("csharp_entity", "temp", "temp", TempSource), N("address", "setting", new { key = "address" }), CSharp("csharp_device", "gateway", "gateway", gateway, name: "Gateway")],
+            Data("address", "gateway", "Address"));
+        var device = await rig.Save("shelf", Definition("Shelf", both, [new JsonObject { ["key"] = "address", ["label"] = "Address", ["type"] = "string" }]));
+        Check(!device["active"]!.GetValue<bool>() && device["activationError"]?.GetValue<string>() == "Shelf: Gateway: the setting Address has no value" && Status(device["document"]!.AsObject()) == "failed",
+            "a C# device without its required setting fails the whole definition: " + device.ToJsonString());
+        Check(calls.IsEmpty && rig.Home.Syncs("shelf").Length == 0 && !rig.Home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("shelf:", StringComparison.Ordinal)),
+            "no Setup() ran and nothing of the definition is registered or shown: " + string.Join(", ", calls));
+    }
+
+    /// <summary>
+    /// Review Focus 1: a definition whose C# node's setting is a <c>LightEntity</c>, loaded before Home Assistant has pushed
+    /// its entity classes (none saved either): it fails, the sentence naming the node; once the classes are pushed it is
+    /// tried again and starts, its class given the light.
+    /// </summary>
+    static async Task AHandleSettingWaitsForTheEntityClasses()
+    {
+        await using var rig = await HandleRig("csharp-handle-retry", ("light.kitchen", "on"));
+        var calls = Calls();
+        var source = $$"""
+            public class Dimmer : SharpSensor
+            {
+                {{NoteMethod}}
+                [Setting] public LightEntity Light { get; set; }
+                protected override Task Setup() { Note("setup " + Light.EntityId + " " + Light.GetType().Name); return Task.CompletedTask; }
+            }
+            """;
+        var node = Handled("csharp_entity", "dimmer", source, new JsonObject { ["Light"] = Lit("entity_id:light", "light.kitchen") });
+        var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [node])));
+        Check(saved["active"]!.GetValue<bool>() && calls.Contains("setup light.kitchen LightEntity"), "with the entity classes it runs, given the light: " + saved.ToJsonString() + " " + string.Join(", ", calls));
+
+        await rig.Restart(() => File.Delete(SchemaFile(rig)));
+        var failed = await rig.Read("hall");
+        // A load's compile problem names the node by its id, as every graph problem at load does.
+        const string missing = "dimmer: The type or namespace name 'LightEntity' could not be found (are you missing a using directive or an assembly reference?)";
+        Check(Status(failed) == "failed" && failed["activationError"]?.GetValue<string>() == missing, $"without the entity classes it fails, naming the node ({missing}): " + failed.ToJsonString());
+        while (calls.TryDequeue(out _)) { }
+        rig.Api.SetEntityDescriptions(EntityComponents, started: true);
+        await rig.Api.RetriesDone();
+        await rig.Started("hall");
+        var started = await rig.Read("hall");
+        Check(Status(started) == "running" && started["activationError"] == null && calls.Contains("setup light.kitchen LightEntity"), "once they are pushed it starts: " + started.ToJsonString() + " " + string.Join(", ", calls));
     }
 }

@@ -36,7 +36,7 @@ internal interface IComponentHost
     SharpFiles Files { get; }
 }
 
-/// <summary>A change of an entity that <see cref="SharpComponent.Track"/> follows.</summary>
+/// <summary>A change of an entity that <see cref="SharpComponent.Track(string, Func{EntityChange, Task})"/> follows.</summary>
 /// <param name="EntityId">The entity that changed, such as <c>sensor.outdoor_temperature</c>.</param>
 /// <param name="To">Its new state.</param>
 /// <param name="From">Its state before the change; null when the entity has just appeared.</param>
@@ -125,6 +125,15 @@ public abstract class SharpComponent
     /// <param name="entityId">The entity to follow, such as <c>binary_sensor.door</c>.</param>
     /// <param name="action">What to run with the change.</param>
     protected IDisposable Track(string entityId, Func<EntityChange, Task> action) => Attached().Track(entityId, action);
+
+    /// <summary>
+    /// Runs <paramref name="action"/> each time the entity of the handle changes, as <see cref="Track(string, Func{EntityChange, Task})"/>
+    /// does with its id, such as <c>Track(Light, change => ...)</c> for a <c>[Setting]</c> of an entity class.
+    /// </summary>
+    /// <param name="entity">The handle of the entity to follow.</param>
+    /// <param name="action">What to run with the change.</param>
+    protected IDisposable Track(Entities.Entity entity, Func<EntityChange, Task> action) =>
+        Track((entity ?? throw new ArgumentNullException(nameof(entity))).EntityId, action);
 
     /// <summary>
     /// An HTTP client to reach the device with, such as <c>await Http.GetStringAsync(url, Stopping)</c>: the definition's

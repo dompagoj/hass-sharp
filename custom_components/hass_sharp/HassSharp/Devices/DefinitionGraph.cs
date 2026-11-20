@@ -42,7 +42,15 @@ internal sealed record HubFlow(string NodeId, string Port, string Method, string
 /// <param name="Title">Its class's title, as its signature has it.</param>
 /// <param name="Settings">Its pins resolved, in its class's order: a typed value as typed, a wired Setting as the
 /// definition's saved value for its key; a pin that is unset, or whose value is none, is left out.</param>
-internal sealed record DefinitionComponent(string NodeId, string Kind, string Key, string? Name, DefinitionVia? Via, string? Device, string Title, IReadOnlyList<DefinitionSetting> Settings);
+internal sealed record DefinitionComponent(string NodeId, string Kind, string Key, string? Name, DefinitionVia? Via, string? Device, string Title, IReadOnlyList<DefinitionSetting> Settings)
+{
+    /// <summary>
+    /// The labels of its class's required settings (the signature's <c>required</c>) that have no value in
+    /// <see cref="Settings"/>, in its class's order, each its key where its label is blank; empty when none. The host
+    /// refuses to set it up while one is listed.
+    /// </summary>
+    public IReadOnlyList<string> Unset { get; init; } = [];
+}
 
 /// <summary>
 /// Between a stored entity definition and the graph its nodes are checked, generated and run as: the stored graph never
@@ -115,7 +123,9 @@ internal static class DefinitionGraph
     /// <paramref name="settings"/> say: the value wired to it when a Setting is (the definition's saved value for that
     /// Setting's key), else the value typed into it, never into a secret one (a secret is given by a Setting alone). An unset
     /// pin, a wire from anything else and a value of none (JSON null, a Setting not saved) leave the pin out: its property
-    /// keeps what its class gives it. Nothing here goes into a source or an answer: values may be secret.
+    /// keeps what its class gives it; when its signature says it is <c>required</c>, its label is listed in
+    /// <see cref="DefinitionComponent.Unset"/> instead. A typed value is the literal's <c>value</c>: an entity's is its id
+    /// text. Nothing here goes into a source or an answer: values may be secret.
     /// </summary>
     /// <param name="graph">A composed graph (<see cref="Compose"/>), as previewed: its C# nodes' signatures are their code's.</param>
     /// <param name="settings">The definition's settings with their values; the first of each key counts.</param>
@@ -135,6 +145,7 @@ internal static class DefinitionGraph
             var id = VisualNodeCatalog.Text(node, "id");
             var config = (JsonObject)node["config"]!;
             var resolved = new List<DefinitionSetting>();
+            var unset = new List<string>();
             foreach (var setting in signature["settings"]!.AsArray().OfType<JsonObject>())
             {
                 var key = VisualNodeCatalog.Text(setting, "key");
@@ -147,19 +158,21 @@ internal static class DefinitionGraph
                 else if (setting["secret"] is not JsonValue secret || !secret.TryGetValue<bool>(out var hidden) || !hidden)
                     value = VisualNodeCatalog.InputValue(node, key, snapshot) is JsonObject typed && VisualNodeCatalog.Text(typed, "kind") == "literal" ? typed["value"] : null;
                 if (!None(value)) resolved.Add(new(key, value!.DeepClone()));
+                else if (setting["required"] is JsonValue required && required.TryGetValue<bool>(out var needed) && needed)
+                    unset.Add(VisualNodeCatalog.Text(setting, "label") is var label && VisualGraphValidator.Words.Trimmed(label).Length > 0 ? label : key);
             }
             var title = VisualNodeCatalog.Text(signature, "title");
             if (VisualNodeCatalog.Declares(spec, "entity"))
             {
                 var device = VisualNodeCatalog.DeviceOf(graph, id, snapshot.Root) is { } deviceNode ? VisualNodeCatalog.DeviceKey(nodes[deviceNode]["config"]) : null;
-                components.Add(new(id, "entity", VisualNodeCatalog.Text(config, "key"), null, null, device, title, resolved));
+                components.Add(new(id, "entity", VisualNodeCatalog.Text(config, "key"), null, null, device, title, resolved) { Unset = unset });
             }
             else
             {
                 var name = VisualNodeCatalog.Text(config, "name") is var given && VisualGraphValidator.Words.Trimmed(given).Length > 0 ? given : null;
                 DefinitionVia? via = null;
                 try { via = config["via"]?.Deserialize<DefinitionVia>(VisualStore.Json); } catch (System.Text.Json.JsonException) { }
-                components.Add(new(id, "device", VisualNodeCatalog.Text(config, "key"), name, via, null, title, resolved));
+                components.Add(new(id, "device", VisualNodeCatalog.Text(config, "key"), name, via, null, title, resolved) { Unset = unset });
             }
         }
         return components;

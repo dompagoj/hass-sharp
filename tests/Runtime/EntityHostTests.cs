@@ -265,6 +265,37 @@ static class EntityHostTests
         Check(plug.Interval == 3600 && plug.Gain == 0.5, $"values within their range are applied: {plug.Interval} {plug.Gain}");
         await manager.UnloadUserScriptsAsync();
         Console.WriteLine("PASS entity host: a C# device's settings fill its [Setting] properties by type (inherited ones too) and skip nulls; an unknown or ill-typed setting, or one outside its range, fails naming the node and the setting");
+
+        // An entity setting is given the handle of its property's class, made from the id; an id its class refuses (of
+        // another domain, or no id at all) and a value that is no text do not fit. A nullable one given nothing stays null.
+        Reset();
+        manager = Manager();
+        HostHandled? handled = null;
+        await Load(manager, Compiled("plug3", "Plug three", Plug(new DefinitionSetting("Light", "light.kitchen"), new DefinitionSetting("Any", "switch.fan")), () => handled = new HostHandled()));
+        Check(handled!.Light is { EntityId: "light.kitchen" } && handled.Light.GetType() == typeof(HostHandles.LightEntity), $"the light setting is a LightEntity of its id: {handled.Light?.GetType().Name} {handled.Light?.EntityId}");
+        Check(handled.Any is { EntityId: "switch.fan" } && handled.Any.GetType() == typeof(HassSharp.Entities.Entity), $"the any-entity setting is an Entity of its id: {handled.Any?.GetType().Name} {handled.Any?.EntityId}");
+        Check(handled.Spare == null, "a nullable entity setting given nothing stays null");
+        await manager.UnloadUserScriptsAsync();
+        foreach (var value in new JsonNode[] { "switch.fan", 5, "not an id" })
+        {
+            Reset();
+            manager = Manager();
+            var failure = await LoadFails(manager, Compiled("plug3", "Plug three", Plug(new DefinitionSetting("Light", value)), () => new HostHandled()));
+            Check(failure is InvalidOperationException && failure.Message == "Plug three: Plug: the saved value of setting Light does not fit its type LightEntity", $"Light={value.ToJsonString()}: {failure.Message}");
+            Check(Syncs().Length == 0 && !Recorded().Contains("device.Setup"), "an entity setting that does not fit fails before setup and sync");
+        }
+        Console.WriteLine("PASS entity host: an entity setting is the handle of its property's class; an id of another domain, a number or a text that is no id does not fit");
+
+        // A required setting with no value fails the start before the class's Setup(), through the failure a setting that
+        // does not fit takes; the class was created, and its other settings not applied.
+        Reset();
+        manager = Manager();
+        HostPlug? created = null;
+        var unset = await LoadFails(manager, Compiled("plug3", "Plug three", Plug(new DefinitionSetting("Address", "10.0.0.5")) with { Unset = ["Main light", "Host"] }, () => created = new HostPlug()));
+        Check(unset is InvalidOperationException && unset.Message == "Plug three: Plug: the setting Main light has no value", "an unset required setting: " + unset.Message);
+        Check(created != null && Syncs().Length == 0 && !Recorded().Contains("device.Setup") && !Recorded().Contains("settings"),
+            "the class was created, no setting applied, no Setup() run and nothing synced: " + string.Join(", ", Recorded()));
+        Console.WriteLine("PASS entity host: a required setting with no value fails the start naming the node and the setting's label, before its Setup()");
     }
 
     static async Task StartFails()
@@ -1054,6 +1085,17 @@ public class HostPlug : HostDeviceBase
     protected internal override async Task Stop() { EntityHostTests.Record("device.Stop"); if (StopHook != null) await StopHook(this); }
 }
 
+/// <summary>
+/// A device whose settings are entity handles. Internal, as its light class is: code compiled in the tests sees this
+/// assembly, and must not find a <c>LightEntity</c> other than Home Assistant's.
+/// </summary>
+internal sealed class HostHandled : SharpDevice
+{
+    [Setting] public HostHandles.LightEntity Light { get; set; } = null!;
+    [Setting] public HassSharp.Entities.Entity? Any { get; set; }
+    [Setting] public HostHandles.LightEntity? Spare { get; set; }
+}
+
 public class HostRelay : SharpSwitch
 {
     public HostRelay() : base("relay", "Relay") { }
@@ -1258,5 +1300,24 @@ public class HostSnapshots : SharpDevice
         Loop.Attributes["deep"] = deep;
         Fine.IsOn = true;
         return Task.CompletedTask;
+    }
+}
+
+namespace HostHandles
+{
+    /// <summary>
+    /// A handle of the light domain as the entity generator writes one (<c>HassSharp.Entities.LightEntity</c> exists only
+    /// in the assembly generated from Home Assistant's entity schema): its constructor refuses an id of another domain.
+    /// Internal, so that code compiled in the tests (against this assembly) never finds it.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonConverter(typeof(HassSharp.Entities.EntityJsonConverter))]
+    [HassSharp.Entities.EntityDomain("light")]
+    internal sealed class LightEntity : HassSharp.Entities.Entity
+    {
+        public LightEntity(string entityId) : base(entityId)
+        {
+            if (!entityId.StartsWith("light.", System.StringComparison.Ordinal))
+                throw new System.ArgumentException("'" + entityId + "' is not an entity of the light domain", nameof(entityId));
+        }
     }
 }
