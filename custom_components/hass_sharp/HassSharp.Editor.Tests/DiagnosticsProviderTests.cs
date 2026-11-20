@@ -21,6 +21,10 @@ public class DiagnosticsProviderTests
         provider.UseServiceSchema(ServiceSchemaCatalog.Parse(Fixture("ha-service-descriptions.json"), _ => { }));
         var source = provider.ServicesSyntaxTree().ToString();
         Assert.Contains("public global::HassSharp.ServiceCalls.LightServices Light", source);
+        // A C# entity's or device's Services has each domain too, and the generated classes hold the caller interface.
+        Assert.Contains("extension(global::HassSharp.ComponentServices services)", source);
+        Assert.Contains("public global::HassSharp.ServiceCalls.LightServices Light => new(services);", source);
+        Assert.Contains("internal LightServices(global::HassSharp.IServiceCaller context) => __context = context;", source);
         Assert.Empty(Diagnostics(provider, "class Empty { }"));
         var again = new DiagnosticsProvider();
         again.UseServiceSchema(ServiceSchemaCatalog.Parse(Fixture("ha-service-descriptions.json"), _ => { }));

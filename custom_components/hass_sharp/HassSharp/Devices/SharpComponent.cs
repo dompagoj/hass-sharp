@@ -177,6 +177,19 @@ public abstract class SharpComponent
         return null;
     }
 
+    /// <summary>
+    /// This Home Assistant's services, by domain, with typed fields, such as <c>await Services.Light.TurnOn(Light,
+    /// brightnessPct: 30);</c> for a <c>[Setting]</c> of an entity class. Each call is a <see cref="CallService"/>, so it
+    /// works wherever that does, <see cref="Stop"/> included. The methods follow the instance's own services: when a
+    /// service goes away, code that calls it stops compiling at its next compile.
+    /// </summary>
+    protected ComponentServices Services => services ??= new(this);
+    ComponentServices? services;
+
+    /// <summary>What <see cref="ComponentServices.CallService"/> calls: this component's own <see cref="CallService"/>.</summary>
+    internal Task<JsonElement?> CallServiceForServices(string service, JsonNode? target, JsonObject? data, bool returnResponse) =>
+        CallService(service, target, data, returnResponse);
+
     /// <summary>Writes a message to the Home Assistant log.</summary>
     /// <param name="message">The message.</param>
     /// <param name="level">How important it is; Info unless given.</param>

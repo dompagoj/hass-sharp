@@ -8,8 +8,10 @@ namespace HassSharp;
 
 /// <summary>
 /// Typed service calls for node code, from the normalised service schema (<see cref="ServiceSchemaCatalog"/> items):
-/// <c>context.Services.Light.TurnOn("light.kitchen", brightnessPct: 30)</c>. One property per domain and one method
-/// per service; every call goes by its original service id through <see cref="NodeContext.CallService"/>.
+/// <c>context.Services.Light.TurnOn("light.kitchen", brightnessPct: 30)</c> in a step, and
+/// <c>Services.Light.TurnOn(Light, brightnessPct: 30)</c> in a custom device or entity (<see cref="ComponentServices"/>).
+/// One property per domain and one method per service; every call goes by its original service id through
+/// <see cref="IServiceCaller.CallService"/>.
 /// <para>
 /// Names: domain and service in PascalCase, fields in camelCase, splitting at every character that cannot be part of an
 /// identifier and at <c>_</c>. A name that is empty becomes <c>_</c>; one that starts with a digit gets a <c>_</c> prefix;
@@ -28,7 +30,10 @@ static class ServiceGenerator
     public const string Namespace = "HassSharp.ServiceCalls";
     const string Root = "Services";
     const string WithResponse = "WithResponse";
-    const string Context = "global::HassSharp.NodeContext";
+    const string NodeContextType = "global::HassSharp.NodeContext";
+    const string ComponentServicesType = "global::HassSharp.ComponentServices";
+    // What the generated classes call through: a step's NodeContext, or a component's ComponentServices.
+    const string Context = "global::HassSharp.IServiceCaller";
     const string Target = "global::HassSharp.ServiceTarget";
     const string Task = "global::System.Threading.Tasks.Task";
     const string Element = "global::System.Text.Json.JsonElement";
@@ -69,6 +74,9 @@ static class ServiceGenerator
             }
         var domainNames = Assign(byDomain.Keys.Select(d => (d, Words(d, pascal: true))), [Root, .. ObjectMembers]);
         var domains = byDomain.Select(pair => DomainOf(pair.Key, domainNames[pair.Key], pair.Value)).Where(d => d.Services.Length > 0).ToArray();
+        // A component's Services takes the same names, except where one is a member ComponentServices has: an instance
+        // member wins over an extension property, so a domain of that name would be hidden. It gets the next free one there.
+        var componentNames = Assign(byDomain.Keys.Select(d => (d, Words(d, pascal: true))), [Root, nameof(ComponentServices.CallService), .. ObjectMembers]);
 
         var sb = new StringBuilder();
         var lines = 0;
@@ -91,13 +99,26 @@ static class ServiceGenerator
         Doc(1, "summary", "Gives <see cref=\"global::HassSharp.NodeContext\"/> its <c>Services</c>.");
         Line(1, "public static class NodeContextServices");
         Line(1, "{");
-        Line(2, $"extension({Context} context)");
+        Line(2, $"extension({NodeContextType} context)");
         Line(2, "{");
         Doc(3, "summary", "This Home Assistant's services, by domain, with typed fields: <c>await context.Services.Light.TurnOn(\"light.kitchen\", brightnessPct: 30);</c> " +
             "The methods follow the instance's own services. When a service goes away, code that calls it stops compiling at its next compile; " +
             "an automation that is running keeps running. For a service id known only at run time, use <c>context.CallService</c>. " +
             "Each call waits until Home Assistant has run the service; when the run stops, the run stops waiting for it (the call already sent is not cancelled).");
         Line(3, $"public global::{Namespace}.{Root} Services => new global::{Namespace}.{Root}(context);");
+        Line(2, "}");
+        Line(0, "");
+        // A custom device's or entity's Services (a member of SharpComponent): the same domains, one property each.
+        Line(2, $"extension({ComponentServicesType} services)");
+        Line(2, "{");
+        foreach (var domain in domains)
+        {
+            if (!ReferenceEquals(domain, domains[0])) Line(0, "");
+            var start = lines + 1;
+            Doc(3, "summary", DomainSummary(domain));
+            Line(3, $"public global::{Namespace}.{domain.Class} {componentNames[domain.Id]} => new(services);");
+            spans.Add(new(domain.Id, true, start, lines));
+        }
         Line(2, "}");
         Line(1, "}");
         Line(0, "}");

@@ -296,6 +296,35 @@ public class NodeLibraryLanguageServicesTests
         Assert.Contains("brightnessPct",signature); Assert.Contains("From 0 to 100 %",signature);
     }
     [Fact]
+    public async Task A_class_nodes_code_completes_and_documents_the_typed_service_calls_of_its_Services()
+    {
+        // A C# entity's class, given a light, calls the typed methods through the Services it inherits.
+        const string source="public class Dimmer : SharpSensor\n{\n    [Setting] public LightEntity Light { get; set; }\n    protected override async Task Start() { await Services.Light.TurnOn(Light, brightnessPct: 30); }\n}";
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(Fixture("ha-entity-components.json")).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!)).ToArray();
+        typeof(DiagnosticsProvider).GetMethod("UseEntitySchema", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(provider, [domains]);
+        provider.UseServiceSchema(ServiceSchemaCatalog.Parse("""
+            {"light":{"turn_on":{"name":"Turn on","description":"Turns on one or more lights.","target":{"entity":{"domain":"light"}},
+              "fields":{"brightness_pct":{"name":"Brightness","description":"Percentage of full brightness.","selector":{"number":{"min":0,"max":100,"unit_of_measurement":"%"}}}}}}}
+            """, _ => { }));
+        var service = new NodeLibraryLanguageServices(provider);
+        var dimmer = new CustomNodeSource("dimmer", source, "csharp_entity");
+        async Task<JsonNode> Class(string operation, int position) =>
+            JsonSerializer.SerializeToNode(await service.RequestAsync(operation, [], dimmer, position, TestContext.Current.CancellationToken), VisualStore.Json)!.Items();
+        var preview = new NodeLibraryCompiler(provider).Preview([], [dimmer], TestContext.Current.CancellationToken).Snapshot.Custom["dimmer"];
+        Assert.True(preview.Valid && preview.Diagnostics.IsEmpty, string.Join(" | ", preview.Diagnostics.Select(d => d.Message)));
+        Assert.Contains((await Class("completion", source.IndexOf("Services.") + 9)).AsArray(), i => i!["displayText"]!.GetValue<string>() == "Light");
+        var light = source.IndexOf("Light.Turn") + 6;
+        var turnOn = Assert.Single((await Class("completion", light)).AsArray(), i => i!["displayText"]!.GetValue<string>() == "TurnOn")!;
+        var key = new CompletionItemKey("TurnOn", turnOn["displayTextPrefix"]!.GetValue<string>(), turnOn["displayTextSuffix"]!.GetValue<string>(), turnOn["inlineDescription"]?.GetValue<string>() ?? "");
+        var resolved = JsonSerializer.SerializeToNode(await service.ResolveAsync([], dimmer, light, key, TestContext.Current.CancellationToken), VisualStore.Json)!;
+        Assert.Contains("Turn on (light.turn_on). Turns on one or more lights.", resolved["documentation"]!.GetValue<string>());
+        // Hover names the member. No member of HassSharp's own assembly shows its summary in a hover: its reference
+        // carries no documentation, so the summary is not asserted here.
+        var hover = (await Class("hover", source.IndexOf("Services.") + 1))["text"]!.GetValue<string>();
+        Assert.Contains("ComponentServices SharpComponent.Services", hover);
+    }
+    [Fact]
     public async Task Named_arguments_select_the_declared_parameter_in_reordered_calls()
     {
         const string source="public static class Factory { public static string Make(string? label, int count=1) => label ?? \"\"; public static void Run() { Make(count: 1, label: null); } }";

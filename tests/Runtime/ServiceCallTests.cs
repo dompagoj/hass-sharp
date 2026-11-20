@@ -42,6 +42,7 @@ static class ServiceCallTests
         {
             FixtureCompiles();
             Naming();
+            ClassServices();
             Targets();
             await Calling();
             await Cancelled();
@@ -96,6 +97,28 @@ static class ServiceCallTests
             "string? light = null", "object? lights = null", "global::HassSharp.ServiceTarget? targets = null", "object? labels = null", "object? wait = null", "object[]? pair = null",
         })
             Check(source.Contains(expected), "the generated source lacks: " + expected);
+        // The root and every domain class hold the caller interface; a step's context.Services is as it was.
+        foreach (var expected in new[] {
+            "extension(global::HassSharp.NodeContext context)", "public global::HassSharp.ServiceCalls.Services Services => new global::HassSharp.ServiceCalls.Services(context);",
+            "readonly global::HassSharp.IServiceCaller __context;", "internal Services(global::HassSharp.IServiceCaller context) => __context = context;",
+            "internal LightServices(global::HassSharp.IServiceCaller context) => __context = context;", "internal WeatherServices(global::HassSharp.IServiceCaller context) => __context = context;",
+        })
+            Check(source.Contains(expected), "the generated source lacks: " + expected);
+        Check(!source.Contains("NodeContext __context") && !source.Contains("(global::HassSharp.NodeContext context) => __context"), "a generated class still holds a NodeContext");
+        // A class's Services: the second extension block has each domain of the root, under the same name and doc.
+        const string Block = "extension(global::HassSharp.ComponentServices services)";
+        Check(source.Contains("        " + Block + "\n        {\n"), "the generated source lacks the extension block of ComponentServices");
+        var component = source[source.IndexOf(Block, StringComparison.Ordinal)..source.IndexOf("namespace " + ServiceGenerator.Namespace, StringComparison.Ordinal)];
+        var roots = System.Text.RegularExpressions.Regex.Matches(source,
+            @"\n        /// <summary>\n        /// (?<doc>[^\n]*)\n        /// </summary>\n        public global::HassSharp\.ServiceCalls\.(?<class>\w+) (?<name>\w+) => new global::HassSharp\.ServiceCalls\.\k<class>\(__context\);\n");
+        Check(roots.Select(m => m.Groups["name"].Value).SequenceEqual(["Climate", "HassSharpTest", "Homeassistant", "Light", "Notify", "PersistentNotification", "Script", "Todo", "Weather"]),
+            "the fixture's domains: " + string.Join(", ", roots.Select(m => m.Groups["name"].Value)));
+        foreach (System.Text.RegularExpressions.Match root in roots)
+        {
+            var property = $"\n            /// <summary>\n            /// {root.Groups["doc"].Value}\n            /// </summary>\n            public global::HassSharp.ServiceCalls.{root.Groups["class"].Value} {root.Groups["name"].Value} => new(services);\n";
+            Check(component.Contains(property), "the extension block of ComponentServices lacks:" + property + component);
+        }
+        Check(System.Text.RegularExpressions.Regex.Count(component, @"=> new\(services\);") == roots.Count, "the extension block of ComponentServices has other properties:\n" + component);
         Console.WriteLine("PASS service calls: the fixture's typed calls compile without diagnostics and are byte-stable");
     }
 
@@ -111,7 +134,8 @@ static class ServiceCallTests
                  "class":{"selector":{"text":{}}},"1st":{"selector":{"text":{}}},"await":{"selector":{"text":{}}},"target":{"selector":{"text":{}}},
                  "brightness-pct":{"selector":{"number":{}}},"brightness_pct":{"selector":{"number":{}}},"rgb_color":{"selector":{"color_rgb":{}}},
                  "rooms":{"selector":{"text":{"multiple":true}}},"wait":{"selector":{"duration":{}}}}},
-               "turn_on_with_response":{"fields":{}},"light_services":{"fields":{}},"to_string":{"fields":{}},"get_type":{"fields":{}}}}
+               "turn_on_with_response":{"fields":{}},"light_services":{"fields":{}},"to_string":{"fields":{}},"get_type":{"fields":{}}},
+             "call_service":{"run":{"fields":{}}}}
             """);
         var source = Source(schema);
         var provider = Provider(schema);
@@ -129,9 +153,67 @@ static class ServiceCallTests
             "<param name=\"class\">", "__context.CallService(\"media__player.play\", null, __data)", "__context.CallService(\"3d.print\", null, __data)",
         })
             Check(source.Contains(expected), "the naming rules: the source lacks " + expected + "\n" + source);
+        // A class's Services takes the root's names, but CallService is a member of ComponentServices, which would hide a
+        // domain of that name: it gets the next free one there, as Services does among the root's.
+        foreach (var expected in new[] {
+            "CallServiceServices CallService => new global::HassSharp.ServiceCalls.CallServiceServices(__context);",
+            "public global::HassSharp.ServiceCalls.CallServiceServices CallService2 => new(services);",
+            "public global::HassSharp.ServiceCalls.Services2Services Services2 => new(services);", "public global::HassSharp.ServiceCalls.MediaPlayer2Services MediaPlayer2 => new(services);",
+        })
+            Check(source.Contains(expected), "the naming rules of a class's Services: the source lacks " + expected + "\n" + source);
+        // A compile error in a domain's property of the extension block is that domain's services'.
+        var generated = ServiceGenerator.GenerateWithSpans(schema.Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!)));
+        var at = Array.FindIndex(generated.Source.Split('\n'), l => l.EndsWith(" CallService2 => new(services);", StringComparison.Ordinal)) + 1;
+        Check(at > 0 && generated.ServicesAt(at, ["call_service.run", "light.turn_on"]).SequenceEqual(["call_service.run"]), $"the span of a class's domain property (line {at})");
         Check(ServiceGenerator.Words("brightness_pct", pascal: false) == "brightnessPct" && ServiceGenerator.Words("brightness_pct", pascal: true) == "BrightnessPct"
             && ServiceGenerator.Words("a​b", pascal: true) == "AB" && ServiceGenerator.Words("!", pascal: false) == "_" && ServiceGenerator.Words("9lives", pascal: true) == "_9lives", "word rules");
         Console.WriteLine("PASS service calls: naming, escapes and collision suffixes are deterministic, and the original ids are sent");
+    }
+
+    // A C# entity's or device's class calls the typed methods through its own Services, a step through context.Services;
+    // the domain named like ComponentServices' CallService is CallService2 in a class and CallService in a step. A class
+    // that declares a member named Services of its own still compiles: its member hides the inherited one.
+    static void ClassServices()
+    {
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(Fixture("ha-entity-components.json")).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!));
+        Check(provider.UseEntitySchema([.. domains]).Accepted, "the entity classes were not installed");
+        provider.UseServiceSchema(Schema(Calls[..^1] + ""","call_service":{"run":{"fields":{}}}}"""));
+        CustomNodeDescriptor Compiled(string kind, string source) => new NodeLibraryCompiler(provider).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
+        static string Shown(CustomNodeDescriptor node) => string.Join(" | ", node.Diagnostics.Select(d => $"{d.Severity} {d.StartLine}:{d.StartColumn} {d.Message}"));
+        var entity = Compiled("csharp_entity", """
+            public class Dimmer : SharpSensor
+            {
+                [Setting] public LightEntity Light { get; set; }
+                protected override async Task Start()
+                {
+                    await Services.Light.TurnOn(Light, brightnessPct: 30);
+                    var forecast = await Services.Weather.GetForecasts("weather.home", type: "daily");
+                    var items = await Services.Todo.GetItemsWithResponse("todo.shopping");
+                    await Services.CallService2.Run();
+                    await Services.CallService("light.turn_off", "light.kitchen");
+                }
+            }
+            """);
+        Check(entity.Valid && entity.Diagnostics.IsEmpty, "a C# entity calling typed services: " + Shown(entity));
+        var device = Compiled("csharp_device", """
+            public class Hub : SharpDevice
+            {
+                protected override Task Stop() => Services.Script.GoodNight(delayMinutes: 5);
+            }
+            """);
+        Check(device.Valid && device.Diagnostics.IsEmpty, "a C# device calling typed services: " + Shown(device));
+        var step = Compiled(CustomNodeSource.Step, Node("await context.Services.CallService.Run(); await context.Services.Light.TurnOn(light);"));
+        Check(step.Valid && step.Diagnostics.IsEmpty, "a step calling typed services: " + Shown(step));
+        var own = Compiled("csharp_entity", """
+            public class Mine : SharpSensor
+            {
+                public string Services => "mine";
+                protected override Task Start() { Value = Services.Length; return Task.CompletedTask; }
+            }
+            """);
+        Check(own.Valid && own.Diagnostics.All(d => d.Severity < 3), "a class with its own member named Services: " + Shown(own));
+        Console.WriteLine("PASS service calls: a C# entity or device calls typed services through Services, a domain named like a member of it gets the next free name there, and a class's own Services hides it");
     }
 
     static void Targets()

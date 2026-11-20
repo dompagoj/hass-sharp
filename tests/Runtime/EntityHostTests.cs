@@ -153,6 +153,7 @@ static class EntityHostTests
             await SlowStart();
             await PublishFailures();
             await ServiceFromStop();
+            await ServicesFromStop();
             await LateAdd();
             await UserLog();
             await MissingJsonCacheHandler();
@@ -857,6 +858,31 @@ static class EntityHostTests
         Console.WriteLine("PASS entity host: CallService awaited inside Stop() completes and the code after it runs");
     }
 
+    // The same through Services, which the typed methods call: from Stop() it waits on the host's calls, not on Stopping.
+    static async Task ServicesFromStop()
+    {
+        Reset();
+        var manager = Manager();
+        var previous = PyInterop.CallService;
+        PyInterop.CallService = (domain, service, json, done, failed) =>
+        {
+            Record($"call {domain}.{service} {json}");
+            _ = Task.Delay(50).ContinueWith(_ => done?.Invoke(), TaskScheduler.Default);
+        };
+        try
+        {
+            HostPlug.StopHook = async plug => { await plug.Typed("switch.turn_off", "switch.lamp"); Record("after the call"); };
+            await Load(manager, Compiled("plug15s", "Plug fifteen", Plug(), () => new HostPlug()));
+            await Until(() => PushedAvailable("plug15s:plug:relay", true), "started");
+            await manager.UnloadScriptAsync("entity_plug15s.cs").WaitAsync(TimeSpan.FromSeconds(5));
+            Check(Recorded().SkipWhile(c => c != "call switch.turn_off {\"entity_id\":\"switch.lamp\"}").Skip(1).FirstOrDefault() == "after the call",
+                "the call through Services from Stop(): " + string.Join(", ", Recorded()));
+            Check(!Logs().Any(m => m.Contains("stopping failed")), "stopping failed: " + string.Join(" | ", Logs()));
+        }
+        finally { PyInterop.CallService = previous; }
+        Console.WriteLine("PASS entity host: a call through Services awaited inside Stop() completes and the code after it runs");
+    }
+
     // An entity added once the entities are registered is refused, not silently ignored; one added in Setup() is set up.
     static async Task LateAdd()
     {
@@ -1070,6 +1096,7 @@ public class HostPlug : HostDeviceBase
     public void AddLater(string key) => Add(new SharpSensor(key));
     public void Say(string message) => Log(message);
     public Task<JsonElement?> Call(string service, string entityId) => CallService(service, entityId);
+    public Task<JsonElement?> Typed(string service, string entityId) => Services.CallService(service, entityId);
     [Setting] public string? Address { get => address; set { address = value; EntityHostTests.Record("settings"); } }
     [Setting] public int Channel { get; set; }
     [Setting] public HostMode Mode { get; set; }

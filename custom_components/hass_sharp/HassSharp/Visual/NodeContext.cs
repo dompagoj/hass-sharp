@@ -7,7 +7,7 @@ namespace HassSharp;
 /// What a node method can reach of the run it is part of. Declare a parameter of this type and the node gets one;
 /// it is never a pin. Each step gets its own, made just before it runs.
 /// </summary>
-public sealed class NodeContext
+public sealed class NodeContext : IServiceCaller
 {
     readonly VisualRuntime runtime;
     readonly VisualScope scope;

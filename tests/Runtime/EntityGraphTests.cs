@@ -136,7 +136,8 @@ static class EntityGraphTests
             (nameof(AClassFollowsTheEntityItIsGiven), AClassFollowsTheEntityItIsGiven),
             (nameof(AHandleOfAMissingEntityThrowsWhenRead), AHandleOfAMissingEntityThrowsWhenRead),
             (nameof(ARequiredSettingWithoutAValueStopsTheStart), ARequiredSettingWithoutAValueStopsTheStart),
-            (nameof(AHandleSettingWaitsForTheEntityClasses), AHandleSettingWaitsForTheEntityClasses) })
+            (nameof(AHandleSettingWaitsForTheEntityClasses), AHandleSettingWaitsForTheEntityClasses),
+            (nameof(AClassCallsServicesWithTypedMethods), AClassCallsServicesWithTypedMethods) })
         {
             try
             {
@@ -3763,5 +3764,77 @@ static class EntityGraphTests
         await rig.Started("hall");
         var started = await rig.Read("hall");
         Check(Status(started) == "running" && started["activationError"] == null && calls.Contains("setup light.kitchen LightEntity"), "once they are pushed it starts: " + started.ToJsonString() + " " + string.Join(", ", calls));
+    }
+
+    /// <summary>The services <see cref="AClassCallsServicesWithTypedMethods"/> calls, as Home Assistant describes them.</summary>
+    const string DimmerServices = """
+        {"light":{"turn_on":{"name":"Turn on","target":{"entity":{"domain":"light"}},"fields":{
+            "brightness_pct":{"name":"Brightness","selector":{"number":{"min":0,"max":100,"unit_of_measurement":"%"}}}}},
+          "turn_off":{"name":"Turn off","target":{"entity":{"domain":"light"}},"fields":{}}},
+         "weather":{"get_forecasts":{"name":"Get forecasts","target":{"entity":{"domain":"weather"}},"response":{"optional":false},"fields":{
+            "type":{"name":"Type","required":true,"selector":{"select":{"options":["daily","hourly"]}}}}}}}
+        """;
+    /// <summary>A provider with Home Assistant's entity classes and <see cref="DimmerServices"/>, for the signature of a class that calls them.</summary>
+    static readonly Lazy<DiagnosticsProvider> DimmerProvider = new(() =>
+    {
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(EntityComponents).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!));
+        if (!provider.UseEntitySchema([.. domains]).Accepted) throw new Exception("The captured entity schema's classes were not installed");
+        provider.UseServiceSchema(ServiceSchemaCatalog.Parse(DimmerServices, _ => { }));
+        return provider;
+    });
+
+    /// <summary>
+    /// A C# entity calls services with the typed methods through its <c>Services</c>: in <c>Start()</c> it turns on the
+    /// light it is given at 30 % and reads a forecast's response; in <c>Stop()</c> it turns the light off, and that call
+    /// completes, Home Assistant answering after the definition has begun to stop, before the code after it runs.
+    /// </summary>
+    static async Task AClassCallsServicesWithTypedMethods()
+    {
+        await using var rig = await HandleRig("csharp-typed-services", ("light.kitchen", "off"));
+        rig.Api.SetServiceDescriptions(DimmerServices, started: true);
+        await rig.Api.RetriesDone();
+        var calls = Calls();
+        var made = new ConcurrentQueue<(string Service, JsonObject Payload, bool Response)>();
+        var (call, respond) = (PyInterop.CallService, PyInterop.CallServiceWithResponse);
+        PyInterop.CallService = (domain, service, json, done, failed) => { made.Enqueue((domain + "." + service, JsonNode.Parse(json!)!.AsObject(), false)); _ = Task.Delay(50).ContinueWith(_ => done?.Invoke(), TaskScheduler.Default); };
+        PyInterop.CallServiceWithResponse = (domain, service, json, done, _) => { made.Enqueue((domain + "." + service, JsonNode.Parse(json!)!.AsObject(), true)); done("""{"weather.home":{"forecast":[{"temperature":3}]}}"""); };
+        try
+        {
+            var source = $$"""
+                public class Dimmer : SharpSensor
+                {
+                    {{NoteMethod}}
+                    [Setting] public LightEntity Light { get; set; }
+                    protected override async Task Start()
+                    {
+                        await Services.Light.TurnOn(Light, brightnessPct: 30);
+                        var forecast = await Services.Weather.GetForecasts("weather.home", type: "daily");
+                        Note("forecast " + forecast.GetProperty("weather.home").GetProperty("forecast")[0].GetProperty("temperature").GetInt32());
+                    }
+                    protected override async Task Stop()
+                    {
+                        await Services.Light.TurnOff(Light);
+                        Note("after the call");
+                    }
+                }
+                """;
+            var node = CSharp("csharp_entity", "dimmer", "dimmer", source, new JsonObject { ["Light"] = Lit("entity_id:light", "light.kitchen") }, provider: DimmerProvider.Value);
+            var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [node])));
+            Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+            await rig.Started("hall");
+            string Made() => string.Join(", ", made.Select(m => $"{m.Service} {m.Payload.ToJsonString()} {m.Response}"));
+            Check(made.Count == 2 && made.First() is var on && on.Service == "light.turn_on" && !on.Response && JsonNode.DeepEquals(on.Payload, JsonNode.Parse("""{"entity_id":"light.kitchen","brightness_pct":30}"""))
+                && made.Last() is var forecast && forecast.Service == "weather.get_forecasts" && forecast.Response && JsonNode.DeepEquals(forecast.Payload, JsonNode.Parse("""{"entity_id":"weather.home","type":"daily"}""")),
+                "Start() turned the light on at 30 % and asked for the forecast: " + Made());
+            Check(calls.SequenceEqual(["forecast 3"]), "the forecast's response reached the class: " + string.Join(", ", calls));
+            await rig.Ok(new { operation = "set_enabled", id = "hall", enabled = false });
+            await EntityTestHome.Until(() => calls.Count == 2, "Stop() went on after its call: " + string.Join(", ", calls));
+            Check(made.Count == 3 && made.Last() is var off && off.Service == "light.turn_off" && !off.Response && JsonNode.DeepEquals(off.Payload, JsonNode.Parse("""{"entity_id":"light.kitchen"}""")),
+                "Stop() turned the light off: " + Made());
+            Check(calls.SequenceEqual(["forecast 3", "after the call"]), "the call from Stop() completed before the code after it: " + string.Join(", ", calls));
+            Check(!rig.Home.Logs().Any(l => l.Contains("stopping failed", StringComparison.Ordinal)), "stopping failed: " + Lines(rig.Home.Logs()));
+        }
+        finally { (PyInterop.CallService, PyInterop.CallServiceWithResponse) = (call, respond); }
     }
 }

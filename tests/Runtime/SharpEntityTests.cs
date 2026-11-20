@@ -40,6 +40,14 @@ static class SharpEntityTests
         public void Write(string message) => Log(message, PyLogLevel.Warn);
         public string Read(string entityId) => State(entityId).State;
         public Task<JsonElement?> Call(string service, JsonNode? target, JsonObject? data) => CallService(service, target, data);
+        public Task<JsonElement?> Typed(string service, JsonNode? target, JsonObject? data, bool response = false) => Services.CallService(service, target, data, response);
+    }
+
+    // Calls a service through Services in its constructor, before any host is attached.
+    sealed class Eager : SharpSensor
+    {
+        public readonly Task<JsonElement?> Pending;
+        public Eager() : base("eager") { Pending = Services.CallService("light.turn_on", "light.porch"); }
     }
 
     sealed class Relay : SharpSwitch
@@ -238,6 +246,27 @@ static class SharpEntityTests
             Check(calls.SequenceEqual(["light.turn_on {\"brightness\":40,\"entity_id\":\"light.kitchen\"}", "light.turn_off {\"area_id\":\"kitchen\"}"]), "service calls: " + string.Join(", ", calls));
             await ThrowsAsync<InvalidOperationException>(() => poller.Call("light.turn_on", new JsonObject { ["brightness"] = 1 }, null), "a target key that is not one");
             await ThrowsAsync<InvalidOperationException>(() => poller.Call("turn_on", null, null), "a service without a domain");
+
+            // Services, which the typed methods call through, is the component's own CallService: the same payload, the
+            // same refusals, a response when asked for, and before a host is attached (as in a constructor) it calls too.
+            calls.Clear();
+            Check(await poller.Typed("light.turn_on", "light.kitchen", new() { ["brightness"] = 40 }) == null, "no response through Services unless asked");
+            await poller.Typed("light.turn_off", new JsonObject { ["area_id"] = "kitchen" }, null);
+            Check(calls.SequenceEqual(["light.turn_on {\"brightness\":40,\"entity_id\":\"light.kitchen\"}", "light.turn_off {\"area_id\":\"kitchen\"}"]), "service calls through Services: " + string.Join(", ", calls));
+            var bad = await ThrowsAsync<InvalidOperationException>(() => poller.Typed("light.turn_on", new JsonObject { ["brightness"] = 1 }, null), "a target key that is not one, through Services");
+            var direct = await ThrowsAsync<InvalidOperationException>(() => poller.Call("light.turn_on", new JsonObject { ["brightness"] = 1 }, null), "a target key that is not one");
+            Check(bad.Message == direct.Message, $"Services refuses as CallService does: {bad.Message} / {direct.Message}");
+            await ThrowsAsync<InvalidOperationException>(() => poller.Typed("turn_on", null, null), "a service without a domain, through Services");
+            var respond = PyInterop.CallServiceWithResponse;
+            PyInterop.CallServiceWithResponse = (domain, service, json, done, _) => { calls.Add($"{domain}.{service} {json} response"); done("""{"todo.shopping":{"items":[]}}"""); };
+            try
+            {
+                var answer = await poller.Typed("todo.get_items", "todo.shopping", null, response: true);
+                Check(answer?.GetProperty("todo.shopping").GetProperty("items").GetArrayLength() == 0 && calls.Last() == "todo.get_items {\"entity_id\":\"todo.shopping\"} response", "a response through Services: " + string.Join(", ", calls));
+            }
+            finally { PyInterop.CallServiceWithResponse = respond; }
+            var eager = new Eager();
+            Check(await eager.Pending.WaitAsync(TimeSpan.FromSeconds(5)) == null && calls.Last() == "light.turn_on {\"entity_id\":\"light.porch\"}", "a call through Services in a constructor: " + string.Join(", ", calls));
         }
         finally { PyInterop.CallService = previous; }
 
