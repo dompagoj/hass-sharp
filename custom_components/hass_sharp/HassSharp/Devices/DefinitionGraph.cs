@@ -120,7 +120,7 @@ internal static class DefinitionGraph
         var wired = edges.Where(e => VisualNodeCatalog.Text(e, "kind") == "data" && VisualNodeCatalog.Text(e, "target") == id).Select(e => VisualNodeCatalog.Text(e, "targetPort")).ToHashSet(StringComparer.Ordinal);
         var arguments = config?["arguments"] as JsonObject;
         // Its Device pin is no state value (VisualNodeCatalog.StateInputs): a wire into it gives the node no state flow.
-        if (VisualNodeCatalog.DataInputs(node, null, snapshot).Where(input => !VisualNodeCatalog.Structural(input.Value)).Any(input => wired.Contains(input.Key) || arguments?[input.Key] is JsonObject value && VisualNodeCatalog.Text(value, "kind") != "unset"))
+        if (VisualNodeCatalog.StateInputs(node, snapshot).Any(input => wired.Contains(input.Key) || arguments?[input.Key] is JsonObject value && VisualNodeCatalog.Text(value, "kind") != "unset"))
             flows.Add(Flow("state", "state", null, "State", Recorded("state", false)));
         var started = edges.Where(e => VisualNodeCatalog.Text(e, "kind") != "data" && VisualNodeCatalog.Text(e, "source") == id).Select(e => VisualNodeCatalog.Text(e, "port", "next")).ToHashSet(StringComparer.Ordinal);
         foreach (var port in VisualNodeCatalog.ExecutionPorts(node, snapshot).Where(started.Contains))

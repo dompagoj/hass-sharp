@@ -399,12 +399,16 @@ export function settingType(catalog: VisualCatalogSnapshot, key: string): string
 }
 /**
  * The value nodes upstream of `start` through value wires: each once, depth first in the order of `data`, a node before
- * those it reads; the walk stops at a step. `data` holds value wires whose two ends are in `nodes`. Mirrors
+ * those it reads; the walk stops at a step. `data` holds value wires whose two ends are in `nodes`; a wire into a
+ * structural input (an Entity node's Device pin, among a node's `inputs`) carries no value and is not walked. Mirrors
  * `VisualNodeCatalog.ValueUpstream`.
  */
-export function valueUpstream(start: GraphNode, nodes: ReadonlyMap<string, GraphNode>, data: readonly { source: string; target: string }[], pure: (node: GraphNode) => boolean): GraphNode[] {
+export function valueUpstream(start: GraphNode, nodes: ReadonlyMap<string, GraphNode>, data: readonly { source: string; target: string; targetPort: string }[], pure: (node: GraphNode) => boolean, inputs: (node: GraphNode) => Record<string, InputSpec>): GraphNode[] {
   const found: GraphNode[] = [], seen = new Set([start.id])
-  const readers = (node: GraphNode) => data.filter(e => e.target === node.id).map(e => nodes.get(e.source)!)
+  const readers = (node: GraphNode) => {
+    const ports = inputs(node)
+    return data.filter(e => e.target === node.id && !(Object.hasOwn(ports, e.targetPort) && structural(ports[e.targetPort]))).map(e => nodes.get(e.source)!)
+  }
   // An explicit stack: a long chain of value nodes must not overflow the call stack.
   const stack: { list: GraphNode[]; next: number }[] = [{ list: readers(start), next: 0 }]
   while (stack.length) {
@@ -1702,7 +1706,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // on no input: a wire into it is allowed (connectData), at the cost it names.
     const readers = new Set<string>()
     for (const state of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity' && Object.keys(stateInputs(n, catalog)).some(p => supplied(n, p))).sort(byId))
-      for (const reader of valueUpstream(state, nodes, data, pure)) {
+      for (const reader of valueUpstream(state, nodes, data, pure, node => dataInputs(node))) {
         if (readers.has(reader.id)) continue
         const wired = Object.entries(dataInputs(reader)).find(([port, input]) => {
           const wire = incoming.get(key(reader.id, port))

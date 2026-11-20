@@ -259,6 +259,15 @@ static class EntityGraphGeneratorTests
             [E("t", "r"), D("r", "and", "left"), D("e", "and", "right"), D("and", "s", "is_on")]);
         Check(Up(step, "s") == "and, e", $"the walk stops at a step: {Up(step, "s")}");
         Same(StateDependencies.Of(step, "s", BuiltIn), ["binary_sensor.kept"], "a step's chosen entity is no dependency");
+        // A Device wire is no value wire into the State: what is upstream, and what it depends on, is its value's only. A
+        // value node wired into the Device pin (which the validators refuse) is not walked either.
+        var device = Entity([N("plug", "device", new { key = "plug", name = "Hall plug" }), Is("e", "binary_sensor.door"), State("s", "door")],
+            [D("plug", "s", "device", "entities"), D("e", "s", "is_on")]);
+        Check(Up(device, "s") == "e", $"a Device wire is not walked: {Up(device, "s")}");
+        Same(StateDependencies.Of(device, "s", BuiltIn), ["binary_sensor.door"], "a Device wire adds no dependency");
+        var stray = Entity([Is("x", "binary_sensor.stray"), Is("e", "binary_sensor.door"), State("s", "door")], [D("x", "s", "device"), D("e", "s", "is_on")]);
+        Check(Up(stray, "s") == "e", $"a value wired into the Device pin is not walked: {Up(stray, "s")}");
+        Same(StateDependencies.Of(stray, "s", BuiltIn), ["binary_sensor.door"], "a value wired into the Device pin adds no dependency");
         // A Setting is a value node, upstream like any other, and chooses no entity.
         var setting = Case("entity graph: sensor state from a setting");
         Check(Up(setting, "s") == "k", $"a Setting is upstream: {Up(setting, "s")}");

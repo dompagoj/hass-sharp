@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
@@ -165,6 +165,30 @@ it('a new Device node has no step pins and no state', () => {
   expect([view.execIn, view.next, view.footer, view.unreachable]).toEqual([undefined, undefined, undefined, false])
   expect(view.title).toBe('Hall plug')
   expect(view.rows.map(row => row.output?.label)).toEqual(['Entities'])
+})
+
+it('a Device wire is not walked upstream of an entity, and makes no run of it a state flow\'s', () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  graph = add(graph, 'entity', 'door', { key: 'door', domain: 'binary_sensor', name: 'Door' })
+  graph = add(graph, 'entity_is', 'e', { entity: lit('entity_id', 'binary_sensor.door'), state: lit('string', 'on') })
+  graph = add(graph, 'entity_is', 'x', { entity: lit('entity_id', 'binary_sensor.stray'), state: lit('string', 'on') })
+  graph = connectData(connectData(graph, 'plug', 'entities', 'door', 'device'), 'e', 'value', 'door', 'is_on')
+  const upstream = (g: typeof graph) => {
+    const nodes = new Map(g.nodes.map(n => [n.id, n]))
+    const data = g.edges.flatMap(e => e.kind === 'data' ? [e] : [])
+    return valueUpstream(nodes.get('door')!, nodes, data, n => isPure(n), n => dataInputs(n)).map(n => n.id)
+  }
+  // What is upstream of the entity is its value's only: the Device node is not walked.
+  expect(upstream(graph)).toEqual(['e'])
+  expect(validateGraph(graph).filter(d => d.severity === 3)).toEqual([])
+  // Nor is a value wired into the Device pin (which the validators refuse).
+  const stray = { ...graph, edges: [...graph.edges.filter(e => !(e.kind === 'data' && e.targetPort === 'device')), { id: 'x.value:door.device', kind: 'data' as const, source: 'x', sourcePort: 'value', target: 'door', targetPort: 'device' }] }
+  expect(upstream(stray)).toEqual(['e'])
+  // A Device node is no root: the run names are the entity's flows, and none is the device's.
+  const names = definitionNames(graph, nodeCatalog)!
+  expect(Object.values(names.roots!).filter(name => name.startsWith('Hall plug'))).toEqual([])
+  expect(Object.values(names.roots!)).toContain('Door: State')
+  expect(names.entities!.map(e => e.key)).toEqual(['door'])
 })
 
 /** Copies the steps `ids` with the clipboard and pastes them beside where they were. */

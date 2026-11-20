@@ -709,7 +709,7 @@ public static class VisualGraphValidator
             // at the cost it names.
             var readers = new HashSet<string>(StringComparer.Ordinal);
             foreach (var state in nodes.Values.Where(n => Declares(Spec(n), "entity") && StateInputs(n, Root).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
-                foreach (var reader in ValueUpstream(state, nodes, data, Pure))
+                foreach (var reader in ValueUpstream(state, nodes, data, Pure, n => DataInputs(n)))
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
                         errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
@@ -900,7 +900,7 @@ public static class VisualGraphValidator
             // An input that accepts no known type a value can have (a Constant whose Type is missing, unknown or a device) is
             // reported where that type is set.
             if (type != null && ValueType(type) && Strings(spec["types"]).Any(ValueType) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t)))
-                Error(Id(node), Kind(node) == "constant" && port == "value" ? Words.ConstantRetyped(Root, label, type, Strings(spec["types"]).First(KnownType)) : Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
+                Error(Id(node), Kind(node) == "constant" && port == "value" ? Words.ConstantRetyped(Root, label, type, Strings(spec["types"]).First(ValueType)) : Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
             return type;
         }
         readonly Dictionary<(string Node, string Terminal, string Owner), bool> terminalMemo = [];

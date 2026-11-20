@@ -178,13 +178,17 @@ public sealed class VisualRuntime
         var sources=new Dictionary<string,List<string>>();
         foreach(var e in graph["edges"]!.AsArray().OfType<JsonObject>()) {
             if(Text(e,"kind")=="data") {
+                // A wire into a structural input (an Entity node's Device pin) says what belongs to what and carries no value:
+                // it is no value to prepare or read.
+                if(nodes.ContainsKey(Text(e,"target"))&&VisualNodeCatalog.Structural((InputSpecs(Text(e,"target")) as JsonObject)?[Text(e,"targetPort")]))continue;
                 data[(Text(e,"target"),Text(e,"targetPort"))]=(Text(e,"source"),Text(e,"sourcePort"));
                 if(!sources.TryGetValue(Text(e,"target"),out var list))sources[Text(e,"target")]=list=[];list.Add(Text(e,"source"));
             }
             else {var port=Text(e,"port","next");if(Text(nodes[Text(e,"source")],"kind")=="condition" && port=="next")port="true";flow[(Text(e,"source"),port)]=Text(e,"target");}
         }
-        // Each step's value nodes, through chains of value nodes, each after the ones it reads.
-        foreach(var id in nodes.Keys.Where(id=>!Pure(id))) {
+        // Each step's value nodes, through chains of value nodes, each after the ones it reads. A declaration (a Device node)
+        // is no step: it has none, and is never walked (see Walk).
+        foreach(var id in nodes.Keys.Where(id=>!Pure(id)&&!Declared(id))) {
             var order=new List<string>();var seen=new HashSet<string>(StringComparer.Ordinal);
             void Visit(string node){foreach(var source in sources.GetValueOrDefault(node)??[])if(Pure(source)&&seen.Add(source)){Visit(source);order.Add(source);}}
             Visit(id);if(order.Count>0)pureInputs[id]=order.ToArray();
@@ -350,6 +354,8 @@ public sealed class VisualRuntime
     }
     JsonNode? Spec(string id)=>catalog["nodes"]?[Text(nodes[id],"kind")];
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
+    /// <summary>Whether the node is a declaration (a Device node): neither a step nor a value, it is never walked or worked out.</summary>
+    bool Declared(string id)=>VisualNodeCatalog.Declaration(Spec(id) as JsonObject);
     // A Custom C# node's pins are its signature's; a Set state's or Entity node's its entity's (see EntityInputs); every other node's are its kind's.
     JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Text(Spec(id),"dynamicInputs") is "entity" or "declared"?EntityInputs(id):Spec(id)?["inputs"];
     readonly Dictionary<string,JsonObject> entityInputs=[];
@@ -632,7 +638,10 @@ public sealed class VisualRuntime
         while(id!=null) {
             external.ThrowIfCancellationRequested();
             if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
-            scope.CancellationToken.ThrowIfCancellationRequested();var n=nodes[id];var kind=Text(n,"kind");var cfg=n["config"]!;string? next=Next(id);
+            scope.CancellationToken.ThrowIfCancellationRequested();
+            // No step order wire goes into or out of a declaration and none is a root, so no walk reaches one.
+            if(Declared(id))throw new InvalidOperationException($"{Title(id)} is a device and is not part of the run order");
+            var n=nodes[id];var kind=Text(n,"kind");var cfg=n["config"]!;string? next=Next(id);
             VisualTrace.Event? ev=null;var port="next";
             // The step's event follows the events of its value nodes; it is started even when one of them failed.
             VisualTrace.Event? Begin()=>trace==null?null:scope.Trace=trace.Start(scope.Frame,id);

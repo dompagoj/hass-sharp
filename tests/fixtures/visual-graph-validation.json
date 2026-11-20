@@ -39110,7 +39110,12 @@
           "config": {
             "key": "lamp",
             "domain": "light",
-            "name": "Lamp"
+            "name": "Lamp",
+            "arguments": {
+              "device": {
+                "kind": "unset"
+              }
+            }
           }
         },
         {

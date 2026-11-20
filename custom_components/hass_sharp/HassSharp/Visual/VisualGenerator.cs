@@ -406,6 +406,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             Add("await global::System.Threading.Tasks.Task.CompletedTask;");
             Add($"switch({nodeId}) {{");
             foreach(var node in nodes) {
+                // A declaration (a Device node) is never run: it has no case, and the runtime never dispatches it.
+                if(VisualNodeCatalog.Declaration(VisualNodeCatalog.Spec(node,snapshot)))continue;
                 var kind=Text(node,"kind");var id=Text(node,"id");current=id;var method=MethodOf(node);if(method==null&&!compiledConversions.ContainsKey(id))continue;
                 var start=lines.Count+1;Add($"case {Q(id)}: {{");
                 if(compiledConversions.TryGetValue(id,out var conversion))

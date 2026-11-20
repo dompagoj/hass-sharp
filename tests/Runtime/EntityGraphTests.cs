@@ -85,6 +85,10 @@ static class EntityGraphTests
             (nameof(AnEntityLeavingTheDefinitionIsForgotten), AnEntityLeavingTheDefinitionIsForgotten),
             (nameof(AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther), AnEntityGivenAnotherDomainDoesNotComeBackAsTheOther),
             (nameof(AnUnavailableEntityIsNotRemembered), AnUnavailableEntityIsNotRemembered),
+            (nameof(AnEntityOnADeviceKeepsItsPushedState), AnEntityOnADeviceKeepsItsPushedState),
+            (nameof(AnEntityOnADeviceWorksOutItsState), AnEntityOnADeviceWorksOutItsState),
+            (nameof(ADeviceNodeIsNeverRun), ADeviceNodeIsNeverRun),
+            (nameof(AnEntityOnADeviceIsHandedOverToANewRevision), AnEntityOnADeviceIsHandedOverToANewRevision),
             (nameof(ACommandFlowThatEndsAtAStopStepSucceeds), ACommandFlowThatEndsAtAStopStepSucceeds),
             (nameof(FailingSetupAndTriggerFlowsAreLoggedByName), FailingSetupAndTriggerFlowsAreLoggedByName),
             (nameof(AnAutomationsFailureIsLoggedAsBefore), AnAutomationsFailureIsLoggedAsBefore),
@@ -2032,6 +2036,120 @@ static class EntityGraphTests
     // ---- How a definition's flows end ----
 
     /// <summary>A command whose flow ends at a Stop step has succeeded: the state the flow set before it is pushed.</summary>
+    // ---- An entity on a Device node runs as one without the wire ----
+
+    /// <summary>
+    /// The definition with a Device node <c>plug</c> (Hall plug) and, unless <paramref name="wired"/> is false, a wire from
+    /// its Entities pin to the Device pin of the Entity node <paramref name="hub"/>, whose config then carries the pin's
+    /// marker as the editor saves it (<c>arguments.device</c> unset, beside the wire).
+    /// </summary>
+    static JsonObject OnADevice(JsonObject definition, string hub, bool wired = true)
+    {
+        var graph = definition["logic"]!["graph"]!.AsObject();
+        graph["nodes"]!.AsArray().Insert(0, N("plug", "device", new { key = "plug", name = "Hall plug" }));
+        if (!wired) return definition;
+        graph["edges"]!.AsArray().Add(Data("plug", hub, "device", "entities"));
+        var config = graph["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == hub)!["config"]!.AsObject();
+        if (config["arguments"] is not JsonObject arguments) config["arguments"] = arguments = [];
+        arguments["device"] = JsonSerializer.SerializeToNode(Unset);
+        return definition;
+    }
+    /// <summary>The flows of the definition's graph, as the host runs them (<see cref="DefinitionGraph.Roots"/>).</summary>
+    static DefinitionRoots Roots(JsonObject definition) => DefinitionGraph.Roots(definition["logic"]!["graph"]!.AsObject(), VisualCatalogSnapshot.BuiltIn);
+
+    /// <summary>
+    /// A switch on a Device node whose state its Turn on flow pushes saves without a problem, and its Device wire gives it
+    /// no state flow: it comes back on after a restart, as one without the wire does.
+    /// </summary>
+    static async Task AnEntityOnADeviceKeepsItsPushedState()
+    {
+        await using var rig = await Rig.Start("device-restore");
+        var definition = OnADevice(Relay(), "relay");
+        var roots = Roots(definition);
+        Check(roots.States.Count == 0 && !roots.StateEntities.Values.Contains("relay"), "the Device wire gives the switch no state flow: " + string.Join(", ", roots.States));
+        var saved = await rig.Save("relay", definition);
+        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "the switch on a device saves without a problem and runs: " + saved.ToJsonString());
+        var stored = NodeOf((await rig.Read("relay")), "relay")["config"]!["arguments"]!["device"];
+        Check(JsonNode.DeepEquals(stored, JsonSerializer.SerializeToNode(Unset)), "the Device pin's marker is kept: " + stored?.ToJsonString());
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        await rig.Flush();
+        var batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true)), "the switch on a device comes back on: " + Lines(after.Select(s => s.ToJsonString())));
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "it takes commands", batches);
+    }
+
+    /// <summary>
+    /// A binary sensor on a Device node whose On is wired from a value works out its state from that value, and again
+    /// when the entity the value reads changes; its Device wire is not read.
+    /// </summary>
+    static async Task AnEntityOnADeviceWorksOutItsState()
+    {
+        await using var rig = await Rig.Start("device-state", ("binary_sensor.motion", "on"));
+        var graph = Graph("Motion", [Entity("s", "motion", "binary_sensor", new { name = "Motion" }),
+            N("is", "entity_is", new JsonObject { ["entity"] = Lit("entity_id", "binary_sensor.motion"), ["state"] = Lit("string", "on") })], Data("is", "s", "is_on"));
+        var definition = OnADevice(Definition("Motion", graph), "s");
+        var states = Roots(definition).StateEntities.Values;
+        Check(states.SequenceEqual(["motion"]), "the wired On gives it its state flow, and the Device wire adds none: " + string.Join(", ", states));
+        var saved = await rig.Save("motion", definition);
+        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "the sensor on a device saves without a problem and runs: " + saved.ToJsonString());
+        await rig.Until("motion:motion", s => Available(s) && Is(s, "is_on", true), "the state flow sets On");
+        var batches = rig.Batches;
+        await rig.Change("binary_sensor.motion", "off");
+        await rig.Until("motion:motion", s => Available(s) && Is(s, "is_on", false), "the state flow follows its source", batches);
+        Check(rig.Home.Logs(PyLogLevel.Warn).Length == 0 && rig.Home.Logs(PyLogLevel.Error).Length == 0, "the state flow failed: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>
+    /// A Device node with nothing wired to it saves and starts, and the definition's other flows run; the generated source
+    /// has a case for the Custom C# step its flow runs and none for the Device node, which is never run.
+    /// </summary>
+    static async Task ADeviceNodeIsNeverRun()
+    {
+        await using var rig = await Rig.Start("device-never-run");
+        const string note = "public static class CustomNode\n{\n    [Node(\"Note\")]\n    public static void Run(NodeContext context) { }\n}";
+        var definition = OnADevice(Relay(before: [Custom("note", note)]), "relay", wired: false);
+        definition["logic"]!["graph"] = Derived(definition["logic"]!["graph"]!.AsObject());
+        var saved = await rig.Save("relay", definition);
+        Check(saved["active"]!.GetValue<bool>(), "the definition with a Device node runs: " + saved.ToJsonString());
+        var source = saved["document"]!["source"]!.GetValue<string>();
+        Check(source.Contains("case \"note\":", StringComparison.Ordinal), "the Custom C# step has its case");
+        Check(!source.Contains("case \"plug\":", StringComparison.Ordinal), "the generated source has a case for the Device node");
+        await rig.Until("relay:relay", s => Available(s), "the switch starts");
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "its Turn on flow runs");
+        var automationId = saved["document"]!["automationId"]!.GetValue<string>();
+        await EntityTestHome.Until(() => rig.History(automationId).Any(r => r["cause"]!.GetValue<string>() == "Command" && r["status"]!.GetValue<string>() == "Succeeded"),
+            "the command's run succeeded: " + Lines(rig.History(automationId).Select(r => r.ToJsonString())));
+        Check(rig.Home.Logs(PyLogLevel.Warn).Length == 0 && rig.Home.Logs(PyLogLevel.Error).Length == 0, "the definition logged a failure: " + Lines(rig.Home.Logs()));
+    }
+
+    /// <summary>
+    /// A switch on a Device node a command turned on stays on through a save of a new revision, as one without the wire
+    /// does: its pushed state is handed over, every push after the save is on, and its commands reach the new revision.
+    /// </summary>
+    static async Task AnEntityOnADeviceIsHandedOverToANewRevision()
+    {
+        await using var rig = await Rig.Start("device-carry");
+        var definition = OnADevice(Relay(), "relay");
+        await rig.Save("relay", definition);
+        await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", null), "the switch starts unknown");
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", true), "the switch is on");
+        var batches = rig.Batches;
+        var saved = await rig.Save("relay", Touched(definition), 1);
+        Check(saved["active"]!.GetValue<bool>() && rig.Home.Syncs("relay").Length == 2, "the new revision runs: " + saved.ToJsonString());
+        await rig.Started("relay");
+        var after = rig.Pushed("relay:relay", batches);
+        Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", true)), "every push after the save is on: " + Lines(after.Select(s => s.ToJsonString())));
+        await rig.Api.EntityCommand("relay:relay", "turn_off", null);
+        await rig.Until("relay:relay", s => Is(s, "is_on", false), "the new revision takes the command", batches);
+    }
+
     static async Task ACommandFlowThatEndsAtAStopStepSucceeds()
     {
         await using var rig = await Rig.Start("stop-command");

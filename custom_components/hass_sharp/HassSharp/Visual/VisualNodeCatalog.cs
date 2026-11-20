@@ -58,8 +58,10 @@ public static class VisualNodeCatalog
     /// The node's data inputs (<see cref="DataInputs"/> under <paramref name="catalog"/>) without the structural ones: an
     /// Entity node's or a Set state's state values. Mirrored by <c>stateInputs</c> in <c>contract.ts</c>.
     /// </summary>
-    internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, JsonObject catalog) =>
-        DataInputs(node, null, VisualCatalogSnapshot.BuiltIn.WithRoot(catalog)).Where(p => !Structural(p.Value)).ToList();
+    internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, JsonObject catalog) => StateInputs(node, VisualCatalogSnapshot.BuiltIn.WithRoot(catalog));
+    /// <summary>The node's state values (<see cref="StateInputs(JsonObject, JsonObject)"/>) under the catalog of <paramref name="snapshot"/>.</summary>
+    internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, VisualCatalogSnapshot snapshot) =>
+        DataInputs(node, null, snapshot).Where(p => !Structural(p.Value)).ToList();
     /// <summary>
     /// The entity an Entity node declares, as a definition lists one (the shape <see cref="SharpDomains.Create"/> reads):
     /// a copy of its settings without its run history and state values, and without a name that is blank once trimmed
@@ -131,14 +133,19 @@ public static class VisualNodeCatalog
     /// <summary>
     /// The value nodes upstream of <paramref name="start"/> through value wires: each once, depth first in the order of
     /// <paramref name="data"/>, a node before those it reads; the walk stops at a step (whose output is read as it is).
-    /// <paramref name="data"/> holds the graph's value wires whose two ends are in <paramref name="nodes"/>. Mirrored by
-    /// <c>valueUpstream</c> in <c>contract.ts</c>.
+    /// <paramref name="data"/> holds the graph's value wires whose two ends are in <paramref name="nodes"/>; a wire into a
+    /// structural input (an Entity node's Device pin, among a node's <paramref name="inputs"/>) carries no value and is
+    /// not walked. Mirrored by <c>valueUpstream</c> in <c>contract.ts</c>.
     /// </summary>
-    internal static List<JsonObject> ValueUpstream(JsonObject start, IReadOnlyDictionary<string, JsonObject> nodes, IReadOnlyList<JsonObject> data, Func<JsonObject, bool> pure)
+    internal static List<JsonObject> ValueUpstream(JsonObject start, IReadOnlyDictionary<string, JsonObject> nodes, IReadOnlyList<JsonObject> data, Func<JsonObject, bool> pure, Func<JsonObject, JsonObject> inputs)
     {
         var found = new List<JsonObject>(); var seen = new HashSet<string>(StringComparer.Ordinal) { Text(start, "id") };
         var stack = new Stack<IEnumerator<JsonObject>>();
-        IEnumerator<JsonObject> Readers(JsonObject node) => data.Where(e => Text(e, "target") == Text(node, "id")).Select(e => nodes[Text(e, "source")]).GetEnumerator();
+        IEnumerator<JsonObject> Readers(JsonObject node)
+        {
+            var ports = inputs(node);
+            return data.Where(e => Text(e, "target") == Text(node, "id") && !Structural(ports[Text(e, "targetPort")])).Select(e => nodes[Text(e, "source")]).GetEnumerator();
+        }
         // An explicit stack: a long chain of value nodes must not overflow the thread's stack.
         stack.Push(Readers(start));
         while (stack.TryPeek(out var current))
@@ -151,12 +158,12 @@ public static class VisualNodeCatalog
         }
         return found;
     }
-    /// <summary>The value nodes upstream of the graph's node <paramref name="id"/> (<see cref="ValueUpstream(JsonObject, IReadOnlyDictionary{string, JsonObject}, IReadOnlyList{JsonObject}, Func{JsonObject, bool})"/>), as the validators read the graph.</summary>
+    /// <summary>The value nodes upstream of the graph's node <paramref name="id"/> (<see cref="ValueUpstream(JsonObject, IReadOnlyDictionary{string, JsonObject}, IReadOnlyList{JsonObject}, Func{JsonObject, bool}, Func{JsonObject, JsonObject})"/>), as the validators read the graph.</summary>
     internal static List<JsonObject> ValueUpstream(JsonObject graph, string id, VisualCatalogSnapshot snapshot)
     {
         var nodes = GraphNodes(graph);
         if (!nodes.TryGetValue(id, out var start)) return [];
-        return ValueUpstream(start, nodes, ValueWires(graph, nodes), n => IsPure(n, Spec(n, snapshot)));
+        return ValueUpstream(start, nodes, ValueWires(graph, nodes), n => IsPure(n, Spec(n, snapshot)), n => DataInputs(n, null, snapshot));
     }
     /// <summary>
     /// Whether an input (as <see cref="DataInputs"/> gives it) takes nothing but entity ids: every one of its types is

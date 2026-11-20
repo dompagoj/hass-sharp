@@ -19,7 +19,8 @@ internal static class StateDependencies
     /// connected adds none: the entity it is given is read as it is. The validators warn on such a reader with
     /// <c>state.dynamicSource</c>, unless the wire comes from a Constant of an entity id type
     /// (<see cref="VisualNodeCatalog.FollowedSource"/>), whose own chosen entity is counted here. The walk stops at a step,
-    /// so neither what a step reads nor what is upstream of it is a dependency. Empty for an unknown node or a graph of
+    /// so neither what a step reads nor what is upstream of it is a dependency. A structural wire (a Device wire) carries no
+    /// value: it is not walked, and a structural input is no reader's. Empty for an unknown node or a graph of
     /// the wrong shape; meaningful for a valid graph only.
     /// </summary>
     internal static IReadOnlyList<string> Of(JsonObject graph, string stateNodeId, VisualCatalogSnapshot snapshot)
@@ -31,7 +32,7 @@ internal static class StateDependencies
         {
             var id = VisualNodeCatalog.Text(node, "id");
             foreach (var (port, input) in VisualNodeCatalog.DataInputs(node, null, snapshot))
-                if (!connected.Contains((id, port)) && VisualNodeCatalog.TakesOnlyEntityIds(input) && VisualNodeCatalog.InputValue(node, port, snapshot) is JsonObject operand &&
+                if (!VisualNodeCatalog.Structural(input) && !connected.Contains((id, port)) && VisualNodeCatalog.TakesOnlyEntityIds(input) && VisualNodeCatalog.InputValue(node, port, snapshot) is JsonObject operand &&
                     VisualNodeCatalog.Text(operand, "kind") == "literal" && operand["value"] is JsonValue value && value.TryGetValue<string>(out var entity) && entity.Length > 0)
                     found.Add(entity);
         }

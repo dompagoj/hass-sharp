@@ -463,6 +463,12 @@ static class EntityGraphRuntimeTests
         definition.Calls.Clear();
         await compiled.Run("setup", definition);
         Same(definition.Calls, ["available relay yes"], "When started runs, and the Device node is not part of it");
+        // The Device node is never walked: a run started at it (no generated method starts one) is refused in words, and
+        // never reaches the compiled handler, whose answer to it would be "Unknown compiled node".
+        var runtime = new VisualRuntime(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), [], TriggerPayload.Manual(), CancellationToken.None,
+            (_, _, _) => throw new InvalidOperationException("Unknown compiled node"));
+        var refused = await Fails(() => runtime.RunAsync("plug"), "a run started at the Device node");
+        Check(refused.Message == "Hall plug is a device and is not part of the run order", "a run started at the Device node is refused in words: " + refused.Message);
     }
 
     /// <summary>A Setting is the definition's value, as text, true or false, or a number.</summary>
