@@ -61,6 +61,7 @@ static class CustomNodeTests
             ClassTitles();
             ClassProblems();
             RequiredSettingsDrawNoWarning();
+            NodeCodeNamesADomainByHassDomains();
             TwoNodesOneClassName();
             NothingRuns();
             ClassNodesInAGraph();
@@ -523,6 +524,15 @@ static class CustomNodeTests
         var step = Compiled("public class Helper : SharpDevice\n{\n    [Setting] public string Host { get; set; }\n}\npublic static class CustomNode\n{\n    [Node(\"Take\")]\n    public static void Run(string value) { }\n}");
         Check(step.Valid && NullWarned(step.Diagnostics) == "Host", "a Custom C# step's code keeps its nullability warnings: " + Messages(step.Diagnostics));
         Console.WriteLine("PASS required settings: no nullability warning for a required setting of a C# entity's or C# device's class or a library's class, with or without a constructor; a helper class's setting, a hidden base property and every other property keep it");
+    }
+
+    // Node code names the domain of one of HassSharp's entity types by HassDomains, which it reaches without a using line.
+    static void NodeCodeNamesADomainByHassDomains()
+    {
+        const string source = "public class Lamp : SharpLight\n{\n    public string Kind => HassDomains.Light;\n    public bool IsLight(Entity entity) => entity.EntityId.StartsWith(HassDomains.Light + \".\", StringComparison.Ordinal);\n}";
+        var lamp = ClassCompiled("csharp_entity", source);
+        Check(lamp.Valid && lamp.Diagnostics.IsEmpty, "a C# entity's class reads HassDomains.Light with no diagnostics: " + Messages(lamp.Diagnostics));
+        Console.WriteLine("PASS custom nodes: a C# entity's class names a domain by HassDomains");
     }
 
     // The types a node's code declares are its own: two nodes with a class of one name compile side by side, and another

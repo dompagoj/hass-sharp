@@ -141,10 +141,10 @@ internal static class DefinitionDocument
     /// </summary>
     static string? Limit(string domain, string option, double number) => (domain, option) switch
     {
-        ("number", "step") when !(number > 0) => "a number above 0",
-        ("text", "min" or "max") when number != Math.Floor(number) => "a whole number",
-        ("text", "min") when number < 0 => "0 or more",
-        ("text", "max") when number > 255 => "255 or less, as Home Assistant keeps at most 255 characters",
+        (HassDomains.Number, "step") when !(number > 0) => "a number above 0",
+        (HassDomains.Text, "min" or "max") when number != Math.Floor(number) => "a whole number",
+        (HassDomains.Text, "min") when number < 0 => "0 or more",
+        (HassDomains.Text, "max") when number > 255 => "255 or less, as Home Assistant keeps at most 255 characters",
         _ => null,
     };
 

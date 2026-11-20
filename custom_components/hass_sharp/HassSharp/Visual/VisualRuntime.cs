@@ -935,7 +935,7 @@ public sealed class VisualRuntime
     /// quote, as its class words it. The validator lets only text into a text's value, so this guards a refusal no saved
     /// graph is expected to reach.
     /// </summary>
-    internal static bool PasswordText(JsonObject catalog,string key)=>VisualNodeCatalog.DefinitionEntity(catalog,key) is {} entity&&Text(entity,"domain")=="text"&&Text(entity["options"],"mode")=="password";
+    internal static bool PasswordText(JsonObject catalog,string key)=>VisualNodeCatalog.DefinitionEntity(catalog,key) is {} entity&&Text(entity,"domain")==HassDomains.Text&&Text(entity["options"],"mode")=="password";
     // Contract C6: each typed output reads its pointer from the normalised payload. A pointer that finds
     // nothing or JSON null, or a value of another type, produces no output; only a consumer fails, naming it.
     void Trigger(string id,VisualScope scope,JsonObject node) {

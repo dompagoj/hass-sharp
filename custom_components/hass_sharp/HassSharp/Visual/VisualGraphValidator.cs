@@ -798,7 +798,7 @@ public static class VisualGraphValidator
                 foreach (var (command, entry) in DeclaredDomain(hub, Root)?["commands"] as JsonObject ?? [])
                     if (!outgoing[Id(hub)].Any(e => FlowPort(hub, e) == "command:" + command))
                         errors.Add(new(Id(hub), Words.NothingOn(name, Text(entry, "label", Words.KeyWords(command))), 2, PortId: "command:" + command, Code: "command.unhandled"));
-                if (Choice(hub, "domain") == "camera" && !OfKind("show_frame").Any(n => Choice(n, "entity") == Choice(hub, "key")))
+                if (Choice(hub, "domain") == HassDomains.Camera && !OfKind("show_frame").Any(n => Choice(n, "entity") == Choice(hub, "key")))
                     errors.Add(new(Id(hub), Words.NoFrame(name, KindLabel("show_frame")), 2, PortId: "frame", Code: "camera.no_frame"));
             }
             DeviceRules();
@@ -911,7 +911,7 @@ public static class VisualGraphValidator
             ? Text(row?["commands"]?[port["command:".Length..]], "label", Words.KeyWords(port["command:".Length..]))
             : Text(row?["frame"], "label", "When a frame is needed");
         /// <summary>Whether the definition's entity with this key is a camera.</summary>
-        bool IsCamera(string key) => Text(DefinitionEntity(Root, key), "domain") == "camera";
+        bool IsCamera(string key) => Text(DefinitionEntity(Root, key), "domain") == HassDomains.Camera;
         /// <summary>The definition's entity with this key as a sentence names it: its name, else its key.</summary>
         string EntityName(string key) => Text(DefinitionEntity(Root, key), "name") is { } name && Words.Trimmed(name).Length > 0 ? name : key;
         /// <summary>Whether a step's input is given a value: a wire into it, or an operand that is not unset.</summary>

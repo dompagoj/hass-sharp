@@ -52,8 +52,9 @@ it('lists every entity class the library derives from SharpEntity, and every dom
   // The domains are the catalog's, in its order, each with the editor's label.
   expect(builtinEntities.map(e => e.domain)).toEqual(Object.keys(nodeCatalog.entityDomains!))
   expect(builtinEntities.map(e => e.label)).toEqual(Object.values(nodeCatalog.entityDomains!).map(d => d.label))
-  // Each class is the one the library gives that domain (SharpDomains in SharpEntities.cs).
-  const typed = Object.fromEntries([...readFileSync(`${library}/Devices/SharpEntities.cs`, 'utf8').matchAll(/\(typeof\((\w+)\), "(\w+)"\)/g)].map(m => [m[2], m[1]]))
+  // Each class is the one the library gives that domain (SharpDomains in SharpEntities.cs, by its HassDomains constant).
+  const constants = Object.fromEntries([...readFileSync(`${library}/Devices/HassDomains.cs`, 'utf8').matchAll(/public const string (\w+) = "(\w+)";/g)].map(m => [m[1], m[2]]))
+  const typed = Object.fromEntries([...readFileSync(`${library}/Devices/SharpEntities.cs`, 'utf8').matchAll(/\(typeof\((\w+)\), HassDomains\.(\w+)\)/g)].map(m => [constants[m[2]!], m[1]]))
   expect(Object.fromEntries(builtinEntities.map(e => [e.domain, e.className]))).toEqual(typed)
   // Every file that declares a part of a listed class is one it is read from.
   for (const item of listed) {

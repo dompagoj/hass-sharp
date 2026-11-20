@@ -152,6 +152,38 @@ static class EntityDomainTests
         Console.WriteLine($"PASS entity domains: {domains!.Count} domains match the state values, commands with their data, and options of their entity classes and the domains a graph creates");
     }
 
+    /// <summary>
+    /// <c>HassDomains</c> is written by hand, so this holds it to the catalog: one public constant per <c>entityDomains</c>
+    /// key, in the catalog's order, named as the key in PascalCase and valued as the key, and nothing else public. Read
+    /// by reflection, so a missing class fails here rather than leaving the suite unbuilt.
+    /// </summary>
+    [RuntimeSuite("--hass-domains", Order = 11)]
+    public static Task HassDomainsAreTheCatalogsEntityDomains()
+    {
+        var domains = VisualNodeCatalog.Root["entityDomains"] as JsonObject ?? [];
+        var type = typeof(SharpEntity).Assembly.GetType("HassSharp.HassDomains");
+        Check(type is { IsPublic: true, IsAbstract: true, IsSealed: true }, "HassSharp.HassDomains is a public static class: " + (type?.ToString() ?? "there is none"));
+        var constants = type!.GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.IsLiteral && f.FieldType == typeof(string)).ToArray();
+        var members = type.GetMembers(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly).Select(m => m.Name).ToArray();
+        Check(members.Order(StringComparer.Ordinal).SequenceEqual(constants.Select(c => c.Name).Order(StringComparer.Ordinal)), "its public members are its constants: " + string.Join(", ", members));
+        Check(string.Join(", ", constants.Select(c => c.Name)) == string.Join(", ", domains.Select(p => Pascal(p.Key))),
+            $"its constants are the entityDomains keys in PascalCase, in order: {string.Join(", ", constants.Select(c => c.Name))}; the catalog has {Keys(domains)}");
+        Check(string.Join(", ", constants.Select(c => (string)c.GetRawConstantValue()!)) == Keys(domains), "each constant is its key: " + string.Join(", ", constants.Select(c => c.Name + "=" + c.GetRawConstantValue())));
+        Console.WriteLine($"PASS hass domains: HassDomains has the {constants.Length} entityDomains keys of the catalog, in order, each named in PascalCase");
+
+        var values = constants.ToDictionary(c => (string)c.GetRawConstantValue()!, c => c.Name, StringComparer.Ordinal);
+        foreach (var (entityType, domain) in SharpDomains.All)
+        {
+            Check(values.ContainsKey(domain), $"SharpDomains gives {entityType.Name} the domain {domain}, which is no HassDomains constant");
+            var reported = ((SharpEntity)Activator.CreateInstance(entityType)!).Domain;
+            Check(reported == (string)type.GetField(values[domain])!.GetRawConstantValue()!, $"{entityType.Name}.Domain is HassDomains.{values[domain]}, not {reported}");
+        }
+        foreach (var domain in SharpDomains.Graph.Keys)
+            Check(values.ContainsKey(domain), $"the graph table creates the domain {domain}, which is no HassDomains constant");
+        Console.WriteLine($"PASS hass domains: the {SharpDomains.All.Count} entity classes and both SharpDomains tables have HassDomains' domains");
+        return Task.CompletedTask;
+    }
+
     [RuntimeSuite("--entity-domains-embedded", Order = 11)]
     public static Task EmbeddedCatalogLeavesEntityDomainsOutOfAutomations()
     {

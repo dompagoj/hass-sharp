@@ -22,7 +22,7 @@ public class SharpBinarySensor : SharpEntity
         set { isOn = value; Publish(); }
     }
 
-    internal override string Domain => "binary_sensor";
+    internal override string Domain => HassDomains.BinarySensor;
     internal override JsonObject Values() => new() { ["is_on"] = IsOn };
     internal override string[] Restore(JsonObject values) => Restoring(values, ("is_on", node => IsOn = StoredFlag(node)));
 }
@@ -56,7 +56,7 @@ public class SharpSensor : SharpEntity
     /// <summary>The values an <c>enum</c> sensor can have; null for any other sensor.</summary>
     public IReadOnlyList<string>? Options { get; init; }
 
-    internal override string Domain => "sensor";
+    internal override string Domain => HassDomains.Sensor;
     internal override JsonObject Values() => new() { ["value"] = ValueJson(Value) };
     internal override string[] Restore(JsonObject values) => Restoring(values, ("value", node => Value = node is JsonValue value && value.GetValueKind() == JsonValueKind.String ? StoredText(node) : StoredNumber(node)));
     internal override JsonObject DomainOptions() => new()
@@ -100,7 +100,7 @@ public class SharpSwitch : SharpEntity
     /// <summary>Turns the switch off when Home Assistant asks; runs <see cref="OnTurnOff"/> unless overridden.</summary>
     protected virtual Task TurnOff() => OnTurnOff?.Invoke() ?? throw new NotSupportedException($"Switch '{Key}' cannot be turned off.");
 
-    internal override string Domain => "switch";
+    internal override string Domain => HassDomains.Switch;
     internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => SwitchCommands;
     internal override Task Command(string name, JsonElement data) => name switch
@@ -119,16 +119,16 @@ internal static class SharpDomains
     // The typed entity bases and their domains, read both by runtime type and by the type's name.
     static readonly (Type Type, string Domain)[] Typed =
     [
-        (typeof(SharpBinarySensor), "binary_sensor"),
-        (typeof(SharpSensor), "sensor"),
-        (typeof(SharpSwitch), "switch"),
-        (typeof(SharpButton), "button"),
-        (typeof(SharpNumber), "number"),
-        (typeof(SharpSelect), "select"),
-        (typeof(SharpText), "text"),
-        (typeof(SharpLight), "light"),
-        (typeof(SharpCover), "cover"),
-        (typeof(SharpCamera), "camera"),
+        (typeof(SharpBinarySensor), HassDomains.BinarySensor),
+        (typeof(SharpSensor), HassDomains.Sensor),
+        (typeof(SharpSwitch), HassDomains.Switch),
+        (typeof(SharpButton), HassDomains.Button),
+        (typeof(SharpNumber), HassDomains.Number),
+        (typeof(SharpSelect), HassDomains.Select),
+        (typeof(SharpText), HassDomains.Text),
+        (typeof(SharpLight), HassDomains.Light),
+        (typeof(SharpCover), HassDomains.Cover),
+        (typeof(SharpCamera), HassDomains.Camera),
     ];
 
     /// <summary>Each typed entity base and its domain, as the catalog's <c>entityDomains</c> describes them.</summary>
@@ -181,23 +181,23 @@ internal static class SharpDomains
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, GraphDomain> Graph = new Dictionary<string, GraphDomain>(StringComparer.Ordinal)
     {
-        ["binary_sensor"] = new(
+        [HassDomains.BinarySensor] = new(
             d => new SharpBinarySensor(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff(entity => ((SharpBinarySensor)entity).IsOn, (entity, on) => ((SharpBinarySensor)entity).IsOn = on) }),
-        ["sensor"] = new(
+        [HassDomains.Sensor] = new(
             d => new SharpSensor(d.Key, d.Name)
             {
                 Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
                 Unit = d.Text("unit"), StateClass = d.Text("stateClass"), Options = d.Texts("options"),
             },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(SensorRefuses, (entity, value) => ((SharpSensor)entity).Value = value, entity => ((SharpSensor)entity).Value) }),
-        ["switch"] = new(
+        [HassDomains.Switch] = new(
             d => new SharpSwitch(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["is_on"] = OnOff(entity => ((SharpSwitch)entity).IsOn, (entity, on) => ((SharpSwitch)entity).IsOn = on) }),
-        ["button"] = new(
+        [HassDomains.Button] = new(
             d => new SharpButton(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault },
             new Dictionary<string, GraphState>(StringComparer.Ordinal)),
-        ["number"] = new(
+        [HassDomains.Number] = new(
             d => new SharpNumber(d.Key, d.Name)
             {
                 Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
@@ -205,10 +205,10 @@ internal static class SharpDomains
                 Mode = d.Text("mode") switch { "box" => SharpNumberMode.Box, "slider" => SharpNumberMode.Slider, _ => SharpNumberMode.Auto },
             },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(NumberRefuses, (entity, value) => ((SharpNumber)entity).Value = (double?)value, entity => ((SharpNumber)entity).Value) }),
-        ["select"] = new(
+        [HassDomains.Select] = new(
             d => new SharpSelect(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault, Options = d.Texts("options") ?? [] },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["option"] = new(SelectRefuses, (entity, value) => ((SharpSelect)entity).Option = (string?)value, entity => ((SharpSelect)entity).Option) }),
-        ["text"] = new(
+        [HassDomains.Text] = new(
             d => new SharpText(d.Key, d.Name)
             {
                 Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
@@ -216,14 +216,14 @@ internal static class SharpDomains
             },
             new Dictionary<string, GraphState>(StringComparer.Ordinal) { ["value"] = new(TextRefuses, (entity, value) => ((SharpText)entity).Value = (string?)value, entity => ((SharpText)entity).Value) }),
         // A brightness and a position are whole numbers on the class, and plain numbers (double) in a graph.
-        ["light"] = new(
+        [HassDomains.Light] = new(
             d => new SharpLight(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault, Dimmable = d.Flag("dimmable") ?? false },
             new Dictionary<string, GraphState>(StringComparer.Ordinal)
             {
                 ["is_on"] = OnOff(entity => ((SharpLight)entity).IsOn, (entity, on) => ((SharpLight)entity).IsOn = on),
                 ["brightness"] = new((entity, value) => WholeRefuses(value, ((SharpLight)entity).Refuses), (entity, value) => ((SharpLight)entity).Brightness = (int?)(double?)value, entity => (double?)((SharpLight)entity).Brightness),
             }),
-        ["cover"] = new(
+        [HassDomains.Cover] = new(
             d => new SharpCover(d.Key, d.Name) { Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault, Positionable = d.Flag("positionable") ?? false },
             new Dictionary<string, GraphState>(StringComparer.Ordinal)
             {
@@ -231,7 +231,7 @@ internal static class SharpDomains
                 ["position"] = new((entity, value) => WholeRefuses(value, ((SharpCover)entity).Refuses), (entity, value) => ((SharpCover)entity).Position = (int?)(double?)value, entity => (double?)((SharpCover)entity).Position),
             }),
         // A camera has no state: its frames are set by the graph's runs (DefinitionHost.SetFrame).
-        ["camera"] = new(
+        [HassDomains.Camera] = new(
             d => new SharpCamera(d.Key, d.Name)
             {
                 Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,

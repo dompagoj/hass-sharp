@@ -49,7 +49,7 @@ public class SharpButton : SharpEntity
     /// <summary>Presses the button when Home Assistant asks; runs <see cref="OnPress"/> unless overridden.</summary>
     protected virtual Task Press() => OnPress?.Invoke() ?? throw new NotSupportedException($"Button '{Key}' cannot be pressed.");
 
-    internal override string Domain => "button";
+    internal override string Domain => HassDomains.Button;
     internal override IReadOnlyList<string> Commands => ButtonCommands;
     internal override Task Command(string name, JsonElement data) => name switch
     {
@@ -122,7 +122,7 @@ public class SharpNumber : SharpEntity
     /// <summary>What the number takes, in a message.</summary>
     internal string Range => $"a number from {CommandData.Shown(Min)} to {CommandData.Shown(Max)}";
 
-    internal override string Domain => "number";
+    internal override string Domain => HassDomains.Number;
     internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => NumberCommands;
     internal override Task Command(string name, JsonElement data) => name switch
@@ -200,7 +200,7 @@ public class SharpSelect : SharpEntity
     /// <summary>What the select takes, in a message.</summary>
     internal string Choices => Options.Count == 0 ? "one of its options, and it has none" : "one of " + VisualGraphValidator.Words.Or(Options);
 
-    internal override string Domain => "select";
+    internal override string Domain => HassDomains.Select;
     internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => SelectCommands;
     internal override Task Command(string name, JsonElement data) => name switch
@@ -348,7 +348,7 @@ public class SharpText : SharpEntity
         _ => null,
     };
 
-    internal override string Domain => "text";
+    internal override string Domain => HassDomains.Text;
     internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => TextCommands;
     internal override Task Command(string name, JsonElement data) => name switch
@@ -444,7 +444,7 @@ public class SharpLight : SharpEntity
 
     ArgumentException NoBrightness(string given) => new($"{Called} cannot be dimmed, so it takes no brightness, not {given}");
 
-    internal override string Domain => "light";
+    internal override string Domain => HassDomains.Light;
     internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => LightCommands;
     internal override Task Command(string name, JsonElement data) => name switch
@@ -550,7 +550,7 @@ public class SharpCover : SharpEntity
         ? $"{Called} has no position, so it cannot be moved to one"
         : $"{Called} has no position, so it takes none, not {given}");
 
-    internal override string Domain => "cover";
+    internal override string Domain => HassDomains.Cover;
     internal override bool RestoresByDefault => true;
     internal override IReadOnlyList<string> Commands => CoverCommands;
     internal override Task Command(string name, JsonElement data) => name switch

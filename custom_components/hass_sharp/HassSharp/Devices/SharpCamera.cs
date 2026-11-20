@@ -98,6 +98,6 @@ public class SharpCamera : SharpEntity
     /// <summary>The camera's current frame, and the frames being made.</summary>
     internal CameraFrames Frames { get; } = new();
 
-    internal override string Domain => "camera";
+    internal override string Domain => HassDomains.Camera;
     internal override JsonObject DomainOptions() => new() { ["frame_interval"] = FrameInterval };
 }

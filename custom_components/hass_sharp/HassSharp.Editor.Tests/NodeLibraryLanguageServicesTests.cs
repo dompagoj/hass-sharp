@@ -103,6 +103,17 @@ public class NodeLibraryLanguageServicesTests
         Assert.Equal(source.IndexOf("Host {"),own[0]!["range"]!["start"]!.GetValue<int>());
     }
     [Fact]
+    public async Task A_class_nodes_code_completes_the_domains_of_HassDomains()
+    {
+        // HassDomains. in a C# entity's code offers the domain of each entity type HassSharp creates.
+        const string source="public class Lamp : SharpLight\n{\n    public string Kind => HassDomains.;\n}";
+        var service=new NodeLibraryLanguageServices(new DiagnosticsProvider());
+        var position=source.IndexOf("HassDomains.")+"HassDomains.".Length;
+        var items=JsonSerializer.SerializeToNode(await service.RequestAsync("completion",[],new CustomNodeSource("lamp",source,"csharp_entity"),position,TestContext.Current.CancellationToken),VisualStore.Json)!.Items().AsArray();
+        var names=items.Select(i=>i!["displayText"]!.GetValue<string>()).ToArray();
+        Assert.Contains("Light",names); Assert.Contains("Switch",names); Assert.Contains("BinarySensor",names);
+    }
+    [Fact]
     public async Task CompletionOffersSharpDeviceInLibraryCode()
     {
         // A library declares its custom devices and entities by deriving from the base classes, which completion offers there.
