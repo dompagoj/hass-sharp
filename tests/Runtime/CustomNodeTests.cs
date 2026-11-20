@@ -49,6 +49,8 @@ static class CustomNodeTests
             Contract();
             ClassTemplates();
             ClassSignatures();
+            LibraryBaseSettings();
+            ClassTitles();
             ClassProblems();
             TwoNodesOneClassName();
             NothingRuns();
@@ -243,6 +245,63 @@ static class CustomNodeTests
         Check(derived.Valid && VisualGenerator.SameJson(derived.Signature, JsonNode.Parse("""{"title": "Kitchen", "description": "", "domain": "switch", "settings": [{"key": "Address", "label": "Address", "description": "", "type": "string", "secret": false}, {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false}]}""")),
             "a C# entity derives from a library's entity class, its settings first: " + Messages(derived.Diagnostics) + " " + derived.Signature?.ToJsonString());
         Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range, a library base's first; a secret's value is never shown");
+    }
+
+    // A C# node whose class derives a concrete class of a node library has that class's [Setting]s in its signature, the
+    // library's first, with their labels, secret flag and range, though the library's class is no node's own code. A
+    // [Setting] of a library's class that a setting cannot be is reported in the library, at the property, and left out:
+    // the node deriving the class has the library class's other settings and no problem of its own.
+    static void LibraryBaseSettings()
+    {
+        static string Where(IEnumerable<NodeLibraryDiagnostic> diagnostics) => string.Join(" | ", diagnostics.Select(d => $"{d.SourceId} {d.StartLine}:{d.StartColumn} {d.Message}"));
+        var meters = new NodeLibrarySource("meters", """
+            /// <summary>A meter.</summary>
+            public class Meter : SharpDevice
+            {
+                [Setting("Server address")] public string Server { get; set; } = "";
+                [Setting(Secret = true)] public string Checksum { get; set; } = "";
+                [Setting(Minimum = 1)] public int Retries { get; set; } = 3;
+            }
+            """, 1);
+        var kitchen = ClassCompiled("csharp_device", "public class Kitchen : Meter\n{\n    [Setting] public bool Loud { get; set; }\n}", libraries: [meters]);
+        Check(kitchen.Valid && kitchen.Diagnostics.IsEmpty && VisualGenerator.SameJson(kitchen.Signature, JsonNode.Parse("""
+            {"title": "Kitchen", "description": "", "domain": null, "settings": [
+              {"key": "Server", "label": "Server address", "description": "", "type": "string", "secret": false},
+              {"key": "Checksum", "label": "Checksum", "description": "", "type": "string", "secret": true},
+              {"key": "Retries", "label": "Retries", "description": "", "type": "integer", "secret": false, "minimum": 1, "maximum": 2147483647},
+              {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false}]}
+            """)), "a C# device deriving a library's device has its settings, the library's first: " + Messages(kitchen.Diagnostics) + " " + kitchen.Signature?.ToJsonString());
+
+        var broken = new NodeLibrarySource("broken", "public class Odd : SharpDevice\n{\n    [Setting] public DateTime When { get; set; }\n    [Setting] public bool On { get; set; }\n}", 1);
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([broken], [new CustomNodeSource("c", "public class Mine : Odd\n{\n    [Setting] public bool Loud { get; set; }\n}", "csharp_device")]);
+        var wrong = $"broken 3:31 {NodeLibraryCompiler.SettingTypeMessage("DateTime")}";
+        Check(!preview.Valid && Where(preview.Diagnostics.Where(d => d.Severity == 3)) == wrong,
+            "a library's bad setting is reported in the library, at the property: " + Where(preview.Diagnostics));
+        var mine = preview.Snapshot.Custom["c"];
+        Check(mine.Valid && mine.Diagnostics.IsEmpty && mine.Signature!["settings"]!.AsArray().Select(s => s!["key"]!.GetValue<string>()).SequenceEqual(["On", "Loud"]),
+            "the node deriving the library's class has its good setting and its own, and no problem: " + Where(mine.Diagnostics) + " " + mine.Signature?.ToJsonString());
+        // The library alone reports it the same.
+        var alone = new NodeLibraryCompiler(Diagnostics).Preview([broken]);
+        Check(!alone.Valid && Where(alone.Diagnostics.Where(d => d.Severity == 3)) == wrong, "the library alone reports it at the property: " + Where(alone.Diagnostics));
+        Console.WriteLine("PASS class signatures: a C# node deriving a library's class has its settings in its signature, the library's first, and a bad [Setting] of the library's class is reported in the library at the property");
+    }
+
+    // A class node's title is its class's name in words (an acronym kept whole), or the title a [Node] on the class gives;
+    // [Node] on a class, in a node's code or in a library, makes no step.
+    static void ClassTitles()
+    {
+        var plug = ClassCompiled("csharp_device", "public class ShellyPlugPro : SharpDevice { }");
+        var sensor = ClassCompiled("csharp_entity", "public class HTTPSensor : SharpSensor { }");
+        var titled = ClassCompiled("csharp_device", "[Node(\"Poller box\")]\npublic class Poller : SharpDevice { }");
+        Check(plug.Signature?["title"]?.GetValue<string>() == "Shelly plug pro" && sensor.Signature?["title"]?.GetValue<string>() == "HTTP sensor"
+            && titled.Signature?["title"]?.GetValue<string>() == "Poller box",
+            "a class's title is its name in words, else its [Node] title: " + string.Join(", ", new[] { plug, sensor, titled }.Select(c => c.Signature?["title"]?.ToJsonString() ?? Messages(c.Diagnostics))));
+        Check(titled.Valid && titled.Method == null && titled.Types.IsEmpty, "[Node] on a node's class makes it no step: " + titled.Method);
+        var library = Library("[Node(\"Poller box\")]\npublic class Poller : SharpDevice { }\npublic class ShellyPlugPro : SharpDevice { }", "ranged");
+        var nodes = library.Snapshot.Catalog["nodes"]!.AsObject();
+        Check(library.Valid && !nodes.Any(n => n.Key.StartsWith("library:", StringComparison.Ordinal)) && !nodes.ToJsonString().Contains("Poller", StringComparison.Ordinal),
+            "[Node] on a library's class makes no step: " + string.Join(", ", nodes.Select(n => n.Key).Where(k => k.StartsWith("library:", StringComparison.Ordinal))));
+        Console.WriteLine("PASS class titles: a class's name in words, an acronym whole, or its [Node] title; [Node] on a class makes no step");
     }
 
     // Each problem a class node's code can have, said in the node's own lines.

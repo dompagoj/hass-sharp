@@ -9,8 +9,8 @@ using static VisualExecutionTests;
 /// service description push, Init) repeated with a few automations, a node library and Custom C# and library nodes that
 /// call a service. Each generation runs the automations that call services: a Custom C# node passes an enum and an
 /// anonymous object of its own to a typed call, and a library record, made an object by Convert, goes into a Call service field, so System.Text.Json
-/// meets types of the automations' own assemblies. Each generation also runs an entity definition whose device, a class
-/// of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
+/// meets types of the automations' own assemblies. Each generation also runs an entity definition whose C# device node,
+/// deriving a class of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
 /// its library serialized by System.Text.Json, reads a value with its HTTP client from a loopback server and leaves a
 /// request open to a server that never answers (it does not pass Stopping, so only disposing the client ends it, which
 /// every reload must see happen), and takes a command on its switch; its camera shows a frame, and a frame request is
@@ -194,7 +194,7 @@ static class ReloadMemoryTests
             var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
             var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
             Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, takes a switch command and has a camera that shows a frame with a frame request in flight across the reload, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose C# device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, takes a switch command and has a camera that shows a frame with a frame request in flight across the reload, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
         }
         finally
         {
@@ -288,7 +288,6 @@ static class ReloadMemoryTests
         await Task.Delay(20);
     }
 
-    const string MeterType = "library:meters:NodeLib.MemoryMeter";
     // The loopback servers' addresses, which the definition's library names: one that answers, one that never does.
     static string Server = "", Silent = "";
     static string Marker(int generation) => "gen" + generation;
@@ -336,6 +335,21 @@ static class ReloadMemoryTests
         }
         """;
 
+    // The definition Memory meter: one C# device node, key box named Meter box, whose class derives the library's
+    // MemoryMeter; its signature is the one the compiler derives from its code against the library, as the editor stores it.
+    static JsonObject MeterDefinition()
+    {
+        const string source = "public class Box : MemoryMeter { }";
+        var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([new NodeLibrarySource("meters", MeterLibrary(0), 1)], [new CustomNodeSource("box", source, "csharp_device")]).Snapshot.Custom["box"];
+        Check(descriptor.Valid, "the C# device's code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+        var box = EntityNodeTests.CSharpDevice("box", "box", "Meter box", new JsonObject { ["source"] = source, ["signature"] = descriptor.Signature!.DeepClone(), ["arguments"] = new JsonObject() });
+        return new()
+        {
+            ["name"] = "Memory meter", ["settings"] = new JsonArray(),
+            ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = new JsonObject { ["version"] = 5, ["name"] = "Memory meter", ["nodes"] = new JsonArray(box), ["edges"] = new JsonArray() } },
+        };
+    }
+
     // The definition's calls since the given one, by marker.
     static string[] MeterCalls(List<(string Service, string Json)> calls, int from)
     {
@@ -373,10 +387,10 @@ static class ReloadMemoryTests
         lock (states) return states.GetValueOrDefault("gauge:" + key)?["values"]?[field]?.ToJsonString();
     }
 
-    // The last value pushed for one of the definition's entities.
+    // The last value pushed for one of the definition's entities, which its C# device box adds.
     static string? Pushed(Dictionary<string, JsonObject> states, string key, string field)
     {
-        lock (states) return states.GetValueOrDefault("meter:" + key)?["values"]?[field]?.ToJsonString();
+        lock (states) return states.GetValueOrDefault("meter:box:" + key)?["values"]?[field]?.ToJsonString();
     }
 
     // The rebuilt definition: its Start() called the service once, read over HTTP and left its request open, its timer
@@ -394,13 +408,13 @@ static class ReloadMemoryTests
             && int.Parse(level.Split(' ')[^1].TrimEnd('"')) >= 2, $"reload {reload}: the rebuilt definition's timer ticks twice");
         await manager.OnTrackedEntityChange("sensor.memory", new HasEntityState { EntityId = "sensor.memory", State = "r" + reload }, null);
         await EntityTestHome.Until(() => Pushed(states, "seen", "value") == $"\"track r{reload} {marker}\"", $"reload {reload}: the rebuilt definition's track gets the change");
-        await manager.EntityCommand("meter:relay", "turn_on", null);
+        await manager.EntityCommand("meter:box:relay", "turn_on", null);
         await EntityTestHome.Until(() => Pushed(states, "seen", "value") == $"\"command {marker}\"" && Pushed(states, "relay", "is_on") == "true",
             $"reload {reload}: the rebuilt definition's switch takes the command");
-        var shown = await manager.CameraImage("meter:view");
+        var shown = await manager.CameraImage("meter:box:view");
         Check(shown is [0xFF, 0xD8, ..] && shown.Length > 100, $"reload {reload}: the rebuilt definition's camera answers the frame it showed");
         await Task.Delay(10);
-        var pending = manager.CameraImage("meter:view");
+        var pending = manager.CameraImage("meter:box:view");
         await Task.Delay(10);
         Check(!pending.IsCompleted, $"reload {reload}: the camera's second request waits for its frame");
         return pending;
@@ -480,7 +494,7 @@ static class ReloadMemoryTests
         }
         // The entity definition, after the automations: its library's save would rebuild them.
         await Request(manager.NodeLibraryRequest, new { operation = "save", id = "meters", name = "Meters.cs", expectedRevision = 0, source = MeterLibrary(0) });
-        var meter = await Request(manager.EntityRequest, new { operation = "save", id = "meter", expectedRevision = 0, definition = new { name = "Memory meter", settings = Array.Empty<object>(), logic = new { kind = "class", type = MeterType } } });
+        var meter = await Request(manager.EntityRequest, new { operation = "save", id = "meter", expectedRevision = 0, definition = MeterDefinition() });
         Check(meter["active"]!.GetValue<bool>() && meter["document"]!["status"]!.GetValue<string>() == "running", "the definition runs after its save: " + meter.ToJsonString()[..Math.Min(1200, meter.ToJsonString().Length)]);
     }
 }

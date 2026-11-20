@@ -1,6 +1,5 @@
 """Real Python.NET entity bridge boundary: a graph whose C# device node holds a device class, and a graph of nodes, each
-become a running definition; so do C# camera entity nodes, and a class from a node library, which the class kind of
-definition still takes until it is removed. No Home Assistant.
+become a running definition; so do C# camera entity nodes. No Home Assistant.
 
 Run in a fresh process against the published library: python tests/packaging/entity_bridge_smoke.py INTEGRATION_DIR [DOTNET_ROOT]
 Python callables stand in for Home Assistant's bridge on the five entity delegates (sync, push, remove, prune, camera snapshot), and the
@@ -21,9 +20,9 @@ handles fails naming the entity and the command, and that nothing logged at warn
 For pictures, which cross as bytes both ways: a C# camera entity node shows a blank picture, which comes out of
 CameraImage as a System.Byte[]; another, whose frames take a picture of the first through BeginCameraSnapshot (answered
 as the bridge answers, with a System.Byte[] the bridge's own code builds) and draw a rectangle and a label on it, gives a
-JPEG that differs from its source, which takes libjpeg-turbo and the embedded font. A camera class from a node library
-that only shows its frames keeps its picture across a save: the request right after it gets the frame the replaced
-revision showed, which the new one never shows itself.
+JPEG that differs from its source, which takes libjpeg-turbo and the embedded font. A third C# camera entity node, which
+only shows its frames, keeps its picture across a save: the request right after it gets the frame the replaced revision
+showed, which the new one never shows itself.
 Exits non-zero with a message on the first mismatch.
 """
 import ast
@@ -54,11 +53,10 @@ DEFINITION = 'smoke_plug'
 PLUG = 'plug'
 # The cameras' definitions, each one C# camera entity node of this key, and the entity id the smoke's sync answers for the still one.
 STILL, LENS, CAMERA = 'smoke_still', 'smoke_lens', 'camera'
-# A camera class from a node library (the class kind, until it is removed) that shows a green frame as it starts only
+# A camera's definition, one C# camera entity node of the key CAMERA too, that shows a green frame as it starts only
 # while the smoke says so (AppContext data), so that a revision saved without it shows none of its own.
 PUSH, PUSH_SHOWS = 'smoke_push', 'HassSharp.Smoke.PushShows'
 STILL_CAMERA = f'camera.{STILL}_{CAMERA}'
-TYPE = 'library:smoke:NodeLib.SmokePush'
 REFUSAL = 'the smoke plug refuses to turn on'
 PLUG_SOURCE = '''
 public class SmokePlug : SharpDevice
@@ -95,7 +93,7 @@ public class SmokeLens : SharpCamera
         (await CameraSnapshot("''' + STILL_CAMERA + '''")).DrawRect(4, 4, 40, 24, SharpColor.Yellow, 3).DrawText("Smoke", 6, 30, SharpColor.White, 14);
 }
 '''
-LIBRARY = '''
+PUSH_SOURCE = '''
 public class SmokePush : SharpCamera
 {
     protected override Task Start()
@@ -141,8 +139,8 @@ def csharp_definition(title, kind, key, source, **config):
         node(key, kind, {'key': key, **config, 'source': source, 'arguments': {}})], 'edges': []}}}
 
 
-def save_csharp(definition_id, definition, what):
-    return request(manager.EntityRequest, {'operation': 'save', 'id': definition_id, 'expectedRevision': 0, 'deriveSignatures': True,
+def save_csharp(definition_id, definition, what, revision=0):
+    return request(manager.EntityRequest, {'operation': 'save', 'id': definition_id, 'expectedRevision': revision, 'deriveSignatures': True,
                                            'definition': definition}, what)
 
 
@@ -581,25 +579,20 @@ try:
             deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': definition_id, 'expectedRevision': 1}, f'the {definition_id} delete')
             check(deleted == {'deleted': True}, f'the {definition_id} delete answered {deleted}')
 
-        # ---- The class kind, until it is removed: a camera class from a node library that only shows its frames, across a save ----
-        library = request(manager.NodeLibraryRequest, {'operation': 'save', 'id': 'smoke', 'name': 'Smoke', 'expectedRevision': 0, 'source': LIBRARY}, 'the library save')
-        check(library.get('saved') is True, f'the library is not saved: {library}')
-        types = request(manager.EntityRequest, {'operation': 'types'}, 'types')
-        check(any(t['id'] == TYPE and t['kind'] == 'entity' and t['domain'] == 'camera' for t in types['types']), f'types does not list {TYPE}: {types}')
-
+        # ---- A C# camera entity node that only shows its frames, across a save ----
         def save_push(revision):
-            saved = request(manager.EntityRequest, {'operation': 'save', 'id': PUSH, 'expectedRevision': revision, 'definition': {
-                'name': PUSH, 'settings': [], 'logic': {'kind': 'class', 'type': TYPE}}},
-                f'the {PUSH} save at revision {revision}')
+            saved = save_csharp(PUSH, csharp_definition(PUSH, 'csharp_entity', CAMERA, PUSH_SOURCE), f'the {PUSH} save at revision {revision}', revision)
             check(saved.get('active') is True and saved['document']['status'] == 'running', f'{PUSH} does not run: {saved}')
+            live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
+            check(live == {f'{PUSH}:{CAMERA}': f'camera.{PUSH}_{CAMERA}'}, f"the push camera's live entities: {saved['document']['liveEntities']}")
         AppContext.SetData(PUSH_SHOWS, Boolean(True))
         save_push(0)
-        shown = frame(f'{PUSH}:main', "the push camera's frame")
+        shown = frame(f'{PUSH}:{CAMERA}', "the push camera's frame")
         check(shown[:2] == b'\xff\xd8', f"the push camera's frame is not a JPEG: it starts {shown[:4].hex()}")
         AppContext.SetData(PUSH_SHOWS, None)
         save_push(1)
         try:
-            kept = bytes(call(lambda: manager.CameraImage(f'{PUSH}:main'), "the push camera's frame right after the save"))
+            kept = bytes(call(lambda: manager.CameraImage(f'{PUSH}:{CAMERA}'), "the push camera's frame right after the save"))
         except Exception as error:
             fail(f"the push camera's frame right after the save failed: {getattr(error, 'Message', error)}")
         check(kept == shown, "the push camera's frame right after the save is not the one the replaced revision showed")

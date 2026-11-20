@@ -12,8 +12,8 @@ using static VisualExecutionTests;
 /// works), which cancels what is still in flight on it; and <see cref="SharpFiles.Download"/>, which fetches a file once
 /// and caches it, never leaves a file at its path that does not match its checksum (wrong checksum, dropped connection,
 /// stalled server, a leftover of a download that died), makes one request for two downloads of one checksum, refuses a
-/// bad address, checksum or name before any request, and whose receiving does not count against the setup limit. A class
-/// device of a saved library downloads in Setup() and polls with Http from Every(): it publishes what it read, logs a
+/// bad address, checksum or name before any request, and whose receiving does not count against the setup limit. A C# device
+/// node deriving a device class of a saved library downloads in Setup() and polls with Http from Every(): it publishes what it read, logs a
 /// server that is down once and its recovery once, a wrong checksum fails it, and turning it off cancels the request in
 /// flight with nothing published after. A plug built from nodes does the same with HTTP request steps (a time pattern
 /// polls, a command posts), and a definition built from nodes downloads a file in its When started flow with Download file.
@@ -499,26 +499,38 @@ static class EntityToolsTests
                 Check(answer["ok"]!.GetValue<bool>(), "the request failed: " + answer.ToJsonString());
                 return answer["result"]!.AsObject();
             }
-            object Definition(string sha) => new
+            // One C# device node, key box named Meter, whose class derives the library's Meter; its Server and Checksum
+            // pins are given as values.
+            const string source = "public class KitchenMeter : Meter { }";
+            var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([new NodeLibrarySource("meters", Library, 1)], [new CustomNodeSource("box", source, "csharp_device")]).Snapshot.Custom["box"];
+            Check(descriptor.Valid, "the C# device's code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+            JsonObject Definition(string sha)
             {
-                name = "Meter",
-                settings = new object[] { new { key = "Server", value = server.Url("") }, new { key = "Checksum", value = sha } },
-                logic = new { kind = "class", type = "library:meters:NodeLib.Meter" },
-            };
+                var box = EntityNodeTests.CSharpDevice("box", "box", "Meter", new JsonObject
+                {
+                    ["source"] = source, ["signature"] = descriptor.Signature!.DeepClone(),
+                    ["arguments"] = new JsonObject { ["Server"] = Lit("string", server.Url("")), ["Checksum"] = Lit("string", sha) },
+                });
+                return new()
+                {
+                    ["name"] = "Kitchen meter", ["settings"] = new JsonArray(),
+                    ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = new JsonObject { ["version"] = 5, ["name"] = "Kitchen meter", ["nodes"] = new JsonArray(box), ["edges"] = new JsonArray() } },
+                };
+            }
             Check((await Ok(api.NodeLibraryRequest, new { operation = "save", id = "meters", name = "Meters", expectedRevision = 0, source = Library }))["saved"]!.GetValue<bool>(), "the library saves");
             var saved = await Ok(api.EntityRequest, new { operation = "save", id = "meter", expectedRevision = 0, definition = Definition(Sha(table)) });
             Check(saved["active"]!.GetValue<bool>() && saved["document"]!["status"]!.GetValue<string>() == "running", "the meter runs: " + saved.ToJsonString());
             JsonObject[] Meter(int from = 0) => home.Snapshots(from).Where(s => s["uniqueId"]!.GetValue<string>().StartsWith("meter:", StringComparison.Ordinal)).ToArray();
-            string? Last(string key) => Meter().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "meter:" + key && s["available"]!.GetValue<bool>())?["values"]?["value"]?.ToJsonString();
+            string? Last(string key) => Meter().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == "meter:box:" + key && s["available"]!.GetValue<bool>())?["values"]?["value"]?.ToJsonString();
             await EntityTestHome.Until(() => Last("power") == "12.5" && Last("table") == "\"rates v1\"", "the meter publishes what it read and what it downloaded");
             Check(File.ReadAllBytes(Path.Combine(FilesRoot(home), Sha(table), "table.txt")).SequenceEqual(table), "the download is under the configuration's .storage/hass_sharp/files");
-            Check(home.Logs(PyLogLevel.Info).Contains("Meter: Downloading a file from 127.0.0.1"), "the download is logged: " + string.Join(" | ", home.Logs()));
-            Console.WriteLine("PASS entity tools: a library device downloads a file in Setup() under .storage/hass_sharp/files and publishes what it polls with Http from Every()");
+            Check(home.Logs(PyLogLevel.Info).Contains("Kitchen meter: Downloading a file from 127.0.0.1"), "the download is logged: " + string.Join(" | ", home.Logs()));
+            Console.WriteLine("PASS entity tools: a C# device deriving a library's device downloads a file in Setup() under .storage/hass_sharp/files and publishes what it polls with Http from Every()");
 
             // The server goes down: the poll fails on every tick, logged once; then it works again, logged once.
             var errors = home.Logs(PyLogLevel.Error).Length;
             // Each failure is logged whole at debug level.
-            int Refused() => home.Logs(PyLogLevel.Debug).Count(line => line.StartsWith("Meter: the timer callback every 20 ms failed: ", StringComparison.Ordinal));
+            int Refused() => home.Logs(PyLogLevel.Debug).Count(line => line.StartsWith("Kitchen meter: the timer callback every 20 ms failed: ", StringComparison.Ordinal));
             server.Down();
             await EntityTestHome.Until(() => Refused() >= 5, "five refused polls");
             var failed = home.Logs(PyLogLevel.Error).Skip(errors).ToArray();
@@ -526,11 +538,11 @@ static class EntityToolsTests
             // A poll in flight as the server goes down is answered by HttpListener as it stops (empty, or with a 404, as
             // seen), and fails for a reason of its own, logged once too; on a slow machine one often is. The refused polls
             // after it are logged once.
-            Check(failed.Length is 1 or 2 && failed.All(line => line.StartsWith("Meter: the timer callback every 20 ms failed: ", StringComparison.Ordinal) && !line.Contains(server.Url("")))
+            Check(failed.Length is 1 or 2 && failed.All(line => line.StartsWith("Kitchen meter: the timer callback every 20 ms failed: ", StringComparison.Ordinal) && !line.Contains(server.Url("")))
                 && failed.Distinct().Count() == failed.Length, "a server that is down is logged once: " + string.Join(" | ", failed));
             server.Respond("/power", LoopbackServer.Reply.Text("13"));
             await EntityTestHome.Until(() => Last("power") == "13", "the poll works again");
-            Check(home.Logs(PyLogLevel.Info).Count(line => line == "Meter: the timer callback every 20 ms works again") == 1 && home.Logs(PyLogLevel.Error).Length == errors + failed.Length,
+            Check(home.Logs(PyLogLevel.Info).Count(line => line == "Kitchen meter: the timer callback every 20 ms works again") == 1 && home.Logs(PyLogLevel.Error).Length == errors + failed.Length,
                 "the recovery is logged once: " + string.Join(" | ", home.Logs()));
             Console.WriteLine("PASS entity tools: a poll of a server that is down logs one error, not one per tick, and one line when it works again");
 
@@ -558,8 +570,8 @@ static class EntityToolsTests
             var wrong = Sha(Encoding.UTF8.GetBytes("rates v2"));
             var bad = await Ok(api.EntityRequest, new { operation = "save", id = "rates", expectedRevision = 0, definition = Definition(wrong) });
             Check(!bad["active"]!.GetValue<bool>() && bad["document"]!["status"]!.GetValue<string>() == "failed"
-                && bad["activationError"]?.GetValue<string>().Contains("The file from 127.0.0.1 does not match its checksum") == true
-                && !bad["activationError"]!.GetValue<string>().Contains(server.Url("")), "a wrong checksum fails the definition: " + bad.ToJsonString());
+                && bad["activationError"]?.GetValue<string>() == "Kitchen meter: Meter: The file from 127.0.0.1 does not match its checksum",
+                "a wrong checksum fails the definition, naming its C# device: " + bad.ToJsonString());
             Check(Listed(home, wrong).Length == 0, "the wrong file is not kept");
             Console.WriteLine("PASS entity tools: a definition whose Setup() downloads a file with the wrong checksum answers failed with the reason");
         }

@@ -119,18 +119,15 @@ static class EntityStoreTests
             (nameof(AnEntityNodesFieldsAreOfTheirType), () => AnEntityNodesFieldsAreOfTheirType(snapshot)),
             (nameof(ComposeGivesNoDeviceMarker), ComposeGivesNoDeviceMarker),
             (nameof(AGraphRequestWithADeviceIsRefused), () => AGraphRequestWithADeviceIsRefused(snapshot)),
-            (nameof(AClassRequestKeepsItsDevice), () => AClassRequestKeepsItsDevice(snapshot)),
             (nameof(AGraphDocumentsStoredDeviceIsNotRead), () => AGraphDocumentsStoredDeviceIsNotRead(snapshot)),
             (nameof(TheListCountsADefinitionsDevices), () => TheListCountsADefinitionsDevices(snapshot)),
             (nameof(ValidDocumentsAreValidDefinitions), () => ValidDocumentsAreValidDefinitions(snapshot)),
             (nameof(RemovingAnEntityStillNamedByANodeIsRefused), () => RemovingAnEntityStillNamedByANodeIsRefused(snapshot)),
             (nameof(PreviewReturnsTheGraphsWarnings), () => PreviewReturnsTheGraphsWarnings(snapshot)),
             (nameof(RootsListSetupCommandsAndStates), () => RootsListSetupCommandsAndStates(snapshot)),
-            (nameof(ClassSettingsKeepTheirShape), () => ClassSettingsKeepTheirShape(snapshot)),
             (nameof(KeepIsNeverStored), () => KeepIsNeverStored(snapshot)),
             (nameof(RebuiltRegeneratesAGraphDefinition), () => RebuiltRegeneratesAGraphDefinition(compiler)),
             (nameof(ARequestThatListsEntitiesIsRefused), () => ARequestThatListsEntitiesIsRefused(snapshot)),
-            (nameof(AClassRequestKeepsItsOwnRefusal), () => AClassRequestKeepsItsOwnRefusal(snapshot)),
             (nameof(ADefinitionWithoutAnEntityNodeAsksForOne), () => ADefinitionWithoutAnEntityNodeAsksForOne(snapshot)),
             (nameof(ASaveWritesVersionThreeWithTheDerivedDevices), () => ASaveWritesVersionThreeWithTheDerivedDevices(snapshot)),
             (nameof(AnOlderGraphDocumentSaysToBuildItAgain), () => AnOlderGraphDocumentSaysToBuildItAgain(snapshot)),
@@ -200,16 +197,6 @@ static class EntityStoreTests
             Check(unnamed.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entitiesNotAllowed"]), "beside its name's problem: " + Codes(unnamed));
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-    }
-
-    /// <summary>A class request keeps its own rule and sentence: a list of entities is refused, an empty one is none.</summary>
-    static void AClassRequestKeepsItsOwnRefusal(VisualCatalogSnapshot snapshot)
-    {
-        var generator = new DefinitionGenerator();
-        var listed = generator.Preview(Body(entities: [Entity("relay", "switch")]), snapshot);
-        Check(listed.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.Message}").SequenceEqual(["definition.entitiesNotAllowed  A class definition's entities come from its code"]),
-            "a class definition's list is refused in its own words: " + Codes(listed));
-        Check(generator.Preview(Body(entities: []), snapshot).Valid, "an empty list is none for a class");
     }
 
     /// <summary>A graph definition without an Entity node is asked for one, about no input.</summary>
@@ -787,20 +774,6 @@ static class EntityStoreTests
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
-    /// <summary>A class request keeps its device: it previews, is saved with it and reads back with it.</summary>
-    static void AClassRequestKeepsItsDevice(VisualCatalogSnapshot snapshot)
-    {
-        var directory = TempDirectory("class-device");
-        try
-        {
-            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            Check(new DefinitionGenerator().Preview(Body(), snapshot) is { Valid: true } preview && preview.Diagnostics.Count == 0, "a class definition with a device previews");
-            store.Save("plug", Body(), 0, snapshot, "g1");
-            Check(store.Read("plug")!.Device is { Manufacturer: "Shelly", Model: "Plug S", SuggestedArea: "Kitchen" }, "and is saved with it: " + JsonSerializer.Serialize(store.Read("plug")!.Device, VisualStore.Json));
-        }
-        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-    }
-
     /// <summary>
     /// A graph document an earlier build of this phase saved with a device of its own is read without it: its read
     /// answer's device is null, and its body regenerates the source it was saved with.
@@ -961,22 +934,6 @@ static class EntityStoreTests
         Console.WriteLine("PASS entity store: Roots names the setup, command and state methods as the generator does, and leaves triggers out");
     }
 
-    /// <summary>A class definition's settings are stored as phase 1 stored them, whatever else a client sends with them.</summary>
-    static void ClassSettingsKeepTheirShape(VisualCatalogSnapshot snapshot)
-    {
-        var directory = TempDirectory("class-settings");
-        try
-        {
-            var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            store.Save("plain", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
-            store.Save("extra", Body(settings: [Typed("Host", "string", "\"10.0.0.5\"", label: "Host", secret: true)]), 0, snapshot, "g1");
-            string Settings(string id) => JsonNode.Parse(File.ReadAllText(store.FilePath(id)))!["settings"]!.ToJsonString();
-            Check(Settings("plain") == """[{"key":"Host","value":"10.0.0.5"}]""" && Settings("extra") == Settings("plain"), "a class definition's settings: " + Settings("extra"));
-            Console.WriteLine("PASS entity store: a class definition's settings keep phase 1's shape");
-        }
-        finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-    }
-
     /// <summary>
     /// A setting saved with <c>keep</c> is stored with the value the stored definition has for its key (none when it has
     /// none, or when the definition is new), and the marker itself is never stored: not in the file, not in the document.
@@ -1000,11 +957,6 @@ static class EntityStoreTests
             var answered = store.Save("level", Level(Typed("token", "string", label: "Token", secret: true) with { HasValue = true }, Typed("other", "string", "\"open\"") with { HasValue = true }), 3, snapshot, "g1");
             Check(Settings() == """[{"key":"offset","value":4,"type":"number"},{"key":"token","value":"hunter2","label":"Token","type":"string","secret":true},{"key":"other","value":"open","type":"string"}]"""
                 && answered.Settings.All(s => !s.HasValue && !s.Keep), "hasValue keeps a value and a value given wins; neither marker is stored: " + Settings());
-
-            // A class definition's kept setting is stored as its settings always are, a key and a value.
-            store.Save("plug", Body(settings: [Setting("Host", "\"10.0.0.5\"")]), 0, snapshot, "g1");
-            store.Save("plug", Body(settings: [Setting("Host", null) with { Keep = true }]), 1, snapshot, "g1");
-            Check(JsonNode.Parse(File.ReadAllText(store.FilePath("plug")))!["settings"]!.ToJsonString() == """[{"key":"Host","value":"10.0.0.5"}]""", "the class definition kept its value: " + File.ReadAllText(store.FilePath("plug")));
             Console.WriteLine("PASS entity store: a kept setting is stored with the value saved before, and keep is never stored");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
@@ -1090,83 +1042,90 @@ static class EntityStoreTests
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
+    /// <summary>
+    /// The store's mechanics, on a graph definition (<see cref="LevelGraph"/>): a save at revision 0 writes revision 1
+    /// with the source the generator gives; a stale revision conflicts; <c>enabled</c> is for a new definition only, and
+    /// SetEnabled and a later save keep the flag; Rebuilt gives the next revision unwritten; Delete checks the revision;
+    /// an unreadable file is in Ids, skipped by List, thrown by a strict List and deleted at revision 0 only; an invalid id
+    /// is refused; no temporary file is left; and an invalid definition stores nothing.
+    /// </summary>
     static void Store(VisualCatalogSnapshot snapshot)
     {
         var directory = Path.Combine(Path.GetTempPath(), "entity-store-" + Guid.NewGuid());
         try
         {
             var store = new EntityDefinitionStore(directory, new DefinitionGenerator());
-            var body = Body(settings: [Setting("Host", "\"10.0.0.5\""), Setting("Channel", "2"), Setting("Mode", "\"Boost\"")]);
-            var saved = store.Save("plug1", body, 0, snapshot, "g1");
-            var expected = string.Join('\n',
-                "// HassSharp entity definition",
-                "public static class SharpDefinition { public static object Create() => new global::NodeLib.ShellyPlug(); }",
-                "// NodeLibrarySource \"shelly\" revision 1",
-                NodeLibraryCompiler.WrapSource(EntityTypeTests.Shelly)) + "\n";
+            // Laid out as the store lays it out, so that the source the generator gives it is the saved one.
+            var body = GraphBody(VisualGraphContract.FillMissingLayout(LevelGraph()), null, [Typed("offset", "number", "4"), Typed("host", "string", "\"10.0.0.5\""), Typed("mode", "string", "\"Boost\"")], "Kitchen level");
+            var preview = new DefinitionGenerator().Preview(body, snapshot);
+            var expected = preview.Source;
+            Check(preview.Valid && expected.Contains("public class VisualAutomation : global::HassSharp.Automation", StringComparison.Ordinal), "the level graph previews: " + Codes(preview));
+            var saved = store.Save("level1", body, 0, snapshot, "g1");
             Check(saved.Revision == 1 && saved.Source == expected, "a new definition is saved at revision 1 with the exact source:\n" + saved.Source);
-            Check(File.Exists(store.FilePath("plug1")) && store.Read("plug1") is { Revision: 1, Name: "Kitchen plug", Enabled: true, CatalogGeneration: "g1" } read
-                && read.Source == expected && read.Settings.Count == 3 && read.Settings[0].Value!.GetValue<string>() == "10.0.0.5"
-                && read.Device is { Manufacturer: "Shelly", SuggestedArea: "Kitchen" } && read.Logic is { Kind: "class", Type: Plug } && read.SavedUtc != null,
+            Check(File.Exists(store.FilePath("level1")) && store.Read("level1") is { Revision: 1, Name: "Kitchen level", Enabled: true, CatalogGeneration: "g1" } read
+                && read.Source == expected && read.Settings.Count == 3 && read.Settings[1].Value!.GetValue<string>() == "10.0.0.5"
+                && read.Device == null && read.Logic is { Kind: "graph", Type: null, Graph: not null } && read.SavedUtc != null,
                 "the saved document reads back with its body");
-            Check(saved.SourceMap.Count == 1 && saved.SourceMap[0] is { NodeId: "$library:shelly", StartLine: 4 }
-                && saved.SourceMap[0].EndLine == expected.Split('\n').Length - 1, "the source map marks the library section: " + string.Join(", ", saved.SourceMap));
-            var json = File.ReadAllText(store.FilePath("plug1"));
-            Check(json.Contains("\"revision\":1") && json.Contains("\"suggestedArea\":\"Kitchen\"") && !json.Contains("\"body\""), "the file uses the automation documents' JSON names, without the body: " + json);
-            Check(saved.Body is { Name: "Kitchen plug", Logic.Type: Plug } && saved.Body.Settings!.Count == 3, "Body gives the definition as written");
+            Check(saved.SourceMap.SequenceEqual(preview.SourceMap) && saved.SourceMap.Any(m => m.NodeId == "s"), "the source map is the generator's, with the Entity node's lines: " + string.Join(", ", saved.SourceMap));
+            var json = File.ReadAllText(store.FilePath("level1"));
+            Check(json.Contains("\"revision\":1") && json.Contains("\"catalogGeneration\":\"g1\"") && !json.Contains("\"body\""), "the file uses the automation documents' JSON names, without the body: " + json);
+            Check(saved.Body is { Name: "Kitchen level", Logic.Kind: "graph" } && saved.Body.Settings!.Count == 3, "Body gives the definition as written");
             Console.WriteLine("PASS entity store: saving at revision 0 writes revision 1 with the exact generated source");
 
-            Throws<VisualConflictException>(() => store.Save("plug1", body, 0, snapshot, "g1"), "a save with the old revision");
-            Check(store.Read("plug1")!.Revision == 1, "a conflicting save changes nothing");
+            Throws<VisualConflictException>(() => store.Save("level1", body, 0, snapshot, "g1"), "a save with the old revision");
+            Check(store.Read("level1")!.Revision == 1, "a conflicting save changes nothing");
             Console.WriteLine("PASS entity store: a save with a stale revision conflicts");
 
-            Throws<ArgumentException>(() => store.Save("plug1", body, 1, snapshot, "g1", enabled: false), "enabled on an existing definition");
+            Throws<ArgumentException>(() => store.Save("level1", body, 1, snapshot, "g1", enabled: false), "enabled on an existing definition");
             Console.WriteLine("PASS entity store: enabled can only be given for a new definition");
 
-            var resaved = store.Save("plug1", body, 1, snapshot, "g2");
+            var resaved = store.Save("level1", body, 1, snapshot, "g2");
             Check(resaved.Revision == 2 && resaved.Enabled, "a second save advances the revision and keeps it on");
-            var off = store.SetEnabled("plug1", false);
-            var reread = store.Read("plug1")!;
+            var off = store.SetEnabled("level1", false);
+            var reread = store.Read("level1")!;
             Check(off is { Enabled: false, Revision: 2 } && reread is { Enabled: false, Revision: 2 } && reread.SavedUtc == resaved.SavedUtc && reread.Source == resaved.Source,
                 "SetEnabled keeps the revision and save time");
-            var kept = store.Save("plug1", body, 2, snapshot, "g2");
+            var kept = store.Save("level1", body, 2, snapshot, "g2");
             Check(kept is { Revision: 3, Enabled: false }, "a save keeps a definition off");
             Console.WriteLine("PASS entity store: SetEnabled keeps the revision and save time, and a save keeps the flag");
 
-            var created = store.Save("plug2", body, 0, snapshot, "g1", enabled: false);
-            Check(!created.Enabled && !store.Read("plug2")!.Enabled, "a new definition can start off");
+            var created = store.Save("level2", body, 0, snapshot, "g1", enabled: false);
+            Check(!created.Enabled && !store.Read("level2")!.Enabled, "a new definition can start off");
             Console.WriteLine("PASS entity store: a new definition can be saved off");
 
             var rebuilt = store.Rebuilt(kept, new DefinitionGenerator().Preview(kept.Body, snapshot), "g3");
             Check(rebuilt is { Revision: 4, Enabled: false, CatalogGeneration: "g3" } && rebuilt.SavedUtc == kept.SavedUtc && rebuilt.Source == expected
                 && rebuilt.SourceMap.SequenceEqual(kept.SourceMap), "Rebuilt gives the next revision with the old flag and save time");
-            Check(store.Read("plug1")!.Revision == 3, "Rebuilt does not write");
+            Check(store.Read("level1")!.Revision == 3, "Rebuilt does not write");
             Console.WriteLine("PASS entity store: Rebuilt returns revision + 1 with the old Enabled and SavedUtc, unwritten");
 
-            Throws<VisualConflictException>(() => store.Delete("plug2", 7), "a delete with the wrong revision");
-            Check(store.Read("plug2") != null, "a conflicting delete keeps the file");
-            store.Delete("plug2", 1);
-            Check(store.Read("plug2") == null, "a delete with the right revision removes it");
+            Throws<VisualConflictException>(() => store.Delete("level2", 7), "a delete with the wrong revision");
+            Check(store.Read("level2") != null, "a conflicting delete keeps the file");
+            store.Delete("level2", 1);
+            Check(store.Read("level2") == null, "a delete with the right revision removes it");
             Console.WriteLine("PASS entity store: Delete checks the revision");
 
             File.WriteAllText(Path.Combine(directory, "broken.json"), "{");
-            Check(store.Ids().SequenceEqual(["broken", "plug1"]), "Ids lists every file: " + string.Join(", ", store.Ids()));
-            Check(store.List().Select(d => d.Id).SequenceEqual(["plug1"]), "List skips the unreadable file");
+            Check(store.Ids().SequenceEqual(["broken", "level1"]), "Ids lists every file: " + string.Join(", ", store.Ids()));
+            Check(store.List().Select(d => d.Id).SequenceEqual(["level1"]), "List skips the unreadable file");
             var unreadable = Throws<JsonException>(() => store.List(strict: true), "a strict List over an unreadable file");
             Check(unreadable.Message.StartsWith($"Cannot read entity definition {Path.GetFullPath(Path.Combine(directory, "broken.json"))}: ", StringComparison.Ordinal), "a strict List names the file: " + unreadable.Message);
             Console.WriteLine("PASS entity store: Ids includes an unreadable file, List skips it and a strict List throws");
 
             Throws<VisualConflictException>(() => store.Delete("broken", 1), "deleting an unreadable file at a revision");
             store.Delete("broken", 0);
-            Check(store.Ids().SequenceEqual(["plug1"]), "revision 0 deletes an unreadable file");
+            Check(store.Ids().SequenceEqual(["level1"]), "revision 0 deletes an unreadable file");
             Console.WriteLine("PASS entity store: an unreadable file is deleted only at revision 0");
 
             Throws<ArgumentException>(() => store.Save("Bad Id", body, 0, snapshot, "g1"), "an id with a space");
-            Throws<ArgumentException>(() => store.Read("plug:1"), "an id with a colon");
+            Throws<ArgumentException>(() => store.Read("level:1"), "an id with a colon");
             Check(!Directory.GetFiles(directory).Any(f => f.EndsWith(".tmp")), "no temporary file is left behind");
             Console.WriteLine("PASS entity store: an invalid id is refused");
 
-            Throws<DefinitionValidationException>(() => store.Save("plug3", Body(type: "library:shelly:NodeLib.Nope"), 0, snapshot, "g1"), "saving an invalid definition");
-            Check(store.Read("plug3") == null, "an invalid definition is not stored");
+            // Its Setting step reads offset, which this definition has no setting of.
+            var invalid = GraphBody(LevelGraph(), null, [Typed("host", "string", "\"10.0.0.5\"")], "Kitchen level");
+            Throws<DefinitionValidationException>(() => store.Save("level3", invalid, 0, snapshot, "g1"), "saving an invalid definition");
+            Check(store.Read("level3") == null, "an invalid definition is not stored");
             Console.WriteLine("PASS entity store: an invalid definition throws its preview and stores nothing");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }

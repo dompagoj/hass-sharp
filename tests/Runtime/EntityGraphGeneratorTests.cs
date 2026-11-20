@@ -130,6 +130,7 @@ static class EntityGraphGeneratorTests
             (nameof(ACSharpNodeGetsAFactory), ACSharpNodeGetsAFactory),
             (nameof(AStaleSignatureIsToldSo), () => { AStaleSignatureIsToldSo(); return Task.CompletedTask; }),
             (nameof(ASettingValueMustFit), () => { ASettingValueMustFit(); return Task.CompletedTask; }),
+            (nameof(AOneSidedRangeSaysItsSide), () => { AOneSidedRangeSaysItsSide(); return Task.CompletedTask; }),
             (nameof(ComponentsResolveTheirSettings), () => { ComponentsResolveTheirSettings(); return Task.CompletedTask; }),
             (nameof(ASecretIsNotInTheSource), () => { ASecretIsNotInTheSource(); return Task.CompletedTask; }),
             (nameof(DerivingDropsWhatTheCodeNoLongerHas), () => { DerivingDropsWhatTheCodeNoLongerHas(); return Task.CompletedTask; }),
@@ -325,6 +326,37 @@ static class EntityGraphGeneratorTests
         var wrong = Previewed(Body([CSharp("csharp_device", "fan", "fan", FanSource, new JsonObject { ["Count"] = Lit("string", "three") })], []));
         Check(!wrong.Valid && wrong.Diagnostics.Count(d => d.InputId == "Count" && d.Severity == 3) == 1 && !wrong.Diagnostics.Any(d => d.Code == "setting.value"),
             "a text in an integer is one problem, not a value problem too: " + Shown(wrong.Diagnostics));
+    }
+
+    const string SidedSource = """
+        public class Sided : SharpDevice
+        {
+            [Setting(Minimum = 1)] public int Retries { get; set; } = 3;
+            [Setting(Maximum = 60)] public int Delay { get; set; }
+            [Setting(Minimum = 0.5)] public double Gain { get; set; } = 1;
+        }
+        """;
+
+    /// <summary>
+    /// A range declared on one side only says that side, not the type's own bound on the other: <c>of at least 1</c>,
+    /// <c>of at most 60</c> and <c>of at least 0.5</c>, typed on the pin or from the Setting wired to it, also for a whole
+    /// number past an int's own bound.
+    /// </summary>
+    static void AOneSidedRangeSaysItsSide()
+    {
+        var sided = CSharp("csharp_device", "sided", "sided", SidedSource, new JsonObject { ["Retries"] = Lit("number", 0), ["Delay"] = Lit("number", 61) });
+        var preview = Previewed(Body([sided, N("gain", "setting", new { key = "gain" })], [D("gain", "sided", "Gain")], Setting("gain", "number", 0.25)));
+        var values = preview.Diagnostics.Where(d => d.Code == "setting.value").ToArray();
+        Check(!preview.Valid && values.Length == 3 && values.All(d => d is { NodeId: "sided", Severity: 3 }), "three values do not fit: " + Shown(preview.Diagnostics));
+        string Said(string pin) => values.SingleOrDefault(d => d.InputId == pin)?.Message ?? "(none)";
+        Check(Said("Retries") == "Retries takes a whole number of at least 1", "a minimum alone: " + Said("Retries"));
+        Check(Said("Delay") == "Delay takes a whole number of at most 60", "a maximum alone: " + Said("Delay"));
+        Check(Said("Gain") == "Gain takes a number of at least 0.5", "a number's minimum alone, from the wired Setting: " + Said("Gain"));
+        var past = Previewed(Body([CSharp("csharp_device", "sided", "sided", SidedSource, new JsonObject { ["Retries"] = Lit("number", 2147483648) })], []));
+        Check(Shown(past.Diagnostics.Where(d => d.Code == "setting.value")) == "setting.value@sided:Retries:3 Retries takes a whole number of at least 1",
+            "a whole number past an int's bound says the minimum alone: " + Shown(past.Diagnostics));
+        var fits = Previewed(Body([CSharp("csharp_device", "sided", "sided", SidedSource, new JsonObject { ["Retries"] = Lit("number", 1), ["Delay"] = Lit("number", 60), ["Gain"] = Lit("number", 0.5) })], []));
+        Check(fits.Valid, "values on the bound fit: " + Shown(fits.Diagnostics));
     }
 
     /// <summary>
