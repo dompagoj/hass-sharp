@@ -1134,11 +1134,11 @@ static class EntityGraphTests
         await rig.Flush();
         Check(rig.Pushed("door:door", batches).LastOrDefault() is { } set && Is(set, "is_on", true), "the trigger flow set the node's entity: " + Lines(rig.Home.Pushes().Skip(batches)));
         // The read answer's entities are for reading: saved back with them, it is refused in words; without them, as the
-        // editor sends it, it answers the same entities. Its device is null, which a graph's request may send.
+        // editor sends it, it answers the same entities. It has no device of its own.
         Check(!read.ContainsKey("device") && !read["logic"]!.AsObject().ContainsKey("type"), "a graph definition's read answer has no device and no logic type: " + read.ToJsonString());
         var back = new JsonObject
         {
-            ["name"] = read["name"]!.DeepClone(), ["device"] = read["device"]?.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
+            ["name"] = read["name"]!.DeepClone(), ["settings"] = read["settings"]!.DeepClone(),
             ["entities"] = read["entities"]!.DeepClone(), ["logic"] = read["logic"]!.DeepClone(),
         };
         var refused = await rig.Request(new { operation = "save", id = "door", expectedRevision = read["revision"]!.GetValue<long>(), definition = back });

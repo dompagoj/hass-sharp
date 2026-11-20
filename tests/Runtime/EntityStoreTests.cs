@@ -196,7 +196,7 @@ static class EntityStoreTests
 
     /// <summary>
     /// The stored file is version 3, lists the devices its Device nodes declare and the entities its Entity nodes declare,
-    /// each with the key of the device it is on or null; a class definition's file is version 3 too and lists no devices.
+    /// each with the key of the device it is on or null.
     /// </summary>
     static void ASaveWritesVersionThreeWithTheDerivedDevices(VisualCatalogSnapshot snapshot)
     {
@@ -955,12 +955,12 @@ static class EntityStoreTests
     static void TheDocumentsOwnProblemsComeAlone(NodeLibraryCompiler compiler, VisualCatalogSnapshot snapshot)
     {
         var generator = new DefinitionGenerator();
-        string Codes(DefinitionPreview preview) => string.Join(" | ", preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.NodeId} {d.Message}"));
+        string Found(DefinitionPreview preview) => string.Join(" | ", preview.Diagnostics.Select(d => $"{d.Code} {d.InputId} {d.NodeId} {d.Message}"));
         void Only(DefinitionBody body, VisualCatalogSnapshot catalog, params string[] problems)
         {
             var preview = generator.Preview(body, catalog);
             Check(!preview.Valid && preview.Source == "" && preview.SourceMap.Count == 0 && preview.Diagnostics.All(d => d is { Severity: 3, NodeId: null, InputId: null })
-                && preview.Diagnostics.Select(d => $"{d.Code} {d.Message}").SequenceEqual(problems), $"expected {string.Join(" | ", problems)}: " + Codes(preview));
+                && preview.Diagnostics.Select(d => $"{d.Code} {d.Message}").SequenceEqual(problems), $"expected {string.Join(" | ", problems)}: " + Found(preview));
         }
         const string name = "definition.name Give the definition a name of up to 120 characters";
         const string logic = "definition.logic A definition is built from nodes: logic is {kind: \"graph\", graph}. Write C# in a C# entity or C# device node";

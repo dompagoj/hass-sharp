@@ -737,7 +737,7 @@ internal sealed partial class DefinitionHost
             // Keyed <entity key>:<command>; an entity key has no colon.
             var colon = handled.IndexOf(':');
             var key = handled[..colon];
-            var domain = definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } entity ? VisualNodeCatalog.Text(entity, "domain") : "";
+            var domain = definition.Entities.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } entity ? VisualNodeCatalog.Text(entity, "domain") : "";
             return ($"{Named(key)}: {CommandLabel(domain, handled[(colon + 1)..])}", FlowKind.Command);
         }
         if (roots?.Setup == method || cause == InvocationCause.Setup) return ("When started", FlowKind.Setup);
@@ -830,7 +830,7 @@ internal sealed partial class DefinitionHost
 
     // An entity as a message names it: its name (trimmed, as run names have it) and key, or its key alone.
     string Named(string key) =>
-        definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } described
+        definition.Entities.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } described
             && VisualGraphValidator.Words.Trimmed(VisualNodeCatalog.Text(described, "name") ?? "") is { Length: > 0 } name
             ? $"{name} ({key})" : key;
 

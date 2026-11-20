@@ -217,8 +217,9 @@ public partial class HassSharpManager
     /// <summary>
     /// Answers each setting of the document that may be secret without its value: <c>value</c> null, <c>secret</c> true
     /// and <c>hasValue</c>, whether one is stored; its other fields as they are. Only a setting known not to be secret
-    /// keeps its value: one whose key no setting of the document marks <c>secret</c>. The answers reach clients, the panel and an assistant over MCP, that have no business with them; a save sends such
-    /// a setting back with <c>keep</c>, or as answered, to leave its value as stored (<see cref="DefinitionSetting.Keep"/>).
+    /// keeps its value: one whose key no setting of the document marks <c>secret</c>. The answers reach clients, the
+    /// panel and an assistant over MCP, that have no business with them; a save sends such a setting back with
+    /// <c>keep</c>, or as answered, to leave its value as stored (<see cref="DefinitionSetting.Keep"/>).
     /// </summary>
     static void WithoutSecretValues(JsonObject json, EntityDefinitionDocument document)
     {

@@ -15,7 +15,7 @@ function client(answer: (request: any) => unknown = () => ok({})) {
 const hub = (key: string, name: string) => ({ id: key, kind: 'entity', config: { key, domain: 'binary_sensor', name }, position: { x: 60, y: 100 } })
 /** The motion definition: its entity an Entity node, so it lists none. */
 const body = (): DefinitionBody => ({
-  name: 'Any motion', device: null, settings: [{ key: 'offset', value: 4, label: 'Offset', type: 'number' }],
+  name: 'Any motion', settings: [{ key: 'offset', value: 4, label: 'Offset', type: 'number' }],
   logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [hub('any_motion', 'Any motion')], edges: [] } },
 })
 
@@ -428,6 +428,22 @@ describe('the in-memory entities backend', () => {
     await api.setEnabled('motion', false)
     await refused('motion', 'poll', 'The entity definition is off')
     expect(fixture.entities.controls.runs).toHaveLength(1)
+  })
+  it('refuses a definition whose logic is not a graph, or that has none, as the server does', async () => {
+    const { fixture, api } = setup()
+    const sentence = 'A definition is built from nodes: logic is {kind: "graph", graph}. Write C# in a C# entity or C# device node'
+    const refusal = { nodeId: null, message: sentence, severity: 3, startLine: null, startColumn: null, inputId: null, portId: null, code: 'definition.logic' }
+    const madeUp = { ...body(), logic: { kind: 'script', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } } } as unknown as DefinitionBody
+    const none = { name: 'Any motion', settings: [] } as unknown as DefinitionBody
+    for (const definition of [madeUp, none]) {
+      const preview = { valid: false, diagnostics: [refusal], source: '', sourceMap: [] }
+      expect(await api.preview(definition)).toEqual(preview)
+      await expect(api.save('motion', definition, 0)).rejects.toMatchObject({ code: 'validation', detail: preview })
+      // Beside its name's problem, and alone: its entities or device are not looked at.
+      expect((await api.preview({ ...definition, name: '', entities: [], device: { model: 'P1' } } as unknown as DefinitionBody)).diagnostics.map(d => d.code))
+        .toEqual(['definition.name', 'definition.logic'])
+    }
+    expect(fixture.entities.documents.size).toBe(0)
   })
   it('previews first only a graph Python reads as one: an object', async () => {
     const { fixture, api } = setup()

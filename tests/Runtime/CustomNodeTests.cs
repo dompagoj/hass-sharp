@@ -352,6 +352,15 @@ static class CustomNodeTests
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] public string Širina { get; set; } = \"\";\n}", NodeLibraryCompiler.PinNameMessage("setting", "Širina"), 3);
         // Code that does not compile has its compiler's errors, on its own lines, and no signature.
         Refused("csharp_device", "public class Plug : SharpDevice\n{\n    public Plug() { Missing(); }\n}", "The name 'Missing' does not exist in the current context", 3);
+        // A setting's problem is the only error, at the property's name: line and column.
+        void Exactly(string kind, string source, string message, int line, int column)
+        {
+            var errors = ClassCompiled(kind, source).Diagnostics.Where(d => d.Severity == 3).ToArray();
+            Check(errors.Length == 1 && errors[0] is { SourceId: "c" } only && only.Message == message && only.StartLine == line && only.StartColumn == column,
+                $"{kind}: expected only \"{message}\" at {line}:{column}: " + string.Join(" | ", errors.Select(d => $"{d.StartLine}:{d.StartColumn} {d.Message}")));
+        }
+        Exactly("csharp_entity", "public class Lamp : SharpLight\n{\n    [Setting] public DateTime When { get; set; }\n}", NodeLibraryCompiler.SettingTypeMessage("DateTime"), 3, 31);
+        Exactly("csharp_device", "public class Plug : SharpDevice\n{\n    [Setting] internal string Hidden { get; set; } = \"\";\n}", NodeLibraryCompiler.SettingAccessMessage("Hidden"), 3, 31);
         // A class of the right kind beside an abstract helper base, or a nested helper of another kind, is the one.
         Check(ClassCompiled("csharp_entity", "public abstract class Base : SharpSwitch { }\npublic class Mine : Base { }").Valid, "an abstract base of an entity class is a helper");
         Check(ClassCompiled("csharp_device", "public class Plug : SharpDevice\n{\n    public class Relay : SharpSwitch { }\n}").Valid, "an entity class inside a device class is its helper");

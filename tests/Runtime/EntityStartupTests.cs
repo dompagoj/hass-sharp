@@ -499,8 +499,9 @@ static class EntityStartupTests
         finally { await api.UnloadAsync(); }
     }
 
-    // A restart runs the saved definitions again; an unreadable file is skipped, a disabled definition stays off, and the
-    // prune keeps every stored id.
+    // A restart runs the saved definitions again; an unreadable file is skipped (one that is not JSON, and a version 3
+    // document whose logic is of another kind than graph), a disabled definition stays off, and the prune keeps every
+    // stored id.
     static async Task Restart()
     {
         await using var home = new EntityTestHome("entity-startup-restart");
@@ -517,6 +518,9 @@ static class EntityStartupTests
         finally { await first.UnloadAsync(); }
 
         File.WriteAllText(Storage(home, "entities", "plug2.json"), "{");
+        var script = JsonNode.Parse(File.ReadAllText(Storage(home, "entities", "plug1.json")))!.AsObject();
+        script["id"] = "plug4"; script["logic"]!["kind"] = "script";
+        File.WriteAllText(Storage(home, "entities", "plug4.json"), script.ToJsonString());
         var (syncs, broken, batches) = (home.Syncs("plug1").Length, home.Syncs("plug2").Length, home.Pushes().Length);
         var api = new HassSharpManager(home.Root);
         try
@@ -531,15 +535,20 @@ static class EntityStartupTests
             Check(EntityTestHome.Commands().Count(c => c == "turn_on 10.0.1.1") == 1, "the command after the restart: " + string.Join(", ", EntityTestHome.Commands()));
             Console.WriteLine("PASS entity startup: a restart runs the saved definition again, syncs it and takes its commands");
 
-            Check(home.Prunes()[^1] == """["plug1","plug2","plug3"]""", "the prune keeps every stored id: " + string.Join(" | ", home.Prunes()));
+            Check(home.Prunes()[^1] == """["plug1","plug2","plug3","plug4"]""", "the prune keeps every stored id: " + string.Join(" | ", home.Prunes()));
             Check(home.Logs().Any(line => line.Contains("Skipping entity definition") && line.Contains("plug2.json")), "the unreadable file is not logged: " + string.Join(" | ", home.Logs()));
             Check(home.Syncs("plug2").Length == broken, "the unreadable definition synced");
+            Check(home.Logs().Count(line => line == $"Skipping entity definition {Storage(home, "entities", "plug4.json")}: Invalid entity definition envelope") == 1,
+                "the document of another logic is logged as malformed: " + string.Join(" | ", home.Logs().Where(l => l.Contains("plug4", StringComparison.Ordinal))));
+            Check(home.Syncs("plug4").Length == 0, "the document of another logic synced");
+            var plug4 = await Request(api.EntityRequest, new { operation = "read", id = "plug4" });
+            Check(plug4.ToJsonString() == """{"version":1,"ok":false,"error":{"code":"invalid_request","detail":"Invalid entity definition envelope"}}""", "its read answers why: " + plug4.ToJsonString());
             Console.WriteLine("PASS entity startup: an unreadable definition file is logged and skipped, its id still kept by the prune, and the others run");
 
             // Listed again, it is not logged again; a library save, which must check every definition, names the file.
             await Request(api.EntityRequest, new { operation = "list" });
             await Request(api.EntityRequest, new { operation = "list" });
-            var skipped = home.Logs().Where(line => line.Contains("Skipping entity definition")).ToArray();
+            var skipped = home.Logs().Where(line => line.Contains("Skipping entity definition") && line.Contains("plug2.json")).ToArray();
             Check(skipped.Length == 1 && skipped[0].Contains("plug2.json: ") && !skipped[0].Contains("JsonException") && !skipped[0].Contains("   at "),
                 "the unreadable file is logged once, without the stack: " + string.Join(" | ", skipped));
             var refused = await Request(api.NodeLibraryRequest, new { operation = "save", id = "shelly", name = "shelly", expectedRevision = 1, source = EntityApiTests.Library });

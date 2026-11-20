@@ -139,8 +139,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     }
 
     /// <summary>
-    /// Creates the entities its Entity nodes describe, creates each C# entity and C# device node's class, applies its settings and runs its
-    /// <c>Setup()</c> (every C# node's creation and <c>Setup()</c> within one <see cref="SetupTimeout"/>), checks the entity
+    /// Creates the entities its Entity nodes describe, creates each C# entity and C# device node's class, applies its
+    /// settings and runs its <c>Setup()</c> (every C# node's creation and <c>Setup()</c> within one
+    /// <see cref="SetupTimeout"/>), checks the entity
     /// keys, and runs its When started flow within a <see cref="SetupTimeout"/> of its own. Last, registers the entities
     /// with Home Assistant, waiting for it no longer than <see cref="SyncTimeout"/>. A failure leaves Home Assistant
     /// untouched. Cancelled with <paramref name="lifetime"/>.
@@ -457,7 +458,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             // A revision this one was to replace keeps nothing of it, nor it of that one.
             ReleasePredecessor();
             // Nothing of the user's code stays reachable from the host once stopped.
-                entities = [];
+            entities = [];
             lifecycle = [];
             parts = [];
             nodes.Clear();

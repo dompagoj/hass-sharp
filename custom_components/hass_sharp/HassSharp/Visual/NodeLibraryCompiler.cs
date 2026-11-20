@@ -732,8 +732,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// <summary>
     /// A custom device or entity class as the C# entity and C# device nodes describe it: its domain, title (a
     /// <c>[Node]</c> on the class, which makes no step, else its name in words), summary, and settings (a base class's
-    /// first; one declared again in a derived class keeps its place), as <paramref name="read"/> has read them. Null for a class a definition cannot create (<see cref="EntityClasses.Creatable"/>) or that is neither a
-    /// device nor an entity of a domain.
+    /// first; one declared again in a derived class keeps its place), as <paramref name="read"/> has read them. Null for
+    /// a class a definition cannot create (<see cref="EntityClasses.Creatable"/>) or that is neither a device nor an
+    /// entity of a domain.
     /// </summary>
     static EntityTypeDescriptor? DescribeEntityType(INamedTypeSymbol type, EntityClasses read)
     {

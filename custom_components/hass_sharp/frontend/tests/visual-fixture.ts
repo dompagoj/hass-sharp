@@ -164,7 +164,7 @@ export type FixtureActivation = 'running' | 'setup' | 'failed' | 'stopped' | 'no
  * The in-memory `hass_sharp/entities` backend of {@link visualFixture} (`fixture.entities`), answering as
  * `EntityApi.EntityRequest` and the Python route do, in the `{version, ok, result | error}` envelope.
  *
- * - `documents`: the stored definitions by id, as the store keeps them: secrets in clear, `logic` as `{kind, type, graph}`,
+ * - `documents`: the stored definitions by id, as the store keeps them: secrets in clear, `logic` as `{kind, graph}`,
  *   the graph without `definition`, at `version` 3, its `entities` derived as `EntityDefinitionStore.Save` stores them
  *   (those its Entity nodes declare), with the run fields an answer has (`automationId` `entity:<id>`, `status`, …).
  *   Every answer masks its `secret` settings.
@@ -247,19 +247,19 @@ function entitiesFixture(generation: () => string) {
     return structuredClone(withGraphTypes(nodeCatalog, { ...body.logic.graph, definition: { settings: [] } }).definition?.devices ?? []) as DerivedDevice[]
   }
   /**
-   * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a request that
-   * lists entities, a request with a device, a graph with no Entity node, and each Entity node's options, whose problems
-   * are on it, about `option:<option>`. A request that lists entities, or else gives a device, gets that refusal alone
-   * (beside its name's): nothing else of it is checked.
+   * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: logic that is not
+   * a graph, a request that lists entities, a request with a device, a graph with no Entity node, and each Entity node's
+   * options, whose problems are on it, about `option:<option>`. Logic that is not a graph, or else a request that lists
+   * entities, or else one that gives a device, gets that refusal alone (beside its name's): nothing else of it is checked.
    */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
     if (typeof body.name !== 'string' || !body.name.trim() || body.name.length > 120) problems.push(problem('definition.name', 'Give the definition a name of up to 120 characters'))
     // As EntityApi reads it: an entities key given as null is an empty list.
     const listed = Object.hasOwn(body, 'entities') ? (body as { entities?: unknown }).entities ?? [] : undefined
-    if (body.logic?.kind !== 'graph') return problems
+    if (body.logic?.kind !== 'graph') return [...problems, problem('definition.logic', 'A definition is built from nodes: logic is {kind: "graph", graph}. Write C# in a C# entity or C# device node')]
     if (listed !== undefined) return [...problems, problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities')]
-    if (!empty(body.device)) return [...problems, problem('definition.deviceNotAllowed', "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", 'device')]
+    if (!empty((body as { device?: unknown }).device)) return [...problems, problem('definition.deviceNotAllowed', "Devices are Device nodes in the graph now: leave device out, add a Device node and connect its Entities pin to each entity's Device pin", 'device')]
     const nodes = declaredEntities(body.logic.graph)
     // A graph whose nodes are not a list is the validator's to tell (graph.shape), as the server has it.
     if (!nodes.length && Array.isArray((body.logic.graph as { nodes?: unknown } | undefined)?.nodes)) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))

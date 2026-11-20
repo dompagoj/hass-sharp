@@ -75,12 +75,11 @@ export interface DefinitionDevice {
 /** Where the behaviour comes from: a node graph. */
 export type DefinitionLogic = { kind: 'graph'; graph: Graph }
 /**
- * A definition as the user writes it: the `definition` of `preview` and `save`. The editor never sends a `device`: its
- * devices are its Device nodes, and the server refuses a request whose device is not null.
+ * A definition as the user writes it: the `definition` of `preview` and `save`. It has no `device`: its devices are its
+ * Device nodes, and the server refuses a request whose device is not null.
  */
 export interface DefinitionBody {
   name: string
-  device?: DefinitionDevice | null
   settings?: DefinitionSetting[]
   logic: DefinitionLogic
 }
@@ -110,7 +109,7 @@ export interface DefinitionTrigger {
   runnable: boolean
 }
 /** A saved definition as `read` and `save` answer it (`list` without `source` and `sourceMap`). */
-export interface EntityDocument extends Omit<DefinitionBody, 'device'> {
+export interface EntityDocument extends DefinitionBody {
   /** 3; one an earlier development build saved is unreadable. */
   version: 3
   id: string
