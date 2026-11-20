@@ -296,7 +296,8 @@ it('the state values are inputs that can be set', () => {
   const { root, changed } = mount(lamp(), 'l')
   const inputs = root.querySelector('section[aria-label="Inputs"]')!
   expect(inputs).not.toBeNull()
-  expect([...inputs.querySelectorAll<HTMLElement>('[data-input-id]')].map(el => el.dataset.inputId)).toEqual(['is_on', 'brightness'])
+  // Its Device pin, then its state values.
+  expect([...inputs.querySelectorAll<HTMLElement>('[data-input-id]')].map(el => el.dataset.inputId)).toEqual(['device', 'is_on', 'brightness'])
   expect(row(inputs, 'is_on')!.textContent).toContain('On')
   expect(row(inputs, 'brightness')!.textContent).toContain('Brightness')
   // Optional on the node: each starts not set, and Set value gives it its editor.

@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
-import { catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
+import { canConnect, catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition } from '../src/entities/model'
@@ -99,6 +99,74 @@ it('a type change removes the wires into a value the new type does not have, and
   expect(validateGraph(retyped).some(d => d.code === 'port.unknownInput' || d.code === 'port.unknownOutput' || d.code === 'port.unknownExecution')).toBe(false)
 })
 
+it('a type change keeps the wire from a Device node', () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  graph = add(graph, 'entity', 'l', { key: 'lamp', domain: 'light', name: 'Lamp', arguments: { brightness: lit('number', 128) } })
+  graph = connectData(graph, 'plug', 'entities', 'l', 'device')
+  const { graph: retyped, removed } = retypeNode(graph, 'l', 'switch', nodeCatalog)
+  expect(retyped.edges.map(e => e.kind === 'data' ? `${e.source}.${e.sourcePort}->${e.target}.${e.targetPort}` : e.id)).toEqual(['plug.entities->l.device'])
+  // Brightness goes, as a switch has none; the Device pin keeps its wire.
+  expect(retyped.nodes.find(n => n.id === 'l')!.config.arguments).toEqual({ device: { kind: 'unset' } })
+  expect(refitNotice(removed)).toBe('Cleared a value that no longer fits: Brightness.')
+})
+
+/** An entity definition's graph with a Device node, a switch, When started and a Log step it runs. */
+const withDevice = () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  graph = add(graph, 'entity_setup', 'start')
+  graph = add(graph, 'log', 'log', { value: lit('string', 'Started') })
+  return connectNodes(graph, 'start', 'log')
+}
+
+it('a Device node connects to an Entity node\'s Device pin and to nothing else', () => {
+  const graph = withDevice()
+  const wired = connectData(graph, 'plug', 'entities', 'relay', 'device')
+  expect(wired.edges.filter(e => e.kind === 'data')).toEqual([expect.objectContaining({ kind: 'data', source: 'plug', sourcePort: 'entities', target: 'relay', targetPort: 'device' })])
+  // The wire's place is held under the node's state values, as every input of an Entity node is.
+  expect(wired.nodes.find(n => n.id === 'relay')!.config.arguments).toEqual({ device: { kind: 'unset' } })
+  expect(validateGraph(wired).filter(d => d.severity === 3)).toEqual([])
+  // Not into an input that takes any value, nor an object's field or a list's item.
+  const notDevice = 'accepts True/False, Number, Text, Object and 5 more, not Device'
+  expect(() => connectData(graph, 'plug', 'entities', 'log', 'value')).toThrow(`Message ${notDevice}`)
+  expect(dataConnectionError(graph, 'plug', 'entities', 'log', 'value', nodeCatalog, { quick: true })).toBe(`Message ${notDevice}`)
+  const fields = add(graph, 'object_create', 'obj', { fields: { room: { kind: 'unset' } } })
+  expect(() => connectData(fields, 'plug', 'entities', 'obj', 'field:room')).toThrow(`Room ${notDevice}`)
+  const items = add(graph, 'array_create', 'list', { items: [{ kind: 'unset' }] })
+  expect(() => connectData(items, 'plug', 'entities', 'list', 'item:0')).toThrow(`Item 1 ${notDevice}`)
+  // No step order wire leads into a Device node or out of it.
+  expect(canConnect(graph, 'log', 'plug')).toBe(false)
+  expect(connectNodes(graph, 'log', 'plug')).toBe(graph)
+  expect(canConnect(graph, 'plug', 'log')).toBe(false)
+  expect(connectNodes(graph, 'plug', 'log', 'next')).toBe(graph)
+})
+
+it('a new Device node has no step pins and no state', () => {
+  const graph = withDevice()
+  const device = graph.nodes.find(n => n.id === 'plug')!, relay = graph.nodes.find(n => n.id === 'relay')!
+  expect(executionPorts(device)).toEqual([])
+  expect(isDeclaration('device', nodeCatalog)).toBe(true)
+  expect(isDeclaration('entity', nodeCatalog) || isDeclaration('log', nodeCatalog) || isDeclaration('missing', nodeCatalog)).toBe(false)
+  expect(structural(nodeCatalog.types.device)).toBe(true)
+  expect(structural(nodeCatalog.types.image) || structural(undefined)).toBe(false)
+  expect(Object.keys(stateInputs(relay, nodeCatalog))).toEqual(['is_on'])
+  expect(Object.keys(dataInputs(relay))).toEqual(['device', 'is_on'])
+  expect(structural(dataInputs(relay).device)).toBe(true)
+  // No list of every type has it: an input of any type, nor the type lists of Constant, Convert and the loops.
+  const message = dataInputs(graph.nodes.find(n => n.id === 'log')!).value.types
+  expect(message).toContain('image')
+  expect(message).not.toContain('device')
+  expect(listedTypes(nodeCatalog)).not.toContain('device')
+  // A Device node is named by its name, has no problem of its own, and its card has no step pins and is not muted.
+  const diagnostics = validateGraph(graph)
+  expect(words.stepName(device)).toBe('Hall plug')
+  expect(diagnostics.filter(d => d.nodeId === 'plug')).toEqual([])
+  const view = buildNodeView(device, { graph, catalog: nodeCatalog, diagnostics })
+  expect([view.execIn, view.next, view.footer, view.unreachable]).toEqual([undefined, undefined, undefined, false])
+  expect(view.title).toBe('Hall plug')
+  expect(view.rows.map(row => row.output?.label)).toEqual(['Entities'])
+})
+
 /** Copies the steps `ids` with the clipboard and pastes them beside where they were. */
 const paste = (graph: VisualGraph, ids: string[]) => {
   const result = pasteSteps(graph, copySteps(graph, ids)!, nodeCatalog, { offset: { x: 40, y: 40 } })
@@ -182,7 +250,9 @@ const rightColumn = (graph: VisualGraph, id: string) =>
 
 it('the node has the pins of its type', () => {
   const light = add(empty(), 'entity', 'l', { key: 'lamp', domain: 'light' }).nodes[0]
-  expect(Object.keys(dataInputs(light))).toEqual(['is_on', 'brightness'])
+  // Its Device pin, then its state values.
+  expect(Object.keys(dataInputs(light))).toEqual(['device', 'is_on', 'brightness'])
+  expect(Object.keys(stateInputs(light, nodeCatalog))).toEqual(['is_on', 'brightness'])
   expect(Object.values(dataInputs(light)).every(input => input.required === false)).toBe(true)
   expect(executionPorts(light)).toEqual(['command:turn_on', 'command:turn_off'])
   expect(executionLabel(light, 'command:turn_on')).toBe('Turn on')
@@ -190,7 +260,7 @@ it('the node has the pins of its type', () => {
   const camera = add(empty(), 'entity', 'c', { key: 'cam', domain: 'camera' }).nodes[0]
   expect(executionPorts(camera)).toEqual(['frame'])
   expect(executionLabel(camera, 'frame')).toBe('When a frame is needed')
-  expect(Object.keys(dataInputs({ ...light, config: { ...light.config, key: '' } }))).toEqual(['is_on', 'brightness'])
+  expect(Object.keys(stateInputs({ ...light, config: { ...light.config, key: '' } }, nodeCatalog))).toEqual(['is_on', 'brightness'])
 })
 
 it('a value set on the node is kept under arguments, and one can be connected', () => {
@@ -310,7 +380,7 @@ it('a declaring node is named by its entity in messages and run names', () => {
 it('the old steps are gone from the catalog and the step library', () => {
   for (const kind of ['entity_state', 'entity_command', 'camera_frame']) expect(nodeCatalog.nodes).not.toHaveProperty(kind)
   const entity = catalogPalette(nodeCatalog, 'entity').filter(item => item.category === 'Entity').map(item => item.kind)
-  expect(entity.slice(0, 3)).toEqual(['entity', 'entity_setup', 'set_entity_state'])
+  expect(entity.slice(0, 4)).toEqual(['entity', 'device', 'entity_setup', 'set_entity_state'])
   expect(diagnosticCodes).not.toContain('state.duplicate')
 })
 

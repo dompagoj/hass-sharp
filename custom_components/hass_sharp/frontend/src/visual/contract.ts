@@ -26,15 +26,16 @@ export interface Graph { version: 5; name: string; nodes: GraphNode[]; edges: Gr
 export type GraphDocument = 'automation' | 'entity'
 /** `code` names structural kinds (see `diagnosticCodes`), the same in both validators; other diagnostics have none. */
 export interface GraphDiagnostic { nodeId: string | null; message: string; severity: number; inputId?: string; portId?: string; code?: DiagnosticCode }
-export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumLabels?: string[]; enumSource?: 'types'; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
+export interface ConfigSpec { label?: string; description?: string; type: string; required?: boolean; default?: unknown; enum?: unknown[]; enumLabels?: string[]; enumSource?: 'types'; nullable?: boolean; min?: number; max?: number; pattern?: string; format?: 'date-time-offset'; minItems?: number; maxItems?: number }
 /**
  * Constraints (enum, pattern, minItems, maxItems, min, max, integer) apply to literal operands only; wires are constrained by type.
  * `connectable: false` marks an input that takes a value only (a Constant's value): it has no pin, and a wire into it is
  * refused as into an input the step does not have. `wireOnly` is set by `dataInputs` (never in the catalog) on an input
- * whose catalog types are `$properties`: it takes a wire only, and the editor offers no value to type in.
+ * whose catalog types are `$properties`: it takes a wire only, and the editor offers no value to type in. `structural` (an
+ * Entity node's Device pin) takes a wire of a structural type only and is no state value (see `stateInputs`).
  */
 export interface InputSpec {
-  connectable?: boolean; wireOnly?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
+  connectable?: boolean; wireOnly?: boolean; structural?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
 }
@@ -50,13 +51,17 @@ export interface OutputSpec { label?: string; type: string; description?: string
  * `root`: the node starts a flow of its own (as a trigger does); `documents`: the kinds of graph it works in (any when
  * absent); `singleton`: a graph holds at most one. `dynamicInputs: 'entity'` (a Set state's) gives the node the state
  * values of the domain of the definition's entity `config.entity` names (see `dataInputs`). `declared` (an Entity node's)
- * gives it the pins of the type its own `config.domain` names (see `declaredDomain`).
+ * gives it the pins of the type its own `config.domain` names (see `declaredDomain`). `declaration` (a Device node's): the
+ * node is neither a step nor a value (see `isDeclaration`).
  */
-export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities. */ declares?: 'entity'; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
+export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities or devices. */ declares?: 'entity' | 'device'; declaration?: boolean; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
 export interface PropertySpec { name: string; type: string; nullable: boolean; description?: string }
-/** `listed: false`: a type the type lists (Constant, Convert, loops) leave out, such as an enum of the entity classes. */
-export interface TypeSpec { properties?: PropertySpec[]; clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[]; listed?: boolean }
+/**
+ * `listed: false`: a type the type lists (Constant, Convert, loops) leave out, such as an enum of the entity classes.
+ * `structural`: a type no value has (a device), which only a wire carries; no list of every type has it (see `structural`).
+ */
+export interface TypeSpec { structural?: boolean; properties?: PropertySpec[]; clrType?: string; elementType?: string; description: string; label?: string; category?: string; nullable?: boolean; literalKind?: string | null; assignableTo?: string[]; assignableFrom?: string[]; refines?: string; pattern?: string; min?: number; max?: number; character?: boolean; enumValues?: JsonValue[]; enumLabels?: string[]; listed?: boolean }
 /** What one parameter of a family stands for: an entity domain's handle class (`clrType`) and its members. */
 export interface ParametricMember { clrType: string; properties: PropertySpec[] }
 export interface ParametricTypeSpec { param: string; valuePattern: string; label: string; members?: Record<string, ParametricMember> }
@@ -148,8 +153,20 @@ export function entityClass(id: string, catalog: VisualCatalogSnapshot = nodeCat
   const member = parametricMember(catalog.parametricTypes!.entity_id, match[2])
   return typeof member?.clrType === 'string' ? member.clrType : 'HassSharp.Entities.Entity'
 }
-/** The ids the type lists (Constant, Convert, loops) offer: every catalog type but those marked `listed: false`. */
-export const listedTypes = (catalog: VisualCatalogSnapshot): string[] => Object.keys(catalog.types).filter(id => catalog.types[id]?.listed !== false)
+/** The ids the type lists (Constant, Convert, loops) offer: every catalog type but those marked `listed: false`, and never a structural one. */
+export const listedTypes = (catalog: VisualCatalogSnapshot): string[] => Object.keys(catalog.types).filter(id => catalog.types[id]?.listed !== false && !structural(catalog.types[id]))
+/**
+ * Whether a type or an input is structural (`structural: true`, a device): a wire of it says what belongs to what and carries
+ * no value. Mirrors `VisualNodeCatalog.Structural`.
+ */
+export const structural = (spec: unknown): boolean => record(spec) && spec.structural === true
+/** The ids of every type a value can have: every catalog type but the structural ones (what `$any` and a field or item take). */
+const valueTypes = (catalog: VisualCatalogSnapshot) => Object.keys(catalog.types).filter(id => !structural(catalog.types[id]))
+/**
+ * Whether a node of the kind is a declaration (`declaration: true`, a Device node): neither a step nor a value. It has no
+ * execution pins, no step order wire goes into or out of it, and it never runs. Mirrors `VisualNodeCatalog.Declaration`.
+ */
+export const isDeclaration = (kind: string, catalog: VisualCatalogSnapshot = nodeCatalog) => nodeSpec(kind, catalog)?.declaration === true
 /** The type, then each type it refines, ending at its root; empty when any link is unknown or cyclic. */
 export function typeChain(id: string, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const chain: string[] = []
@@ -183,7 +200,8 @@ const nullableType = (id: string, catalog: VisualCatalogSnapshot) => resolveType
 const numeric = (id: string, catalog: VisualCatalogSnapshot) => { const kind = resolveTypeSpec(id, catalog)?.literalKind; return kind === 'integer' || kind === 'number' }
 export function executionPorts(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const spec = nodeSpec(node.kind, catalog)
-  if (isPure(node, catalog)) return []
+  // A value node and a declaration (a Device node) have no place in the run order.
+  if (isPure(node, catalog) || spec?.declaration === true) return []
   return spec ? [...(spec.dynamicExecution === 'branches' && Array.isArray(node.config.branches) ? node.config.branches.filter((id): id is string => typeof id === 'string').map(id => `branch:${id}`) : []), ...(spec.dynamicExecution === 'declared' ? declaredExecution(node, catalog) : []), ...(flowSource(node, catalog)?.execution ?? [])] : []
 }
 /** Where a node's execution ports, scopes and their labels are: a Custom C# node's signature when it has flows, else its kind's entry. */
@@ -675,9 +693,10 @@ function refinedType(type: string, value: unknown, catalog: VisualCatalogSnapsho
 const withProperties = (catalog: VisualCatalogSnapshot) => Object.entries(catalog.types).filter(([, type]) => record(type) && Array.isArray(type.properties) && type.properties.length > 0).map(([id]) => id)
 export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> {
   const spec = nodeSpec(node.kind, catalog)
-  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, ...(value.types.includes('$properties') ? { wireOnly: true } : {}), types: value.types.flatMap(t => t === '$any' ? Object.keys(catalog.types) : t === '$properties' ? withProperties(catalog) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
+  const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, ...(value.types.includes('$properties') ? { wireOnly: true } : {}), types: value.types.flatMap(t => t === '$any' ? valueTypes(catalog) : t === '$properties' ? withProperties(catalog) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
   if (node.kind === 'foreach' && ports.items) ports.items.types = ['array', ...Object.entries(catalog.types).filter(([, type]) => !type.nullable && type.elementType && isAssignable(type.elementType, text(node.config.itemType), catalog)).map(([id]) => id)]
-  const types = Object.keys(catalog.types)
+  // Every type a value can have, for an object's field, an unknown service field and a list's item: none is structural.
+  const types = valueTypes(catalog)
   const dynamic = spec?.dynamicInputs
   if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Field ${key}` }
   if (dynamic === 'service') {
@@ -707,6 +726,12 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   }
   return ports
 }
+/**
+ * The node's data inputs (`dataInputs`) without the structural ones: an Entity node's or a Set state's state values.
+ * Mirrors `VisualNodeCatalog.StateInputs`.
+ */
+export const stateInputs = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> =>
+  Object.fromEntries(Object.entries(dataInputs(node, undefined, catalog)).filter(([, input]) => !structural(input)))
 /** An own property only, as `TryGetInputValue` reads it: a field named `constructor` or `toString` is not inherited. */
 const own = (container: unknown, key: string): unknown => record(container) && Object.hasOwn(container, key) ? container[key] : undefined
 export function inputValue(node: GraphNode, port: string, catalog: VisualCatalogSnapshot): unknown {
@@ -792,11 +817,12 @@ function kindName(node: GraphNode, catalog: VisualCatalogSnapshot): string {
 }
 /**
  * The entity a node declares as people read it, in the validator's messages and in its runs' names: its name, else its
- * key, each trimmed, else its kind's label; never a label of the node's own. Undefined for a node that declares no
- * entity. Mirrors `VisualGraphValidator.Words.EntityName`.
+ * key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device alike. Undefined for
+ * a node that declares neither. Mirrors `VisualGraphValidator.Words.EntityName`.
  */
 export function entityNodeName(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
-  if (nodeSpec(node.kind, catalog)?.declares !== 'entity') return undefined
+  const declares = nodeSpec(node.kind, catalog)?.declares
+  if (declares !== 'entity' && declares !== 'device') return undefined
   const config = record(node.config) ? node.config : {}
   return text(config.name).replace(blankEnds, '') || text(config.key).replace(blankEnds, '') || kindName(node, catalog)
 }
@@ -832,7 +858,7 @@ export const words = {
   pathTilde: 'Path has a ~ that is not followed by 0 or 1; inside a name, write ~0 for a ~ and ~1 for a /, such as /data/on~1off for the name on/off',
   /**
    * A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
-   * kind's catalog label, else its kind in words. A node that declares an entity is named by it (`entityNodeName`).
+   * kind's catalog label, else its kind in words. A node that declares an entity or a device is named by it (`entityNodeName`).
    */
   stepName: (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): string => {
     const entity = entityNodeName(node, catalog)
@@ -845,6 +871,8 @@ export const words = {
   unreachable: (step: string) => `${step} is not connected into the flow; connect a step to its execution input`,
   /** A step order wire into or out of a value node. */
   notInFlow: (node: string) => `${node} is a value and is not part of the run order`,
+  /** A step order wire into or out of a Device node. */
+  deviceNotInFlow: (device: string) => `${device} is a device and is not part of the run order`,
   /** A node on a cycle of value wires. */
   ownResult: (node: string) => `${node} would depend on its own result`,
   /** A value node none of whose outputs is connected. */
@@ -1096,7 +1124,7 @@ export const diagnosticCodes = [
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow',
-  'flow.pure', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
+  'flow.pure', 'flow.declaration', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
   'node.document', 'node.singleton', 'root.incoming',
   'setting.unknown', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
@@ -1170,6 +1198,8 @@ export const analyzeScopes = (value: unknown, catalog: VisualCatalogSnapshot = n
 export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): GraphAnalysis {
   const nodeSpec = (kind: unknown) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
   const knownType = (type: string) => typeChain(type, catalog).length > 0
+  /** A known type a value can have: not a structural one (a device), which only a wire carries. */
+  const valueType = (type: string) => knownType(type) && !structural(resolveTypeSpec(type, catalog))
   const executionPorts = (node: GraphNode) => catalogExecutionPorts(node, catalog)
   const dataOutputs = (node: GraphNode) => catalogDataOutputs(node, catalog)
   const dataInputs = (node: GraphNode, owner?: GraphNode) => catalogDataInputs(node, owner, catalog)
@@ -1193,6 +1223,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const resolvedTypes = new Map<string, Record<string, string | undefined>>()
   const ownerOf = (node: GraphNode) => { const s = scopes.get(node.id)?.at(-1); return s?.port === 'body' ? nodes.get(s.owner) : undefined }
   const pure = (node: GraphNode) => isPure(node, catalog)
+  /** Whether the node is a declaration (`isDeclaration`): a Device node, neither a step nor a value. */
+  const declared = (node: GraphNode) => isDeclaration(node.kind, catalog)
   function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
     const b = scopes.get(target.id)
     return b !== undefined && visibleIn(source, b, port)
@@ -1254,11 +1286,14 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     } else if (edge.kind === undefined || edge.kind === 'execution') {
       if ('sourcePort' in edge || 'targetPort' in edge) error(edge.source, 'This step order wire names value pins; connect step order pins to step order pins', undefined, undefined, 'edge.orderWirePins')
       if (edge.port !== undefined && typeof edge.port !== 'string') { error(edge.source, 'This step order wire leaves from a pin without a valid name', undefined, undefined, 'edge.orderPinName'); continue }
-      // A value node has no execution pins; the wire is reported on it and otherwise ignored.
+      // A value node and a declaration (a Device node) have no execution pins; the wire is reported on them and otherwise
+      // ignored, so it puts neither in a scope.
       const from = nodes.get(edge.source)!, to = nodes.get(edge.target)!
-      if (pure(from) || pure(to)) {
+      if (pure(from) || pure(to) || declared(from) || declared(to)) {
         if (pure(from)) error(from.id, words.notInFlow(words.stepName(from, catalog)), undefined, undefined, 'flow.pure')
         if (pure(to) && to.id !== from.id) error(to.id, words.notInFlow(words.stepName(to, catalog)), undefined, undefined, 'flow.pure')
+        if (declared(from)) error(from.id, words.deviceNotInFlow(words.stepName(from, catalog)), undefined, undefined, 'flow.declaration')
+        if (declared(to) && to.id !== from.id) error(to.id, words.deviceNotInFlow(words.stepName(to, catalog)), undefined, undefined, 'flow.declaration')
         continue
       }
       const node = nodes.get(edge.source)!, port = flowPort(node, edge)
@@ -1299,10 +1334,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const roots = [...nodes.values()].filter(n => isRoot(n, catalog))
   if (document === 'automation' && ![...nodes.values()].some(n => n.kind === 'trigger')) error(null, 'At least one trigger is required', undefined, undefined, 'graph.noTrigger')
   roots.forEach(n => scope(n.id, []))
-  // A value node is never reached by execution; it is a warning when nothing reads it.
+  // A value node is never reached by execution; it is a warning when nothing reads it. Nor is a declaration (a Device
+  // node), which never runs.
   for (const [id, node] of nodes)
     if (pure(node)) { if (!data.some(e => e.source === id)) { errors.push({ nodeId: id, message: words.unused(words.stepName(node, catalog)), severity: 2, code: 'pure.unused' }); origins.push(origin) } }
-    else if (!scopes.has(id)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
+    else if (!scopes.has(id) && !declared(node)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
   const incoming = new Map<string, DataEdge>()
   const key = (node: string, port: string) => JSON.stringify([node, port])
   for (const edge of data) {
@@ -1348,8 +1384,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!record(raw) || raw.kind === 'unset') { if (spec.required) error(node.id, service ? `${serviceTitle(node, catalog)} needs ${label}` : `${label} is required`, port, port); else if (raw !== undefined && !record(raw)) error(node.id, `${subject} has an invalid value`, port, port); return }
     let type: string | undefined
     if (raw.kind === 'variable') { error(node.id, words.variable(subject), port, port); return }
-    // A value with properties (a record, class or struct) comes from a step: nothing can be typed in, null included.
-    if (selectsProperties(nodeSpec(node.kind), port)) { error(node.id, words.wireOnly(words.stepName(node, catalog)), port, port); return }
+    // A value with properties (a record, class or struct) comes from a step, and an Entity node's device from a Device node
+    // (a structural input): nothing can be typed in, null included.
+    if (selectsProperties(nodeSpec(node.kind), port) || structural(spec)) { error(node.id, words.wireOnly(words.stepName(node, catalog)), port, port); return }
     if (raw.kind === 'literal') {
       type = text(raw.type, 'unknown')
       const v = raw.value
@@ -1389,9 +1426,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (Array.isArray(v) && ((spec.minItems !== undefined && v.length < spec.minItems) || (spec.maxItems !== undefined && v.length > spec.maxItems))) error(node.id, `${subject} must have ${words.items(spec.minItems, spec.maxItems)}`, port)
     } else error(node.id, `${subject} has an invalid value`, port)
     // A value of unknown type was reported above; it is not also a mismatch. Nor is a value for an input that accepts no
-    // known type (a Constant whose Type is missing or unknown): that is reported where the type is set.
-    if (type && knownType(type) && spec.types.some(knownType) && !spec.types.some(t => isAssignable(type!, t)))
-      error(node.id, node.kind === 'constant' && port === 'value' ? words.constantRetyped(label, type, spec.types.find(knownType)!, catalog) : words.incompatible(subject, type, spec.types, catalog), port)
+    // known type a value can have (a Constant whose Type is missing, unknown or a device): that is reported where the type is set.
+    if (type && valueType(type) && spec.types.some(valueType) && !spec.types.some(t => isAssignable(type!, t)))
+      error(node.id, node.kind === 'constant' && port === 'value' ? words.constantRetyped(label, type, spec.types.find(valueType)!, catalog) : words.incompatible(subject, type, spec.types, catalog), port)
     return type
   }
   // Memoize by the full analysis context. Shared successors are visited once,
@@ -1457,7 +1494,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     const row = node.kind === 'set_entity_state' && typeof entityKey === 'string' && definitionEntity(catalog, entityKey) ? entityDomain(catalog, entityKey) : undefined
     if (entityGraph && row) {
       if (!record(row.state) || !Object.keys(row.state).length) error(node.id, words.stateless(entityTypeLabel(catalog, text(definitionEntity(catalog, entityKey as string)?.domain))), 'entity', undefined, 'entity.stateless')
-      else if (!Object.keys(dataInputs(node)).some(port => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
+      else if (!Object.keys(stateInputs(node, catalog)).some(port => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
     }
     // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
     // device names its entities, and none of its state values or each one its type needs. A field that is not text is
@@ -1478,7 +1515,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const name = typed('name')
       if (name !== undefined && !name.replace(blankEnds, '') && !hasDevice) error(node.id, words.entityNameMissing, 'name', undefined, 'entity.name')
       const state = declaredDomain(node, catalog)?.state
-      const values = Object.entries(dataInputs(node)), given = values.filter(([port]) => supplied(node, port))
+      // Its Device input is no state value: a wire into it neither counts as one given nor asks for the others.
+      const values = Object.entries(stateInputs(node, catalog)), given = values.filter(([port]) => supplied(node, port))
       if (record(state) && given.length)
         for (const [port, input] of values) {
           const entry: unknown = Object.hasOwn(state, port) ? state[port] : undefined
@@ -1500,12 +1538,15 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       const v = node.config[field]
       const label = configLabel(rule, field)
       if (v === undefined) { if (rule.required) error(node.id, `${label} is required`, field); continue }
+      // A rule that says "nullable" takes null as a value of its own (a Device node's Part of: nothing).
+      if (v === null && rule.nullable === true) continue
       const valid = rule.type === 'array' ? Array.isArray(v) : rule.type === 'object' ? record(v) : rule.type === 'integer' ? typeof v === 'number' && Number.isInteger(v) : typeof v === rule.type
       if (!valid) { error(node.id, `${label} must be ${words.configKind(rule.type)}`, field); continue }
       // Trigger type changes retain inactive fields so drafts and overrides are not lost.
       if (node.kind === 'trigger' && field === 'at' && (node.config.type ?? spec.config.type.default) !== 'once') continue
-      // Type choices accept every resolvable id, so a parametric type can be selected for narrowing.
-      if (rule.enumSource === 'types') { if (typeof v !== 'string' || !knownType(v)) error(node.id, `${label} must be a known type`, field) }
+      // Type choices accept every resolvable id, so a parametric type can be selected for narrowing, but no structural one
+      // (a device), which no value has.
+      if (rule.enumSource === 'types') { if (typeof v !== 'string' || !valueType(v)) error(node.id, `${label} must be a known type`, field) }
       else if (rule.enum && !rule.enum.some(choice => jsonEqual(choice, v))) error(node.id, `${label} must be ${words.choices(rule.enum, (rule as { enumLabels?: unknown }).enumLabels, 'one of ')}`, field)
       if (typeof v === 'number' && ((rule.min !== undefined && v < rule.min) || (rule.max !== undefined && v > rule.max))) error(node.id, `${label} must be ${words.range(rule.min, rule.max, false)}`, field)
       if (typeof v === 'string' && rule.pattern && !formatted(node.id, label, v, rule.pattern, field)) error(node.id, `${label} is not in the expected format`, field)
@@ -1660,7 +1701,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // wire comes from a Constant of an entity id type, whose entity is followed as chosen. The warning is the reader's own,
     // on no input: a wire into it is allowed (connectData), at the cost it names.
     const readers = new Set<string>()
-    for (const state of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity' && Object.keys(dataInputs(n)).some(p => supplied(n, p))).sort(byId))
+    for (const state of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity' && Object.keys(stateInputs(n, catalog)).some(p => supplied(n, p))).sort(byId))
       for (const reader of valueUpstream(state, nodes, data, pure)) {
         if (readers.has(reader.id)) continue
         const wired = Object.entries(dataInputs(reader)).find(([port, input]) => {
@@ -1716,8 +1757,9 @@ export function entityScopes(nodes: ReadonlyMap<string, GraphNode>, data: readon
   const found: GraphDiagnostic[] = []
   const error = (nodeId: string, message: string, port: string, code: DiagnosticCode) => found.push({ nodeId, message, severity: 3, inputId: port, portId: port, code })
   const declares = (node: GraphNode) => nodeSpec(node.kind, catalog)?.declares === 'entity'
+  // Its Device input reads no step: the Device node it is wired to is a declaration, not a flow's step.
   for (const hub of [...nodes.values()].filter(declares))
-    for (const [port, input] of Object.entries(dataInputs(hub, undefined, catalog))) {
+    for (const [port, input] of Object.entries(stateInputs(hub, catalog))) {
       const step = stateSource(hub, port, nodes, data, catalog)
       if (step) error(hub.id, words.stateSource(words.portLabel(input, port), words.stepName(hub, catalog), words.stepName(step, catalog)), port, 'scope.stateSource')
     }

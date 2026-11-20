@@ -96,7 +96,7 @@ const pickEntity = async (root: Element, entityId: string) => {
 const deselect = (root: Element) => {
   const id = inspector(root).querySelector('.hs-insp-node')?.getAttribute('data-node-id')
   if (id) press(root.querySelector(`.solid-flow__node[data-id="${id}"]`)!, 'Escape')
-  expect(inspector(root).querySelector('[aria-label="Device"]')).not.toBeNull()
+  expect(inspector(root).querySelector('section[aria-label="Device"]')).not.toBeNull()
 }
 const saves = (fixture: ReturnType<typeof visualFixture>) => fixture.entities.requests.filter(r => r.operation === 'save')
 
@@ -244,7 +244,7 @@ it('builds a polled plug: a time-pattern trigger sets its power, its relay\'s tw
   type(control(inspector(root), 'deviceClass'), 'connectivity')
   choose(control(inspector(root), 'entityCategory'), 'diagnostic')
   deselect(root)
-  const device = root.querySelector<HTMLElement>('[aria-label="Device"]')!
+  const device = root.querySelector<HTMLElement>('section[aria-label="Device"]')!
   control(device, 'device').click()
   type(control(device, 'manufacturer'), 'Acme')
   type(control(device, 'model'), 'P1')
@@ -532,7 +532,7 @@ it('opens the definition form as the inspector\'s sheet on a narrow screen, from
   peek.click()
   await vi.waitFor(() => expect(sheet.dataset.open).toBe('true'))
   expect(sheet.dataset.peek).toBeUndefined()
-  expect(sheet.querySelector('[aria-label="Device"]')).not.toBeNull()
+  expect(sheet.querySelector('section[aria-label="Device"]')).not.toBeNull()
   expect(sheet.querySelector('[aria-label="Entities"]')).toBeNull()
   // Focus moves into the sheet; Close puts it back as its bar.
   await vi.waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true))
@@ -686,7 +686,7 @@ it('builds the phase 2 plug through the page, every member of it, and saves that
   type(control(inspector(root), 'icon'), 'mdi:power-socket')
   control(inspector(root), 'enabledByDefault').click()
   deselect(root)
-  const device = root.querySelector<HTMLElement>('[aria-label="Device"]')!
+  const device = root.querySelector<HTMLElement>('section[aria-label="Device"]')!
   control(device, 'device').click()
   type(control(device, 'manufacturer'), 'Acme')
   type(control(device, 'model'), 'P1')
@@ -776,13 +776,13 @@ it('turns the device back on as it was, its parent too, after a step was selecte
   // As read: the store answers every member of the device, those not set as null.
   const before = json(root).definition.device
   expect(before).toMatchObject({ manufacturer: 'Acme', model: 'P1', via: { definition: 'hub', deviceId: null } })
-  control(inspector(root).querySelector('[aria-label="Device"]')!, 'device').click()
+  control(inspector(root).querySelector('section[aria-label="Device"]')!, 'device').click()
   expect(json(root).definition.device).toBeNull()
   // A step selected (the form goes), then nothing (it is back).
   press(root.querySelector('.solid-flow__node[data-id="relay"]')!)
   await vi.waitFor(() => expect(inspector(root).querySelector('.hs-insp-node')).not.toBeNull())
   deselect(root)
-  control(inspector(root).querySelector('[aria-label="Device"]')!, 'device').click()
+  control(inspector(root).querySelector('section[aria-label="Device"]')!, 'device').click()
   expect(json(root).definition.device).toEqual(before)
 })
 
@@ -1128,7 +1128,7 @@ const entityConfig = (root: Element, key: string) => json(root).nodes.find((n: a
 /** Turns the definition's device on, so that its entities need no name of their own. */
 const withDevice = (root: Element) => {
   deselect(root)
-  control(root.querySelector<HTMLElement>('[aria-label="Device"]')!, 'device').click()
+  control(root.querySelector<HTMLElement>('section[aria-label="Device"]')!, 'device').click()
 }
 /** The selected step's id. */
 const selected = (root: Element) => inspector(root).querySelector('.hs-insp-node')?.getAttribute('data-node-id')
@@ -1665,7 +1665,7 @@ const devicesRegistry = () => ({
   areas: [{ area_id: 'loft', name: 'Loft', floor_id: null }],
   devices: [device('zigbee', 'Zigbee coordinator'), device('plug-device', 'Plug'), device('attic', 'Attic router', 'loft')],
 })
-const partOf = (root: Element) => control(root.querySelector('[aria-label="Device"]')!, 'via') as HTMLSelectElement
+const partOf = (root: Element) => control(root.querySelector('section[aria-label="Device"]')!, 'via') as HTMLSelectElement
 const shownChoices = (select: HTMLSelectElement) => [...select.options].map(o => o.textContent)
 
 it('makes the device part of another definition that is a device, or of a Home Assistant device, and shows it again when opened', async () => {
@@ -1694,34 +1694,34 @@ it('makes the device part of another definition that is a device, or of a Home A
   // device is still part of Hub, and the form says so; the focus stays on Part of, and Tab goes on to the picker.
   partOf(again.root).focus()
   choose(partOf(again.root), 'device')
-  const picker = () => again.root.querySelector<HTMLInputElement>('[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
+  const picker = () => again.root.querySelector<HTMLInputElement>('section[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
   await vi.waitFor(() => expect(picker()).not.toBeNull())
   expect(document.activeElement).toBe(partOf(again.root))
-  const focusable = [...again.root.querySelectorAll<HTMLElement>('[aria-label="Device"] :is(input, select, textarea, button)')]
+  const focusable = [...again.root.querySelectorAll<HTMLElement>('section[aria-label="Device"] :is(input, select, textarea, button)')]
   expect(focusable[focusable.indexOf(partOf(again.root)) + 1]).toBe(picker())
   expect(json(again.root).definition.device.via).toEqual({ definition: 'hub' })
-  expect(again.root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
+  expect(again.root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
   picker().click()
-  const options = () => [...again.root.querySelectorAll<HTMLElement>('[aria-label="Device"] [role="option"]')]
+  const options = () => [...again.root.querySelectorAll<HTMLElement>('section[aria-label="Device"] [role="option"]')]
   expect(options().map(o => o.querySelector('span')!.textContent)).toEqual(['Attic router', 'Zigbee coordinator'])
   // Each with its area, as the device picker of a step shows it.
   expect(options().map(o => o.querySelector('small')?.textContent ?? null)).toEqual(['Loft', null])
   options()[1].click()
   expect(json(again.root).definition.device.via).toEqual({ deviceId: 'zigbee' })
   expect(partOf(again.root).value).toBe('device')
-  expect(again.root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')).toBeNull()
+  expect(again.root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')).toBeNull()
   button(again.root, 'Save').click()
   await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device.via).toEqual({ deviceId: 'zigbee' }))
   await vi.waitFor(() => expect(again.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   dispose!(); document.body.innerHTML = ''
   const third = await openPlug(undefined, fixture, devicesRegistry())
   await vi.waitFor(() => expect(partOf(third.root).value).toBe('device'))
-  await vi.waitFor(() => expect(third.root.querySelector<HTMLInputElement>('[aria-label="Device"] input[aria-label="Home Assistant device"]')!.value).toBe('Zigbee coordinator'))
+  await vi.waitFor(() => expect(third.root.querySelector<HTMLInputElement>('section[aria-label="Device"] input[aria-label="Home Assistant device"]')!.value).toBe('Zigbee coordinator'))
   // Nothing: the device is part of nothing, the other details as they were.
   choose(partOf(third.root), '')
   expect(json(third.root).definition.device).toMatchObject({ manufacturer: 'Acme', model: 'P1' })
   expect(json(third.root).definition.device).not.toHaveProperty('via')
-  expect(third.root.querySelector('[aria-label="Device"] input[aria-label="Home Assistant device"]')).toBeNull()
+  expect(third.root.querySelector('section[aria-label="Device"] input[aria-label="Home Assistant device"]')).toBeNull()
   expectClean(third.root)
 })
 
@@ -1807,7 +1807,7 @@ it('reads the definition again when it was switched elsewhere, so its switch say
 })
 
 it("names a parent as it is called, until a device is picked, and a parent that is gone as such", async () => {
-  const pending = (root: Element) => root.querySelector('[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')?.textContent
+  const pending = (root: Element) => root.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')?.textContent
   const body = plugBody()
   body.device = { via: { definition: 'room' } }
   const { root } = await openPlug(f => { f.entities.seed('room', { ...newGraphDefinition('A Room Hub'), device: {} }); f.entities.seed('plug', body) }, undefined, devicesRegistry())

@@ -217,7 +217,8 @@ describe('the members of an entity id and the enums of the entity classes (serve
     expect(entities(constantTypes(richCatalog))).toEqual([])
     expect(entities(contract.listedTypes(richCatalog))).toEqual([])
     expect(contract.listedTypes(richCatalog)).toEqual(expect.arrayContaining(['global::NodeLib.Mode', 'entity_id', 'string']))
-    expect(contract.listedTypes(contract.nodeCatalog)).toEqual(Object.keys(contract.nodeCatalog.types).filter(id => id !== 'image'))
+    // Image is not listed, and a device (a structural type, which no value has) never is.
+    expect(contract.listedTypes(contract.nodeCatalog)).toEqual(Object.keys(contract.nodeCatalog.types).filter(id => id !== 'image' && id !== 'device'))
   })
 })
 describe('the image type', () => {
@@ -345,7 +346,8 @@ describe('service node ports (C5)', () => {
     expect(Object.keys(inputs)).toEqual(['target', 'field:brightness_pct', 'field:glow'])
     expect(inputs['field:brightness_pct']).toMatchObject({ types: ['number'], required: false, min: 0, max: 100, integer: false, unit: '%', step: 1 })
     expect(inputs['field:brightness_pct']).not.toHaveProperty('section')
-    expect(inputs['field:glow'].types).toEqual(Object.keys(contract.nodeCatalog.types))
+    // Every type a value can have: all but the structural device.
+    expect(inputs['field:glow'].types).toEqual(Object.keys(contract.nodeCatalog.types).filter(id => id !== 'device'))
     expect(inputs.target.types).toEqual(['target', 'entity_id:light'])
     expect(contract.dataInputs(node({ service: 'notify.notify', fields: { target: { kind: 'unset' } } }), undefined, withServices)).toMatchObject({ target: { types: ['target', 'entity_id'] }, 'field:target': { label: 'target', required: false } })
     expect(contract.dataInputs(node({ service: 'homeassistant.turn_on' }), undefined, withServices).target.types).toEqual(['target', 'entity_id'])
@@ -355,7 +357,7 @@ describe('service node ports (C5)', () => {
       const inputs = contract.dataInputs(node({ service, fields: { brightness_pct: { kind: 'unset' } } }), undefined, catalog)
       expect(Object.keys(inputs)).toEqual(['target', 'field:brightness_pct'])
       expect(inputs.target.types).toEqual(['target', 'entity_id'])
-      expect(inputs['field:brightness_pct']).toMatchObject({ types: Object.keys(contract.nodeCatalog.types), required: false })
+      expect(inputs['field:brightness_pct']).toMatchObject({ types: Object.keys(contract.nodeCatalog.types).filter(id => id !== 'device'), required: false })
     }
   })
   it('exposes the response output only while returnResponse is true', () => {

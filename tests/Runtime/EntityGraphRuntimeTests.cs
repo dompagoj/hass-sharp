@@ -172,6 +172,7 @@ static class EntityGraphRuntimeTests
                 (nameof(EntityIsReadsTheTriggeringEntitysFreshState), EntityIsReadsTheTriggeringEntitysFreshState),
                 (nameof(SetStateAndSetAvailableStepsCallTheDefinition), SetStateAndSetAvailableStepsCallTheDefinition),
                 (nameof(StateSetBeforeALaterFailingStepStaysSet), StateSetBeforeALaterFailingStepStaysSet),
+                (nameof(ADeviceWireIsNoStateValue), ADeviceWireIsNoStateValue),
                 (nameof(SettingGivesItsValueAsItsType), SettingGivesItsValueAsItsType),
                 (nameof(SensorStateAcceptsNumberAndText), SensorStateAcceptsNumberAndText),
                 (nameof(EmptyStateValueIsPassedThrough), () => { EmptyStateValueIsPassedThrough(); return Task.CompletedTask; }),
@@ -442,6 +443,26 @@ static class EntityGraphRuntimeTests
         var error = await Fails(() => compiled.Run("relay", "command:turn_on", definition), "a command whose later step fails");
         Check(error.Message.Contains("Entity 'sensor.gone' is unavailable.", StringComparison.Ordinal), "the run fails with the later step's error: " + error.Message);
         Same(definition.Calls, ["state relay is_on=bool:true"], "the state set before the failure stays set, and nothing marks the entity unavailable");
+    }
+
+    /// <summary>
+    /// A graph with a Device node compiles and runs: the Device node is no step, and the wire into an Entity node's Device
+    /// pin is no state value, so the state handed over is the entity's values alone.
+    /// </summary>
+    static async Task ADeviceWireIsNoStateValue()
+    {
+        var graph = Entity(
+            [N("plug", "device", new { key = "plug", name = "Hall plug" }),
+             Hub("relay", "relay", "switch", new JsonObject { ["is_on"] = Lit("boolean", true), ["device"] = new JsonObject { ["kind"] = "unset" } }),
+             N("setup", "entity_setup"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) })],
+            [D("plug", "relay", "device", "entities"), E("setup", "up")]);
+        using var compiled = await Compiled.Of(graph, "a switch on a device");
+        var definition = new FakeDefinition();
+        await compiled.Run("relay", "state", definition);
+        Same(definition.Calls, ["state relay is_on=bool:true", "available relay yes"], "the state is the switch's own value, and the Device wire is not one");
+        definition.Calls.Clear();
+        await compiled.Run("setup", definition);
+        Same(definition.Calls, ["available relay yes"], "When started runs, and the Device node is not part of it");
     }
 
     /// <summary>A Setting is the definition's value, as text, true or false, or a number.</summary>
@@ -1551,6 +1572,11 @@ static class EntityGraphRuntimeTests
         var wiredLight = Light();
         var wired = Nodes([wiredLight, Constant("c", true)], D("c", "lamp", "is_on"));
         Check(DefinitionGraph.HubFlows(wiredLight, wired, VisualCatalogSnapshot.BuiltIn).Select(f => f.Port).SequenceEqual(["state"]), "a wired value is supplied over the unset one");
+        // A wire into its Device pin is no state value: on its own it gives the node no state flow.
+        var onDevice = Light();
+        var plugged = Nodes([onDevice, N("plug", "device", new { key = "plug", name = "Hall plug" })], D("plug", "lamp", "device", "entities"));
+        Check(DefinitionGraph.HubFlows(onDevice, plugged, VisualCatalogSnapshot.BuiltIn).Count == 0, "a node wired only to a device has no flow");
+        Check(DefinitionGraph.Roots(plugged, VisualCatalogSnapshot.BuiltIn).States.Count == 0, "nor a state root");
     }
 
     /// <summary>A graph whose only Entity node has no flow builds a class with no action and no flow method.</summary>

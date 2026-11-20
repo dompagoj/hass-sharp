@@ -70,6 +70,7 @@
   "pin: and, or, xor and condition": "d6f0983cf8a3d0cc75f2440051f110570398e31e5fefc9b9b8b6d4a3584e9d10",
   "pin: automation beside an unused node library": "b5eab2da8685b13d92e7de4a5bd7c0cd31a2650e0b1fad51f312eca2e7c80b74",
   "pin: custom node with flows": "cf051e4d4bbdd4f44c90bb33d50400def0d1f4a707f8c995228f55132b9d61eb",
+  "pin: native device trigger": "e10fa53033cf39bfeebca33d98ef78711e1c2a2ae7c524ec4f709b8f85a915ca",
   "pin: node-library node": "b7788b27cfc15efcf04d4eda8090067b33c8954cd7c394209670c714bd33e9f2",
   "pin: pure custom node": "2e9b1327498c576c2a07e727a7a300dbb25c6cb331b85b992834bddde592519f",
   "pin: select_property in a loop, a parallel branch and into a service field and target": "a6c534983f4b9af23cc73587647f7fd0db481a3d252a9ca128ac4a8c834695f7",

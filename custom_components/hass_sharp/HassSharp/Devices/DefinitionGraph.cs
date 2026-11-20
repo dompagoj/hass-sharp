@@ -98,7 +98,8 @@ internal static class DefinitionGraph
 
     /// <summary>
     /// The flows of the Entity node <paramref name="node"/>, in this order: its state, when at least one of its state values
-    /// is supplied (a value wire into it, or a value under <c>config.arguments</c> that is not unset), recorded when
+    /// is supplied (a value wire into it, or a value under <c>config.arguments</c> that is not unset; its Device pin is
+    /// none), recorded when
     /// <c>config.history.state</c> is true; each command whose pin has a step order wire out of it, in its type's order,
     /// recorded unless <c>config.history.commands</c> is false; its frame, when that pin has one, recorded when
     /// <c>config.history.frame</c> is true. None for a node of an unknown type.
@@ -118,7 +119,8 @@ internal static class DefinitionGraph
             new(id, port, VisualNodeCatalog.FlowMethod(node, port), kind, key, command, $"{name}: {what}", track);
         var wired = edges.Where(e => VisualNodeCatalog.Text(e, "kind") == "data" && VisualNodeCatalog.Text(e, "target") == id).Select(e => VisualNodeCatalog.Text(e, "targetPort")).ToHashSet(StringComparer.Ordinal);
         var arguments = config?["arguments"] as JsonObject;
-        if (VisualNodeCatalog.DataInputs(node, null, snapshot).Any(input => wired.Contains(input.Key) || arguments?[input.Key] is JsonObject value && VisualNodeCatalog.Text(value, "kind") != "unset"))
+        // Its Device pin is no state value (VisualNodeCatalog.StateInputs): a wire into it gives the node no state flow.
+        if (VisualNodeCatalog.DataInputs(node, null, snapshot).Where(input => !VisualNodeCatalog.Structural(input.Value)).Any(input => wired.Contains(input.Key) || arguments?[input.Key] is JsonObject value && VisualNodeCatalog.Text(value, "kind") != "unset"))
             flows.Add(Flow("state", "state", null, "State", Recorded("state", false)));
         var started = edges.Where(e => VisualNodeCatalog.Text(e, "kind") != "data" && VisualNodeCatalog.Text(e, "source") == id).Select(e => VisualNodeCatalog.Text(e, "port", "next")).ToHashSet(StringComparer.Ordinal);
         foreach (var port in VisualNodeCatalog.ExecutionPorts(node, snapshot).Where(started.Contains))

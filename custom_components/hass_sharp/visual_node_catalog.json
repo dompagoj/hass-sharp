@@ -103,6 +103,15 @@
       "label": "Image",
       "listed": false
     },
+    "device": {
+      "description": "A device in Home Assistant, which groups entities. Only the Device pin of an entity takes one.",
+      "structural": true,
+      "listed": false,
+      "assignableTo": [
+        "device"
+      ],
+      "label": "Device"
+    },
     "global::HassSharp.EntityStateSnapshot": {
       "description": "An entity's state and attributes as they were when read.",
       "clrType": "HassSharp.EntityStateSnapshot",
@@ -1768,7 +1777,17 @@
           "description": "The state values set on the node instead of connected."
         }
       },
-      "inputs": {},
+      "inputs": {
+        "device": {
+          "types": [
+            "device"
+          ],
+          "structural": true,
+          "required": false,
+          "label": "Device",
+          "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+        }
+      },
       "outputs": {},
       "execution": [],
       "runtimeVersions": [
@@ -1787,6 +1806,84 @@
         "camera",
         "state",
         "command"
+      ]
+    },
+    "device": {
+      "label": "Device",
+      "category": "Entity",
+      "description": "A device in Home Assistant that groups entities. Connect its Entities pin to the Device pin of each entity that belongs to it.",
+      "declares": "device",
+      "declaration": true,
+      "documents": [
+        "entity"
+      ],
+      "minGraphVersion": 5,
+      "config": {
+        "key": {
+          "type": "string",
+          "label": "Key",
+          "description": "What the device is called inside this definition and in its identity in Home Assistant."
+        },
+        "name": {
+          "type": "string",
+          "label": "Name",
+          "description": "The name Home Assistant shows for it."
+        },
+        "manufacturer": {
+          "type": "string",
+          "label": "Manufacturer",
+          "description": "Who made the device."
+        },
+        "model": {
+          "type": "string",
+          "label": "Model",
+          "description": "The device's model."
+        },
+        "swVersion": {
+          "type": "string",
+          "label": "Software version",
+          "description": "The version of the software the device runs."
+        },
+        "hwVersion": {
+          "type": "string",
+          "label": "Hardware version",
+          "description": "The version of the device's hardware."
+        },
+        "configurationUrl": {
+          "type": "string",
+          "label": "Configuration URL",
+          "description": "A page of the device's own, linked from its page in Home Assistant."
+        },
+        "suggestedArea": {
+          "type": "string",
+          "label": "Suggested area",
+          "description": "The area Home Assistant puts the device in when it first adds it."
+        },
+        "via": {
+          "type": "object",
+          "nullable": true,
+          "label": "Part of",
+          "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "entities": {
+          "type": "device",
+          "label": "Entities",
+          "description": "Connect it to the Device pin of each entity on this device."
+        }
+      },
+      "execution": [],
+      "runtimeVersions": [
+        5
+      ],
+      "keywords": [
+        "device",
+        "group",
+        "hub",
+        "manufacturer",
+        "model"
       ]
     },
     "entity_setup": {

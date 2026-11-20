@@ -3,6 +3,7 @@ import { nodeCatalog, refinesType, resolveTypeSpec, type VisualCatalogSnapshot }
 const builtIn: Record<string, string> = {
   string: 'Text', number: 'Number', boolean: 'True/False', object: 'Object', array: 'List',
   entity_id: 'Entity', target: 'Target', 'global::HassSharp.EntityStateSnapshot': 'Entity state', image: 'Image',
+  device: 'Device',
 }
 /** Names of literal kinds and categories that are a primitive, for library types of that kind. */
 const primitiveNames: Record<string, string> = { boolean: 'True/False', number: 'Number', integer: 'Number', string: 'Text', object: 'Object', array: 'List' }
@@ -117,7 +118,7 @@ export function stableHue(id: string): number {
 }
 /**
  * The colour of a type's pins and wires, as a CSS value built from the tokens in `styles/tokens.css`: the five
- * primitive colours, distinct ones for entity ids (any domain), entity state, target and image, the primitive colour for a
+ * primitive colours, distinct ones for entity ids (any domain), entity state, target, image and device, the primitive colour for a
  * library type of a primitive category, and a stable hue derived from the id for every other library type.
  * Colour is never the only signal: pins and chips also name the type.
  */
@@ -126,6 +127,7 @@ export function typeColor(typeId: string, catalog: VisualCatalogSnapshot = nodeC
   if (typeId === 'target') return 'var(--hs-port-target)'
   if (typeId === 'global::HassSharp.EntityStateSnapshot') return 'var(--hs-port-entity-state)'
   if (typeId === 'image') return 'var(--hs-port-image)'
+  if (typeId === 'device') return 'var(--hs-port-device)'
   const spec = resolveTypeSpec(typeId, catalog)
   if (!spec) return 'var(--hs-port-object)'
   if (refinesType(typeId, 'entity_id', catalog)) return 'var(--hs-port-entity)'

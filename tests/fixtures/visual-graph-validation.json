@@ -38845,5 +38845,659 @@
     "messages": [
       "An Entity node has no trackHistory: its history says which of its flows record their runs (state, commands, frame)"
     ]
+  },
+  {
+    "name": "a Device node wired to an Entity node is valid",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "manufacturer": "Acme",
+            "model": "P1",
+            "swVersion": "1.2",
+            "hwVersion": "A",
+            "configurationUrl": "https://plug.local",
+            "suggestedArea": "Hall",
+            "via": null
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Started"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "start:next:l",
+          "source": "start",
+          "target": "l"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a Device node with nothing connected is not \"not connected into the flow\"",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a step-order wire into a Device node is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "start:next:plug",
+          "source": "start",
+          "target": "plug"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "contains": "Hall plug is a device and is not part of the run order",
+    "messages": [
+      "Hall plug is a device and is not part of the run order"
+    ],
+    "codes": [
+      "flow.declaration"
+    ]
+  },
+  {
+    "name": "a step-order wire out of a Device node is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Started"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "start:next:l",
+          "source": "start",
+          "target": "l"
+        },
+        {
+          "id": "plug:next:l",
+          "source": "plug",
+          "target": "l"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "contains": "Hall plug is a device and is not part of the run order",
+    "messages": [
+      "Hall plug is a device and is not part of the run order"
+    ],
+    "codes": [
+      "flow.declaration"
+    ]
+  },
+  {
+    "name": "a Device wire does not ask for the entity's state values",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "lamp",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp"
+          }
+        },
+        {
+          "id": "on_log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Turned on"
+            }
+          }
+        },
+        {
+          "id": "off_log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Turned off"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:lamp.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "lamp",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "lamp:command:turn_on:on_log",
+          "source": "lamp",
+          "target": "on_log",
+          "port": "command:turn_on"
+        },
+        {
+          "id": "lamp:command:turn_off:off_log",
+          "source": "lamp",
+          "target": "off_log",
+          "port": "command:turn_off"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a light with Brightness and a Device wire is asked for On only",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "lamp",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp",
+            "arguments": {
+              "brightness": {
+                "kind": "literal",
+                "type": "number",
+                "value": 128
+              }
+            }
+          }
+        },
+        {
+          "id": "on_log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Turned on"
+            }
+          }
+        },
+        {
+          "id": "off_log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "Turned off"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:lamp.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "lamp",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "lamp:command:turn_on:on_log",
+          "source": "lamp",
+          "target": "on_log",
+          "port": "command:turn_on"
+        },
+        {
+          "id": "lamp:command:turn_off:off_log",
+          "source": "lamp",
+          "target": "off_log",
+          "port": "command:turn_off"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lamp",
+    "inputId": "is_on",
+    "contains": "has a value for Brightness but none for On",
+    "messages": [
+      "Lamp has a value for Brightness but none for On: connect or set On too"
+    ],
+    "codes": [
+      "entity.partialState"
+    ]
+  },
+  {
+    "name": "a Device node's Entities pin connects only to a Device pin",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "l",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "fields",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "items",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "obj",
+          "kind": "object_create",
+          "config": {
+            "fields": {
+              "room": {
+                "kind": "unset"
+              }
+            }
+          }
+        },
+        {
+          "id": "list",
+          "kind": "array_create",
+          "config": {
+            "items": [
+              {
+                "kind": "unset"
+              }
+            ]
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "start:next:l",
+          "source": "start",
+          "target": "l"
+        },
+        {
+          "id": "l:next:fields",
+          "source": "l",
+          "target": "fields"
+        },
+        {
+          "id": "fields:next:items",
+          "source": "fields",
+          "target": "items"
+        },
+        {
+          "id": "plug.entities:l.value",
+          "kind": "data",
+          "source": "plug",
+          "target": "l",
+          "sourcePort": "entities",
+          "targetPort": "value"
+        },
+        {
+          "id": "plug.entities:obj.field:room",
+          "kind": "data",
+          "source": "plug",
+          "target": "obj",
+          "sourcePort": "entities",
+          "targetPort": "field:room"
+        },
+        {
+          "id": "plug.entities:list.item:0",
+          "kind": "data",
+          "source": "plug",
+          "target": "list",
+          "sourcePort": "entities",
+          "targetPort": "item:0"
+        },
+        {
+          "id": "obj.value:fields.value",
+          "kind": "data",
+          "source": "obj",
+          "target": "fields",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "list.value:items.value",
+          "kind": "data",
+          "source": "list",
+          "target": "items",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "l",
+    "inputId": "value",
+    "contains": "Message accepts",
+    "messages": [
+      "Room accepts True/False, Number, Text, Object and 5 more, not Device",
+      "Item 1 accepts True/False, Number, Text, Object and 5 more, not Device",
+      "Message accepts True/False, Number, Text, Object and 5 more, not Device"
+    ]
+  },
+  {
+    "name": "a value typed into the Device pin is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion",
+            "arguments": {
+              "device": {
+                "kind": "literal",
+                "type": "string",
+                "value": "plug"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "motion",
+    "inputId": "device",
+    "contains": "nothing can be typed in here",
+    "messages": [
+      "Connect a value to Motion; nothing can be typed in here"
+    ]
+  },
+  {
+    "name": "a Constant of type device is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "device",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "plug"
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "c",
+    "inputId": "type",
+    "contains": "Type must be a known type",
+    "messages": [
+      "Constant is not used",
+      "Type must be a known type"
+    ],
+    "codes": [
+      "pure.unused"
+    ]
   }
 ]

@@ -21,7 +21,7 @@ public static class GeneratedSourcePinTests
     /// Built-in node kinds no automation graph can use, so no pin can hold them (such as kinds only an entity
     /// definition's graph takes). Every other built-in kind must appear in some pinned graph.
     /// </summary>
-    static readonly HashSet<string> UnpinnableKinds = new(["entity", "entity_setup", "set_entity_state", "set_entity_available", "setting", "download_file", "camera_snapshot", "image_draw_rect", "image_draw_text", "show_frame"], StringComparer.Ordinal);
+    static readonly HashSet<string> UnpinnableKinds = new(["entity", "device", "entity_setup", "set_entity_state", "set_entity_available", "setting", "download_file", "camera_snapshot", "image_draw_rect", "image_draw_text", "show_frame"], StringComparer.Ordinal);
     static readonly JsonSerializerOptions Readable = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     static string Line(string name, string hash) => JsonSerializer.Serialize(name, Readable) + ": " + JsonSerializer.Serialize(hash, Readable);
     /// <summary>The pin file for these pins: sorted by key, one entry per line, so adding a case is a one-line diff.</summary>
@@ -188,6 +188,14 @@ public static class GeneratedSourcePinTests
             N("quiet", "trigger", new { type = "entity", entity = "sensor.noise", trackHistory = false }),
             Log("l1", "restart"), Log("l2", "queued"), Log("l3", "parallel"), Log("l4", "auto"), Log("l5", "quiet")],
             Next("restart", "l1"), Next("queued", "l2"), Next("parallel", "l3"), Next("auto", "l4"), Next("quiet", "l5")), builtIn);
+
+        // A native Home Assistant device trigger: its configuration holds the string "device", which is also the id of a
+        // type only an entity definition's graph uses. The generated source embeds every type whose id is a string of the
+        // graph; it must not embed that one.
+        yield return ("pin: native device trigger", Graph("Device trigger", [
+            N("t", "trigger", new { type = "ha", trigger = new { trigger = "device", device_id = "4f1c2a9e0b7d", domain = "light", entity_id = "light.hall", type = "turned_on" } }),
+            Log("l", "hall light turned on")],
+            Next("t", "l")), builtIn);
 
         // A node library's step and value node, and an automation beside the library that uses neither: the embedded
         // catalog carries every library node kind into every automation of someone who has a library.

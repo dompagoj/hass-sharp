@@ -23,7 +23,8 @@ static class EntityNodeTests
             (nameof(ACommandEntryThatIsNotAnObjectHasNoValues), ACommandEntryThatIsNotAnObjectHasNoValues),
             (nameof(FlowsAreNamedByNodeAndPort), FlowsAreNamedByNodeAndPort),
             (nameof(ANodeIsNamedByItsEntity), ANodeIsNamedByItsEntity),
-            (nameof(TheOldStepsAreNotKinds), TheOldStepsAreNotKinds) })
+            (nameof(TheOldStepsAreNotKinds), TheOldStepsAreNotKinds),
+            (nameof(ADeviceNodeIsADeclaration), ADeviceNodeIsADeclaration) })
         {
             try
             {
@@ -91,7 +92,8 @@ static class EntityNodeTests
     static void TheNodeHasItsTypesPins()
     {
         var light = Hub("l", "lamp", "light");
-        Check(string.Join(",", VisualNodeCatalog.DataInputs(light).Select(p => p.Key)) == "is_on,brightness", "a light's state values are its inputs");
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(light).Select(p => p.Key)) == "device,is_on,brightness", "a light's inputs are its Device pin and its state values");
+        Check(string.Join(",", VisualNodeCatalog.StateInputs(light, VisualNodeCatalog.Root).Select(p => p.Key)) == "is_on,brightness", "a light's state values are its inputs but Device");
         Check(VisualNodeCatalog.DataInputs(light).All(p => p.Value?["required"]?.GetValue<bool>() == false), "every state input is optional as a pin");
         Check(string.Join(",", VisualNodeCatalog.ExecutionPorts(light)) == "command:turn_on,command:turn_off", "one execution pin per command");
         var outputs = VisualNodeCatalog.DataOutputs(light);
@@ -100,8 +102,8 @@ static class EntityNodeTests
         Check(string.Join(",", VisualNodeCatalog.ExecutionPorts(Hub("c", "cam", "camera"))) == "frame", "a camera has the frame pin");
         Check(VisualNodeCatalog.ExecutionPorts(Hub("s", "t", "sensor")).Length == 0 && VisualNodeCatalog.DataOutputs(Hub("s", "t", "sensor")).Count == 0, "a sensor has inputs only");
         var unknown = Hub("u", "u", "nothing");
-        Check(VisualNodeCatalog.DataInputs(unknown).Count == 0 && VisualNodeCatalog.ExecutionPorts(unknown).Length == 0, "an unknown type has no pins");
-        Check(VisualNodeCatalog.DataInputs(Hub("d", "", "light")).Count == 2, "the pins do not wait for a key");
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(unknown).Select(p => p.Key)) == "device" && !VisualNodeCatalog.StateInputs(unknown, VisualNodeCatalog.Root).Any() && VisualNodeCatalog.ExecutionPorts(unknown).Length == 0, "an unknown type has no pins but Device");
+        Check(VisualNodeCatalog.StateInputs(Hub("d", "", "light"), VisualNodeCatalog.Root).Count() == 2, "the pins do not wait for a key");
     }
 
     /// <summary>A command entry of a catalog that is not an object gives its Entity node no values, as in TypeScript, rather than failing.</summary>
@@ -146,5 +148,36 @@ static class EntityNodeTests
             Check(VisualNodeCatalog.GetNode(kind) == null, kind + " is not in the catalog");
         foreach (var code in new[] { "state.duplicate", "command.duplicate", "camera.duplicate" })
             Check(!VisualGraphValidator.Codes.Contains(code), code + " is not a problem any more");
+    }
+
+    /// <summary>
+    /// A Device node declares a device and is neither a step nor a value; its wire is of a structural type, which no input
+    /// open to every type lists. An Entity node's Device input is one of its inputs but not one of its state values.
+    /// </summary>
+    static void ADeviceNodeIsADeclaration()
+    {
+        var catalog = VisualNodeCatalog.Root;
+        var device = VisualNodeCatalog.GetNode("device")!;
+        Check(VisualNodeCatalog.Declaration(device) && VisualNodeCatalog.Declares(device, "device"), "the Device kind declares a device");
+        Check(!VisualNodeCatalog.Declaration(VisualNodeCatalog.GetNode("entity")) && !VisualNodeCatalog.Declaration(VisualNodeCatalog.GetNode("log")), "an Entity node and a step are no declaration");
+        Check(VisualNodeCatalog.Structural(catalog["types"]!["device"]), "the device type is structural");
+        Check(!VisualNodeCatalog.Structural(catalog["types"]!["image"]) && !VisualNodeCatalog.Structural(null), "another type is not");
+        Check(VisualNodeCatalog.Structural(VisualNodeCatalog.GetNode("entity")!["inputs"]!["device"]), "the Entity node's Device input is structural");
+        var node = N("plug", "device", new { key = "plug", name = "Hall plug" });
+        Check(VisualNodeCatalog.ExecutionPorts(node).Length == 0, "a Device node has no execution pins");
+        Check(string.Join(",", VisualNodeCatalog.DataOutputs(node).Select(p => p.Key + ":" + p.Value!["type"])) == "entities:device", "its one output is Entities, of type device");
+        Check(VisualGraphValidator.Words.StepName(node, device) == "Hall plug", "it is named by its name: " + VisualGraphValidator.Words.StepName(node, device));
+        // No input open to every type lists the device type: a Log's message, an object's field, a list's item.
+        static string[] Types(JsonObject inputs, string port) => inputs[port]!["types"]!.AsArray().Select(t => t!.GetValue<string>()).ToArray();
+        var message = Types(VisualNodeCatalog.DataInputs(N("l", "log")), "value");
+        Check(message.Contains("image") && !message.Contains("device"), "an input of any type lists every type but device: " + string.Join(",", message));
+        Check(!Types(VisualNodeCatalog.DataInputs(N("o", "object_create", new { fields = new { room = new { kind = "unset" } } })), "field:room").Contains("device"), "an object's field does not take a device");
+        Check(!Types(VisualNodeCatalog.DataInputs(N("a", "array_create", new { items = new[] { new { kind = "unset" } } })), "item:0").Contains("device"), "a list's item does not take a device");
+        Check(!Types(VisualNodeCatalog.DataInputs(N("s", "service", new { service = "light.turn_on", fields = new { anything = new { kind = "unset" } } })), "field:anything").Contains("device"), "an unknown service field does not take a device");
+        var relay = Hub("r", "relay", "switch");
+        Check(string.Join(",", VisualNodeCatalog.StateInputs(relay, catalog).Select(p => p.Key)) == "is_on", "a switch's state values are On alone");
+        Check(string.Join(",", VisualNodeCatalog.DataInputs(relay).Select(p => p.Key)) == "device,is_on", "its inputs also have Device");
+        var group = catalog["nodes"]!.AsObject().Where(n => VisualNodeCatalog.Text(n.Value, "category") == "Entity").Select(n => n.Key).Take(3);
+        Check(string.Join(",", group) == "entity,device,entity_setup", "the catalog's Entity group begins Entity, Device, When started: " + string.Join(",", group));
     }
 }

@@ -3,6 +3,7 @@ import { createUuid } from './id'
 import {
   addGraphNode,
   executionPorts,
+  isDeclaration,
   isPure,
   isRoot,
   dataInputs,
@@ -164,8 +165,8 @@ export function canConnect(
     destination = graph.nodes.find(n => n.id === target)
   // A root starts a flow of its own (a trigger; an entity definition's Entity node and When started) and a value node
   // has no place in the run order: no step order wire goes into either (nor out of a value node: it has no execution
-  // output).
-  if (!node || !destination || source === target || isRoot(destination, catalog) || isPure(destination, catalog)) return false
+  // output). A declaration (a Device node) is neither a step nor a value: no step order wire goes into or out of it.
+  if (!node || !destination || source === target || isRoot(destination, catalog) || isPure(destination, catalog) || isDeclaration(node.kind, catalog) || isDeclaration(destination.kind, catalog)) return false
   const resolved = port ?? executionPorts(node, catalog)[0]
   if (
     !executionPorts(node, catalog).includes(resolved) ||

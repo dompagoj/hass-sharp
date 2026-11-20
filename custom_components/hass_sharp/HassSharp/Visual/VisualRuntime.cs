@@ -890,7 +890,8 @@ public sealed class VisualRuntime
         var values=new Dictionary<string,object?>(StringComparer.Ordinal);hidden=new(StringComparer.Ordinal);
         var cfg=nodes[id]["config"];var stored=Text(Spec(id),"argumentStorage")=="arguments"?cfg?["arguments"] as JsonObject:cfg;
         foreach(var (port,spec) in InputSpecs(id) as JsonObject??[]) {
-            if(!Supplied(id,port,stored?[port]))continue;
+            // An Entity node's Device pin is no state value: the Device node wired to it says which device the entity is on and carries nothing.
+            if(VisualNodeCatalog.Structural(spec)||!Supplied(id,port,stored?[port]))continue;
             var given=Input(scope,id,port);
             values[port]=Guarded(()=>EntityStateValue(given,(spec?["types"] as JsonArray??[]).OfType<JsonValue>().Select(t=>t.TryGetValue<string>(out var type)?type:"").ToArray(),Pin(id,port),!PasswordText(catalog,EntityKey(id))),
                 error=>error is InvalidOperationException&&SecretInput(id,port,given),()=>Hidden(id,port));

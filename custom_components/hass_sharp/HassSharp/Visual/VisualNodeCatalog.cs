@@ -43,6 +43,24 @@ public static class VisualNodeCatalog
     /// <summary>Whether a node of the kind declares one of its definition's <paramref name="what"/> (<c>"declares": "entity"</c>).</summary>
     internal static bool Declares(JsonNode? spec, string what) => Text(spec, "declares") == what;
     /// <summary>
+    /// Whether a node of the kind is a declaration (<c>"declaration": true</c>, a Device node): neither a step nor a value. It
+    /// has no execution pins, no step order wire goes into or out of it, and it never runs. Mirrored by <c>isDeclaration</c>
+    /// in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool Declaration(JsonObject? spec) => Flag(spec, "declaration");
+    /// <summary>
+    /// Whether a type or an input is structural (<c>"structural": true</c>, a device): a wire of it says what belongs to what
+    /// and carries no value. No list of every type has a structural type, and nothing that reads an Entity node's state
+    /// values reads a structural input. Mirrored by <c>structural</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool Structural(JsonNode? typeOrInput) => Flag(typeOrInput, "structural");
+    /// <summary>
+    /// The node's data inputs (<see cref="DataInputs"/> under <paramref name="catalog"/>) without the structural ones: an
+    /// Entity node's or a Set state's state values. Mirrored by <c>stateInputs</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, JsonObject catalog) =>
+        DataInputs(node, null, VisualCatalogSnapshot.BuiltIn.WithRoot(catalog)).Where(p => !Structural(p.Value)).ToList();
+    /// <summary>
     /// The entity an Entity node declares, as a definition lists one (the shape <see cref="SharpDomains.Create"/> reads):
     /// a copy of its settings without its run history and state values, and without a name that is blank once trimmed
     /// (no name: Home Assistant, the messages and the run names see none); empty when its config is not an object.
@@ -338,7 +356,8 @@ public static class VisualNodeCatalog
     {
         var spec = Spec(node, snapshot);
         var ports = new List<string>();
-        if (IsPure(node, spec)) return [];
+        // A value node and a declaration (a Device node) have no place in the run order.
+        if (IsPure(node, spec) || Declaration(spec)) return [];
         if (Text(spec, "dynamicExecution") == "branches" && node["config"]?["branches"] is JsonArray branches)
             // Only a text id names a branch, as in TypeScript; another value is reported by the validators and has no port.
             ports.AddRange(branches.OfType<JsonValue>().Select(id => id.TryGetValue<string>(out var branch) ? branch : null).OfType<string>().Select(id => "branch:" + id));
@@ -468,11 +487,12 @@ public static class VisualNodeCatalog
     {
         var spec = Spec(node, snapshot);
         var ports = (spec?["inputs"]?.DeepClone() as JsonObject) ?? [];
-        // $any is every type; $properties every type whose values have properties (a Select property node's input).
+        // $any is every type but a structural one (a device, which carries no value); $properties every type whose values
+        // have properties (a Select property node's input).
         foreach (var (_, value) in ports) if (value is JsonObject port && port["types"] is JsonArray types)
             port["types"] = new JsonArray(types.SelectMany(t => t!.GetValue<string>() switch
             {
-                "$any" => (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key),
+                "$any" => (snapshot?.Root ?? Root)["types"]!.AsObject().Where(p => !Structural(p.Value)).Select(p => p.Key),
                 "$properties" => (snapshot?.Root ?? Root)["types"]!.AsObject().Where(p => (p.Value as JsonObject)?["properties"] is JsonArray { Count: > 0 }).Select(p => p.Key),
                 var type => [ResolveType(type, node)],
             }).Select(t => JsonValue.Create(t)).ToArray<JsonNode?>());
@@ -487,7 +507,8 @@ public static class VisualNodeCatalog
             if (description != null) port["description"] = description;
             return port;
         }
-        var all = (snapshot?.Root ?? Root)["types"]!.AsObject().Select(p => p.Key).ToArray();
+        // Every type a value can have, for an object's field, an unknown service field and a list's item: none is structural.
+        var all = (snapshot?.Root ?? Root)["types"]!.AsObject().Where(p => !Structural(p.Value)).Select(p => p.Key).ToArray();
         var dynamic = Text(spec, "dynamicInputs");
         if (dynamic == "custom" && CustomSignature(node, spec)?["inputs"] is JsonObject custom) foreach (var (key, value) in custom) ports[key] = value?.DeepClone();
         if (dynamic == "fields" && node["config"]?["fields"] is JsonObject fields)

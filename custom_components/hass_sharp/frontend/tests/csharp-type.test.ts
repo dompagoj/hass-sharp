@@ -1,9 +1,11 @@
 import { expect, it } from 'vitest'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
-import { nodeCatalog, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { nodeCatalog, structural, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { csharpType, csharpTypeParts, csharpTypes, hasDefinition } from '../src/visual/csharpType'
 
 const catalog = rich.catalog as unknown as VisualCatalogSnapshot
+/** The rich catalog's types a value can have: a structural one (a device) is no C# type, as no node method takes it. */
+const valueTypes = Object.keys(catalog.types).filter(id => !structural(catalog.types[id]))
 
 // Every type of the rich catalog, as a node method declares it.
 const expected: Record<string, string> = {
@@ -50,7 +52,9 @@ it.each(Object.entries(expected))('writes the catalog type %s as the C# type %s'
 })
 
 it('writes every type of the rich catalog as C#: no global::, no Nullable<>, keywords for the built-in CLR types', () => {
-  for (const id of Object.keys(catalog.types)) {
+  // A device, which only a wire into an Entity node's Device pin carries, has none.
+  expect(csharpType('device', catalog)).toBeUndefined()
+  for (const id of valueTypes) {
     const written = csharpType(id, catalog)
     expect(written, id).toBeDefined()
     expect(written).not.toMatch(/global::|System\.(Boolean|Double|String|Int32|Single|Object|Nullable)\b/)
@@ -124,9 +128,9 @@ const linked: Record<string, string[][]> = {
 const entityEnum = (id: string) => { const plain = id.replace(/\?$/, ''); return [[plain.split('.').pop()!, plain]] }
 
 it('links, over every type of the rich catalog, exactly the parts that name a library, Custom C# or HassSharp type', () => {
-  for (const id of Object.keys(catalog.types)) expect(links(id), id).toEqual(linked[id] ?? (id.startsWith('global::HassSharp.Entities.') ? entityEnum(id) : []))
+  for (const id of valueTypes) expect(links(id), id).toEqual(linked[id] ?? (id.startsWith('global::HassSharp.Entities.') ? entityEnum(id) : []))
   // The pieces always read as the plain C# type.
-  for (const id of Object.keys(catalog.types)) expect(csharpTypeParts(id, catalog)!.map(p => p.text).join(''), id).toBe(csharpType(id, catalog))
+  for (const id of valueTypes) expect(csharpTypeParts(id, catalog)!.map(p => p.text).join(''), id).toBe(csharpType(id, catalog))
 })
 
 it.each([

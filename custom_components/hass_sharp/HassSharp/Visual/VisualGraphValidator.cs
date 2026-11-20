@@ -36,7 +36,7 @@ public static class VisualGraphValidator
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow",
-        "flow.pure", "pure.unused", "custom.signature", "property.unset", "property.unknown",
+        "flow.pure", "flow.declaration", "pure.unused", "custom.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
         "node.document", "node.singleton", "root.incoming",
         "setting.unknown", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
@@ -53,6 +53,7 @@ public static class VisualGraphValidator
         {
             ["string"] = "Text", ["number"] = "Number", ["boolean"] = "True/False", ["object"] = "Object", ["array"] = "List",
             ["entity_id"] = "Entity", ["target"] = "Target", ["global::HassSharp.EntityStateSnapshot"] = "Entity state", ["image"] = "Image",
+            ["device"] = "Device",
         };
         static readonly Dictionary<string, string> Primitive = new(StringComparer.Ordinal)
         { ["boolean"] = "True/False", ["number"] = "Number", ["integer"] = "Number", ["string"] = "Text", ["object"] = "Object", ["array"] = "List" };
@@ -88,10 +89,10 @@ public static class VisualGraphValidator
         }
         /// <summary>
         /// A step as people see it on the canvas: its own label, else (for a Custom C# node) its method's title, else its
-        /// kind's catalog label, else its kind in words. A node that declares an entity is named by it (<see cref="EntityName"/>).
+        /// kind's catalog label, else its kind in words. A node that declares an entity or a device is named by it (<see cref="EntityName"/>).
         /// </summary>
         internal static string StepName(JsonObject node, JsonNode? spec) =>
-            Declares(spec, "entity") ? EntityName(node, spec)
+            Declares(spec, "entity") || Declares(spec, "device") ? EntityName(node, spec)
             : node["label"] is JsonValue l && l.TryGetValue<string>(out var label) && Trimmed(label).Length > 0 ? Trimmed(label)
             : Text(CustomSignature(node, spec), "title") is { } title && Trimmed(title).Length > 0 ? Trimmed(title)
             : KindName(node, spec);
@@ -101,8 +102,8 @@ public static class VisualGraphValidator
             : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
         /// <summary>
         /// An Entity node's entity as people read it, in the validator's messages and in its runs' names: its name, else its
-        /// key, each trimmed, else its kind's label; never a label of the node's own. Mirrored by <c>entityNodeName</c> in
-        /// <c>contract.ts</c>.
+        /// key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device alike. Mirrored by
+        /// <c>entityNodeName</c> in <c>contract.ts</c>.
         /// </summary>
         internal static string EntityName(JsonObject node, JsonNode? spec) =>
             Trimmed(Text(node["config"], "name")) is { Length: > 0 } name ? name
@@ -112,6 +113,8 @@ public static class VisualGraphValidator
         internal static string Unreachable(string step) => $"{step} is not connected into the flow; connect a step to its execution input";
         /// <summary>A step order wire into or out of a value node.</summary>
         internal static string NotInFlow(string node) => $"{node} is a value and is not part of the run order";
+        /// <summary>A step order wire into or out of a Device node.</summary>
+        internal static string DeviceNotInFlow(string device) => $"{device} is a device and is not part of the run order";
         /// <summary>A node on a cycle of value wires.</summary>
         internal static string OwnResult(string node) => $"{node} would depend on its own result";
         /// <summary>A value node none of whose outputs is connected.</summary>
@@ -471,6 +474,8 @@ public static class VisualGraphValidator
         readonly Dictionary<string, (string Owner, string Port)[]> scopes = new(StringComparer.Ordinal);
         readonly Dictionary<(string Node, string Port), JsonObject> incoming = [];
         bool KnownType(string type) => VisualTypes.Chain(Root, type).Count > 0;
+        /// <summary>A known type a value can have: not a structural one (a device), which only a wire carries.</summary>
+        bool ValueType(string type) => KnownType(type) && !Structural(VisualTypes.Resolve(Root, type));
         void Error(string? node, string message, string? input = null, string? port = null, string? code = null) => errors.Add(new(node, message, InputId: input, PortId: port, Code: code));
         static bool Bool(JsonNode? node, string key, bool fallback = false) => node is JsonObject o && o[key] is JsonValue v && v.TryGetValue<bool>(out var result) ? result : fallback;
         static double? Number(JsonNode? value) => value is JsonValue v && v.GetValueKind() == System.Text.Json.JsonValueKind.Number && double.TryParse(v.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) ? number : null;
@@ -516,6 +521,8 @@ public static class VisualGraphValidator
         static bool Ancestor((string Owner, string Port)[] a, (string Owner, string Port)[] b) => a.Length <= b.Length && a.SequenceEqual(b.Take(a.Length));
         JsonObject? Owner(JsonObject node) => scopes.TryGetValue(Id(node), out var scope) && scope.LastOrDefault() is var last && last.Port == "body" ? nodes[last.Owner] : null;
         bool Pure(JsonObject node) => IsPure(node, Spec(node));
+        /// <summary>Whether the node is a declaration (<see cref="Declaration"/>): a Device node, neither a step nor a value.</summary>
+        bool Declared(JsonObject node) => Declaration(Spec(node));
         bool Visible(JsonObject source, JsonObject target, JsonNode port) => scopes.TryGetValue(Id(target), out var b) && VisibleIn(source, b, port);
         /// <summary>Whether an output of <paramref name="source"/> may be read by a step in scope <paramref name="b"/>.</summary>
         bool VisibleIn(JsonObject source, (string Owner, string Port)[] b, JsonNode port)
@@ -592,11 +599,14 @@ public static class VisualGraphValidator
                 {
                     if (edge.ContainsKey("sourcePort") || edge.ContainsKey("targetPort")) Error(source, "This step order wire names value pins; connect step order pins to step order pins", code: "edge.orderWirePins");
                     if (edge.ContainsKey("port") && (edge["port"] is not JsonValue pv || !pv.TryGetValue<string>(out _))) { Error(source, "This step order wire leaves from a pin without a valid name", code: "edge.orderPinName"); continue; }
-                    // A value node has no execution pins; the wire is reported on it and otherwise ignored.
-                    if (Pure(nodes[source]) || Pure(nodes[target]))
+                    // A value node and a declaration (a Device node) have no execution pins; the wire is reported on them and
+                    // otherwise ignored, so it puts neither in a scope.
+                    if (Pure(nodes[source]) || Pure(nodes[target]) || Declared(nodes[source]) || Declared(nodes[target]))
                     {
                         if (Pure(nodes[source])) Error(source, Words.NotInFlow(Words.StepName(nodes[source], Spec(nodes[source]))), code: "flow.pure");
                         if (Pure(nodes[target]) && target != source) Error(target, Words.NotInFlow(Words.StepName(nodes[target], Spec(nodes[target]))), code: "flow.pure");
+                        if (Declared(nodes[source])) Error(source, Words.DeviceNotInFlow(Words.StepName(nodes[source], Spec(nodes[source]))), code: "flow.declaration");
+                        if (Declared(nodes[target]) && target != source) Error(target, Words.DeviceNotInFlow(Words.StepName(nodes[target], Spec(nodes[target]))), code: "flow.declaration");
                         continue;
                     }
                     var node = nodes[source]; var port = FlowPort(node, edge);
@@ -614,10 +624,11 @@ public static class VisualGraphValidator
             var roots = nodes.Values.Where(n => IsRoot(n, snapshot)).ToArray();
             if (document == "automation" && !nodes.Values.Any(n => Kind(n) == "trigger")) Error(null, "At least one trigger is required", code: "graph.noTrigger");
             foreach (var root in roots) Scope(Id(root), []);
-            // A value node is never reached by execution; it is a warning when nothing reads it.
+            // A value node is never reached by execution; it is a warning when nothing reads it. Nor is a declaration (a Device
+            // node), which never runs.
             foreach (var (id, node) in nodes)
                 if (Pure(node)) { if (!data.Any(e => Text(e, "source") == id)) errors.Add(new(id, Words.Unused(Words.StepName(node, Spec(node))), 2, Code: "pure.unused")); }
-                else if (!scopes.ContainsKey(id)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
+                else if (!scopes.ContainsKey(id) && !Declared(node)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
             foreach (var edge in data)
             {
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];
@@ -697,7 +708,7 @@ public static class VisualGraphValidator
             // (StateDependencies.Of). The warning is the reader's own, on no input: a wire into it is allowed (connectData),
             // at the cost it names.
             var readers = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var state in nodes.Values.Where(n => Declares(Spec(n), "entity") && DataInputs(n).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
+            foreach (var state in nodes.Values.Where(n => Declares(Spec(n), "entity") && StateInputs(n, Root).Any(p => Supplied(n, p.Key))).OrderBy(Id, StringComparer.Ordinal))
                 foreach (var reader in ValueUpstream(state, nodes, data, Pure))
                     if (!readers.Contains(Id(reader)) && DataInputs(reader).FirstOrDefault(p => TakesOnlyEntityIds(p.Value) && incoming.TryGetValue((Id(reader), p.Key), out var wire) &&
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
@@ -725,8 +736,9 @@ public static class VisualGraphValidator
         /// </summary>
         void EntityScopes()
         {
+            // Its Device input reads no step: the Device node it is wired to is a declaration, not a flow's step.
             foreach (var hub in nodes.Values.Where(n => Declares(Spec(n), "entity")))
-                foreach (var (port, input) in DataInputs(hub))
+                foreach (var (port, input) in StateInputs(hub, Root))
                     if (StateSource(hub, port) is { } step)
                         Error(Id(hub), Words.StateSource(Words.PortLabel(input, port), Words.StepName(hub, Spec(hub)), Words.StepName(step, Spec(step))), port, port, "scope.stateSource");
             var pins = FlowPins();
@@ -837,8 +849,9 @@ public static class VisualGraphValidator
             }
             string? type = null;
             if (Text(operand, "kind") == "variable") { Error(Id(node), Words.Variable(subject), port, port); return null; }
-            // A value with properties (a record, class or struct) comes from a step: nothing can be typed in, null included.
-            if (SelectsProperties(Spec(node), port)) { Error(Id(node), Words.WireOnly(Words.StepName(node, Spec(node))), port, port); return null; }
+            // A value with properties (a record, class or struct) comes from a step, and an Entity node's device from a Device node
+            // (a structural input): nothing can be typed in, null included.
+            if (SelectsProperties(Spec(node), port) || Structural(spec)) { Error(Id(node), Words.WireOnly(Words.StepName(node, Spec(node))), port, port); return null; }
             if (Text(operand, "kind") == "literal")
             {
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
@@ -884,8 +897,9 @@ public static class VisualGraphValidator
                     Error(Id(node), $"{subject} must have {Words.Items(Number(spec["minItems"]), Number(spec["maxItems"]))}", port);
             }
             else Error(Id(node), $"{subject} has an invalid value", port);
-            // An input that accepts no known type (a Constant whose Type is missing or unknown) is reported where that type is set.
-            if (type != null && KnownType(type) && Strings(spec["types"]).Any(KnownType) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t)))
+            // An input that accepts no known type a value can have (a Constant whose Type is missing, unknown or a device) is
+            // reported where that type is set.
+            if (type != null && ValueType(type) && Strings(spec["types"]).Any(ValueType) && !Strings(spec["types"]).Any(t => CompatibleTypes(type, t)))
                 Error(Id(node), Kind(node) == "constant" && port == "value" ? Words.ConstantRetyped(Root, label, type, Strings(spec["types"]).First(KnownType)) : Words.Incompatible(Root, subject, type, Strings(spec["types"])), port);
             return type;
         }
@@ -970,7 +984,7 @@ public static class VisualGraphValidator
             if (EntityGraph && kind == "set_entity_state" && DefinitionEntity(Root, Text(cfg, "entity")) is { } described && EntityDomain(Root, Text(cfg, "entity")) is { } row)
             {
                 if (row["state"] is not JsonObject { Count: > 0 }) Error(id, Words.Stateless(Text(row, "label", Words.DomainWords(Text(described, "domain")))), "entity", code: "entity.stateless");
-                else if (!DataInputs(node).Any(p => Supplied(node, p.Key)))
+                else if (!StateInputs(node, Root).Any(p => Supplied(node, p.Key)))
                     Error(id, Words.NoValue(KindLabel(kind)), code: "entity.no_value");
             }
             // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
@@ -987,7 +1001,8 @@ public static class VisualGraphValidator
                     if (Words.Trimmed(domain).Length == 0) Error(id, $"{ConfigLabel(spec["config"]?["domain"], "domain")} is required", "domain");
                     else if (DeclaredDomain(node, Root) == null) Error(id, Words.NotAnEntityType(domain), "domain", code: "definition.entityDomain");
                 if (Typed("name") is { } name && Words.Trimmed(name).Length == 0 && !device) Error(id, Words.EntityNameMissing, "name", code: "entity.name");
-                if (DeclaredDomain(node, Root)?["state"] is JsonObject state && DataInputs(node) is var values && values.Where(p => Supplied(node, p.Key)).ToList() is { Count: > 0 } given)
+                // Its Device input is no state value: a wire into it neither counts as one given nor asks for the others.
+                if (DeclaredDomain(node, Root)?["state"] is JsonObject state && StateInputs(node, Root).ToList() is var values && values.Where(p => Supplied(node, p.Key)).ToList() is { Count: > 0 } given)
                     foreach (var (port, input) in values)
                         if (!Supplied(node, port) && Bool(state[port], "required", true))
                             Error(id, Words.PartialState(Words.StepName(node, spec), string.Join(", ", given.Select(p => Words.PortLabel(p.Value, p.Key))), Words.PortLabel(input, port)), port, code: "entity.partialState");
@@ -1006,6 +1021,8 @@ public static class VisualGraphValidator
                 var rule = rawRule!; var value = cfg[field];
                 var label = ConfigLabel(rule, field);
                 if (value == null && !cfg.ContainsKey(field)) { if (Bool(rule, "required")) Error(id, $"{label} is required", field); continue; }
+                // A rule that says "nullable" takes null as a value of its own (a Device node's Part of: nothing).
+                if (value == null && Bool(rule, "nullable")) continue;
                 var valid = Text(rule, "type") switch
                 {
                     "array" => value is JsonArray,
@@ -1019,8 +1036,9 @@ public static class VisualGraphValidator
                 if (!valid) { Error(id, $"{label} must be {Words.ConfigKind(Text(rule, "type"))}", field); continue; }
                 // Trigger type changes retain inactive fields so drafts and overrides are not lost.
                 if (kind == "trigger" && field == "at" && TriggerType(node, snapshot) != "once") continue;
-                // Type choices accept every resolvable id, so a parametric type can be selected for narrowing.
-                if (Text(rule, "enumSource") == "types") { if (value is not JsonValue tv || !tv.TryGetValue<string>(out var typeId) || !KnownType(typeId)) Error(id, $"{label} must be a known type", field); }
+                // Type choices accept every resolvable id, so a parametric type can be selected for narrowing, but no structural
+                // one (a device), which no value has.
+                if (Text(rule, "enumSource") == "types") { if (value is not JsonValue tv || !tv.TryGetValue<string>(out var typeId) || !ValueType(typeId)) Error(id, $"{label} must be a known type", field); }
                 else if (rule["enum"] is JsonArray choices && !choices.Any(v => JsonNode.DeepEquals(v, value))) Error(id, $"{label} must be {Words.Choices(choices, rule["enumLabels"], "one of ")}", field);
                 if (Number(value) is { } number && (Number(rule["min"]) is { } min && number < min || Number(rule["max"]) is { } max && number > max)) Error(id, $"{label} must be {Words.Range(Number(rule["min"]), Number(rule["max"]), false)}", field);
                 if (value is JsonValue text && text.TryGetValue<string>(out var str) && Text(rule, "pattern") is { Length: > 0 } pattern && !Formatted(id, label, str, pattern, field)) Error(id, $"{label} is not in the expected format", field);

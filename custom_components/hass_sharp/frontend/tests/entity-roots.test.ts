@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, dataOutputs, executionLabel, executionPorts, nodeCatalog, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, dataOutputs, executionLabel, executionPorts, nodeCatalog, stateInputs, validateGraph, withGraphTypes, type Graph } from '../src/visual/contract'
 import { addNode, canConnect, connectNodes, createGraph, updateNode } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { addConnected, canAddFor } from '../src/visual/flow/autoConnect'
@@ -57,7 +57,8 @@ it('the roots of an entity graph have no execution input pin, and an Entity node
   expect(view(graph, 'relay').footer).toBeUndefined()
   expect(view(graph, 'relay').rows.flatMap(r => (r.output?.kind === 'exec' ? [r.output.id] : []))).toEqual(['command:turn_on', 'command:turn_off'])
   expect(outputs(graph, 'relay')).toEqual(['Turn on', 'Turn off'])
-  expect(view(graph, 'relay').rows.flatMap(r => (r.input ? [r.input.port] : []))).toEqual(['is_on'])
+  // Its Device pin, then its state values.
+  expect(view(graph, 'relay').rows.flatMap(r => (r.input ? [r.input.port] : []))).toEqual(['device', 'is_on'])
   // A binary sensor has its state and no command: no execution pin at all.
   expect(view(graph, 'door').next).toBeUndefined()
   expect(view(graph, 'door').rows.some(r => r.output)).toBe(false)
@@ -204,9 +205,9 @@ it('an Entity node has an output for each value of its commands\' data, typed an
 it('an Entity node asks for the values its type requires once it has one, and a Set state needs at least one', () => {
   let graph = add(lampGraph(), 'set_entity_state', 'set', { entity: 'lamp' })
   const required = (id: string) => Object.fromEntries(Object.entries(dataInputs(graph.nodes.find(n => n.id === id)!, undefined, withGraphTypes(nodeCatalog, graph))).map(([port, input]) => [port, input.required]))
-  // Every state pin of the node can be left empty: the node then has no state flow.
-  expect(required('lamp')).toEqual({ is_on: false, brightness: false })
-  expect(required('blind')).toEqual({ is_closed: false, position: false })
+  // Every state pin of the node can be left empty: the node then has no state flow. Its Device pin can be too.
+  expect(required('lamp')).toEqual({ device: false, is_on: false, brightness: false })
+  expect(required('blind')).toEqual({ device: false, is_closed: false, position: false })
   expect(required('set')).toEqual({ is_on: false, brightness: false })
   // Errors on the three steps, a Set state's not being in a flow aside.
   const problems = (g: Graph) => validateGraph(g, nodeCatalog).filter(d => d.severity === 3 && d.code !== 'node.unreachable' && ['lamp', 'blind', 'set'].includes(d.nodeId ?? '')).map(d => `${d.nodeId}: ${d.message}`).sort()
@@ -224,7 +225,9 @@ it('an Entity node of a button has no state pins, and a Set state of it is refus
   let graph = add(empty('Bell'), 'entity', 'bell', { key: 'bell', domain: 'button', name: 'Bell' })
   graph = connectNodes(add(graph, 'set_entity_state', 'set', { entity: 'bell' }), 'bell', 'set', 'command:press')
   const bell = graph.nodes.find(n => n.id === 'bell')!
-  expect(dataInputs(bell)).toEqual({})
+  // Its one pin is Device, which is no state value.
+  expect(Object.keys(dataInputs(bell))).toEqual(['device'])
+  expect(stateInputs(bell, nodeCatalog)).toEqual({})
   expect(executionPorts(bell)).toEqual(['command:press'])
   expect(Object.keys(dataOutputs(bell))).toEqual([])
   expect(validateGraph(graph, nodeCatalog).filter(d => d.code === 'entity.stateless')).toEqual([
