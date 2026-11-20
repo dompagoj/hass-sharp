@@ -57,12 +57,10 @@ class Registry:
         return [e for e in self.entries if e.config_entry_id == entry_id]
 
 
-def definition(kind='graph', nodes=()):
-    """A definition as a request sends it: a graph's entity is an Entity node, before the given nodes."""
+def definition(nodes=()):
+    """A definition as a request sends it: its entity is an Entity node, before the given nodes."""
     relay = {'id': 'relay', 'kind': 'entity', 'config': {'key': 'relay', 'domain': 'switch', 'name': 'Relay'}}
-    logic = {'kind': 'graph', 'graph': {'version': 5, 'nodes': [relay, *nodes], 'edges': []}} if kind == 'graph' \
-        else {'kind': 'class', 'className': 'Porch'}
-    return {'name': 'Plug', 'settings': [], 'logic': logic}
+    return {'name': 'Plug', 'settings': [], 'logic': {'kind': 'graph', 'graph': {'version': 5, 'nodes': [relay, *nodes], 'edges': []}}}
 
 
 def trigger(node_id, configuration):
@@ -79,6 +77,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.requests = []
         self.dotnet_threads = set()
         self.refuse = None  # an error envelope .NET answers instead, for the next request
+        self.refuse_on = None  # the operation of the request self.refuse answers; None: whichever comes next
         self.documents = {}  # what .NET's documents of these ids carry besides its own fields, such as their logic
         self.preview = None  # what .NET's preview answers instead of its valid preview with one warning
         self.registry = Registry([
@@ -112,15 +111,14 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.dotnet_threads.add(threading.get_ident())
         request = json.loads(raw)
         self.requests.append(request)
-        if self.refuse is not None:
-            refused, self.refuse = self.refuse, None
-            return json.dumps(refused)
         operation = request.get('operation')
+        if self.refuse is not None and self.refuse_on in (None, operation):
+            refused, self.refuse, self.refuse_on = self.refuse, None, None
+            return json.dumps(refused)
         def document(definition_id):
             return {'version': 1, 'id': definition_id, 'revision': 2, 'name': definition_id, 'status': 'off', 'liveEntities': [],
                     **copy.deepcopy(self.documents.get(definition_id, {}))}
         result = {
-            'types': lambda: {'types': [], 'generation': 'g1'},
             'list': lambda: [document('lonely'), document('plug'), document('plug2')],
             'read': lambda: {**document(request['id']), 'source': 'class Plug {}', 'sourceMap': []},
             'preview': lambda: copy.deepcopy(self.preview) if self.preview is not None else {'valid': True, 'diagnostics': [copy.deepcopy(WARNING)], 'source': 'class Plug {}', 'sourceMap': []},
@@ -183,9 +181,10 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.send(save), refused)
         self.assertEqual([r['operation'] for r in self.requests], ['preview'])
 
-        # A class definition, and a request of another shape, go to .NET untouched: .NET answers what is wrong with it.
+        # A request of another shape, such as a logic of another kind than graph, goes to .NET untouched: .NET answers
+        # what is wrong with it.
         self.validated.clear()
-        for body in (definition('class'), None, 'plug', {'logic': None}, {'logic': {'kind': 'graph'}},
+        for body in ({'name': 'Plug', 'settings': [], 'logic': {'kind': 'script'}}, None, 'plug', {'logic': None}, {'logic': {'kind': 'graph'}},
                      {'logic': {'kind': 'graph', 'graph': ['not', 'an', 'object']}}):
             for operation in ('preview', 'save'):
                 with self.subTest(definition=body, operation=operation):
@@ -259,7 +258,7 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         read = await self.send({'operation': 'read', 'id': 'plug'})
         self.assertEqual(read['result']['registeredEntities'], self.plug_entities())
         self.assertEqual(read['result']['source'], 'class Plug {}')
-        saved = await self.send({'operation': 'save', 'id': 'plug', 'expectedRevision': 2, 'definition': definition('class')})
+        saved = await self.send({'operation': 'save', 'id': 'plug', 'expectedRevision': 2, 'definition': definition()})
         self.assertEqual(saved['result']['document']['registeredEntities'], self.plug_entities())
         self.assertNotIn('registeredEntities', saved['result'])
         self.assertEqual(self.registry.reads, [(ENTRY, self.loop_thread)] * 2)
@@ -297,14 +296,14 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
             {'id': 'closed', 'kind': 'trigger', 'config': {'type': 'manual', 'manual': False}},
             {'id': 'set', 'kind': 'set_entity_state', 'config': {'entity': 'relay'}}]}
         self.documents = {'plug': {'logic': {'kind': 'graph', 'graph': graph}, 'currentRevisionActive': True, 'status': 'running'},
-                          'plug2': {'logic': {'kind': 'class', 'type': 'library:shelly:NodeLib.Plug'}, 'currentRevisionActive': True}}
+                          'plug2': {'logic': {'kind': 'graph', 'graph': {'version': 5, 'nodes': [], 'edges': []}}, 'currentRevisionActive': True}}
         steps = [{'triggerId': 'press', 'method': 'Run_' + 'press'.encode().hex().upper(), 'manual': True, 'runnable': True},
                  {'triggerId': 'closed', 'method': 'Run_' + 'closed'.encode().hex().upper(), 'manual': False, 'runnable': False}]
         listed = await self.send({'operation': 'list'})
-        # As an automation's are given; a class definition has none, nor one whose logic is not there.
+        # As an automation's are given; a graph without Trigger steps has none, nor one whose logic is not there.
         self.assertEqual({d['id']: d['triggers'] for d in listed['result']}, {'lonely': [], 'plug': steps, 'plug2': []})
         self.assertEqual((await self.send({'operation': 'read', 'id': 'plug'}))['result']['triggers'], steps)
-        saved = await self.send({'operation': 'save', 'id': 'plug', 'expectedRevision': 2, 'definition': definition('class')})
+        saved = await self.send({'operation': 'save', 'id': 'plug', 'expectedRevision': 2, 'definition': definition()})
         self.assertEqual(saved['result']['document']['triggers'], steps)
         self.assertNotIn('triggers', saved['result'])
         self.assertEqual((await self.send({'operation': 'read', 'id': 'plug2'}))['result']['triggers'], [])
@@ -318,10 +317,9 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([t['runnable'] for t in (await self.send({'operation': 'read', 'id': 'plug'}))['result']['triggers']], [False, False])
 
     async def test_other_operations_are_passed_through(self):
-        for request in ({'operation': 'types'}, {'operation': 'set_enabled', 'id': 'plug', 'enabled': False},
+        for request in ({'operation': 'set_enabled', 'id': 'plug', 'enabled': False},
                         {'operation': 'run', 'id': 'plug', 'triggerId': 'press'},
-                        {'operation': 'delete', 'id': 'plug', 'expectedRevision': 2},
-                        {'operation': 'preview', 'definition': definition('class')}):
+                        {'operation': 'delete', 'id': 'plug', 'expectedRevision': 2}):
             with self.subTest(operation=request['operation']):
                 self.requests.clear()
                 answer = await self.send(request)
@@ -330,15 +328,18 @@ class EntityAuthoringTests(unittest.IsolatedAsyncioTestCase):
         # Error answers of the operations that answer documents are .NET's as they are.
         for request, refusal in (({'operation': 'list', 'view': 'week'}, ('invalid_request', 'Unknown list view; the entity definitions list has the view home')),
                                  ({'operation': 'read', 'id': 'gone'}, ('not_found', 'Entity definition not found')),
-                                 ({'operation': 'save', 'id': 'plug', 'expectedRevision': 1, 'definition': definition('class')},
+                                 ({'operation': 'save', 'id': 'plug', 'expectedRevision': 1, 'definition': definition()},
                                   ('conflict', 'Revision conflict; reload the current document')),
                                  ({'operation': 'rename', 'id': 'plug'}, ('invalid_request', 'Unknown entity operation')),
                                  ({'operation': 'run', 'id': 'plug', 'triggerId': 'set'},
                                   ('invalid_request', 'Only a Trigger step can be run by hand; Set state is not one'))):
             with self.subTest(operation=request['operation']):
-                self.refuse = {'version': 1, 'ok': False, 'error': {'code': refusal[0], 'detail': refusal[1]}}
+                # A graph's save is previewed first: the refusal is the save's own.
+                self.requests.clear()
+                self.refuse, self.refuse_on = {'version': 1, 'ok': False, 'error': {'code': refusal[0], 'detail': refusal[1]}}, request['operation']
                 expected = copy.deepcopy(self.refuse)
                 self.assertEqual(await self.send(request), expected)
+                self.assertEqual(self.requests[-1], request)
         self.assertEqual(self.registry.reads, [])
         self.assertEqual(self.validated, [])
 

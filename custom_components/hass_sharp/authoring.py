@@ -63,7 +63,7 @@ def runnable_triggers(document, graph=None):
 
 def definition_triggers(document):
     """A definition's Trigger steps as an automation's are given (`runnable_triggers`), read from its `logic.graph`;
-    none for a class definition. One runs only while the definition runs its saved revision and is running (not still
+    none for a document without one. One runs only while the definition runs its saved revision and is running (not still
     in setup, nor failed), as .NET's `run` requires."""
     logic = document.get("logic")
     graph = logic.get("graph") if isinstance(logic, dict) and logic.get("kind") == "graph" else None
@@ -139,7 +139,7 @@ class AuthoringService:
         definition's Home Assistant triggers are checked on preview and save as an automation's are (`visual`), with
         `deriveSignatures` passed on to that preview, and every definition a list, read or save answers gains
         `registeredEntities`, its entities in the entity registry, which has them while it is off or failed too, and
-        `triggers`, its Trigger steps as an automation's are given (none for a class)."""
+        `triggers`, its Trigger steps as an automation's are given."""
         if not is_admin:
             raise PermissionError("Administrator required")
         if not isinstance(request, dict):

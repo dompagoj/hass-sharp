@@ -273,7 +273,7 @@ def platform_class(domain):
 
 
 def device(name='Plug one', key='main', **fields):
-    """A device of a sync request, keyed `main` as a class's (or a graph's definition-level) device is."""
+    """A device of a sync request, keyed `main` unless given."""
     return {'key': key, 'name': name, 'manufacturer': 'Shelly', 'model': 'Plug S', 'swVersion': None, 'hwVersion': None,
             'configurationUrl': None, 'suggestedArea': None, 'via': None, **fields}
 
@@ -656,18 +656,20 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.live('plug1:note')._attr_pattern)
 
     async def test_sync_resolves_the_via_device(self):
-        # Another definition's device is its device `main`; the one an earlier build made for it is not that.
-        self.devices.add('hub:main', name='Hub')
-        self.devices.add('hub', name='Old hub')
+        # A Home Assistant device, by its id.
         other = self.devices.add('zigbee', config_entry_id='entry2')
         other.identifiers = {('zha', 'coordinator'), ('zha', 'b')}
-        await self.sync(definition(devices=[device(via={'definition': 'hub'})]))
-        plug = identified(self.devices, 'plug1:main')
-        self.assertEqual(plug.via_device_id, 'device-hub:main')
         await self.sync(definition(devices=[device(via={'deviceId': other.id})]))
+        plug = identified(self.devices, 'plug1:main')
         self.assertEqual(plug.via_device_id, other.id)
         # A parent that does not exist is left out: the device no longer has one.
-        await self.sync(definition(devices=[device(via={'definition': 'gone'})]))
+        await self.sync(definition(devices=[device(via={'deviceId': 'gone'})]))
+        self.assertNotIn('via_device_id', [c[1] for c in self.devices.calls if c[0] == 'get_or_create'][-1])
+        self.assertIsNone(plug.via_device_id)
+        # Another definition's device is no parent, whatever its key: a device is part of one of its own definition's or
+        # of a Home Assistant device.
+        self.devices.add('hub:main', name='Hub')
+        await self.sync(definition(devices=[device(via={'definition': 'hub'})]))
         self.assertNotIn('via_device_id', [c[1] for c in self.devices.calls if c[0] == 'get_or_create'][-1])
         self.assertIsNone(plug.via_device_id)
 

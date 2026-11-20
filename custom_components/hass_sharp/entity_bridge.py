@@ -46,8 +46,6 @@ SNAPSHOT_CLOSED = "HassSharp is stopping, so no picture was taken"
 # The device fields of a sync request by the keyword Home Assistant's device registry takes; a null clears one.
 DEVICE_FIELDS = {"name": "name", "manufacturer": "manufacturer", "model": "model", "swVersion": "sw_version",
                  "hwVersion": "hw_version", "configurationUrl": "configuration_url"}
-# The key of the device a definition itself is (a class's, or the one another definition's device is part of).
-MAIN_DEVICE = "main"
 
 
 def _identifier(definition_id, key):
@@ -436,15 +434,11 @@ class EntityBridge:
     def _via(self, devices, definition_id, via):
         """The id of the parent device, or None when there is none or it does not exist (Home Assistant refuses an
         unknown `via_device_id`; it deprecates `via_device` and the lookup by identifiers alone). The parent is another
-        device of this definition (`device`), the device of another definition (`definition`, its device `main`), or a
-        Home Assistant device (`deviceId`)."""
+        device of this definition (`device`) or a Home Assistant device (`deviceId`); anything else is no parent."""
         if not via:
             return None
         if via.get("device") is not None:
             parent = devices.async_get_device_by_identifier((DOMAIN, _identifier(definition_id, via["device"])),
-                                                            self.entry.entry_id)
-        elif via.get("definition") is not None:
-            parent = devices.async_get_device_by_identifier((DOMAIN, _identifier(via["definition"], MAIN_DEVICE)),
                                                             self.entry.entry_id)
         elif via.get("deviceId") is not None:
             parent = devices.async_get(via["deviceId"])

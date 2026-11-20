@@ -181,7 +181,7 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         state = EntryState(None)
         hass = types.SimpleNamespace(data={'hass_sharp_llm': {'entry': state}})
         handlers, env = load_routes(manager, hass)
-        msg = {'request': {'operation': 'types'}}
+        msg = {'request': {'operation': 'set_enabled', 'id': 'plug', 'enabled': False}}
         for data in ({'hass_sharp_llm': {'entry': state}}, {}):
             hass.data = data
             results, errors = await self.send(handlers['hass_sharp/entities'], hass, msg)
@@ -192,7 +192,7 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         hass.data = {'hass_sharp_llm': {'entry': state}}
         results, errors = await self.send(handlers['hass_sharp/entities'], hass, msg)
         self.assertEqual(errors, [])
-        self.assertEqual(calls, ['{"operation": "types"}'])
+        self.assertEqual(calls, ['{"operation": "set_enabled", "id": "plug", "enabled": false}'])
 
     async def test_request_routes_answer_a_failure_as_an_internal_error(self):
         def fail(raw):

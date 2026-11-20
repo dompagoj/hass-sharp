@@ -787,14 +787,14 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(definition(description('fan', definition='hub1'), definition_id='hub1', name='Hub',
                                    devices=[device('Hub')]))
         hub = self.device_of('hub1:main')
-        await self.sync(plug(description('relay'), devices=[device(via={'definition': 'hub1'})]))
+        await self.sync(plug(description('relay'), devices=[device(via={'deviceId': hub.id})]))
         self.assertEqual(hub.id, self.plug_device().via_device_id)
         await self.sync(plug(description('relay'), devices=[device(via=None)]))
         self.assertIsNone(self.plug_device().via_device_id)
         await self.sync(plug(description('relay'), devices=[device(via={'deviceId': hub.id})]))
         self.assertEqual(hub.id, self.plug_device().via_device_id)
         # A parent that does not exist is left out (Home Assistant refuses an unknown via device id).
-        await self.sync(plug(description('relay'), devices=[device(via={'definition': 'gone'})]))
+        await self.sync(plug(description('relay'), devices=[device(via={'deviceId': 'gone'})]))
         self.assertIsNone(self.plug_device().via_device_id)
         # Another device of the same definition, made first.
         await self.sync(plug(description('relay', device='plug'), description('motion', 'binary_sensor', 'Motion', device='hub'),

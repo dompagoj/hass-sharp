@@ -205,8 +205,8 @@ and pagination values must be integers (booleans are not accepted). Stable IDs
 match `[a-z0-9][a-z0-9_-]{0,79}`. All tools require administrator privileges.
 Read-only MCP mode removes save, set_enabled, delete, run, entities_save,
 entities_set_enabled, entities_delete, entities_run, library_save and
-library_delete; `trace`, `history` and `entities_history` stay available. Of the 26
-tools, 16 remain.
+library_delete; `trace`, `history` and `entities_history` stay available. Of the 25
+tools, 15 remain.
 
 A failed replacement can leave an older generation running. Document `active`
 means some generation is active; **`currentRevisionActive`** means the saved
@@ -235,62 +235,50 @@ envelope; validation, conflicts and revisions work as above.
    `device` (the Device node) it gives its config and its `entities` output, and for
    `csharp_entity` and `csharp_device` their config (see
    [C# entity and C# device nodes](#c-entity-and-c-device-nodes)).
-2. `entities_types({})` lists the classes the node libraries offer:
-   `{types:[…], generation}`, each type `{id, sourceId, typeExpression, title,
-   description, kind, domain, settings:[{key, label, description, type, secret,
-   options, minimum?, maximum?}]}` (`minimum` and `maximum` only when the setting has
-   them). A class is written with `library_save`. A class from a node library can
-   still be a whole definition (`logic: {kind: "class", type}`) for now; write new C#
-   in the graph instead, as C# entity and C# device nodes.
-3. `entities_list({})` summarises every definition without its graph: `{id, name,
-   revision, enabled, status, activationError, logic, devices, entities:[{key,
-   domain, name, device, entityId}], triggers:[{triggerId, label?, type, config,
-   manual, runnable}]}`. `status` is `running`, `setup` (starting), `failed` or
-   `off`; `logic` is `"graph"` or the class's type id. A graph definition's
-   `entities` are its Entity nodes and C# entity nodes, each with `device`, the key
-   of the device it is on or null (a C# entity is named as Home Assistant has it,
-   else by its class's title), then each entity a C# device's code added, as Home
-   Assistant has registered it, with `device` the C# device's key: those are known
-   only once the definition has run. A class definition's entities have no
-   `device`. `devices` is how many Home Assistant devices it makes: for a graph
-   definition its Device nodes and C# device nodes, which `entities_read` lists
-   under `devices`; for a class definition 1 when it gives
-   device details or its class derives from `SharpDevice` (for a class no node
-   library offers any more, when it gives device details), else 0. Beside the
+2. `entities_list({})` summarises every definition without its graph: `{id, name,
+   revision, enabled, status, activationError, devices, entities:[{key, domain,
+   name, device, entityId}], triggers:[{triggerId, label?, type, config, manual,
+   runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`. A
+   definition's `entities` are its Entity nodes and C# entity nodes, each with
+   `device`, the key of the device it is on or null (a C# entity is named as Home
+   Assistant has it, else by its class's title), then each entity a C# device's code
+   added, as Home Assistant has registered it, with `device` the C# device's key:
+   those are known only once the definition has run. `devices` is how many Home
+   Assistant devices it makes: its Device nodes and C# device nodes, which
+   `entities_read` lists under `devices`. Beside the
    result, `unreadable: [{id, reason, deletable}]` names each definition file that
    cannot be read; one that is `deletable` only `entities_delete` with
-   `expectedRevision` 0 removes (see step 6), and one that is not (its file name is
+   `expectedRevision` 0 removes (see step 5), and one that is not (its file name is
    not a definition id, or it could not be opened) is removed by hand from Home
    Assistant's `.storage/hass_sharp/entities` folder.
    `entities_read({id})` returns one complete document, with its `revision`,
-   `source`, `automationId` and `registeredEntities`, and, for a graph, `devices`,
-   the devices its Device nodes and C# device nodes declare (a C# device's with
+   `source`, `automationId` and `registeredEntities`, and `devices`, the devices
+   its Device nodes and C# device nodes declare (a C# device's with
    `csharp: true`), and `entities`, the entities its Entity nodes and C# entity
    nodes declare, each with `device`, the key of the device it is on or null (a C#
    entity's `{key, domain, name: null, device, csharp: true}`); both are for reading
    only. The entities a C# device's code adds are in neither: they are in
    `liveEntities` and `registeredEntities`, under the unique id `<definition
-   id>:<device key>:<entity key>` (a class's entities come from its code and are in
-   `registeredEntities`). Read before every edit, and send back only `name`,
-   `settings` and `logic`, and a class definition's `device`.
-4. `entities_preview({definition})` validates and compiles a definition without
-   creating anything: a graph definition is `{name, settings?, logic}` with `logic`
+   id>:<device key>:<entity key>`. Read before every edit, and send back only `name`,
+   `settings` and `logic`.
+3. `entities_preview({definition})` validates and compiles a definition without
+   creating anything: a definition is `{name, settings?, logic}` with `logic`
    `{kind:"graph", graph}`, its devices Device nodes in the graph (one sent with a
    `device` that is not null is refused with `definition.deviceNotAllowed`, which says
-   to use Device nodes); a class
-   definition is `{name, device?, settings?, logic}` with `logic`
-   `{kind:"class", type}`. It returns `valid`,
-   `diagnostics` and, for a graph, `graph` with each Custom C# step's pins and each
+   to use Device nodes). A `logic` of another kind is refused before it reaches the
+   server: "A definition is built from nodes: logic is {kind: "graph", graph}. Write
+   C# in a C# entity or C# device node". It returns `valid`,
+   `diagnostics` and `graph` with each Custom C# step's pins and each
    C# node's signature worked out (no settings come back). Unlike the panel's API, it leaves out the generated
    `source` and `sourceMap`, and so does a refusal for errors (`validation`) from it
    or from `entities_save`, whose detail is the preview; `entities_read` has a saved
-   definition's `source`. A graph definition that carries `entities`, even an empty
+   definition's `source`. A definition that carries `entities`, even an empty
    list, is refused with the server's own sentence, `definition.entitiesNotAllowed`:
    "Entities are Entity nodes in the graph now: leave entities out and add one Entity
    node for each". One with no Entity node, C# entity node or C# device node gets
    `definition.entitiesRequired`, "Add an Entity node: an entity definition creates
    the entities on its canvas, and has none".
-5. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
+4. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
    creates or updates its entities, returning `saved`, `document` (as
    `entities_read` gives it, without `source` and `sourceMap`), `active`,
    `activationError` and, when the save has warnings, `diagnostics`. `enabled` is
@@ -299,7 +287,7 @@ envelope; validation, conflicts and revisions work as above.
    changing it makes a new entity. A secret setting is sent back as answered to
    keep its value, with a new `value` to replace it, or with `value: null` and no
    `hasValue` to clear it.
-6. `entities_set_enabled({id, enabled})` turns a definition on or off (off, the
+5. `entities_set_enabled({id, enabled})` turns a definition on or off (off, the
    entities it has created stay as unavailable; a definition saved off creates its
    entities the first time it is turned on) and returns `enabled`, `active` and
    `activationError`. `entities_delete({id, expectedRevision})` deletes it and
@@ -313,11 +301,11 @@ envelope; validation, conflicts and revisions work as above.
    `expectedRevision` 0 (the user can also do so on the **Entities** page) and save
    it again; one listed with `deletable` false cannot be deleted so, and the user
    removes its file from Home Assistant's `.storage/hass_sharp/entities` folder by hand.
-7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
+6. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
    one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
    command runs when the entity's service is called, an Entity node's state follows
    the entities it reads, and When started runs when the definition starts.
-8. `entities_history({id, status?, offset?, limit?})` returns the definition's runs
+7. `entities_history({id, status?, offset?, limit?})` returns the definition's runs
    as `history` does an automation's; `trace` reads any run of either. An Entity
    node's `config.history` (`{state, commands, frame}`, each true or false and no
    other member; an Entity node takes no `trackHistory`) says which of its runs are
@@ -440,7 +428,7 @@ entity keeps its entity id when it moves to another device or off one.
 
 ### C# entity and C# device nodes
 
-Write C# for a definition as nodes of its graph, not as a class definition: an
+Write C# for a definition as nodes of its graph: an
 entity is a C# entity node (kind `csharp_entity`) and a device a C# device node (kind
 `csharp_device`), each with one class in `config.source`. A C# entity node's
 `config` is
