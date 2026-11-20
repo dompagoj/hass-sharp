@@ -14,6 +14,7 @@ import {
   isPure,
   nodeCatalog,
   serviceTargetDiagnostics,
+  settingSourceError,
   withGraphTypes,
   wireTypeError,
   words,
@@ -198,6 +199,9 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       if (input) {
         const wrong = wireTypeError(source, output, target, input, targetPort, after, index.assignable)
         if (wrong) messages.add(wrong.message)
+        // A setting of a C# node reads a Setting node only (scope.settingSource): the wire it replaces said so of its own source.
+        const unset = settingSourceError(source, target, input, targetPort, catalog)
+        if (unset) messages.add(unset)
         // A state value of an Entity node gets scope.stateSource instead, as the validator has it.
         const stateValue = isHub(spec)
         if (!stateValue && analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))

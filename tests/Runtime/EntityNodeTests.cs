@@ -33,7 +33,8 @@ static class EntityNodeTests
             (nameof(NothingDerivedCarriesCode), NothingDerivedCarriesCode),
             (nameof(EveryDeclaringKindIsDerivedOnPurpose), EveryDeclaringKindIsDerivedOnPurpose),
             (nameof(TheHostIsSentNoCSharpDeviceYet), TheHostIsSentNoCSharpDeviceYet),
-            (nameof(TheRuntimeNeverWalksACSharpNode), TheRuntimeNeverWalksACSharpNode) })
+            (nameof(TheRuntimeNeverWalksACSharpNode), TheRuntimeNeverWalksACSharpNode),
+            (nameof(ASettingTakesATypedValueOrASettingNode), ASettingTakesATypedValueOrASettingNode) })
         {
             try
             {
@@ -496,5 +497,46 @@ static class EntityNodeTests
             try { Runtime().RunAsync(id).GetAwaiter().GetResult(); throw new Exception($"a run started at {id} ran"); }
             catch (InvalidOperationException refused) { Check(refused.Message == words, $"a run started at {id} is refused in words: {refused.Message}"); }
         }
+    }
+
+    /// <summary>
+    /// A setting is set before anything runs: its pin takes a typed value or a wire from a Setting node, never a step's
+    /// output or a value made from a Setting (<c>scope.settingSource</c>, on the pin); and a secret takes only the wire
+    /// (<c>setting.secretLiteral</c>, in words that do not repeat what was typed). A secret left unset is no problem.
+    /// </summary>
+    static void ASettingTakesATypedValueOrASettingNode()
+    {
+        var template = VisualNodeCatalog.GetNode("csharp_device")!["config"]!["signature"]!["default"]!.DeepClone();
+        template["settings"]!.AsArray().Add(JsonNode.Parse("""{"key":"Token","label":"Token","description":"The token the plug asks for.","type":"string","secret":true}"""));
+        JsonObject Of(JsonObject? arguments, params JsonObject[] edges)
+        {
+            var graph = Graph(null, CSharpDevice("plug", "plug", "Plug", new() { ["signature"] = template.DeepClone(), ["arguments"] = arguments ?? [] }), CSharpEntity("thermo", "thermometer"),
+                N("address", "setting", new { key = "address" }), N("text", "convert", new JsonObject { ["type"] = "string", ["value"] = new JsonObject { ["kind"] = "unset" } }),
+                N("start", "entity_setup"), N("http", "http_request", new JsonObject { ["method"] = "GET", ["responseType"] = "string", ["url"] = Lit("string", "http://192.168.1.50/address") }));
+            graph["definition"]!["settings"] = new JsonArray(new JsonObject { ["key"] = "address", ["type"] = "string" });
+            graph["edges"] = new JsonArray([E("start", "http"), D("address", "text", "value"), .. edges]);
+            return graph;
+        }
+        // The Convert step is not used unless it is wired on: that warning is not a setting's.
+        List<VisualDiagnostic> Problems(JsonObject graph) => VisualGraphValidator.Validate(graph, VisualCatalogSnapshot.BuiltIn).Where(d => d.NodeId != "text" || d.Code != "pure.unused").ToList();
+        string Of1(VisualDiagnostic d) => $"{d.Code}@{d.NodeId}:{d.InputId}:{d.PortId}:{d.Severity}:{d.Message}";
+        Check(Problems(Of(null)).Count == 0, "the graph has no problem: " + string.Join(" | ", Problems(Of(null)).Select(Of1)));
+        Check(VisualGraphValidator.Codes.Contains("scope.settingSource") && VisualGraphValidator.Codes.Contains("setting.secretLiteral"), "both codes are declared");
+        foreach (var (source, port) in new[] { ("http", "body"), ("text", "value") })
+            foreach (var target in new[] { "plug", "thermo" })
+            {
+                var found = Problems(Of(null, D(source, target, "Address", port)));
+                Check(string.Join(" | ", found.Select(Of1)) == $"scope.settingSource@{target}:Address:Address:3:Address takes a typed value or a Setting: it is set before anything runs",
+                    $"{source}.{port} into {target}.Address is refused on the pin: " + string.Join(" | ", found.Select(Of1)));
+            }
+        var wired = Problems(Of(null, D("address", "plug", "Address"), D("address", "thermo", "Address"), D("address", "plug", "Token")));
+        Check(wired.Count == 0, "a Setting is taken by a setting, a secret one too: " + string.Join(" | ", wired.Select(Of1)));
+        var typed = Problems(Of(new JsonObject { ["Address"] = Lit("string", "http://192.168.1.50"), ["Token"] = Lit("string", "s3cr3t-token") }));
+        Check(string.Join(" | ", typed.Select(Of1)) == "setting.secretLiteral@plug:Token::3:Token is a secret: connect a Setting instead of typing it here",
+            "a typed value is taken, a typed secret is not: " + string.Join(" | ", typed.Select(Of1)));
+        Check(!typed.Any(d => d.Message.Contains("s3cr3t", StringComparison.Ordinal)), "the secret is not repeated");
+        Check(Problems(Of(new JsonObject { ["Token"] = new JsonObject { ["kind"] = "unset" } })).Count == 0, "a secret left unset is no problem");
+        var other = Problems(Of(new JsonObject { ["Address"] = new JsonObject { ["kind"] = "expression", ["code"] = "Address" } }));
+        Check(string.Join(" | ", other.Select(Of1)) == "@plug:Address::3:Address has an invalid value", "a value of another kind is what any input says of it: " + string.Join(" | ", other.Select(Of1)));
     }
 }

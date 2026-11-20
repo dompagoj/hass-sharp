@@ -3,6 +3,7 @@ import { addGraphNode, classSignature, connectData, entityKeyHolders, hasCode, i
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
 import { addConnected } from '../src/visual/flow/autoConnect'
+import { connectionIndex } from '../src/visual/connectionIndex'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
 import { editorGraph, newGraphDefinition, renameEntityKey } from '../src/entities/model'
@@ -328,6 +329,70 @@ it('a C# entity\'s key is an entity key: a rename does not take it', () => {
   const graph = withCSharp()
   expect(renameEntityKey(graph, 'lamp', 'thermometer', 'lamp')).toBe(graph)
   expect(renameEntityKey(graph, 'lamp', 'desk', 'lamp').nodes.find(n => n.id === 'lamp')!.config.key).toBe('desk')
+})
+
+/**
+ * A Plug C# device (its template, with a secret Token setting added), a Thermometer C# entity, a Setting of the
+ * definition's text setting address, a Convert of it, and When started running an HTTP request whose body is text.
+ */
+const withSettings = () => {
+  const template = nodeCatalog.nodes.csharp_device.config.signature.default as { settings: object[] }
+  const signature = { ...template, settings: [...template.settings, { key: 'Token', label: 'Token', description: 'The token the plug asks for.', type: 'string', secret: true }] }
+  let graph: VisualGraph = { ...empty(), definition: { settings: [{ key: 'address', type: 'string' }] } as never }
+  graph = add(graph, 'csharp_device', 'plug', { key: 'plug', name: 'Plug', signature })
+  graph = add(graph, 'csharp_entity', 'thermo', { key: 'thermometer' })
+  graph = add(graph, 'setting', 'address', { key: 'address' })
+  graph = add(graph, 'convert', 'text', { type: 'string' })
+  graph = connectData(graph, 'address', 'value', 'text', 'value')
+  graph = add(graph, 'entity_setup', 'start')
+  graph = add(graph, 'http_request', 'http', { responseType: 'string', url: lit('string', 'http://192.168.1.50/address') })
+  return connectNodes(graph, 'start', 'http')
+}
+
+it('a setting pin takes a typed value or a Setting node, and a secret only a Setting node', () => {
+  const graph = withSettings()
+  // The Convert step is not used until it is wired: that warning is no problem of a setting.
+  const problems = (value: VisualGraph) => validateGraph(value).filter(d => d.nodeId !== 'text' || d.code !== 'pure.unused')
+  expect(problems(graph)).toEqual([])
+  expect(diagnosticCodes).toContain('scope.settingSource')
+  expect(diagnosticCodes).toContain('setting.secretLiteral')
+  // A step's output is refused, on the drop and on the hover alike, in the same words; so is a value made from a Setting.
+  const runs = words.settingSource('Address')
+  expect(runs).toBe('Address takes a typed value or a Setting: it is set before anything runs')
+  for (const [source, port] of [['http', 'body'], ['text', 'value']]) for (const target of ['plug', 'thermo']) {
+    expect(() => connectData(graph, source, port, target, 'Address'), `${source} -> ${target}`).toThrow(runs)
+    expect(dataConnectionError(graph, source, port, target, 'Address', nodeCatalog, { quick: true }), `${source} -> ${target}`).toBe(runs)
+    expect(dataConnectionError(graph, source, port, target, 'Address', nodeCatalog), `${source} -> ${target}`).toBe(runs)
+    expect(connectionIndex(graph).verdict(source, port, target, 'Address'), `${source} -> ${target}`).toEqual({ message: runs, fallback: false })
+  }
+  // The validator says the same of such a wire in a graph, on the pin, as a blocking scope problem.
+  const stepWired = { ...graph, edges: [...graph.edges, { id: 'w', kind: 'data' as const, source: 'http', sourcePort: 'body', target: 'plug', targetPort: 'Address' }] }
+  expect(problems(stepWired)).toEqual([{ nodeId: 'plug', message: runs, severity: 3, inputId: 'Address', portId: 'Address', code: 'scope.settingSource' }])
+  // A Setting is accepted, into a C# device and a C# entity alike, and leaves no problem.
+  expect(dataConnectionError(graph, 'address', 'value', 'plug', 'Address', nodeCatalog, { quick: true })).toBeUndefined()
+  const wired = connectData(connectData(graph, 'address', 'value', 'plug', 'Address'), 'address', 'value', 'thermo', 'Address')
+  expect(problems(wired)).toEqual([])
+  // A Setting in place of the step's wire is accepted: the problem it replaces is no reason to refuse it.
+  expect(dataConnectionError(stepWired, 'address', 'value', 'plug', 'Address', nodeCatalog, { quick: true })).toBeUndefined()
+  expect(problems(connectData(stepWired, 'address', 'value', 'plug', 'Address'))).toEqual([])
+  // A typed value is accepted, and a typed secret is not, in words that do not repeat it.
+  const typed = updateNode(graph, 'plug', { config: { ...graph.nodes.find(n => n.id === 'plug')!.config, arguments: { Address: lit('string', 'http://192.168.1.50'), Token: lit('string', 's3cr3t-token') } } })
+  const secret = problems(typed)
+  expect(secret).toEqual([{ nodeId: 'plug', message: 'Token is a secret: connect a Setting instead of typing it here', severity: 3, inputId: 'Token', code: 'setting.secretLiteral' }])
+  expect(JSON.stringify(secret)).not.toContain('s3cr3t')
+  expect(words.secretLiteral('Token')).toBe(secret[0].message)
+  // A Setting wired in its place takes it away, though that setting is not marked secret.
+  expect(dataConnectionError(typed, 'address', 'value', 'plug', 'Token', nodeCatalog, { quick: true })).toBeUndefined()
+  const fixed = connectData(typed, 'address', 'value', 'plug', 'Token')
+  expect(fixed.nodes.find(n => n.id === 'plug')!.config.arguments).toEqual({ Address: lit('string', 'http://192.168.1.50'), Token: { kind: 'unset' } })
+  expect(problems(fixed)).toEqual([])
+  // A step's output is refused into a secret too: a Setting is all it takes.
+  expect(dataConnectionError(typed, 'http', 'body', 'plug', 'Token', nodeCatalog, { quick: true })).toBe(words.settingSource('Token'))
+  // A value of another kind than typed in or connected is what any input says of it.
+  const other = updateNode(graph, 'plug', { config: { ...graph.nodes.find(n => n.id === 'plug')!.config, arguments: { Address: { kind: 'expression', code: 'Address' } } } })
+  expect(problems(other)).toEqual([{ nodeId: 'plug', message: 'Address has an invalid value', severity: 3, inputId: 'Address' }])
+  // A secret left unset is no problem: the class keeps what it starts with.
+  expect(problems(updateNode(typed, 'plug', { config: { ...typed.nodes.find(n => n.id === 'plug')!.config, arguments: {} } }))).toEqual([])
 })
 
 it('deleting a Device node asks nothing', () => {

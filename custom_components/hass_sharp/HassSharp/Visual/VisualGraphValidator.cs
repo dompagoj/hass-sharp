@@ -36,12 +36,12 @@ public static class VisualGraphValidator
         "node.invalid", "node.duplicate", "node.unknownKind", "node.unreachable", "limit.nesting",
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
-        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow",
+        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow", "scope.settingSource",
         "flow.pure", "flow.declaration", "pure.unused", "custom.signature", "csharp.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
         "definition.deviceKey", "definition.duplicateDevice",
         "node.document", "node.singleton", "root.incoming",
-        "setting.unknown", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
+        "setting.unknown", "setting.secretLiteral", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
         "device.name", "device.via", "device.viaUnknown", "device.viaCycle", "device.configurationUrl", "device.empty",
         "http.url", "http.body", "download.checksum", "camera.entity", "camera.no_frame",
     ];
@@ -446,7 +446,7 @@ public static class VisualGraphValidator
         internal static string KeyTaken(string key, string first) => $"The key {key} is already used by {first}: give this entity its own";
         /// <summary>An Entity node of a type the catalog's <c>entityDomains</c> does not describe.</summary>
         internal static string NotAnEntityType(string domain) => $"{domain} is not an entity type: choose one from the list";
-        /// <summary>An Entity node on no device (none wired to it, and the definition is none), with no name.</summary>
+        /// <summary>An Entity node on no device (no Device node wired to it), with no name.</summary>
         internal const string EntityNameMissing = "Name this entity: it has no device, so Home Assistant shows it by its own name";
         // A Device node's device, named by EntityName.
         /// <summary>A Device node without a key.</summary>
@@ -471,6 +471,10 @@ public static class VisualGraphValidator
         internal static string PartialState(string name, string given, string missing) => $"{name} has a value for {given} but none for {missing}: connect or set {missing} too";
         /// <summary>A state value of an Entity node that reads a step's output: its state is worked out in no flow.</summary>
         internal static string StateSource(string value, string name, string step) => $"{value} of {name} cannot read {step}, which runs in a flow: use a Set state step after {step} instead";
+        /// <summary>A setting of a C# entity or a C# device wired from anything but a Setting node: it is set before anything runs.</summary>
+        internal static string SettingSource(string label) => $"{label} takes a typed value or a Setting: it is set before anything runs";
+        /// <summary>A value typed into a secret setting of a C# entity or a C# device, which only a Setting node may give; the value is not repeated.</summary>
+        internal static string SecretLiteral(string label) => $"{label} is a secret: connect a Setting instead of typing it here";
         /// <summary>
         /// A step reading a command's value that another flow runs too, named by where that flow starts: <paramref name="also"/>
         /// when the command whose value it reads runs it as well, else it runs only from the other.
@@ -694,6 +698,9 @@ public static class VisualGraphValidator
                     // A Select property node reads a value whose own type has properties.
                     else if (SelectsProperties(Spec(target), tp) ? TypeProperties(Root, type).Length == 0 : !expected.Any(t => CompatibleTypes(type, t)))
                         Error(Id(target), WrongDomain(target, tp, type) ?? (SelectsProperties(Spec(target), tp) && KnownType(type) ? Words.NoProperties(Root, type) : Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected)), tp, tp);
+                    // A setting of a C# entity or a C# device is set before anything runs: it reads a Setting node, and no step's
+                    // output or value worked out while a flow runs, nor a value node that passes a Setting's value on.
+                    if (SettingSourceError(source, target, input, tp) is { } unset) Error(Id(target), unset, tp, tp, "scope.settingSource");
                     // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable. A state value
                     // of an Entity node reads no step in a flow at all, which scope.stateSource says instead.
                     var stateValue = IsHub(Spec(target));
@@ -844,6 +851,13 @@ public static class VisualGraphValidator
             }
         }
         /// <summary>
+        /// What a wire from <paramref name="source"/> into a setting pin of a class node (a C# entity's or a C# device's)
+        /// says: such a pin reads a Setting node and nothing else. Null for any other wire. Mirrored by
+        /// <c>settingSourceError</c> in <c>contract.ts</c>, which the connection index asks too.
+        /// </summary>
+        string? SettingSourceError(JsonObject source, JsonObject target, JsonNode input, string port) =>
+            IsClassNode(Spec(target)) && input["setting"] is JsonObject && Kind(source) != "setting" ? Words.SettingSource(Words.PortLabel(input, port)) : null;
+        /// <summary>
         /// The step a state value of an Entity node reads: the source of the wire into it, else the first step a value node
         /// on that wire reads, depth first in the order of the graph's value wires; null when nothing or only values are read.
         /// Mirrored by <c>stateSource</c> in <c>contract.ts</c>.
@@ -937,6 +951,8 @@ public static class VisualGraphValidator
             if (SelectsProperties(Spec(node), port) || Structural(spec)) { Error(Id(node), Words.WireOnly(Words.StepName(node, Spec(node))), port, port); return null; }
             if (Text(operand, "kind") == "literal")
             {
+                // A secret setting of a C# entity or a C# device is given by a Setting node only; whatever was typed is told, not repeated.
+                if (spec["setting"] is JsonObject setting && Bool(setting, "secret")) Error(Id(node), Words.SecretLiteral(label), port, code: "setting.secretLiteral");
                 type = Text(operand, "type", "unknown"); var value = operand["value"];
                 var valid = ValidLiteral(type, value, operand.ContainsKey("value"), snapshot);
                 if (!valid) Error(Id(node), operand["type"] is not JsonValue tv || !tv.TryGetValue<string>(out var named) || named.Length == 0 ? $"{subject} has a value without a type"

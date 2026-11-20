@@ -1216,6 +1216,10 @@ export const words = {
   partialState: (name: string, given: string, missing: string) => `${name} has a value for ${given} but none for ${missing}: connect or set ${missing} too`,
   /** A state value of an Entity node that reads a step's output: its state is worked out in no flow. */
   stateSource: (value: string, name: string, step: string) => `${value} of ${name} cannot read ${step}, which runs in a flow: use a Set state step after ${step} instead`,
+  /** A setting of a C# entity or a C# device wired from anything but a Setting node: it is set before anything runs. */
+  settingSource: (label: string) => `${label} takes a typed value or a Setting: it is set before anything runs`,
+  /** A value typed into a secret setting of a C# entity or a C# device, which only a Setting node may give; the value is not repeated. */
+  secretLiteral: (label: string) => `${label} is a secret: connect a Setting instead of typing it here`,
   /** A step reading a command's value that another flow runs too, named by where that flow starts. */
   /** `also` when the command whose value the step reads runs it as well, else it runs only from the other. */
   flowValue: (step: string, value: string, command: string, name: string, other: string, also: boolean) => `${step} reads ${value} from ${command} of ${name} but ${also ? 'also ' : ''}runs from ${other}, where there is no ${value}`,
@@ -1307,12 +1311,12 @@ export const diagnosticCodes = [
   'node.invalid', 'node.duplicate', 'node.unknownKind', 'node.unreachable', 'limit.nesting',
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
-  'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow',
+  'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow', 'scope.settingSource',
   'flow.pure', 'flow.declaration', 'pure.unused', 'custom.signature', 'csharp.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
   'definition.deviceKey', 'definition.duplicateDevice',
   'node.document', 'node.singleton', 'root.incoming',
-  'setting.unknown', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
+  'setting.unknown', 'setting.secretLiteral', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
   'device.name', 'device.via', 'device.viaUnknown', 'device.viaCycle', 'device.configurationUrl', 'device.empty',
   'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.no_frame',
 ] as const
@@ -1562,6 +1566,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (output && input) {
       const wrong = wireTypeError(source, output, target, input, edge.targetPort, catalog, isAssignable)
       if (wrong) error(target.id, wrong.message, edge.targetPort, edge.targetPort, wrong.code)
+      // A setting of a C# entity or a C# device is set before anything runs: it reads a Setting node, and no step's output or
+      // value worked out while a flow runs, nor a value node that passes a Setting's value on.
+      const unset = settingSourceError(source, target, input, edge.targetPort, catalog)
+      if (unset) error(target.id, unset, edge.targetPort, edge.targetPort, 'scope.settingSource')
       // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable. A state value of an
       // Entity node reads no step in a flow at all, which scope.stateSource says instead.
       const stateValue = isHub(nodeSpec(target.kind))
@@ -1602,6 +1610,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // (a structural input): nothing can be typed in, null included.
     if (selectsProperties(nodeSpec(node.kind), port) || structural(spec)) { error(node.id, words.wireOnly(words.stepName(node, catalog)), port, port); return }
     if (raw.kind === 'literal') {
+      // A secret setting of a C# entity or a C# device is given by a Setting node only; whatever was typed is told, not repeated.
+      if (spec.setting?.secret === true) error(node.id, words.secretLiteral(label), port, undefined, 'setting.secretLiteral')
       type = text(raw.type, 'unknown')
       const v = raw.value
       const valid = validLiteral(type, v, catalog)
@@ -2048,6 +2058,14 @@ export function entityScopes(nodes: ReadonlyMap<string, GraphNode>, data: readon
     }
   }
   return found
+}
+/**
+ * What a wire from `source` into a setting pin of a class node (a C# entity's or a C# device's) says: such a pin reads a
+ * Setting node and nothing else. Undefined for any other wire. The validator and the connection index both ask it.
+ * Mirrors `VisualGraphValidator` `SettingSourceError`.
+ */
+export function settingSourceError(source: GraphNode, target: GraphNode, input: InputSpec, port: string, catalog: VisualCatalogSnapshot): string | undefined {
+  return isClassNode(nodeSpec(target.kind, catalog)) && record(input.setting) && source.kind !== 'setting' ? words.settingSource(words.portLabel(input, port)) : undefined
 }
 /**
  * The step a state value of an Entity node reads: the source of the wire into it, else the first step a value node on

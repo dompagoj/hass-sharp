@@ -42478,5 +42478,881 @@
     "messages": [
       "Address accepts Text, not Number"
     ]
+  },
+  {
+    "name": "code scope.settingSource: a step's output wired into a setting",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "start",
+          "kind": "entity_setup",
+          "config": {
+            "trackHistory": true
+          }
+        },
+        {
+          "id": "http",
+          "kind": "http_request",
+          "config": {
+            "method": "GET",
+            "responseType": "string",
+            "url": {
+              "kind": "literal",
+              "type": "string",
+              "value": "http://192.168.1.50/address"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "start:next",
+          "source": "start",
+          "target": "http"
+        },
+        {
+          "id": "http.body:plug.Address",
+          "kind": "data",
+          "source": "http",
+          "target": "plug",
+          "sourcePort": "body",
+          "targetPort": "Address"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Address",
+    "contains": "it is set before anything runs",
+    "messages": [
+      "Address takes a typed value or a Setting: it is set before anything runs"
+    ],
+    "codes": [
+      "scope.settingSource"
+    ]
+  },
+  {
+    "name": "code scope.settingSource: a state value wired into a setting",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "hall",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "light.hall"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "hall.value:plug.Inverted",
+          "kind": "data",
+          "source": "hall",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Inverted"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Inverted",
+    "contains": "Inverted takes a typed value or a Setting",
+    "messages": [
+      "Inverted takes a typed value or a Setting: it is set before anything runs"
+    ],
+    "codes": [
+      "scope.settingSource"
+    ]
+  },
+  {
+    "name": "code scope.settingSource: a value made from a Setting is not a Setting",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "address",
+          "kind": "setting",
+          "config": {
+            "key": "address"
+          }
+        },
+        {
+          "id": "text",
+          "kind": "convert",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "address.value:text.value",
+          "kind": "data",
+          "source": "address",
+          "target": "text",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "text.value:plug.Address",
+          "kind": "data",
+          "source": "text",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Address"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Address",
+    "contains": "Address takes a typed value or a Setting",
+    "messages": [
+      "Address takes a typed value or a Setting: it is set before anything runs"
+    ],
+    "codes": [
+      "scope.settingSource"
+    ]
+  },
+  {
+    "name": "a Setting wired into a setting of its type is valid",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "address",
+          "kind": "setting",
+          "config": {
+            "key": "address"
+          }
+        },
+        {
+          "id": "port",
+          "kind": "setting",
+          "config": {
+            "key": "port"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "address.value:plug.Address",
+          "kind": "data",
+          "source": "address",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Address"
+        },
+        {
+          "id": "port.value:plug.Port",
+          "kind": "data",
+          "source": "port",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Port"
+        },
+        {
+          "id": "address.value:thermo.Address",
+          "kind": "data",
+          "source": "address",
+          "target": "thermo",
+          "sourcePort": "value",
+          "targetPort": "Address"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "address",
+            "type": "string"
+          },
+          {
+            "key": "port",
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a text Setting wired into a number setting is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {}
+          }
+        },
+        {
+          "id": "address",
+          "kind": "setting",
+          "config": {
+            "key": "address"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "address.value:plug.Port",
+          "kind": "data",
+          "source": "address",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Port"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "address",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Port",
+    "contains": "Port accepts Number, not Text",
+    "messages": [
+      "Port accepts Number, not Text"
+    ]
+  },
+  {
+    "name": "code setting.secretLiteral: a typed secret",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Token": {
+                "kind": "literal",
+                "type": "string",
+                "value": "s3cr3t-token"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Token",
+    "contains": "Token is a secret",
+    "messages": [
+      "Token is a secret: connect a Setting instead of typing it here"
+    ],
+    "codes": [
+      "setting.secretLiteral"
+    ]
+  },
+  {
+    "name": "code setting.secretLiteral: a typed secret of another type is told both",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Token": {
+                "kind": "literal",
+                "type": "number",
+                "value": 1234
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "Token",
+    "contains": "Token is a secret",
+    "messages": [
+      "Token accepts Text, not Number",
+      "Token is a secret: connect a Setting instead of typing it here"
+    ],
+    "codes": [
+      "setting.secretLiteral"
+    ]
+  },
+  {
+    "name": "a secret wired from a Setting is valid",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Token": {
+                "kind": "unset"
+              }
+            }
+          }
+        },
+        {
+          "id": "token",
+          "kind": "setting",
+          "config": {
+            "key": "token"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "token.value:plug.Token",
+          "kind": "data",
+          "source": "token",
+          "target": "plug",
+          "sourcePort": "value",
+          "targetPort": "Token"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "token",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "a typed value in a setting is valid",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "csharp_device",
+          "config": {
+            "key": "plug",
+            "name": "Plug",
+            "source": "/// <summary>A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.</summary>\npublic class Plug : SharpDevice\n{\n    /// <summary>Where the plug answers, such as http://192.168.1.50.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>The port the plug answers on.</summary>\n    [Setting(\"Port\", Minimum = 1, Maximum = 65535)]\n    public int Port { get; set; } = 80;\n\n    /// <summary>The token the plug asks for.</summary>\n    [Setting(\"Token\", Secret = true)]\n    public string Token { get; set; } = \"\";\n\n    /// <summary>Whether the relay is on when the plug says it is off.</summary>\n    [Setting(\"Inverted\")]\n    public bool Inverted { get; set; }\n\n    readonly SharpSwitch relay;\n\n    /// <summary>Adds the plug's relay, a switch.</summary>\n    public Plug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n    }\n\n    /// <summary>Turns the relay on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        using var request = new HttpRequestMessage(HttpMethod.Post, $\"{Address}:{Port}/relay?turn={(on != Inverted ? \"on\" : \"off\")}\");\n        request.Headers.Add(\"Authorization\", \"Bearer \" + Token);\n        using var response = await Http.SendAsync(request, Stopping);\n        response.EnsureSuccessStatusCode();\n        relay.IsOn = on;\n    }\n}",
+            "signature": {
+              "title": "Plug",
+              "description": "A plug whose relay is turned on and off over HTTP at its address, with the token it asks for.",
+              "domain": null,
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the plug answers, such as http://192.168.1.50.",
+                  "type": "string",
+                  "secret": false
+                },
+                {
+                  "key": "Port",
+                  "label": "Port",
+                  "description": "The port the plug answers on.",
+                  "type": "integer",
+                  "secret": false,
+                  "minimum": 1,
+                  "maximum": 65535
+                },
+                {
+                  "key": "Token",
+                  "label": "Token",
+                  "description": "The token the plug asks for.",
+                  "type": "string",
+                  "secret": true
+                },
+                {
+                  "key": "Inverted",
+                  "label": "Inverted",
+                  "description": "Whether the relay is on when the plug says it is off.",
+                  "type": "boolean",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "http://192.168.1.50"
+              },
+              "Port": {
+                "kind": "literal",
+                "type": "number",
+                "value": 8080
+              },
+              "Inverted": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
+            }
+          }
+        },
+        {
+          "id": "thermo",
+          "kind": "csharp_entity",
+          "config": {
+            "key": "thermometer",
+            "source": "using System.Globalization;\n\n/// <summary>A thermometer that reads the temperature at its address every minute.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Reads the temperature every minute while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromMinutes(1), async () => Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture));\n        return Task.CompletedTask;\n    }\n}",
+            "signature": {
+              "title": "Thermometer",
+              "description": "A thermometer that reads the temperature at its address every minute.",
+              "domain": "sensor",
+              "settings": [
+                {
+                  "key": "Address",
+                  "label": "Address",
+                  "description": "Where the thermometer answers with the temperature in degrees Celsius, such as http://192.168.1.60/temperature.",
+                  "type": "string",
+                  "secret": false
+                }
+              ]
+            },
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "http://192.168.1.60/temperature"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
   }
 ]
