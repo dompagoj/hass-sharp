@@ -1,5 +1,9 @@
 # pyright: reportMissingImports=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
-"""Home Assistant's side of the custom entities: the entities and device of each .NET definition.
+"""Home Assistant's side of the custom entities: the entities and devices of each .NET definition.
+
+A definition's device of the key `k` is the registry device `(DOMAIN, "<definition id>:k")`; an entity's unique id is
+`<definition id>:<key>` whatever device it is on, so an entity moved between devices keeps its registry entry. An earlier
+build made one device `(DOMAIN, "<definition id>")`, which the next sync removes.
 
 .NET asks, with JSON text, to sync a definition's entities, remove a definition, prune the definitions that no
 longer exist, and write a batch of states; Home Assistant's commands go back through `EntityCommand`, and its
@@ -42,6 +46,19 @@ SNAPSHOT_CLOSED = "HassSharp is stopping, so no picture was taken"
 # The device fields of a sync request by the keyword Home Assistant's device registry takes; a null clears one.
 DEVICE_FIELDS = {"name": "name", "manufacturer": "manufacturer", "model": "model", "swVersion": "sw_version",
                  "hwVersion": "hw_version", "configurationUrl": "configuration_url"}
+# The key of the device a definition itself is (a class's, or the one another definition's device is part of).
+MAIN_DEVICE = "main"
+
+
+def _identifier(definition_id, key):
+    """The DOMAIN identifier of a definition's device of the key."""
+    return f"{definition_id}:{key}"
+
+
+def _definition_of(identifier):
+    """The definition a DOMAIN device identifier belongs to: the text before its first colon (the whole of one an
+    earlier build made, which had none)."""
+    return identifier.split(":", 1)[0]
 
 
 class _Closed(Exception):
@@ -340,7 +357,10 @@ class EntityBridge:
         failures.add(message)
 
     async def _async_sync(self, definition_json):
-        """Make Home Assistant match one definition's description (spike rules 2, 5, 6, 8, 9).
+        """Make Home Assistant match one definition's description (spike rules 2, 5, 6, 8, 9): its devices, in the order
+        given, then its entities, each on its own device or none; once they all succeeded, the entries no longer
+        described are removed, every described entry is moved to its device, and the definition's devices no longer
+        described are removed, after the entries still on them are moved off.
 
         Refused before anything changes when a platform is not set up or cannot show one of the entities
         (`HassSharpEntity.refusal`)."""
@@ -360,15 +380,20 @@ class EntityBridge:
         prefix = definition_id + ":"
         # A failed sync leaves the revision running and must leave what it shows in place: only an entry whose unique
         # id is described again under another domain goes first, as its entity cannot be updated into the new one
-        # (`_live` is keyed by unique id alone). The entries no longer described go once everything else succeeded.
+        # (`_live` is keyed by unique id alone). The entries and devices no longer described go once everything else
+        # succeeded.
         self._remove_entries(entities, definition_id, keep=lambda entry: entry.unique_id not in unique_ids
                              or (entry.domain, entry.unique_id) in described)
         for unique_id in [u for u in self._write_failures if isinstance(u, str) and u.startswith(prefix)]:
             del self._write_failures[unique_id]
-        device_info, device_id = self._sync_device(entities, devices, definition_id, definition.get("device"))
+        # In the order given: .NET lists a device after the one it is part of, which must exist by then.
+        infos, device_ids = {}, {}
+        for device in definition.get("devices") or []:
+            infos[device["key"]], device_ids[device["key"]] = self._sync_device(devices, definition_id, device)
         result, failed = {}, []
         for description in descriptions:
-            entity_id = await self._async_sync_entity(entities, description, device_info, device_id,
+            on = description.get("device")
+            entity_id = await self._async_sync_entity(entities, description, infos.get(on), device_ids.get(on),
                                                       definition["name"])
             if entity_id is None:
                 failed.append(description["uniqueId"])
@@ -377,29 +402,28 @@ class EntityBridge:
         if failed:
             raise _Refused(f"Home Assistant did not add {', '.join(failed)}; its log says why")
         self._remove_entries(entities, definition_id, keep=lambda entry: entry.unique_id in unique_ids)
+        # Each entry on its device: Home Assistant moves an entry it adds, but not one it skips before registering it.
+        targets = {d["uniqueId"]: device_ids.get(d.get("device")) for d in descriptions}
+        for entry in self._entries(entities, definition_id):
+            if entry.unique_id in targets and entry.device_id != targets[entry.unique_id]:
+                entities.async_update_entity(entry.entity_id, device_id=targets[entry.unique_id])
+        self._remove_devices(entities, devices, definition_id, keep={_identifier(definition_id, key) for key in infos})
         for unique_id in [u for u in self._pending if u.startswith(prefix) and u not in unique_ids]:
             del self._pending[unique_id]
         return (json.dumps({"entities": result}),)
 
-    def _sync_device(self, entities, devices, definition_id, device):
-        """Create, update or remove the definition's device; returns its device info for new entities and its id."""
-        identifiers = {(DOMAIN, definition_id)}
-        if device is None:
-            existing = devices.async_get_device_by_identifier((DOMAIN, definition_id), self.entry.entry_id)
-            if existing is not None:
-                # Off it first: removing a device removes the entities on it (spike rule 9).
-                for entry in self._entries(entities, definition_id):
-                    if entry.device_id == existing.id:
-                        entities.async_update_entity(entry.entity_id, device_id=None)
-                devices.async_remove_device(existing.id)
-            return None, None
+    def _sync_device(self, devices, definition_id, device):
+        """Create or update one of the definition's devices; returns its device info for new entities and its id."""
         fields = {keyword: device.get(name) for name, keyword in DEVICE_FIELDS.items()}
-        info = {"identifiers": identifiers, **{k: v for k, v in fields.items() if v is not None}}
+        info = {"identifiers": {(DOMAIN, _identifier(definition_id, device["key"]))},
+                **{k: v for k, v in fields.items() if v is not None}}
         if device.get("suggestedArea") is not None:
             info["suggested_area"] = device["suggestedArea"]
-        via = self._via(devices, device.get("via"))
+        via = self._via(devices, definition_id, device.get("via"))
         if via is not None:
             info["via_device_id"] = via
+        # Home Assistant refuses a field it cannot take, such as a configuration URL without a host: the sync fails
+        # with its message before any entity changes, and removes nothing.
         entry = devices.async_get_or_create(config_entry_id=self.entry.entry_id, **info)
         # Updates in place; a field described as null is cleared separately (spike rule 8).
         cleared = {k: None for k, v in fields.items() if v is None and getattr(entry, k, None) is not None}
@@ -409,18 +433,37 @@ class EntityBridge:
             devices.async_update_device(entry.id, **cleared)
         return info, entry.id
 
-    def _via(self, devices, via):
+    def _via(self, devices, definition_id, via):
         """The id of the parent device, or None when there is none or it does not exist (Home Assistant refuses an
-        unknown `via_device_id`; it deprecates `via_device` and the lookup by identifiers alone)."""
+        unknown `via_device_id`; it deprecates `via_device` and the lookup by identifiers alone). The parent is another
+        device of this definition (`device`), the device of another definition (`definition`, its device `main`), or a
+        Home Assistant device (`deviceId`)."""
         if not via:
             return None
-        if via.get("definition") is not None:
-            parent = devices.async_get_device_by_identifier((DOMAIN, via["definition"]), self.entry.entry_id)
+        if via.get("device") is not None:
+            parent = devices.async_get_device_by_identifier((DOMAIN, _identifier(definition_id, via["device"])),
+                                                            self.entry.entry_id)
+        elif via.get("definition") is not None:
+            parent = devices.async_get_device_by_identifier((DOMAIN, _identifier(via["definition"], MAIN_DEVICE)),
+                                                            self.entry.entry_id)
         elif via.get("deviceId") is not None:
             parent = devices.async_get(via["deviceId"])
         else:
             return None
         return parent.id if parent is not None else None
+
+    def _remove_devices(self, entities, devices, definition_id, keep=frozenset()):
+        """Remove this config entry's devices of the definition whose identifiers are not in `keep`: the device an
+        earlier build made for it (`<definition id>`) and those of keys no longer described. The entries still on one
+        are moved off first, as removing a device removes the entries on it (spike rule 9)."""
+        for device in dr.async_entries_for_config_entry(devices, self.entry.entry_id):
+            ours = {i[1] for i in device.identifiers if i[0] == DOMAIN and _definition_of(i[1]) == definition_id}
+            if not ours or ours & keep:
+                continue
+            for entry in er.async_entries_for_config_entry(entities, self.entry.entry_id):
+                if entry.device_id == device.id:
+                    entities.async_update_entity(entry.entity_id, device_id=None)
+            devices.async_remove_device(device.id)
 
     async def _async_sync_entity(self, entities, description, device_info, device_id, definition_name):
         """Update a live entity in place or add a new one; returns its entity id, or None when it was not added."""
@@ -479,7 +522,8 @@ class EntityBridge:
         entities, devices = er.async_get(self.hass), dr.async_get(self.hass)
         found = {e.unique_id.split(":", 1)[0] for e in er.async_entries_for_config_entry(entities, self.entry.entry_id)
                  if ":" in e.unique_id}
-        found.update(identifier[1] for d in dr.async_entries_for_config_entry(devices, self.entry.entry_id)
+        # A device is `<definition id>:<key>`, or `<definition id>` as an earlier build made it.
+        found.update(_definition_of(identifier[1]) for d in dr.async_entries_for_config_entry(devices, self.entry.entry_id)
                      for identifier in d.identifiers if identifier[0] == DOMAIN)
         for definition_id in sorted(found - keep):
             self._purge(entities, devices, definition_id)
@@ -488,11 +532,10 @@ class EntityBridge:
         return ()
 
     def _purge(self, entities, devices, definition_id):
-        """Remove a definition's device, then the registry entries left with its prefix, and forget its entities."""
-        if (device := devices.async_get_device_by_identifier((DOMAIN, definition_id), self.entry.entry_id)) is not None:
-            devices.async_remove_device(device.id)
+        """Remove a definition's registry entries and every device of it, and forget its entities."""
         for entry in self._entries(entities, definition_id):
             entities.async_remove(entry.entity_id)
+        self._remove_devices(entities, devices, definition_id)
         prefix = definition_id + ":"
         for store in (self._live, self._pending, self._write_failures):
             for unique_id in [u for u in store if isinstance(u, str) and u.startswith(prefix)]:

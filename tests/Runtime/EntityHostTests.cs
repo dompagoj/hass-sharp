@@ -157,7 +157,7 @@ static class EntityHostTests
         string[] expected = ["settings", "device.Setup", "relay.Setup", "power.Setup", "sync", "device.Start", "relay.Start", "power.Start"];
         Check(Recorded().SequenceEqual(expected), "order: " + string.Join(", ", Recorded()));
         var json = Syncs().Single();
-        const string expectedJson = """{"definitionId":"plug1","name":"Plug one","device":{"name":"Plug one","manufacturer":"Shelly","model":"Plug S","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null},"entities":[{"uniqueId":"plug1:relay","key":"relay","domain":"switch","name":"Relay","icon":null,"deviceClass":null,"entityCategory":null,"enabledByDefault":true,"commands":["turn_on","turn_off"],"options":{}},{"uniqueId":"plug1:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null}}]}""";
+        const string expectedJson = """{"definitionId":"plug1","name":"Plug one","devices":[{"key":"main","name":"Plug one","manufacturer":"Shelly","model":"Plug S","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}],"entities":[{"uniqueId":"plug1:relay","key":"relay","domain":"switch","name":"Relay","icon":null,"deviceClass":null,"entityCategory":null,"enabledByDefault":true,"commands":["turn_on","turn_off"],"options":{},"device":"main"},{"uniqueId":"plug1:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null},"device":"main"}]}""";
         Check(json == expectedJson, "sync JSON: " + json);
         Check(host.DefinitionId == "plug1", "definition id");
         var live = string.Join(";", host.Entities.Select(e => $"{e.UniqueId},{e.Key},{e.Domain},{e.Name},{e.EntityId}"));
@@ -175,7 +175,8 @@ static class EntityHostTests
         var manager = Manager();
         var host = await Load(manager, Compiled("lamp", "Lamp", () => new HostLamp()));
         var json = JsonNode.Parse(Syncs().Single())!;
-        Check(json["device"] == null && json.ToJsonString().Contains("\"device\":null"), "an entity without a document device syncs no device: " + json.ToJsonString());
+        Check(json["devices"] is JsonArray { Count: 0 } && !json.AsObject().ContainsKey("device"), "an entity without a document device syncs no device: " + json.ToJsonString());
+        Check(json["entities"]![0]!.AsObject().TryGetPropertyValue("device", out var on) && on == null, "the root entity is on no device: " + json.ToJsonString());
         Check(json["entities"]!.AsArray().Single()!["uniqueId"]!.GetValue<string>() == "lamp:main", "the root entity's unique id is <id>:main");
         Check(host.Entities.Single().UniqueId == "lamp:main" && host.Entities.Single().EntityId == "switch.lamp_main", "live entity of the root entity");
         await manager.UnloadUserScriptsAsync();
@@ -183,9 +184,11 @@ static class EntityHostTests
         Reset();
         manager = Manager();
         await Load(manager, Compiled("lamp", "Lamp", () => new HostLamp(), new DefinitionDevice("Ikea", null, null, null, null, "Hall", new DefinitionVia(null, "abc123"))));
-        var device = JsonNode.Parse(Syncs().Single())!["device"]!.ToJsonString();
-        Check(device == """{"name":"Lamp","manufacturer":"Ikea","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Hall","via":{"deviceId":"abc123"}}""", "an entity's document device: " + device);
-        Console.WriteLine("PASS entity host: an entity root syncs \"device\":null and the unique id <id>:main, or the document's device named as the definition");
+        var synced = JsonNode.Parse(Syncs().Single())!;
+        var device = synced["devices"]!.ToJsonString();
+        Check(device == """[{"key":"main","name":"Lamp","manufacturer":"Ikea","model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Hall","via":{"deviceId":"abc123"}}]""", "an entity's document device: " + device);
+        Check(synced["entities"]![0]!["device"]?.GetValue<string>() == "main", "the root entity is on the device main: " + synced.ToJsonString());
+        Console.WriteLine("PASS entity host: an entity root syncs \"devices\":[] and \"device\":null and the unique id <id>:main, or the document's device as main, named as the definition");
         await manager.UnloadUserScriptsAsync();
     }
 
@@ -194,8 +197,10 @@ static class EntityHostTests
         Reset();
         var manager = Manager();
         await Load(manager, Compiled("plug2", "Plug two", () => new HostPlug(), new DefinitionDevice(null, "Plug S Gen3", "1.4", null, null, null, new DefinitionVia("hub", null))));
-        var device = JsonNode.Parse(Syncs().Single())!["device"]!.ToJsonString();
-        Check(device == """{"name":"Plug two","manufacturer":"Shelly","model":"Plug S Gen3","swVersion":"1.4","hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":"hub"}}""",
+        var synced = JsonNode.Parse(Syncs().Single())!;
+        var device = synced["devices"]!.ToJsonString();
+        Check(synced["entities"]!.AsArray().All(e => e!["device"]?.GetValue<string>() == "main"), "every entity is on the device main: " + synced.ToJsonString());
+        Check(device == """[{"key":"main","name":"Plug two","manufacturer":"Shelly","model":"Plug S Gen3","swVersion":"1.4","hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":"hub"}}]""",
             "the document's model overrides the class's; its null manufacturer does not: " + device);
         Console.WriteLine("PASS entity host: a document device field overrides the class's, a null one keeps it, and via names the definition");
         await manager.UnloadUserScriptsAsync();

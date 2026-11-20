@@ -35,6 +35,9 @@ static class EntityGraphTests
             (nameof(SetupRunsBeforeTheSyncAndItsFailureFailsTheSave), SetupRunsBeforeTheSyncAndItsFailureFailsTheSave),
             (nameof(ASetupThatDoesNotFinishFailsTheSave), ASetupThatDoesNotFinishFailsTheSave),
             (nameof(ADeviceDefinitionGroupsItsEntities), ADeviceDefinitionGroupsItsEntities),
+            (nameof(TwoDevicesAndAStandaloneEntityReachHomeAssistant), TwoDevicesAndAStandaloneEntityReachHomeAssistant),
+            (nameof(TheDevicesAreListedAfterTheDeviceTheyArePartOf), TheDevicesAreListedAfterTheDeviceTheyArePartOf),
+            (nameof(ARequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHas), ARequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHas),
             (nameof(SettingsReachTheGraph), SettingsReachTheGraph),
             (nameof(ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds), ARenamedKeyLeavesTheSyncAndTheOthersKeepTheirUniqueIds),
             (nameof(DisableEnableAndDelete), DisableEnableAndDelete),
@@ -321,8 +324,8 @@ static class EntityGraphTests
         Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null && Status(saved["document"]!.AsObject()) == "running"
             && saved["document"]!["currentRevisionActive"]!.GetValue<bool>(), "the definition runs once saved: " + saved.ToJsonString());
         var sync = JsonNode.Parse(rig.Home.Syncs("motion").Single())!.AsObject();
-        Check(sync.ContainsKey("device") && sync["device"] == null && sync["name"]!.GetValue<string>() == "Any motion", "the sync has no device: " + sync.ToJsonString());
-        Check(sync["entities"]!.ToJsonString() == """[{"uniqueId":"motion:any_motion","key":"any_motion","domain":"binary_sensor","name":"Any motion","icon":null,"deviceClass":null,"entityCategory":null,"enabledByDefault":true,"commands":[],"options":{}}]""",
+        Check(sync["devices"] is JsonArray { Count: 0 } && !sync.ContainsKey("device") && sync["name"]!.GetValue<string>() == "Any motion", "the sync has no device: " + sync.ToJsonString());
+        Check(sync["entities"]!.ToJsonString() == """[{"uniqueId":"motion:any_motion","key":"any_motion","domain":"binary_sensor","name":"Any motion","icon":null,"deviceClass":null,"entityCategory":null,"enabledByDefault":true,"commands":[],"options":{},"device":null}]""",
             "the sync describes the one binary sensor: " + sync["entities"]!.ToJsonString());
         Check(saved["document"]!["liveEntities"]!.ToJsonString() == """[{"uniqueId":"motion:any_motion","key":"any_motion","domain":"binary_sensor","name":"Any motion","entityId":"binary_sensor.motion_any_motion"}]""",
             "the live entities: " + saved["document"]!["liveEntities"]!.ToJsonString());
@@ -637,7 +640,10 @@ static class EntityGraphTests
             "a setup that does not finish fails the save: " + saved.ToJsonString());
     }
 
-    /// <summary>A definition with a device registers its three entities under it, each described as the document says.</summary>
+    /// <summary>
+    /// A definition with a device (the request's, until requests no longer send one) registers its three entities under it,
+    /// each described as the document says: the device <c>main</c>, named after the definition.
+    /// </summary>
     static async Task ADeviceDefinitionGroupsItsEntities()
     {
         await using var rig = await Rig.Start("device");
@@ -651,15 +657,121 @@ static class EntityGraphTests
         var saved = await rig.Save("plug", definition);
         Check(saved["active"]!.GetValue<bool>(), "the device definition runs: " + saved.ToJsonString());
         var sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!;
-        Check(sync["device"]!.ToJsonString() == """{"name":"Plug","manufacturer":"Acme","model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Kitchen","via":null}""",
-            "the device is the document's, named after the definition: " + sync["device"]!.ToJsonString());
-        Check(sync["entities"]!.ToJsonString() == """[{"uniqueId":"plug:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null}},"""
-            + """{"uniqueId":"plug:online","key":"online","domain":"binary_sensor","name":null,"icon":null,"deviceClass":"connectivity","entityCategory":"diagnostic","enabledByDefault":true,"commands":[],"options":{}},"""
-            + """{"uniqueId":"plug:relay","key":"relay","domain":"switch","name":"Relay","icon":"mdi:power-socket","deviceClass":null,"entityCategory":null,"enabledByDefault":false,"commands":["turn_on","turn_off"],"options":{}}]""",
+        Check(sync["devices"]!.ToJsonString() == """[{"key":"main","name":"Plug","manufacturer":"Acme","model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":"Kitchen","via":null}]"""
+            && !sync.AsObject().ContainsKey("device"), "the device is the document's, keyed main and named after the definition: " + sync.ToJsonString());
+        Check(sync["entities"]!.ToJsonString() == """[{"uniqueId":"plug:power","key":"power","domain":"sensor","name":"Power","icon":null,"deviceClass":"power","entityCategory":null,"enabledByDefault":true,"commands":[],"options":{"unit":"W","stateClass":"measurement","options":null},"device":"main"},"""
+            + """{"uniqueId":"plug:online","key":"online","domain":"binary_sensor","name":null,"icon":null,"deviceClass":"connectivity","entityCategory":"diagnostic","enabledByDefault":true,"commands":[],"options":{},"device":"main"},"""
+            + """{"uniqueId":"plug:relay","key":"relay","domain":"switch","name":"Relay","icon":"mdi:power-socket","deviceClass":null,"entityCategory":null,"enabledByDefault":false,"commands":["turn_on","turn_off"],"options":{},"device":"main"}]""",
             "the three entities as the document describes them: " + sync["entities"]!.ToJsonString());
         await rig.Until("plug:power", s => Is(s, "value", 42.0), "the power State");
         await rig.Until("plug:online", s => Is(s, "is_on", true), "the online State");
         await rig.Until("plug:relay", s => Available(s), "the relay");
+    }
+
+    /// <summary>A Device node of the key (also its id), named, with the rest of its config (such as its model or Part of).</summary>
+    static JsonObject DeviceNode(string key, string name, object? more = null)
+    {
+        var config = new JsonObject { ["key"] = key, ["name"] = name };
+        foreach (var (member, value) in JsonSerializer.SerializeToNode(more ?? new { })!.AsObject()) config[member] = value?.DeepClone();
+        return N(key, "device", config);
+    }
+    /// <summary>Wires the Device node's Entities pin to the Entity node's Device pin, the pin's marker beside it as the editor saves it.</summary>
+    static void Wire(JsonObject graph, string device, string hub)
+    {
+        graph["edges"]!.AsArray().Add(Data(device, hub, "device", "entities"));
+        var config = graph["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == hub)!["config"]!.AsObject();
+        if (config["arguments"] is not JsonObject arguments) config["arguments"] = arguments = [];
+        arguments["device"] = JsonSerializer.SerializeToNode(Unset);
+    }
+
+    /// <summary>
+    /// Device nodes plug (Hall plug, part of hub, declared first) and hub, a switch on plug, a binary sensor on hub and a
+    /// standalone one: Home Assistant is handed hub, then plug, part of hub, and each entity's device, or none.
+    /// </summary>
+    static async Task TwoDevicesAndAStandaloneEntityReachHomeAssistant()
+    {
+        await using var rig = await Rig.Start("two-devices");
+        var graph = Graph("Plug",
+            [DeviceNode("plug", "Hall plug", new { model = "P1", via = new { device = "hub" } }), DeviceNode("hub", "Hub"),
+             Entity("relay", "relay", "switch", new { name = "Relay" }),
+             Unnamed(Entity("online", "online", "binary_sensor", new { deviceClass = "connectivity" }, On(true))),
+             Entity("bare", "bare", "binary_sensor", new { name = "Bare" }, On(false)),
+             SetState("set_on", "relay", On(true)), SetState("set_off", "relay", On(false))],
+            Pin("relay", "command:turn_on", "set_on"), Pin("relay", "command:turn_off", "set_off"));
+        Wire(graph, "plug", "relay");
+        Wire(graph, "hub", "online");
+        var saved = await rig.Save("plug", Definition("Plug", graph));
+        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "the definition saves without a problem and runs: " + saved.ToJsonString());
+        var sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!.AsObject();
+        Check(sync["devices"]!.ToJsonString() == """[{"key":"hub","name":"Hub","manufacturer":null,"model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null},"""
+            + """{"key":"plug","name":"Hall plug","manufacturer":null,"model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"device":"hub"}}]""",
+            "hub, then plug, part of hub: " + sync["devices"]!.ToJsonString());
+        Check(!sync.ContainsKey("device"), "the definition is no device of its own: " + sync.ToJsonString());
+        var on = sync["entities"]!.AsArray().ToDictionary(e => e!["key"]!.GetValue<string>(), e => e!.AsObject().TryGetPropertyValue("device", out var key) ? key?.ToJsonString() : "absent");
+        Check(on.Count == 3 && on["relay"] == "\"plug\"" && on["online"] == "\"hub\"" && on["bare"] == null, "each entity's device: " + sync["entities"]!.ToJsonString());
+        await rig.Until("plug:online", s => Is(s, "is_on", true), "the online State");
+        await rig.Until("plug:bare", s => Is(s, "is_on", false), "the bare State");
+        await rig.Api.EntityCommand("plug:relay", "turn_on", null);
+        await rig.Until("plug:relay", s => Is(s, "is_on", true), "the relay on a device takes its command");
+    }
+
+    /// <summary>
+    /// The devices a definition hands Home Assistant come each after the one it is part of; the others keep node order. A
+    /// key two nodes have is the first of them, and a circle or an unknown parent, which the validator refuses, neither
+    /// loops nor throws: what can be ordered is, the rest follows in node order, and a parent that is no other device of
+    /// the list is none.
+    /// </summary>
+    static Task TheDevicesAreListedAfterTheDeviceTheyArePartOf()
+    {
+        static DefinitionDevice Device(string key, string? partOf = null, string? name = null) =>
+            new(null, null, null, null, null, null, partOf == null ? null : new DefinitionVia(null, null, partOf)) { Key = key, Name = name ?? key };
+        static string Keys(IEnumerable<DefinitionDevice> devices) => string.Join(",", devices.Select(d => d.Name));
+        var chain = DefinitionHost.InOrder([Device("c", "b"), Device("b", "a"), Device("a"), Device("d")]);
+        Check(Keys(chain) == "a,b,c,d", "a chain declared backwards: " + Keys(chain));
+        var roots = DefinitionHost.InOrder([Device("z"), Device("y"), Device("x", "y")]);
+        Check(Keys(roots) == "z,y,x", "roots keep node order: " + Keys(roots));
+        var circle = DefinitionHost.InOrder([Device("x", "y"), Device("self", "self"), Device("y", "x"), Device("u", "nowhere"), Device("z")]);
+        Check(Keys(circle) == "u,z,x,self,y", "a circle and an unknown parent: " + Keys(circle));
+        var twice = DefinitionHost.InOrder([Device("plug", "hub"), Device("hub", name: "Hub"), Device("hub", "plug", "Desk hub")]);
+        Check(Keys(twice) == "Hub,plug", "a key two nodes have is the first of them: " + Keys(twice));
+        var keys = new HashSet<string>(["a", "x"], StringComparer.Ordinal);
+        string Via(DefinitionDevice device) => DefinitionHost.DeviceJson(device, keys)["via"]?.ToJsonString() ?? "null";
+        Check(Via(Device("x", "a")) == """{"device":"a"}""" && Via(Device("x", "nowhere")) == "null" && Via(Device("x", "x")) == "null"
+            && Via(new(null, null, null, null, null, null, new DefinitionVia(null, "zigbee")) { Key = "x" }) == """{"deviceId":"zigbee"}"""
+            && Via(new(null, null, null, null, null, null, new DefinitionVia("hub", null)) { Key = "x" }) == """{"definition":"hub"}""",
+            "Part of in the sync: another device of the list, a Home Assistant device or another definition; else none");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A request's device carries none of what only a Device node has, its key, name and Part of another of its devices:
+    /// they are left out where the request is read, for a graph and a class, and nothing is refused.
+    /// </summary>
+    static async Task ARequestsDeviceIsStoredWithoutWhatOnlyADeviceNodeHas()
+    {
+        await using var rig = await Rig.Start("request-device");
+        var graph = Relay();
+        graph["device"] = JsonSerializer.SerializeToNode(new { key = "x", name = "y", model = "P1", via = new { device = "z" } });
+        var saved = await rig.Save("relay", graph);
+        Check(saved["active"]!.GetValue<bool>() && !saved.ContainsKey("diagnostics"), "the graph definition saves and runs: " + saved.ToJsonString());
+        var expected = JsonNode.Parse("""{"manufacturer":null,"model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}""");
+        var stored = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "relay")))!["device"];
+        Check(JsonNode.DeepEquals(stored, expected) && JsonNode.DeepEquals((await rig.Read("relay"))["device"], expected), "the graph's device as stored: " + stored?.ToJsonString());
+        var sync = JsonNode.Parse(rig.Home.Syncs("relay").Single())!;
+        Check(sync["devices"]!.ToJsonString() == """[{"key":"main","name":"Relay","manufacturer":null,"model":"P1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}]""",
+            "the graph's device is main, named after the definition: " + sync.ToJsonString());
+
+        Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
+        var plug = JsonSerializer.SerializeToNode(SecretPlugDefinition())!.AsObject();
+        plug["device"] = JsonSerializer.SerializeToNode(new { key = "x", name = "y", via = new { device = "z", deviceId = "abc" } });
+        saved = await rig.Save("plug", plug);
+        Check(saved["active"]!.GetValue<bool>(), "the class definition saves and runs: " + saved.ToJsonString());
+        expected = JsonNode.Parse("""{"manufacturer":null,"model":null,"swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":{"definition":null,"deviceId":"abc"}}""");
+        stored = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "plug")))!["device"];
+        Check(JsonNode.DeepEquals(stored, expected) && JsonNode.DeepEquals((await rig.Read("plug"))["device"], expected), "the class's device as stored: " + stored?.ToJsonString());
+        sync = JsonNode.Parse(rig.Home.Syncs("plug").Single())!;
+        Check(sync["devices"]![0]!["name"]!.GetValue<string>() == "Plug" && sync["devices"]![0]!["via"]!.ToJsonString() == """{"deviceId":"abc"}""",
+            "the class's device is named after the definition, part of the Home Assistant device: " + sync.ToJsonString());
     }
 
     /// <summary>A setting's value reaches the graph, also when a save changes only the value, which leaves the generated source as it was.</summary>

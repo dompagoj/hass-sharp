@@ -9,15 +9,24 @@ namespace HassSharp;
 /// <summary>An entity definition as its compiled script runs it: what the stored document says besides its code.</summary>
 /// <param name="Id">The definition's id; each entity's unique id is <c>&lt;Id&gt;:&lt;key&gt;</c>.</param>
 /// <param name="Name">What the definition and its device are called.</param>
-/// <param name="Device">What the device page shows, each field in place of the class's own; null for the class's own.</param>
+/// <param name="Device">What the device page shows, each field in place of the class's own; null for the class's own. Home
+/// Assistant gets it as the device <c>main</c>, named after the definition (for a graph, until requests no longer send one).</param>
 /// <param name="Settings">For a class, values for its <c>[Setting]</c> properties, a null value keeping the class default; for a
 /// graph, its settings, which its Setting nodes read.</param>
 public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice? Device, IReadOnlyList<DefinitionSetting> Settings)
 {
     /// <summary>Builds the definition's device or entity; null for <c>SharpDefinition.Create()</c> of the compiled assembly. A test seam.</summary>
     internal Func<object>? Factory { get; init; }
-    /// <summary>For a definition built from nodes, the document's entity descriptions, which the host creates; null for a class definition.</summary>
+    /// <summary>
+    /// For a definition built from nodes, the document's entity descriptions, which the host creates, each with the key of
+    /// the device it is on (<c>device</c>, null for none); null for a class definition.
+    /// </summary>
     internal JsonArray? Entities { get; init; }
+    /// <summary>
+    /// For a definition built from nodes, the devices its Device nodes declare, each with its <see cref="DefinitionDevice.Key"/>
+    /// and <see cref="DefinitionDevice.Name"/>, in node order (<see cref="DefinitionGraph.Devices"/>); none for a class definition.
+    /// </summary>
+    internal IReadOnlyList<DefinitionDevice> Devices { get; init; } = [];
     /// <summary>For a definition built from nodes, the methods of its graph's When started step and of its Entity nodes' flows; null for a class definition.</summary>
     internal DefinitionRoots? Roots { get; init; }
 }
@@ -132,12 +141,19 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         lifetime.ThrowIfCancellationRequested();
         stopping = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         var all = definition.Entities is { } described ? await PrepareGraph(described) : await PrepareClass();
+        var devices = Devices();
+        var keys = devices.Select(device => device.Key!).ToHashSet(StringComparer.Ordinal);
         var json = new JsonObject
         {
             ["definitionId"] = definition.Id,
             ["name"] = definition.Name,
-            ["device"] = DeviceJson(),
-            ["entities"] = new JsonArray(all.Select(entity => (JsonNode?)entity.Describe(UniqueId(entity))).ToArray()),
+            ["devices"] = new JsonArray(devices.Select(device => (JsonNode?)DeviceJson(device, keys)).ToArray()),
+            ["entities"] = new JsonArray(all.Select(entity =>
+            {
+                var description = entity.Describe(UniqueId(entity));
+                description["device"] = DeviceOf(entity, keys);
+                return (JsonNode?)description;
+            }).ToArray()),
         };
         var sync = PyInterop.SyncEntitiesAsync(json.ToJsonString());
         if (!await Within(sync, SyncTimeout))
@@ -896,28 +912,85 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
     }
 
-    // A device's own metadata, each field replaced by the document's when it gives one; an entity has only the document's.
-    JsonObject? DeviceJson()
+    /// <summary>The key of the device the definition itself is, as Home Assistant gets it (see <see cref="Devices"/>).</summary>
+    internal const string MainDevice = "main";
+
+    /// <summary>
+    /// The devices Home Assistant gets for the definition, each after the one it is part of (<see cref="InOrder"/>): a
+    /// graph's Device nodes, then the definition's own device, keyed <see cref="MainDevice"/> and named after the definition.
+    /// That one is a class's device, each field replaced by the document's when it gives one; for a class's entity or a
+    /// graph, the document's device alone (a graph's until requests no longer send one); none when there is neither. A
+    /// Device node keyed <c>main</c> beside the document's device is the first of that key, so the document's is left out.
+    /// </summary>
+    List<DefinitionDevice> Devices()
     {
         var given = definition.Device;
-        if (device == null && given == null) return null;
-        return new()
-        {
-            ["name"] = definition.Name,
-            ["manufacturer"] = given?.Manufacturer ?? device?.Manufacturer,
-            ["model"] = given?.Model ?? device?.Model,
-            ["swVersion"] = given?.SwVersion ?? device?.SwVersion,
-            ["hwVersion"] = given?.HwVersion ?? device?.HwVersion,
-            ["configurationUrl"] = given?.ConfigurationUrl ?? device?.ConfigurationUrl,
-            ["suggestedArea"] = given?.SuggestedArea ?? device?.SuggestedArea,
-            ["via"] = given?.Via switch
-            {
-                { Definition: { } id } => new JsonObject { ["definition"] = id },
-                { DeviceId: { } id } => new JsonObject { ["deviceId"] = id },
-                _ => null,
-            },
-        };
+        DefinitionDevice? main = device == null && given == null ? null
+            : new DefinitionDevice(given?.Manufacturer ?? device?.Manufacturer, given?.Model ?? device?.Model, given?.SwVersion ?? device?.SwVersion,
+                given?.HwVersion ?? device?.HwVersion, given?.ConfigurationUrl ?? device?.ConfigurationUrl, given?.SuggestedArea ?? device?.SuggestedArea, given?.Via)
+            { Key = MainDevice, Name = definition.Name };
+        return InOrder(main == null ? definition.Devices : [.. definition.Devices, main]);
     }
+
+    /// <summary>
+    /// The key of the device <paramref name="entity"/> is on, among <paramref name="keys"/>, or null for none: a graph's
+    /// entity is on the device its description names; one that names none, and every entity of a class, is on the
+    /// definition's own device when it has one (<see cref="MainDevice"/>), else on none.
+    /// </summary>
+    string? DeviceOf(SharpEntity entity, IReadOnlySet<string> keys)
+    {
+        var named = definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == entity.Key)?["device"] is JsonValue value
+            && value.TryGetValue<string>(out var key) ? key : null;
+        var on = named ?? (device != null || definition.Device != null ? MainDevice : null);
+        return on != null && keys.Contains(on) ? on : null;
+    }
+
+    /// <summary>
+    /// The devices in the order Home Assistant needs them: each after the one it is part of (<c>via: {device: key}</c>), the
+    /// others in the order given. Of two of one key, the first is kept, as a Part of names the first. A circle, or a parent
+    /// that is no device of the list, is refused by the validator and does not loop or throw here: what can be ordered is,
+    /// the rest follows in the order given, and a parent of an unknown key counts as none.
+    /// </summary>
+    internal static List<DefinitionDevice> InOrder(IEnumerable<DefinitionDevice> devices)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var left = devices.Where(d => d.Key is { } key && keys.Add(key)).ToList();
+        var placed = new HashSet<string>(StringComparer.Ordinal);
+        List<DefinitionDevice> ordered = [];
+        // Each round takes the first device whose parent is none, unknown or already placed, so roots keep their order.
+        while (left.FindIndex(d => d.Via?.Device is not { } parent || !keys.Contains(parent) || placed.Contains(parent)) is var next and >= 0)
+        {
+            ordered.Add(left[next]);
+            placed.Add(left[next].Key!);
+            left.RemoveAt(next);
+        }
+        return [.. ordered, .. left];
+    }
+
+    /// <summary>
+    /// A device as Home Assistant gets it: its key, name and every field, null where it has none, and what it is part of:
+    /// another device of <paramref name="keys"/> (<c>{device}</c>), another definition (<c>{definition}</c>, whose device
+    /// is its <see cref="MainDevice"/>) or a Home Assistant device (<c>{deviceId}</c>); null for none, for itself or for a
+    /// key of no device of the definition.
+    /// </summary>
+    internal static JsonObject DeviceJson(DefinitionDevice device, IReadOnlySet<string> keys) => new()
+    {
+        ["key"] = device.Key,
+        ["name"] = device.Name,
+        ["manufacturer"] = device.Manufacturer,
+        ["model"] = device.Model,
+        ["swVersion"] = device.SwVersion,
+        ["hwVersion"] = device.HwVersion,
+        ["configurationUrl"] = device.ConfigurationUrl,
+        ["suggestedArea"] = device.SuggestedArea,
+        ["via"] = device.Via switch
+        {
+            { Device: { } key } => key != device.Key && keys.Contains(key) ? new JsonObject { ["device"] = key } : null,
+            { Definition: { } id } => new JsonObject { ["definition"] = id },
+            { DeviceId: { } id } => new JsonObject { ["deviceId"] = id },
+            _ => null,
+        },
+    };
 
     sealed class Handle(Action dispose) : IDisposable
     {

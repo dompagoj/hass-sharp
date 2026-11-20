@@ -390,8 +390,10 @@ try:
         check(len(synced) == 1, f'one save synced {len(synced)} times')
         definition = json.loads(synced[0])
         check(definition['definitionId'] == DEFINITION and definition['name'] == 'Smoke plug', f'the sync names another definition: {definition}')
-        check(definition['device'] is not None and definition['device']['name'] == 'Smoke plug' and definition['device']['manufacturer'] == 'Smoke',
-              f"the sync's device: {definition['device']}")
+        devices = definition['devices']
+        check(len(devices) == 1 and devices[0]['key'] == 'main' and devices[0]['name'] == 'Smoke plug'
+              and devices[0]['manufacturer'] == 'Smoke' and 'device' not in definition, f"the sync's devices: {devices}")
+        check(all(e['device'] == 'main' for e in definition['entities']), f"the entities are not all on the device main: {definition['entities']}")
         described = [(e['uniqueId'], e['key'], e['domain']) for e in definition['entities']]
         check(described == [(f'{DEFINITION}:{key}', key, domain) for key, domain in EXPECTED], f'the sync describes {described}')
         power = definition['entities'][1]
@@ -456,8 +458,8 @@ try:
         synced = arguments('sync')
         check(len(synced) == 2, f'the graph save synced {len(synced) - 1} times')
         definition = json.loads(synced[1])
-        check(definition['definitionId'] == GRAPH_DEFINITION and definition['name'] == 'Smoke graph' and definition['device'] is None,
-              f'the graph sync: {definition}')
+        check(definition['definitionId'] == GRAPH_DEFINITION and definition['name'] == 'Smoke graph' and definition['devices'] == []
+              and 'device' not in definition and all(e['device'] is None for e in definition['entities']), f'the graph sync: {definition}')
         described = [(e['uniqueId'], e['key'], e['domain'], e['name'], e['commands']) for e in definition['entities']]
         check(described == [(f'{GRAPH_DEFINITION}:{key}', key, domain, name, commands) for key, domain, name, commands, _ in GRAPH_ENTITIES],
               f'the graph sync describes {described}')

@@ -95,8 +95,24 @@ public partial class HassSharpManager
         script.VisualGraph = graph.ToJsonString();
         script.VisualCatalog = catalog;
         script.Definition = new(document.Id, document.Name, document.Device, document.Settings)
-            { Entities = DefinitionGraph.Entities(graph, snapshot), Roots = roots };
+            { Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots };
         return script;
+    }
+
+    /// <summary>
+    /// The devices a graph's Device nodes declare, as its host hands them to Home Assistant, worked out from the graph again
+    /// as its entities are (<see cref="DefinitionGraph.Devices"/>); one whose config is not a device's is left out, which a
+    /// saved graph, checked as it was saved, does not have.
+    /// </summary>
+    static List<DefinitionDevice> GraphDevices(JsonObject graph, VisualCatalogSnapshot snapshot)
+    {
+        List<DefinitionDevice> devices = [];
+        foreach (var entry in DefinitionGraph.Devices(graph, snapshot.Root))
+        {
+            try { if (entry.Deserialize<DefinitionDevice>(VisualStore.Json) is { Key: not null } device) devices.Add(device); }
+            catch (JsonException) { }
+        }
+        return devices;
     }
 
     /// <summary>
@@ -277,13 +293,25 @@ public partial class HassSharpManager
     /// it, <c>hasValue</c> and no value, is kept alike; with a value, the value wins (<see cref="DefinitionSetting.HasValue"/>).
     /// An <c>entities</c> key given as null is an empty list: a graph's is refused whatever it holds, and a class's is none.
     /// A <c>devices</c> key, as a read answer has it, is no member of a body and is ignored: a graph's devices are its
-    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>).
+    /// Device nodes, and the store lists them again (<see cref="DefinitionGraph.Devices"/>). The <c>device</c> is the
+    /// definition's own, which has none of what only a Device node has: a key, a name (the definition's) and Part of
+    /// another device of the definition are left out, and a Part of with nothing else is none.
     /// </summary>
     static DefinitionBody DefinitionBody(JsonObject request)
     {
         var definition = ApiRequest.Object(request, "definition");
         var body = definition.Deserialize<DefinitionBody>(VisualStore.Json) ?? throw new ArgumentException("definition is required");
         if (body.Entities == null && definition.ContainsKey("entities")) body = body with { Entities = [] };
+        if (body.Device is { } device)
+            body = body with
+            {
+                Device = device with
+                {
+                    Key = null,
+                    Name = null,
+                    Via = device.Via is { Device: not null } via ? via is { Definition: null, DeviceId: null } ? null : via with { Device = null } : device.Via,
+                },
+            };
         // The value is not quoted: it may be a secret.
         if (body.Settings?.FirstOrDefault(s => s is { Keep: true, Value: { } value } && value.GetValueKind() != JsonValueKind.Null) is { } both)
             throw new ArgumentException($"Setting {both.Key} has both a value and keep; give the value, or keep to leave the saved one as it is");

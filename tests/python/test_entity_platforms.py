@@ -245,8 +245,11 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         entity_id = self.entities.async_get_entity_id(domain, DOMAIN, unique_id)
         return self.entities.async_get(entity_id) if entity_id is not None else None
 
+    def device_of(self, identifier):
+        return self.devices.async_get_device_by_identifier((DOMAIN, identifier), self.entry.entry_id)
+
     def plug_device(self):
-        return self.devices.async_get_device_by_identifier((DOMAIN, 'plug1'), self.entry.entry_id)
+        return self.device_of('plug1:main')
 
     # The tests
 
@@ -266,7 +269,7 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
     async def test_device_and_entities_are_registered_with_the_unique_id(self):
         await self.sync(plug())
         plug_device = self.plug_device()
-        self.assertEqual((('Plug one', 'Shelly', 'Plug S'), {(DOMAIN, 'plug1')}, self.entry.entry_id),
+        self.assertEqual((('Plug one', 'Shelly', 'Plug S'), {(DOMAIN, 'plug1:main')}, self.entry.entry_id),
                          ((plug_device.name, plug_device.manufacturer, plug_device.model), plug_device.identifiers,
                           plug_device.config_entry_id))
         for domain, key in (('switch', 'relay'), ('sensor', 'power'), ('binary_sensor', 'motion')):
@@ -554,15 +557,18 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(plug())
         await self.push(snapshot('plug1:power', values={'value': 5}))
         # The new revision drops power and motion, and its device has a field Home Assistant refuses.
-        answer = await self.answer(self.bridge.begin_sync,
-                                   plug(description('relay'), device=device(configurationUrl='not a url')))
-        self.assertEqual('error', answer[0], answer)
-        self.assertIn('configuration_url', answer[1])
+        # So does an address with no host, which the configuration URL rule of a Device node lets through.
+        for url in ('not a url', 'http://'):
+            answer = await self.answer(self.bridge.begin_sync,
+                                       plug(description('relay'), devices=[device(configurationUrl=url)]))
+            self.assertEqual('error', answer[0], answer)
+            self.assertIn(f"invalid configuration_url '{url}'", answer[1])
         # The bridge logged the failure; that is expected here.
         self.records.records = [r for r in self.records.records
                                 if not (r.name == self.const.logger.name and 'Cannot sync' in r.getMessage())]
         self.assertIsNotNone(self.registered('sensor', 'plug1:power'))
         self.assertIsNotNone(self.registered('binary_sensor', 'plug1:motion'))
+        self.assertIsNotNone(self.plug_device())
         await self.push(snapshot('plug1:power', values={'value': 6}))
         self.assertEqual('6', self.state('sensor.plug_one_power').state)  # Still live.
         # A sync that succeeds removes them.
@@ -665,7 +671,7 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
     async def test_prune_removes_only_deleted_definitions(self):
         await self.sync(plug())
         await self.sync(definition(description('fan', definition='fan1'), definition_id='fan1', name='Fan',
-                                   device=device('Fan')))
+                                   devices=[device('Fan')]))
         self.assertEqual(('success',), await self.answer(self.bridge.begin_prune, '["fan1"]'))
         self.assertIsNone(self.plug_device())
         self.assertIsNone(self.registered('switch', 'plug1:relay'))
@@ -769,27 +775,147 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_device_field_set_to_null_is_cleared(self):
         await self.sync(plug(description('relay')))
-        await self.sync(plug(description('relay'), device=device(model=None, swVersion='1.2')))
+        await self.sync(plug(description('relay'), devices=[device(model=None, swVersion='1.2')]))
         plug_device = self.plug_device()
         self.assertEqual(('Plug one', None, '1.2'), (plug_device.name, plug_device.model, plug_device.sw_version))
         # A device whose name is cleared: Home Assistant names the entity by itself alone.
-        await self.sync(plug(description('relay'), device=device(name=None)))
+        await self.sync(plug(description('relay'), devices=[device(name=None)]))
         self.assertIsNone(self.plug_device().name)
         self.assertEqual('Relay', self.state('switch.plug_one_relay').attributes['friendly_name'])
 
     async def test_via_device_links_and_unlinks(self):
         await self.sync(definition(description('fan', definition='hub1'), definition_id='hub1', name='Hub',
-                                   device=device('Hub')))
-        hub = self.devices.async_get_device_by_identifier((DOMAIN, 'hub1'), self.entry.entry_id)
-        await self.sync(plug(description('relay'), device=device(via={'definition': 'hub1'})))
+                                   devices=[device('Hub')]))
+        hub = self.device_of('hub1:main')
+        await self.sync(plug(description('relay'), devices=[device(via={'definition': 'hub1'})]))
         self.assertEqual(hub.id, self.plug_device().via_device_id)
-        await self.sync(plug(description('relay'), device=device(via=None)))
+        await self.sync(plug(description('relay'), devices=[device(via=None)]))
         self.assertIsNone(self.plug_device().via_device_id)
-        await self.sync(plug(description('relay'), device=device(via={'deviceId': hub.id})))
+        await self.sync(plug(description('relay'), devices=[device(via={'deviceId': hub.id})]))
         self.assertEqual(hub.id, self.plug_device().via_device_id)
         # A parent that does not exist is left out (Home Assistant refuses an unknown via device id).
-        await self.sync(plug(description('relay'), device=device(via={'definition': 'gone'})))
+        await self.sync(plug(description('relay'), devices=[device(via={'definition': 'gone'})]))
         self.assertIsNone(self.plug_device().via_device_id)
+        # Another device of the same definition, made first.
+        await self.sync(plug(description('relay', device='plug'), description('motion', 'binary_sensor', 'Motion', device='hub'),
+                             devices=[device('Hub', 'hub'), device('Hall plug', 'plug', via={'device': 'hub'})]))
+        self.assertEqual(self.device_of('plug1:hub').id, self.device_of('plug1:plug').via_device_id)
+
+    # Several devices of one definition, in Home Assistant's own registries
+
+    @staticmethod
+    def two_devices(relay='plug', motion='hub', devices=None):
+        """The plug with the devices plug (Hall plug) and hub (Hub): relay on `relay`, power on plug, motion on `motion`
+        and a standalone bare switch."""
+        return plug(description('relay', device=relay),
+                    description('power', 'sensor', 'Power', deviceClass='power', device='plug',
+                                options={'unit': 'W', 'stateClass': 'measurement', 'options': None}),
+                    description('motion', 'binary_sensor', 'Motion', deviceClass='motion', device=motion),
+                    description('bare', name='Bare', device=None),
+                    devices=[device('Hub', 'hub'), device('Hall plug', 'plug')] if devices is None else devices)
+
+    async def test_each_described_device_is_a_device(self):
+        ids = await self.sync(self.two_devices())
+        self.assertEqual({'plug1:relay': 'switch.hall_plug_relay', 'plug1:power': 'sensor.hall_plug_power',
+                          'plug1:motion': 'binary_sensor.hub_motion', 'plug1:bare': 'switch.bare'}, ids)
+        plug_, hub = self.device_of('plug1:plug'), self.device_of('plug1:hub')
+        self.assertEqual(({(DOMAIN, 'plug1:plug')}, 'Hall plug', {(DOMAIN, 'plug1:hub')}, 'Hub'),
+                         (plug_.identifiers, plug_.name, hub.identifiers, hub.name))
+        self.assertIsNone(self.plug_device())
+        from homeassistant.helpers import device_registry as dr
+        self.assertEqual(2, len(dr.async_entries_for_config_entry(self.devices, self.entry.entry_id)))
+        on = {key: self.registered(domain, f'plug1:{key}').device_id
+              for domain, key in (('switch', 'relay'), ('sensor', 'power'), ('binary_sensor', 'motion'), ('switch', 'bare'))}
+        self.assertEqual({'relay': plug_.id, 'power': plug_.id, 'motion': hub.id, 'bare': None}, on)
+        self.assertEqual('Hall plug Relay', self.state('switch.hall_plug_relay').attributes['friendly_name'])
+        self.assertEqual('Bare', self.state('switch.bare').attributes['friendly_name'])
+
+    async def test_an_entity_moved_between_devices_keeps_its_entity_id(self):
+        from homeassistant.helpers import entity_registry as er
+        # Motion's entry is one the user disabled, so it is never added.
+        motion = self.entities.async_get_or_create('binary_sensor', DOMAIN, 'plug1:motion', config_entry=self.entry,
+                                                   suggested_object_id='hub_motion',
+                                                   disabled_by=er.RegistryEntryDisabler.USER)
+        ids = await self.sync(self.two_devices())
+        await self.push(snapshot('plug1:relay'))
+        entry = self.registered('switch', 'plug1:relay')
+        self.assertEqual(self.device_of('plug1:hub').id, self.registered('binary_sensor', 'plug1:motion').device_id)
+        self.assertIsNone(self.state('binary_sensor.hub_motion'))
+        # relay to hub, motion (disabled) to plug: the same entries, entity ids and unique ids, on the other device.
+        self.assertEqual(ids, await self.sync(self.two_devices(relay='hub', motion='plug')))
+        plug_, hub = self.device_of('plug1:plug'), self.device_of('plug1:hub')
+        moved = self.registered('switch', 'plug1:relay')
+        self.assertEqual((entry.id, entry.entity_id, hub.id), (moved.id, moved.entity_id, moved.device_id))
+        self.assertEqual('on', self.state('switch.hall_plug_relay').state)  # Live all along.
+        moved = self.registered('binary_sensor', 'plug1:motion')
+        self.assertEqual((motion.id, plug_.id, er.RegistryEntryDisabler.USER),
+                         (moved.id, moved.device_id, moved.disabled_by))
+        # Relay and motion to hub, power dropped and plug no longer described: plug goes, and motion (disabled), which
+        # was on it, is moved off it first and stays.
+        moved_all = plug(description('relay', device='hub'),
+                         description('motion', 'binary_sensor', 'Motion', deviceClass='motion', device='hub'),
+                         description('bare', name='Bare', device=None), devices=[device('Hub', 'hub')])
+        await self.sync(moved_all)
+        self.assertIsNone(self.device_of('plug1:plug'))
+        for domain, key, device_id in (('switch', 'relay', hub.id), ('binary_sensor', 'motion', hub.id),
+                                       ('switch', 'bare', None)):
+            kept = self.registered(domain, f'plug1:{key}')
+            self.assertEqual((ids[f'plug1:{key}'], device_id), (kept.entity_id, kept.device_id))
+        self.assertIsNone(self.registered('sensor', 'plug1:power'))  # Not described: removed, as before.
+        self.assertEqual(motion.id, self.registered('binary_sensor', 'plug1:motion').id)
+        # And none: hub goes too, its entries kept.
+        await self.sync(plug(description('relay', device=None),
+                             description('motion', 'binary_sensor', 'Motion', deviceClass='motion', device=None),
+                             description('bare', name='Bare', device=None), devices=[]))
+        self.assertIsNone(self.device_of('plug1:hub'))
+        for key, domain, was in (('relay', 'switch', entry), ('motion', 'binary_sensor', motion)):
+            kept = self.registered(domain, f'plug1:{key}')
+            self.assertEqual((was.id, was.entity_id, None), (kept.id, kept.entity_id, kept.device_id))
+
+    async def test_prune_after_a_restart_keeps_the_devices_of_a_definition(self):
+        ids = await self.sync(self.two_devices())
+        await self.sync(definition(description('fan', definition='fan1', device='fan'), definition_id='fan1', name='Fan',
+                                   devices=[device('Fan', 'fan')]))
+        await self.unload_platforms()
+        await self.set_up_platforms()
+        # At start-up .NET prunes before it syncs: plug1 still exists, fan1 does not.
+        self.assertEqual(('success',), await self.answer(self.bridge.begin_prune, '["plug1"]'))
+        plug_, hub = self.device_of('plug1:plug'), self.device_of('plug1:hub')
+        self.assertIsNotNone(plug_)
+        self.assertIsNotNone(hub)
+        self.assertEqual(plug_.id, self.registered('switch', 'plug1:relay').device_id)
+        self.assertEqual(plug_.id, self.registered('sensor', 'plug1:power').device_id)
+        self.assertEqual(hub.id, self.registered('binary_sensor', 'plug1:motion').device_id)
+        self.assertIsNotNone(self.registered('switch', 'plug1:bare'))
+        self.assertIsNone(self.device_of('fan1:fan'))
+        self.assertIsNone(self.registered('switch', 'fan1:fan'))
+        # The sync after it takes the same entities back, on the same devices.
+        self.assertEqual(ids, await self.sync(self.two_devices()))
+        self.assertEqual((plug_.id, hub.id), (self.device_of('plug1:plug').id, self.device_of('plug1:hub').id))
+
+    async def test_the_device_an_earlier_build_made_goes_at_the_next_sync(self):
+        from homeassistant.helpers import entity_registry as er
+        old = self.devices.async_get_or_create(config_entry_id=self.entry.entry_id, identifiers={(DOMAIN, 'plug1')},
+                                               name='Plug one')
+        relay = self.entities.async_get_or_create('switch', DOMAIN, 'plug1:relay', config_entry=self.entry,
+                                                  device_id=old.id, suggested_object_id='plug_one_relay')
+        power = self.entities.async_get_or_create('sensor', DOMAIN, 'plug1:power', config_entry=self.entry,
+                                                  device_id=old.id, suggested_object_id='plug_one_power',
+                                                  disabled_by=er.RegistryEntryDisabler.USER)
+        # The clean-up keeps it, as plug1 still exists.
+        self.assertEqual(('success',), await self.answer(self.bridge.begin_prune, '["plug1"]'))
+        self.assertIsNotNone(self.device_of('plug1'))
+        ids = await self.sync(plug(description('relay', device='plug'),
+                                   description('power', 'sensor', 'Power', deviceClass='power', device='plug',
+                                               options={'unit': 'W', 'stateClass': 'measurement', 'options': None}),
+                                   devices=[device('Hall plug', 'plug')]))
+        self.assertIsNone(self.device_of('plug1'))
+        plug_ = self.device_of('plug1:plug')
+        self.assertEqual(relay.entity_id, ids['plug1:relay'])
+        for entry in (relay, power):
+            kept = self.entities.async_get(entry.entity_id)
+            self.assertEqual((entry.id, entry.unique_id, plug_.id), (kept.id, kept.unique_id, kept.device_id))
+        self.assertIs(er.RegistryEntryDisabler.USER, self.entities.async_get(power.entity_id).disabled_by)
 
     async def test_close_during_an_add_adds_nothing_to_the_unloaded_platform(self):
         # Home Assistant finishes an add it started even after the platform unloaded, leaving an entity that keeps

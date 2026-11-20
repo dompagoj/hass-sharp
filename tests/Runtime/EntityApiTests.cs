@@ -336,7 +336,8 @@ static class EntityApiTests
             && live[0]!.ToJsonString() == """{"uniqueId":"plug1:relay","key":"relay","domain":"switch","name":null,"entityId":"switch.plug1_relay"}""",
             "the live entities: " + live.ToJsonString());
         var synced = JsonNode.Parse(home.Syncs("plug1").Single())!;
-        Check(synced["name"]!.GetValue<string>() == "Plug one" && synced["device"]!["name"]!.GetValue<string>() == "Plug one"
+        Check(synced["name"]!.GetValue<string>() == "Plug one" && synced["devices"]!.AsArray().Single()!["name"]!.GetValue<string>() == "Plug one"
+            && synced["devices"]![0]!["key"]!.GetValue<string>() == "main" && synced["entities"]!.AsArray().All(e => e!["device"]!.GetValue<string>() == "main")
             && synced["entities"]!.AsArray().Count == 2, "the sync names the device as the definition: " + synced.ToJsonString());
         Console.WriteLine("PASS entity api: save at revision 0 compiles and runs the definition, syncs its device and answers its live entities");
 
