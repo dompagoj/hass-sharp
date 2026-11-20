@@ -38955,7 +38955,14 @@
       }
     },
     "valid": true,
-    "noDiagnostics": true
+    "warning": "Hall plug has no entities",
+    "warningNodeId": "plug",
+    "messages": [
+      "Hall plug has no entities: connect its Entities pin to an entity's Device pin"
+    ],
+    "codes": [
+      "device.empty"
+    ]
   },
   {
     "name": "a step-order wire into a Device node is refused",
@@ -39504,5 +39511,872 @@
     "codes": [
       "pure.unused"
     ]
+  },
+  {
+    "name": "a Device node without a key is told to give it one",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "  ",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "key",
+    "contains": "Give this device a key",
+    "messages": [
+      "Give this device a key, such as plug"
+    ],
+    "codes": [
+      "definition.deviceKey"
+    ]
+  },
+  {
+    "name": "a Device node's key that is not a key is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "Plug-1",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "key",
+    "contains": "Device key Plug-1 is not a key",
+    "messages": [
+      "Device key Plug-1 is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters"
+    ],
+    "codes": [
+      "definition.deviceKey"
+    ]
+  },
+  {
+    "name": "of two Device nodes of one key the later is told, naming the first",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "first",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "second",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Desk plug"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "first.entities:motion.device",
+          "kind": "data",
+          "source": "first",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "second.entities:door.device",
+          "kind": "data",
+          "source": "second",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "second",
+    "inputId": "key",
+    "contains": "already used by Hall plug",
+    "messages": [
+      "The key plug is already used by Hall plug: give this device its own"
+    ],
+    "codes": [
+      "definition.duplicateDevice"
+    ]
+  },
+  {
+    "name": "a Device node with a blank or no name is told to name it",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": " \t "
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "name",
+    "contains": "Name this device",
+    "messages": [
+      "Name this device: Home Assistant shows it by this name",
+      "Name this device: Home Assistant shows it by this name"
+    ],
+    "codes": [
+      "device.name",
+      "device.name"
+    ]
+  },
+  {
+    "name": "a Device node's Part of that is not nothing, a Home Assistant device or another device is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "definition": "hub"
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "desk",
+          "kind": "device",
+          "config": {
+            "key": "desk",
+            "name": "Desk plug",
+            "via": {
+              "deviceId": "f00d",
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "lamp",
+          "kind": "device",
+          "config": {
+            "key": "lamp",
+            "name": "Lamp plug",
+            "via": {
+              "deviceId": " "
+            }
+          }
+        },
+        {
+          "id": "window",
+          "kind": "entity",
+          "config": {
+            "key": "window",
+            "domain": "binary_sensor",
+            "name": "Window"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "desk.entities:door.device",
+          "kind": "data",
+          "source": "desk",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "lamp.entities:window.device",
+          "kind": "data",
+          "source": "lamp",
+          "target": "window",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "via",
+    "contains": "Part of must be nothing",
+    "messages": [
+      "Part of must be nothing, a Home Assistant device or another device of this definition",
+      "Part of must be nothing, a Home Assistant device or another device of this definition",
+      "Part of must be nothing, a Home Assistant device or another device of this definition"
+    ],
+    "codes": [
+      "device.via",
+      "device.via",
+      "device.via"
+    ]
+  },
+  {
+    "name": "a Device node part of a device this definition does not have is told so",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": "hub"
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "via",
+    "contains": "part of the device hub, which is not a device of this definition",
+    "messages": [
+      "Hall plug is part of the device hub, which is not a device of this definition: choose another, or none"
+    ],
+    "codes": [
+      "device.viaUnknown"
+    ]
+  },
+  {
+    "name": "two devices that are part of each other",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": "hub"
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": {
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "desk",
+          "kind": "device",
+          "config": {
+            "key": "desk",
+            "name": "Desk plug",
+            "via": {
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "window",
+          "kind": "entity",
+          "config": {
+            "key": "window",
+            "domain": "binary_sensor",
+            "name": "Window"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "desk.entities:window.device",
+          "kind": "data",
+          "source": "desk",
+          "target": "window",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "inputId": "via",
+    "contains": "Hub ends up being part of itself: change what one of these devices is part of",
+    "messages": [
+      "Hall plug ends up being part of itself: change what one of these devices is part of",
+      "Hub ends up being part of itself: change what one of these devices is part of"
+    ],
+    "codes": [
+      "device.viaCycle",
+      "device.viaCycle"
+    ]
+  },
+  {
+    "name": "a device that is part of itself",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": "plug"
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "via",
+    "contains": "Hall plug ends up being part of itself: change what one of these devices is part of",
+    "messages": [
+      "Hall plug ends up being part of itself: change what one of these devices is part of"
+    ],
+    "codes": [
+      "device.viaCycle"
+    ]
+  },
+  {
+    "name": "a Device node's configuration URL of another kind is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "configurationUrl": "ftp://plug.local"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "configurationUrl",
+    "contains": "configuration URL of Hall plug",
+    "messages": [
+      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://"
+    ],
+    "codes": [
+      "device.configurationUrl"
+    ]
+  },
+  {
+    "name": "a device with no entities is warned about",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "desk",
+          "kind": "device",
+          "config": {
+            "key": "desk",
+            "name": "Desk lamp"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "warning": "Desk lamp has no entities",
+    "warningNodeId": "desk",
+    "messages": [
+      "Desk lamp has no entities: connect its Entities pin to an entity's Device pin"
+    ],
+    "codes": [
+      "device.empty"
+    ]
+  },
+  {
+    "name": "an entity wired to a device needs no name",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": " "
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "plug.entities:door.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "an entity not wired to a device needs a name",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "name",
+    "contains": "Name this entity",
+    "messages": [
+      "Name this entity: it has no device, so Home Assistant shows it by its own name"
+    ],
+    "codes": [
+      "entity.name"
+    ]
+  },
+  {
+    "name": "a device that is part of another device of this definition is valid",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": {
+              "deviceId": "zigbee"
+            },
+            "configurationUrl": "http://hub.local"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": "hub"
+            },
+            "configurationUrl": "homeassistant://config/integrations"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
   }
 ]

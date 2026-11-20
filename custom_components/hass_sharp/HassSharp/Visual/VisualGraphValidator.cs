@@ -38,8 +38,10 @@ public static class VisualGraphValidator
         "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow",
         "flow.pure", "flow.declaration", "pure.unused", "custom.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
+        "definition.deviceKey", "definition.duplicateDevice",
         "node.document", "node.singleton", "root.incoming",
         "setting.unknown", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
+        "device.name", "device.via", "device.viaUnknown", "device.viaCycle", "device.configurationUrl", "device.empty",
         "http.url", "http.body", "download.checksum", "camera.entity", "camera.no_frame",
     ];
 
@@ -425,7 +427,7 @@ public static class VisualGraphValidator
         /// <summary>A camera an Entity node declares that no Show frame step shows a frame for, named by its name.</summary>
         internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: add {Article(label)} {label} step for it";
         // An Entity node's entity, named by EntityName.
-        /// <summary>What an Entity node's key must be, as an entity key is (<c>SharpEntity.KeyPattern</c>).</summary>
+        /// <summary>What an Entity node's key must be, as an entity key is (<c>SharpEntity.KeyPattern</c>); a Device node's key is of the same form.</summary>
         internal const string EntityKeyPattern = "^[a-z][a-z0-9_]{0,39}$";
         /// <summary>An Entity node without a key.</summary>
         internal const string EntityKeyMissing = "Give this entity a key, such as power";
@@ -435,8 +437,27 @@ public static class VisualGraphValidator
         internal static string KeyTaken(string key, string first) => $"The key {key} is already used by {first}: give this entity its own";
         /// <summary>An Entity node of a type the catalog's <c>entityDomains</c> does not describe.</summary>
         internal static string NotAnEntityType(string domain) => $"{domain} is not an entity type: choose one from the list";
-        /// <summary>An Entity node of a definition without a device, with no name.</summary>
+        /// <summary>An Entity node on no device (none wired to it, and the definition is none), with no name.</summary>
         internal const string EntityNameMissing = "Name this entity: it has no device, so Home Assistant shows it by its own name";
+        // A Device node's device, named by EntityName.
+        /// <summary>A Device node without a key.</summary>
+        internal const string DeviceKeyMissing = "Give this device a key, such as plug";
+        /// <summary>A Device node's key that is not of the form entity keys take (<see cref="EntityKeyPattern"/>).</summary>
+        internal static string DeviceKey(string key) => $"Device key {key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters";
+        /// <summary>A Device node of the key an earlier one has, and the name of that one.</summary>
+        internal static string DeviceKeyTaken(string key, string first) => $"The key {key} is already used by {first}: give this device its own";
+        /// <summary>A Device node with no name.</summary>
+        internal const string DeviceNameMissing = "Name this device: Home Assistant shows it by this name";
+        /// <summary>A Device node's Part of that is not nothing, <c>{deviceId}</c> or <c>{device}</c>.</summary>
+        internal const string ViaShape = "Part of must be nothing, a Home Assistant device or another device of this definition";
+        /// <summary>A Device node part of a device of a key no Device node of the graph has.</summary>
+        internal static string ViaUnknown(string name, string key) => $"{name} is part of the device {key}, which is not a device of this definition: choose another, or none";
+        /// <summary>A Device node on a circle of Part of.</summary>
+        internal static string ViaCycle(string name) => $"{name} ends up being part of itself: change what one of these devices is part of";
+        /// <summary>A Device node's configuration URL that Home Assistant would refuse.</summary>
+        internal static string ConfigurationUrl(string name) => $"The configuration URL of {name} must start with http://, https:// or homeassistant://";
+        /// <summary>A Device node no entity is wired to.</summary>
+        internal static string DeviceEmpty(string name) => $"{name} has no entities: connect its Entities pin to an entity's Device pin";
         /// <summary>An Entity node given some of its state values (by their labels, joined) and not one its type needs.</summary>
         internal static string PartialState(string name, string given, string missing) => $"{name} has a value for {given} but none for {missing}: connect or set {missing} too";
         /// <summary>A state value of an Entity node that reads a step's output: its state is worked out in no flow.</summary>
@@ -671,6 +692,21 @@ public static class VisualGraphValidator
         /// <summary>Whether the definition has a device (<c>definition.device</c> is an object), which names its entities.</summary>
         bool device;
         /// <summary>
+        /// Whether an Entity node is on a Device node: the wire into its Device pin (the one it reads) comes from one. As
+        /// <see cref="VisualNodeCatalog.DeviceOf"/> derives it from the graph.
+        /// </summary>
+        bool OnDevice(JsonObject hub) => incoming.TryGetValue((Id(hub), "device"), out var wire) && Declares(Spec(nodes[Text(wire, "source")]), "device");
+        /// <summary>What a Device node's configuration URL may start with: what Home Assistant takes.</summary>
+        static readonly string[] ConfigurationUrlSchemes = ["http://", "https://", "homeassistant://"];
+        /// <summary>
+        /// Whether a Device node's Part of, an object, is of its shape: <c>{deviceId}</c> (a Home Assistant device) or
+        /// <c>{device}</c> (the key of another Device node), that one member, a text that is not blank once trimmed.
+        /// </summary>
+        static bool ViaShaped(JsonObject via) =>
+            via.Count == 1 && via.First() is var (member, value) && member is "deviceId" or "device" && value is JsonValue v && v.TryGetValue<string>(out var text) && Words.Trimmed(text).Length > 0;
+        /// <summary>The key of the Device node a Device node's Part of names (<c>{device: key}</c>, of its shape); else null.</summary>
+        static string? ViaDevice(JsonNode? via) => via is JsonObject o && ViaShaped(o) && o["device"] is JsonValue v && v.TryGetValue<string>(out var key) ? key : null;
+        /// <summary>
         /// The definition a graph carries: an object with a list of settings, each with a text key and type, each of a type a
         /// setting can have, and no key twice. Its entities are the graph's Entity nodes: a list of them it has is ignored. Its
         /// <c>device</c>, an object when it has one, is read too (<see cref="device"/>).
@@ -727,7 +763,32 @@ public static class VisualGraphValidator
                 if (Choice(hub, "domain") == "camera" && !OfKind("show_frame").Any(n => Choice(n, "entity") == Choice(hub, "key")))
                     errors.Add(new(Id(hub), Words.NoFrame(name, KindLabel("show_frame")), 2, PortId: "frame", Code: "camera.no_frame"));
             }
+            DeviceRules();
             EntityScopes();
+        }
+        /// <summary>
+        /// The rules about Device nodes among each other, in the graph's order: a key no earlier Device node has; a Part of
+        /// that names a device (<c>{device: key}</c>, the first Device node of that key) this graph has, and does not come
+        /// back to the node it starts from (every device of such a circle is told, one part of itself included); and at
+        /// least one entity wired to it, else a warning. Mirrored by <c>deviceRules</c> in <c>contract.ts</c>.
+        /// </summary>
+        void DeviceRules()
+        {
+            var devices = nodes.Values.Where(n => Declares(Spec(n), "device")).ToList();
+            var byKey = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            foreach (var node in devices)
+                if (Text(Config(node), "key") is var key && Words.Trimmed(key).Length > 0 && !byKey.TryAdd(key, node))
+                    Error(Id(node), Words.DeviceKeyTaken(key, Words.StepName(byKey[key], Spec(byKey[key]))), "key", code: "definition.duplicateDevice");
+            JsonObject? Parent(JsonObject node) => ViaDevice(Config(node)["via"]) is { } key && byKey.TryGetValue(key, out var parent) ? parent : null;
+            foreach (var node in devices)
+            {
+                var name = Words.StepName(node, Spec(node));
+                if (ViaDevice(Config(node)["via"]) is { } named && !byKey.ContainsKey(named)) Error(Id(node), Words.ViaUnknown(name, named), "via", code: "device.viaUnknown");
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                for (var next = Parent(node); next != null && seen.Add(Id(next)); next = Parent(next))
+                    if (ReferenceEquals(next, node)) { Error(Id(node), Words.ViaCycle(name), "via", code: "device.viaCycle"); break; }
+                if (!data.Any(e => Text(e, "source") == Id(node) && Text(e, "sourcePort") == "entities")) errors.Add(new(Id(node), Words.DeviceEmpty(name), 2, Code: "device.empty"));
+            }
         }
         /// <summary>
         /// The flows of Entity nodes: a state value reads no step that runs in a flow (<see cref="StateSource"/>), its state
@@ -987,20 +1048,21 @@ public static class VisualGraphValidator
                 else if (!StateInputs(node, Root).Any(p => Supplied(node, p.Key)))
                     Error(id, Words.NoValue(KindLabel(kind)), code: "entity.no_value");
             }
-            // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
-            // device names its entities, and none of its state values or each one its type needs. A field that is not text
-            // is the config rule's below.
+            // A text setting of an Entity or a Device node: "" when left out, null when it is not text (the config rule's below).
+            string? TextSetting(string field) => !cfg.ContainsKey(field) ? "" : cfg[field] is JsonValue v && v.TryGetValue<string>(out var typed) ? typed : null;
+            // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless it is on a device
+            // (a Device node wired to it, or the definition's device), and none of its state values or each one its type
+            // needs. A field that is not text is the config rule's below.
             if (EntityGraph && Declares(spec, "entity"))
             {
-                string? Typed(string field) => !cfg.ContainsKey(field) ? "" : cfg[field] is JsonValue v && v.TryGetValue<string>(out var typed) ? typed : null;
-                if (Typed("key") is { } key)
+                if (TextSetting("key") is { } key)
                     if (Words.Trimmed(key).Length == 0) Error(id, Words.EntityKeyMissing, "key", code: "definition.entityKey");
                     else if (!Match(key, Words.EntityKeyPattern)) Error(id, Words.EntityKey(key), "key", code: "definition.entityKey");
                 // A type left out is the config rule's; one given blank is said the same way.
-                if (Typed("domain") is { } domain && cfg.ContainsKey("domain"))
+                if (TextSetting("domain") is { } domain && cfg.ContainsKey("domain"))
                     if (Words.Trimmed(domain).Length == 0) Error(id, $"{ConfigLabel(spec["config"]?["domain"], "domain")} is required", "domain");
                     else if (DeclaredDomain(node, Root) == null) Error(id, Words.NotAnEntityType(domain), "domain", code: "definition.entityDomain");
-                if (Typed("name") is { } name && Words.Trimmed(name).Length == 0 && !device) Error(id, Words.EntityNameMissing, "name", code: "entity.name");
+                if (TextSetting("name") is { } name && Words.Trimmed(name).Length == 0 && !device && !OnDevice(node)) Error(id, Words.EntityNameMissing, "name", code: "entity.name");
                 // Its Device input is no state value: a wire into it neither counts as one given nor asks for the others.
                 if (DeclaredDomain(node, Root)?["state"] is JsonObject state && StateInputs(node, Root).ToList() is var values && values.Where(p => Supplied(node, p.Key)).ToList() is { Count: > 0 } given)
                     foreach (var (port, input) in values)
@@ -1013,6 +1075,19 @@ public static class VisualGraphValidator
                         if (member is not ("state" or "commands" or "frame")) Error(id, Words.HistoryMember(member), "history");
                         else if (value is not JsonValue flag || !flag.TryGetValue<bool>(out _)) Error(id, Words.HistoryValue(member), "history");
                 if (cfg.ContainsKey("trackHistory")) Error(id, Words.HistoryNotTrack, "history");
+            }
+            // A Device node: a key of the form entity keys take, a name, a Part of of its shape, and a configuration URL Home
+            // Assistant takes. A field that is not text, or a Part of that is not an object, is the config rule's below; what
+            // Part of names, and its key among the others, are the graph's (GraphRules).
+            if (EntityGraph && Declares(spec, "device"))
+            {
+                if (TextSetting("key") is { } key)
+                    if (Words.Trimmed(key).Length == 0) Error(id, Words.DeviceKeyMissing, "key", code: "definition.deviceKey");
+                    else if (!Match(key, Words.EntityKeyPattern)) Error(id, Words.DeviceKey(key), "key", code: "definition.deviceKey");
+                if (TextSetting("name") is { } name && Words.Trimmed(name).Length == 0) Error(id, Words.DeviceNameMissing, "name", code: "device.name");
+                if (cfg["via"] is JsonObject via && !ViaShaped(via)) Error(id, Words.ViaShape, "via", code: "device.via");
+                if (cfg.ContainsKey("configurationUrl") && TextSetting("configurationUrl") is { } url && !ConfigurationUrlSchemes.Any(s => url.StartsWith(s, StringComparison.Ordinal)))
+                    Error(id, Words.ConfigurationUrl(Words.StepName(node, spec)), "configurationUrl", code: "device.configurationUrl");
             }
             if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))
                 Error(id, Words.UnknownSetting(settingKey, ConfigLabel(spec["config"]?["key"], "key")), "key", code: "setting.unknown");

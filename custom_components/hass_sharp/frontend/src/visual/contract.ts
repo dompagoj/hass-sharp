@@ -273,6 +273,32 @@ export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnaps
   const keys = declaredEntities(graph, catalog).map(d => d.entity.key)
   return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
 }
+/**
+ * The devices the graph's Device nodes declare (a kind with `declares: 'device'`), each with its node's id, in the order
+ * of the graph's `nodes`: a copy of the node's config (empty when it is not an object); none for a graph of the wrong
+ * shape. Mirrors `VisualNodeCatalog.DeclaredDevices`.
+ */
+export function declaredDevices(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; device: Record<string, unknown> }[] {
+  return (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record)
+    .filter(node => nodeSpec(node.kind, catalog)?.declares === 'device')
+    .map(node => ({ nodeId: text(node.id), device: record(node.config) ? structuredClone(node.config) : {} }))
+}
+/** The keys a graph already gives its devices: those its Device nodes have, each text key once; none without Device nodes. */
+export function definitionDeviceKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
+  const keys = declaredDevices(graph, catalog).map(d => d.device.key)
+  return [...new Set(keys.filter((key): key is string => typeof key === 'string' && key !== ''))]
+}
+/**
+ * The id of the Device node an Entity node is on: the source of the first value wire into its Device pin, as the
+ * validators read the graph's nodes and wires, when that source is a Device node; undefined without the wire, when
+ * something else is wired there, or for an id that is no Entity node. Mirrors `VisualNodeCatalog.DeviceOf`.
+ */
+export function deviceNodeOf(graph: unknown, entityNodeId: string, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
+  const nodes = graphNodes(graph), hub = nodes.get(entityNodeId)
+  if (!hub || nodeSpec(hub.kind, catalog)?.declares !== 'entity') return undefined
+  const wire = (record(graph) && Array.isArray(graph.edges) ? graph.edges as unknown[] : []).find((edge): edge is Record<string, unknown> => valueWire(edge, nodes) && edge.target === entityNodeId && edge.targetPort === 'device')
+  return wire && nodeSpec(nodes.get(wire.source as string)!.kind, catalog)?.declares === 'device' ? wire.source as string : undefined
+}
 /** `base`, else `base_2`, `base_3`… past the keys `taken`, each within the 40 characters of an entity key. */
 export function freeKey(base: string, taken: readonly string[]): string {
   if (!taken.includes(base)) return base
@@ -533,6 +559,13 @@ function graphNodes(graph: unknown): Map<string, GraphNode> {
     if (record(node) && typeof node.id === 'string' && node.id && record(node.config) && !nodes.has(node.id)) nodes.set(node.id, node as unknown as GraphNode)
   return nodes
 }
+/**
+ * Whether an edge is a well-formed value wire between two of the graph's `nodes`, as both validators read one. Mirrors
+ * `VisualNodeCatalog.ValueWires`.
+ */
+const valueWire = (edge: unknown, nodes: ReadonlyMap<string, GraphNode>): edge is Record<string, unknown> =>
+  record(edge) && typeof edge.id === 'string' && !!edge.id && edge.kind === 'data' && !Object.hasOwn(edge, 'port') && typeof edge.sourcePort === 'string' && !!edge.sourcePort &&
+  typeof edge.targetPort === 'string' && !!edge.targetPort && typeof edge.source === 'string' && nodes.has(edge.source) && typeof edge.target === 'string' && nodes.has(edge.target)
 const propertyOf = (output: unknown) => record(output) ? text(output.propertyOf) : ''
 const selectingNodes = (catalog: VisualCatalogSnapshot, graph: unknown) =>
   [...graphNodes(graph).values()].filter(node => Object.values(nodeSpec(node.kind, catalog)?.outputs ?? {}).some(output => propertyOf(output) !== ''))
@@ -561,8 +594,7 @@ export function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
   const nodes = graphNodes(graph)
   const incoming = new Map<string, Record<string, unknown>>()
   for (const edge of record(graph) && Array.isArray(graph.edges) ? graph.edges : [])
-    if (record(edge) && typeof edge.id === 'string' && edge.id && edge.kind === 'data' && !Object.hasOwn(edge, 'port') && typeof edge.sourcePort === 'string' && edge.sourcePort &&
-      typeof edge.targetPort === 'string' && edge.targetPort && typeof edge.source === 'string' && nodes.has(edge.source) && typeof edge.target === 'string' && nodes.has(edge.target)) {
+    if (valueWire(edge, nodes)) {
       const key = JSON.stringify([edge.target, edge.targetPort])
       if (!incoming.has(key)) incoming.set(key, edge)
     }
@@ -1020,7 +1052,7 @@ export const words = {
   /** A camera no Show frame step shows a frame for, named by its name. */
   noFrame: (name: string, label: string) => `${words.name(name)} never shows a frame: add ${words.article(label)} ${label} step for it`,
   // An Entity node's entity, named by entityNodeName.
-  /** What an Entity node's key must be, as an entity key is (`SharpEntity.KeyPattern`). */
+  /** What an Entity node's key must be, as an entity key is (`SharpEntity.KeyPattern`); a Device node's key is of the same form. */
   entityKeyPattern: '^[a-z][a-z0-9_]{0,39}$',
   /** An Entity node without a key. */
   entityKeyMissing: 'Give this entity a key, such as power',
@@ -1030,8 +1062,27 @@ export const words = {
   keyTaken: (key: string, first: string) => `The key ${key} is already used by ${first}: give this entity its own`,
   /** An Entity node of a type the catalog's `entityDomains` does not describe. */
   notAnEntityType: (domain: string) => `${domain} is not an entity type: choose one from the list`,
-  /** An Entity node of a definition without a device, with no name. */
+  /** An Entity node on no device (none wired to it, and the definition is none), with no name. */
   entityNameMissing: 'Name this entity: it has no device, so Home Assistant shows it by its own name',
+  // A Device node's device, named by entityNodeName.
+  /** A Device node without a key. */
+  deviceKeyMissing: 'Give this device a key, such as plug',
+  /** A Device node's key that is not of the form entity keys take (`entityKeyPattern`). */
+  deviceKey: (key: string) => `Device key ${key} is not a key: start it with a lowercase letter and use only lowercase letters, digits and underscores, up to 40 characters`,
+  /** A Device node of the key an earlier one has, and the name of that one. */
+  deviceKeyTaken: (key: string, first: string) => `The key ${key} is already used by ${first}: give this device its own`,
+  /** A Device node with no name. */
+  deviceNameMissing: 'Name this device: Home Assistant shows it by this name',
+  /** A Device node's Part of that is not nothing, `{deviceId}` or `{device}`. */
+  viaShape: 'Part of must be nothing, a Home Assistant device or another device of this definition',
+  /** A Device node part of a device of a key no Device node of the graph has. */
+  viaUnknown: (name: string, key: string) => `${name} is part of the device ${key}, which is not a device of this definition: choose another, or none`,
+  /** A Device node on a circle of Part of. */
+  viaCycle: (name: string) => `${name} ends up being part of itself: change what one of these devices is part of`,
+  /** A Device node's configuration URL that Home Assistant would refuse. */
+  configurationUrl: (name: string) => `The configuration URL of ${name} must start with http://, https:// or homeassistant://`,
+  /** A Device node no entity is wired to. */
+  deviceEmpty: (name: string) => `${name} has no entities: connect its Entities pin to an entity's Device pin`,
   /** An Entity node given some of its state values (by their labels, joined) and not one its type needs. */
   partialState: (name: string, given: string, missing: string) => `${name} has a value for ${given} but none for ${missing}: connect or set ${missing} too`,
   /** A state value of an Entity node that reads a step's output: its state is worked out in no flow. */
@@ -1130,8 +1181,10 @@ export const diagnosticCodes = [
   'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow',
   'flow.pure', 'flow.declaration', 'pure.unused', 'custom.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
+  'definition.deviceKey', 'definition.duplicateDevice',
   'node.document', 'node.singleton', 'root.incoming',
   'setting.unknown', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
+  'device.name', 'device.via', 'device.viaUnknown', 'device.viaCycle', 'device.configurationUrl', 'device.empty',
   'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.no_frame',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
@@ -1140,6 +1193,18 @@ export type DiagnosticCode = typeof diagnosticCodes[number]
  * refused; one the graph already has is not a reason to refuse an unrelated connection (it may be the one that fixes it).
  */
 export const blockingDiagnostic = (d: { code?: string }) => d.code !== undefined && (d.code.startsWith('cycle.') || d.code.startsWith('scope.'))
+/** What a Device node's configuration URL may start with: what Home Assistant takes. */
+const configurationUrlSchemes = ['http://', 'https://', 'homeassistant://']
+/**
+ * Whether a Device node's Part of, an object, is of its shape: `{deviceId}` (a Home Assistant device) or `{device}` (the
+ * key of another Device node), that one member, a text that is not blank once trimmed. Mirrors `VisualGraphValidator` `ViaShaped`.
+ */
+const viaShaped = (via: Record<string, unknown>) => {
+  const members = Object.entries(via)
+  return members.length === 1 && (members[0][0] === 'deviceId' || members[0][0] === 'device') && typeof members[0][1] === 'string' && !!members[0][1].replace(blankEnds, '')
+}
+/** The key of the Device node a Device node's Part of names (`{device: key}`, of its shape); else undefined. */
+const viaDevice = (via: unknown) => record(via) && viaShaped(via) && typeof via.device === 'string' ? via.device : undefined
 
 /**
  * Which part of the validator produced a diagnostic. The connection index re-derives only the parts a
@@ -1370,6 +1435,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     }
   }
   origin = graphOrigin
+  /**
+   * Whether an Entity node is on a Device node: the wire into its Device pin (the one it reads) comes from one. As
+   * `deviceNodeOf` derives it from the graph. Mirrors `VisualGraphValidator` `OnDevice`.
+   */
+  const onDevice = (hub: GraphNode) => { const wire = incoming.get(key(hub.id, 'device')); return wire !== undefined && nodeSpec(nodes.get(wire.source)!.kind)?.declares === 'device' }
   /** Whether a step's input is given a value: a wire into it, or an operand that is not unset. Mirrors `VisualGraphValidator` `Supplied`. */
   function supplied(node: GraphNode, port: string) {
     const raw = inputValue(node, port, catalog)
@@ -1500,11 +1570,12 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       if (!record(row.state) || !Object.keys(row.state).length) error(node.id, words.stateless(entityTypeLabel(catalog, text(definitionEntity(catalog, entityKey as string)?.domain))), 'entity', undefined, 'entity.stateless')
       else if (!Object.keys(stateInputs(node, catalog)).some(port => supplied(node, port))) error(node.id, words.noValue(text(nodeSpec(node.kind)?.label, words.key(node.kind))), undefined, undefined, 'entity.no_value')
     }
-    // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless the definition's
-    // device names its entities, and none of its state values or each one its type needs. A field that is not text is
-    // the config rule's below.
+    // A text setting of an Entity or a Device node: '' when left out, undefined when it is not text (the config rule's below).
+    const typed = (field: string) => !Object.hasOwn(node.config, field) ? '' : typeof node.config[field] === 'string' ? node.config[field] as string : undefined
+    // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless it is on a device (a
+    // Device node wired to it, or the definition's device), and none of its state values or each one its type needs. A
+    // field that is not text is the config rule's below.
     if (entityGraph && spec.declares === 'entity') {
-      const typed = (field: string) => !Object.hasOwn(node.config, field) ? '' : typeof node.config[field] === 'string' ? node.config[field] as string : undefined
       const key = typed('key')
       if (key !== undefined) {
         if (!key.replace(blankEnds, '')) error(node.id, words.entityKeyMissing, 'key', undefined, 'definition.entityKey')
@@ -1517,7 +1588,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         else if (!declaredDomain(node, catalog)) error(node.id, words.notAnEntityType(domain), 'domain', undefined, 'definition.entityDomain')
       }
       const name = typed('name')
-      if (name !== undefined && !name.replace(blankEnds, '') && !hasDevice) error(node.id, words.entityNameMissing, 'name', undefined, 'entity.name')
+      if (name !== undefined && !name.replace(blankEnds, '') && !hasDevice && !onDevice(node)) error(node.id, words.entityNameMissing, 'name', undefined, 'entity.name')
       const state = declaredDomain(node, catalog)?.state
       // Its Device input is no state value: a wire into it neither counts as one given nor asks for the others.
       const values = Object.entries(stateInputs(node, catalog)), given = values.filter(([port]) => supplied(node, port))
@@ -1535,6 +1606,22 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
           if (!['state', 'commands', 'frame'].includes(member)) error(node.id, words.historyMember(member), 'history')
           else if (typeof value !== 'boolean') error(node.id, words.historyValue(member), 'history')
       if (Object.hasOwn(node.config, 'trackHistory')) error(node.id, words.historyNotTrack, 'history')
+    }
+    // A Device node: a key of the form entity keys take, a name, a Part of of its shape, and a configuration URL Home
+    // Assistant takes. A field that is not text, or a Part of that is not an object, is the config rule's below; what Part
+    // of names, and its key among the others, are the graph's (`deviceRules`).
+    if (entityGraph && spec.declares === 'device') {
+      const key = typed('key')
+      if (key !== undefined) {
+        if (!key.replace(blankEnds, '')) error(node.id, words.deviceKeyMissing, 'key', undefined, 'definition.deviceKey')
+        else if (!matches(key, words.entityKeyPattern)) error(node.id, words.deviceKey(key), 'key', undefined, 'definition.deviceKey')
+      }
+      const name = typed('name')
+      if (name !== undefined && !name.replace(blankEnds, '')) error(node.id, words.deviceNameMissing, 'name', undefined, 'device.name')
+      if (record(node.config.via) && !viaShaped(node.config.via)) error(node.id, words.viaShape, 'via', undefined, 'device.via')
+      const url = typed('configurationUrl')
+      if (Object.hasOwn(node.config, 'configurationUrl') && url !== undefined && !configurationUrlSchemes.some(s => url.startsWith(s)))
+        error(node.id, words.configurationUrl(words.stepName(node, catalog)), 'configurationUrl', undefined, 'device.configurationUrl')
     }
     if (entityGraph && node.kind === 'setting' && typeof node.config.key === 'string' && !definitionItems(catalog, 'settings').some(s => s.key === node.config.key))
       error(node.id, words.unknownSetting(node.config.key, configLabel(spec.config.key, 'key')), 'key', undefined, 'setting.unknown')
@@ -1732,7 +1819,34 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         errors.push({ nodeId: hub.id, message: words.noFrame(name, kindLabel('show_frame')), severity: 2, portId: 'frame', code: 'camera.no_frame' }); origins.push(origin)
       }
     }
+    deviceRules()
     for (const found of entityScopes(nodes, data, outgoing, catalog)) { errors.push(found); origins.push(origin) }
+  }
+  /**
+   * The rules about Device nodes among each other, in the graph's order: a key no earlier Device node has; a Part of that
+   * names a device (`{device: key}`, the first Device node of that key) this graph has, and does not come back to the node
+   * it starts from (every device of such a circle is told, one part of itself included); and at least one entity wired to
+   * it, else a warning. Mirrors `VisualGraphValidator` `DeviceRules`.
+   */
+  function deviceRules() {
+    const devices = [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'device')
+    const byKey = new Map<string, GraphNode>()
+    for (const node of devices) {
+      const key = text(node.config.key), first = byKey.get(key)
+      if (key.replace(blankEnds, '') && first) error(node.id, words.deviceKeyTaken(key, words.stepName(first, catalog)), 'key', undefined, 'definition.duplicateDevice')
+      else if (key.replace(blankEnds, '')) byKey.set(key, node)
+    }
+    const parent = (node: GraphNode) => { const key = viaDevice(node.config.via); return key === undefined ? undefined : byKey.get(key) }
+    for (const node of devices) {
+      const name = words.stepName(node, catalog), named = viaDevice(node.config.via)
+      if (named !== undefined && !byKey.has(named)) error(node.id, words.viaUnknown(name, named), 'via', undefined, 'device.viaUnknown')
+      const seen = new Set<string>()
+      for (let next = parent(node); next !== undefined && !seen.has(next.id); next = parent(next)) {
+        seen.add(next.id)
+        if (next === node) { error(node.id, words.viaCycle(name), 'via', undefined, 'device.viaCycle'); break }
+      }
+      if (!data.some(e => e.source === node.id && e.sourcePort === 'entities')) { errors.push({ nodeId: node.id, message: words.deviceEmpty(name), severity: 2, code: 'device.empty' }); origins.push(origin) }
+    }
   }
 }
 /**
@@ -1894,8 +2008,10 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // is about the node, not a problem the wire causes; one on the input the wire fills still refuses it.
   // A reader that now gets its entity over a wire is warned that an Entity node's state reading it cannot watch that entity: the
   // warning names the cost, and the wire is allowed. An Entity node given one of its state values asks for the others
-  // its type needs: they can only be connected one at a time.
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
+  // its type needs: they can only be connected one at a time. A Device node left with no entities by the Device wire this
+  // one replaces is only a warning about that device, as an unused value node is. Nothing else a Device node says (its key,
+  // name, Part of, configuration URL) changes with a wire, so it is never new.
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)

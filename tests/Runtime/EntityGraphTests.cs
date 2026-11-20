@@ -2033,9 +2033,6 @@ static class EntityGraphTests
         Check(after.Length > 0 && after.All(s => Available(s) && Is(s, "is_on", null)), "the binary sensor starts unknown: " + Lines(after.Select(s => s.ToJsonString())));
     }
 
-    // ---- How a definition's flows end ----
-
-    /// <summary>A command whose flow ends at a Stop step has succeeded: the state the flow set before it is pushed.</summary>
     // ---- An entity on a Device node runs as one without the wire ----
 
     /// <summary>
@@ -2150,6 +2147,9 @@ static class EntityGraphTests
         await rig.Until("relay:relay", s => Is(s, "is_on", false), "the new revision takes the command", batches);
     }
 
+    // ---- How a definition's flows end ----
+
+    /// <summary>A command whose flow ends at a Stop step has succeeded: the state the flow set before it is pushed.</summary>
     static async Task ACommandFlowThatEndsAtAStopStepSucceeds()
     {
         await using var rig = await Rig.Start("stop-command");

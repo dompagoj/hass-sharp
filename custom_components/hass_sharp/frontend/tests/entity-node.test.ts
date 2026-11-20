@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, connectData, dataInputs, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, connectData, dataInputs, declaredDevices, definitionDeviceKeys, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
@@ -157,10 +157,10 @@ it('a new Device node has no step pins and no state', () => {
   expect(message).toContain('image')
   expect(message).not.toContain('device')
   expect(listedTypes(nodeCatalog)).not.toContain('device')
-  // A Device node is named by its name, has no problem of its own, and its card has no step pins and is not muted.
+  // A Device node is named by its name, has no problem but that it has no entities yet, and its card has no step pins and is not muted.
   const diagnostics = validateGraph(graph)
   expect(words.stepName(device)).toBe('Hall plug')
-  expect(diagnostics.filter(d => d.nodeId === 'plug')).toEqual([])
+  expect(diagnostics.filter(d => d.nodeId === 'plug')).toEqual([{ nodeId: 'plug', message: 'Hall plug has no entities: connect its Entities pin to an entity\'s Device pin', severity: 2, code: 'device.empty' }])
   const view = buildNodeView(device, { graph, catalog: nodeCatalog, diagnostics })
   expect([view.execIn, view.next, view.footer, view.unreachable]).toEqual([undefined, undefined, undefined, false])
   expect(view.title).toBe('Hall plug')
@@ -189,6 +189,67 @@ it('a Device wire is not walked upstream of an entity, and makes no run of it a 
   expect(Object.values(names.roots!).filter(name => name.startsWith('Hall plug'))).toEqual([])
   expect(Object.values(names.roots!)).toContain('Door: State')
   expect(names.entities!.map(e => e.key)).toEqual(['door'])
+})
+
+it('wiring an entity to a device takes away its need for a name', () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: ' ' })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'binary_sensor', name: '' })
+  const nameless = { nodeId: 'relay', message: 'Name this entity: it has no device, so Home Assistant shows it by its own name', severity: 3, inputId: 'name', code: 'entity.name' }
+  expect(validateGraph(graph).filter(d => d.nodeId === 'relay')).toEqual([nameless])
+  // A wire is refused only for a problem it makes: the Device node's own (it has no name yet) is no reason, and the index agrees.
+  expect(validateGraph(graph).filter(d => d.nodeId === 'plug').map(d => d.code)).toEqual(['device.name', 'device.empty'])
+  expect(dataConnectionError(graph, 'plug', 'entities', 'relay', 'device', nodeCatalog, { quick: true })).toBeUndefined()
+  expect(dataConnectionError(graph, 'plug', 'entities', 'relay', 'device', nodeCatalog)).toBeUndefined()
+  const wired = connectData(graph, 'plug', 'entities', 'relay', 'device')
+  expect(validateGraph(wired).filter(d => d.nodeId === 'relay')).toEqual([])
+  expect(validateGraph(wired).filter(d => d.nodeId === 'plug').map(d => d.code)).toEqual(['device.name'])
+  // Moved to another device, it leaves the first with no entities: a warning about that device, not a problem the wire makes.
+  const desk = add(wired, 'device', 'desk', { key: 'desk', name: 'Desk' })
+  expect(dataConnectionError(desk, 'desk', 'entities', 'relay', 'device', nodeCatalog, { quick: true })).toBeUndefined()
+  const moved = connectData(desk, 'desk', 'entities', 'relay', 'device')
+  expect(validateGraph(moved).filter(d => d.code === 'device.empty').map(d => d.nodeId)).toEqual(['plug'])
+  expect(validateGraph(moved).filter(d => d.nodeId === 'relay')).toEqual([])
+  // Without the wire it stands alone and needs its name again.
+  expect(validateGraph(disconnectData(moved, 'relay', 'device')).filter(d => d.nodeId === 'relay')).toEqual([nameless])
+})
+
+it('a definition\'s devices are its Device nodes, and an entity is on the one wired to it', () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug', model: 'P1' })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  graph = add(graph, 'entity', 'power', { key: 'power', domain: 'sensor', name: 'Power' })
+  graph = add(graph, 'device', 'hub', { key: 'hub', name: 'Hub', via: { deviceId: 'zigbee' } })
+  graph = add(graph, 'entity', 'bare', { key: 'bare', domain: 'switch', name: 'Bare' })
+  graph = add(graph, 'entity', 'stray', { key: 'stray', domain: 'binary_sensor', name: 'Stray' })
+  graph = add(graph, 'device', 'keyless', { key: '', name: 'Keyless' })
+  graph = connectData(connectData(graph, 'plug', 'entities', 'relay', 'device'), 'plug', 'entities', 'power', 'device')
+  // A wire into the Device pin from a node that is not a Device node (which the validators refuse).
+  graph = add(graph, 'constant', 'c', { type: 'string', value: lit('string', 'plug') })
+  graph = { ...graph, edges: [...graph.edges, { id: 'c.value:stray.device', kind: 'data', source: 'c', sourcePort: 'value', target: 'stray', targetPort: 'device' }] }
+  const devices = declaredDevices(graph)
+  expect(devices.map(d => d.nodeId)).toEqual(['plug', 'hub', 'keyless'])
+  expect(devices[0].device).toMatchObject({ key: 'plug', name: 'Hall plug', model: 'P1' })
+  expect(devices[1].device.via).toEqual({ deviceId: 'zigbee' })
+  expect(devices[0].device).not.toBe(graph.nodes[0].config)
+  expect(definitionDeviceKeys(graph)).toEqual(['plug', 'hub'])
+  expect([deviceNodeOf(graph, 'relay'), deviceNodeOf(graph, 'power')]).toEqual(['plug', 'plug'])
+  expect([deviceNodeOf(graph, 'bare'), deviceNodeOf(graph, 'stray'), deviceNodeOf(graph, 'missing'), deviceNodeOf(graph, 'plug')]).toEqual([undefined, undefined, undefined, undefined])
+  expect(declaredDevices({ nodes: 3 })).toEqual([])
+})
+
+it('a device\'s problems are on its node: a circle of Part of on each of its devices, no entities on the node as a whole', () => {
+  let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug', via: { device: 'hub' } })
+  graph = add(graph, 'device', 'hub', { key: 'hub', name: 'Hub', via: { device: 'plug' } })
+  graph = add(graph, 'device', 'desk', { key: ' desk ', name: ' ' })
+  graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' })
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  graph = connectData(connectData(graph, 'plug', 'entities', 'relay', 'device'), 'hub', 'entities', 'lamp', 'device')
+  const found = validateGraph(graph).filter(d => d.code === 'device.viaCycle' || d.code === 'device.empty')
+  expect(found.map(d => `${d.code}@${d.nodeId}:${d.inputId ?? ''}:${d.portId ?? ''}:${d.severity}`)).toEqual(['device.viaCycle@plug:via::3', 'device.viaCycle@hub:via::3', 'device.empty@desk:::2'])
+  // A device without a name is named by its key, trimmed, else Device.
+  expect(found[2].message).toBe('desk has no entities: connect its Entities pin to an entity\'s Device pin')
+  expect(words.stepName({ id: 'd', kind: 'device', config: { key: '', name: '' } })).toBe('Device')
+  for (const code of ['definition.deviceKey', 'definition.duplicateDevice', 'device.name', 'device.via', 'device.viaUnknown', 'device.viaCycle', 'device.configurationUrl', 'device.empty'])
+    expect(diagnosticCodes as readonly string[]).toContain(code)
 })
 
 /** Copies the steps `ids` with the clipboard and pastes them beside where they were. */

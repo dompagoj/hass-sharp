@@ -86,6 +86,30 @@ public static class VisualNodeCatalog
             if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "entity")) yield return (Text(node, "id"), EntityDescription(node));
     }
     /// <summary>
+    /// The devices the graph's Device nodes declare (<c>"declares": "device"</c>), each with its node's id, in the order of
+    /// the graph's <c>nodes</c>: a copy of the node's config (empty when it is not an object); none for a graph of the wrong
+    /// shape. Mirrored by <c>declaredDevices</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static IEnumerable<(string NodeId, JsonObject Device)> DeclaredDevices(JsonObject graph, JsonObject catalog)
+    {
+        foreach (var raw in graph["nodes"] as JsonArray ?? [])
+            if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "device"))
+                yield return (Text(node, "id"), node["config"] is JsonObject config ? (JsonObject)config.DeepClone() : []);
+    }
+    /// <summary>
+    /// The id of the Device node an Entity node is on: the source of the first value wire into its Device pin, as the
+    /// validators read the graph's nodes and wires (<see cref="GraphNodes"/>, <see cref="ValueWires"/>), when that source is
+    /// a Device node; null without the wire, when something else is wired there, or for an id that is no Entity node.
+    /// Mirrored by <c>deviceNodeOf</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static string? DeviceOf(JsonObject graph, string entityNodeId, JsonObject catalog)
+    {
+        var nodes = GraphNodes(graph);
+        if (!nodes.TryGetValue(entityNodeId, out var hub) || !Declares(catalog["nodes"]?[Text(hub, "kind")], "entity")) return null;
+        var wire = ValueWires(graph, nodes).Find(e => Text(e, "target") == entityNodeId && Text(e, "targetPort") == "device");
+        return wire != null && Declares(catalog["nodes"]?[Text(nodes[Text(wire, "source")], "kind")], "device") ? Text(wire, "source") : null;
+    }
+    /// <summary>
     /// The kind of document a graph is: <c>entity</c> when it has an object <c>definition</c> (an entity definition's
     /// logic, its settings composed into it), else <c>automation</c>.
     /// </summary>

@@ -24,7 +24,9 @@ static class EntityNodeTests
             (nameof(FlowsAreNamedByNodeAndPort), FlowsAreNamedByNodeAndPort),
             (nameof(ANodeIsNamedByItsEntity), ANodeIsNamedByItsEntity),
             (nameof(TheOldStepsAreNotKinds), TheOldStepsAreNotKinds),
-            (nameof(ADeviceNodeIsADeclaration), ADeviceNodeIsADeclaration) })
+            (nameof(ADeviceNodeIsADeclaration), ADeviceNodeIsADeclaration),
+            (nameof(DevicesAreDerivedFromTheirNodes), DevicesAreDerivedFromTheirNodes),
+            (nameof(ADevicesProblemsAreOnItsNode), ADevicesProblemsAreOnItsNode) })
         {
             try
             {
@@ -179,5 +181,47 @@ static class EntityNodeTests
         Check(string.Join(",", VisualNodeCatalog.DataInputs(relay).Select(p => p.Key)) == "device,is_on", "its inputs also have Device");
         var group = catalog["nodes"]!.AsObject().Where(n => VisualNodeCatalog.Text(n.Value, "category") == "Entity").Select(n => n.Key).Take(3);
         Check(string.Join(",", group) == "entity,device,entity_setup", "the catalog's Entity group begins Entity, Device, When started: " + string.Join(",", group));
+    }
+
+    /// <summary>
+    /// A definition's devices are its Device nodes, in node order, each its node's config; an entity is on the Device node
+    /// wired into its Device pin, and on none when nothing or something else is wired there.
+    /// </summary>
+    static void DevicesAreDerivedFromTheirNodes()
+    {
+        var graph = Graph(null,
+            N("plug", "device", new { key = "plug", name = "Hall plug", model = "P1" }), Hub("relay", "relay", "switch"), Hub("power", "power", "sensor"),
+            N("hub", "device", new { key = "hub", name = "Hub", via = new { deviceId = "zigbee" } }), Hub("bare", "bare", "switch"),
+            Hub("stray", "stray", "binary_sensor"), N("c", "constant", new { type = "string", value = new { kind = "literal", type = "string", value = "plug" } }));
+        graph["edges"] = new JsonArray(D("plug", "relay", "device", "entities"), D("plug", "power", "device", "entities"), D("c", "stray", "device"));
+        var catalog = VisualNodeCatalog.Root;
+        var devices = VisualNodeCatalog.DeclaredDevices(graph, catalog).ToList();
+        Check(string.Join(",", devices.Select(d => d.NodeId + "=" + d.Device["key"])) == "plug=plug,hub=hub", "the Device nodes in node order: " + string.Join(",", devices.Select(d => d.NodeId)));
+        Check(devices[0].Device["model"]!.GetValue<string>() == "P1" && devices[1].Device["via"]!["deviceId"]!.GetValue<string>() == "zigbee", "each device is its node's config");
+        Check(!ReferenceEquals(devices[0].Device, graph["nodes"]![0]!["config"]), "a copy of it, not the node's own");
+        Check(VisualNodeCatalog.DeviceOf(graph, "relay", catalog) == "plug" && VisualNodeCatalog.DeviceOf(graph, "power", catalog) == "plug", "a wired entity is on its Device node");
+        Check(VisualNodeCatalog.DeviceOf(graph, "bare", catalog) == null, "an entity without the wire is on none");
+        Check(VisualNodeCatalog.DeviceOf(graph, "stray", catalog) == null, "nor is one whose Device pin is wired from a node that is not a Device node");
+        Check(VisualNodeCatalog.DeviceOf(graph, "missing", catalog) == null && VisualNodeCatalog.DeviceOf(graph, "plug", catalog) == null, "an id that is no Entity node is on none");
+        Check(!VisualNodeCatalog.DeclaredDevices(new JsonObject { ["nodes"] = 3 }, catalog).Any(), "a graph of the wrong shape declares no device");
+    }
+
+    /// <summary>
+    /// A Device node is named by its name, else its key, else Device; its problems are on it, each on the setting it is
+    /// about, and a device with no entities is a warning on the node as a whole. A device of a circle of Part of has it on each.
+    /// </summary>
+    static void ADevicesProblemsAreOnItsNode()
+    {
+        var spec = VisualNodeCatalog.GetNode("device");
+        Check(VisualGraphValidator.Words.StepName(N("d", "device", new { key = " desk ", name = " " }), spec) == "desk", "a device without a name is named by its key, trimmed");
+        Check(VisualGraphValidator.Words.StepName(N("d", "device", new { key = "", name = "" }), spec) == "Device", "else Device");
+        var graph = Graph(null,
+            N("plug", "device", new { key = "plug", name = "Hall plug", via = new { device = "hub" } }), N("hub", "device", new { key = "hub", name = "Hub", via = new { device = "plug" } }),
+            N("desk", "device", new { key = "desk", name = "Desk" }), Hub("relay", "relay", "switch"), Hub("lamp", "lamp", "switch"));
+        graph["edges"] = new JsonArray(D("plug", "relay", "device", "entities"), D("hub", "lamp", "device", "entities"));
+        var found = VisualGraphValidator.Validate(graph, VisualCatalogSnapshot.BuiltIn).Where(d => d.Code is "device.viaCycle" or "device.empty").ToList();
+        string Of(VisualDiagnostic d) => $"{d.Code}@{d.NodeId}:{d.InputId}:{d.PortId}:{d.Severity}";
+        Check(string.Join(",", found.Select(Of)) == "device.viaCycle@plug:via::3,device.viaCycle@hub:via::3,device.empty@desk:::2",
+            "each device of the circle on its Part of, an empty one on the node as a warning: " + string.Join(",", found.Select(Of)));
     }
 }
