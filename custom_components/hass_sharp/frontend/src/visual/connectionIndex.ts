@@ -197,14 +197,16 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
       if (input) {
         const wrong = wireTypeError(source, output, target, input, targetPort, after, index.assignable)
         if (wrong) messages.add(wrong.message)
-        if (analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
-        if (sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
+        // A state value of an Entity node gets scope.stateSource instead, as the validator has it.
+        const stateValue = spec.declares === 'entity'
+        if (!stateValue && analysis.scopes.has(sourceId) && analysis.scopes.has(targetId) && !analysis.visible(source, target, output)) messages.add(words.scopeData(inputSubject(target, input, targetPort, catalog)))
+        if (!stateValue && sourcePure && !targetPure && analysis.scopes.has(targetId)) for (const m of crossing(target, source)) messages.add(m)
       }
       // Into a value node: every step reading it, directly or through other value nodes, now reads those outputs too,
       // even through an input that takes no wire (the validator still follows the wire). A step's problem the graph
       // already has is no new problem.
       if (targetPure) for (const { via, reader, port } of stepReaders(target))
-        if (analysis.scopes.has(reader.id)) for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
+        if (analysis.scopes.has(reader.id) && catalog.nodes[reader.kind]?.declares !== 'entity') for (const m of crossing(reader, via)) if (!oldScope.has(JSON.stringify([reader.id, port, m]))) messages.add(m)
     }
     // Into the input a Select property node reads: the wire changes the type of its output, and so of every wire from it
     // and from a Select property node reading it in turn. What the nodes say about their property never refuses it.

@@ -438,8 +438,18 @@ public static class VisualGraphValidator
         internal static string PartialState(string name, string given, string missing) => $"{name} has a value for {given} but none for {missing}: connect or set {missing} too";
         /// <summary>A state value of an Entity node that reads a step's output: its state is worked out in no flow.</summary>
         internal static string StateSource(string value, string name, string step) => $"{value} of {name} cannot read {step}, which runs in a flow: use a Set state step after {step} instead";
-        /// <summary>A step reading a command's value that another flow runs too, named by where that flow starts.</summary>
-        internal static string FlowValue(string step, string value, string command, string name, string other) => $"{step} reads {value} from {command} of {name} but also runs from {other}, where there is no {value}";
+        /// <summary>
+        /// A step reading a command's value that another flow runs too, named by where that flow starts: <paramref name="also"/>
+        /// when the command whose value it reads runs it as well, else it runs only from the other.
+        /// </summary>
+        internal static string FlowValue(string step, string value, string command, string name, string other, bool also) =>
+            $"{step} reads {value} from {command} of {name} but {(also ? "also " : "")}runs from {other}, where there is no {value}";
+        /// <summary>A member of an Entity node's run history that is not one of its flows.</summary>
+        internal static string HistoryMember(string member) => $"Run history has no {member}; it takes state, commands or frame";
+        /// <summary>A member of an Entity node's run history that is not true or false.</summary>
+        internal static string HistoryValue(string member) => $"{KeyWords(member)} of Run history must be true or false";
+        /// <summary>trackHistory on an Entity node, whose runs are recorded by its history.</summary>
+        internal const string HistoryNotTrack = "An Entity node has no trackHistory: its history says which of its flows record their runs (state, commands, frame)";
         /// <summary>A command pin of an Entity node with no step connected.</summary>
         internal static string NothingOn(string name, string command) => $"{name} does nothing on {command}: connect a step to {command}";
     }
@@ -550,7 +560,8 @@ public static class VisualGraphValidator
             if (graph.ContainsKey("imports")) Error(null, Words.Imports);
             if (graph.ContainsKey("members")) Error(null, Words.Members);
             if (graph["nodes"] is not JsonArray ns || graph["edges"] is not JsonArray es) { Error(null, "Nodes and edges arrays are required", code: "graph.shape"); return errors; }
-            // An entity definition's graph may be empty: the definition is saved with its entities before its logic.
+            // An entity definition's graph may be empty here: a definition with no Entity node is refused by the
+            // definition check (definition.entitiesRequired, DefinitionDocument), not by this validator.
             document = GraphDocument(graph);
             if (ns.Count < 1 && document == "automation" || OverLimit(Root, graph)) { Error(null, Words.GraphLimit(document), code: "graph.limit"); return errors; }
             // Only an object definition makes an entity graph; any other value of the key is ignored, as it always was.
@@ -626,11 +637,13 @@ public static class VisualGraphValidator
                     // A Select property node reads a value whose own type has properties.
                     else if (SelectsProperties(Spec(target), tp) ? TypeProperties(Root, type).Length == 0 : !expected.Any(t => CompatibleTypes(type, t)))
                         Error(Id(target), WrongDomain(target, tp, type) ?? (SelectsProperties(Spec(target), tp) && KnownType(type) ? Words.NoProperties(Root, type) : Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected)), tp, tp);
-                    // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
-                    if (scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
+                    // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable. A state value
+                    // of an Entity node reads no step in a flow at all, which scope.stateSource says instead.
+                    var stateValue = Declares(Spec(target), "entity");
+                    if (!stateValue && scopes.ContainsKey(Id(source)) && scopes.ContainsKey(Id(target)) && !Visible(source, target, output))
                         Error(Id(target), ScopeData(Prefix(target) + Words.PortLabel(input, tp)), tp, tp, "scope.data");
                     // A step reading a value node reads, in effect, every step output that value node uses.
-                    if (Pure(source) && !Pure(target) && scopes.ContainsKey(Id(target)))
+                    if (!stateValue && Pure(source) && !Pure(target) && scopes.ContainsKey(Id(target)))
                         foreach (var (producer, port, spec) in PureSources(source))
                             if (scopes.ContainsKey(Id(producer)) && !Visible(producer, target, spec))
                                 Error(Id(target), Words.PureScope(Words.StepName(source, Spec(source)), Words.StepName(producer, Spec(producer)), Words.PortLabel(spec, port), Words.StepName(target, Spec(target))), tp, tp, "scope.data");
@@ -728,8 +741,9 @@ public static class VisualGraphValidator
                     if (!Declares(Spec(hub), "entity") || Text(value, "group") is not { Length: > 0 } own) continue;
                     var other = pins.Find(p => p.Reached.Contains(Id(reader)) && !(p.Root == hub && p.Port == own));
                     if (other.Root == null) continue;
+                    var also = pins.Any(p => p.Root == hub && p.Port == own && p.Reached.Contains(Id(reader)));
                     Error(Id(reader), Words.FlowValue(Words.StepName(reader, Spec(reader)), Words.PortLabel(value, port), PinLabel(hub, own), Words.StepName(hub, Spec(hub)),
-                        other.Port == null ? Words.StepName(other.Root, Spec(other.Root)) : $"{PinLabel(other.Root, other.Port)} of {Words.StepName(other.Root, Spec(other.Root))}"), input, input, "scope.flow");
+                        other.Port == null ? Words.StepName(other.Root, Spec(other.Root)) : $"{PinLabel(other.Root, other.Port)} of {Words.StepName(other.Root, Spec(other.Root))}", also), input, input, "scope.flow");
                     break;
                 }
             }
@@ -977,6 +991,13 @@ public static class VisualGraphValidator
                     foreach (var (port, input) in values)
                         if (!Supplied(node, port) && Bool(state[port], "required", true))
                             Error(id, Words.PartialState(Words.StepName(node, spec), string.Join(", ", given.Select(p => Words.PortLabel(p.Value, p.Key))), Words.PortLabel(input, port)), port, code: "entity.partialState");
+                // Its run history: only its flows, each true or false (one that is not an object is the config rule's). A
+                // step's trackHistory is not its: it would be ignored.
+                if (cfg["history"] is JsonObject history)
+                    foreach (var (member, value) in history)
+                        if (member is not ("state" or "commands" or "frame")) Error(id, Words.HistoryMember(member), "history");
+                        else if (value is not JsonValue flag || !flag.TryGetValue<bool>(out _)) Error(id, Words.HistoryValue(member), "history");
+                if (cfg.ContainsKey("trackHistory")) Error(id, Words.HistoryNotTrack, "history");
             }
             if (EntityGraph && kind == "setting" && cfg["key"] is JsonValue kv && kv.TryGetValue<string>(out var settingKey) && !DefinitionItems(Root, "settings").Any(s => Text(s, "key") == settingKey))
                 Error(id, Words.UnknownSetting(settingKey, ConfigLabel(spec["config"]?["key"], "key")), "key", code: "setting.unknown");

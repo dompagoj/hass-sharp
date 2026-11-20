@@ -17,6 +17,7 @@ static class EntityNodeTests
         foreach (var (name, test) in new (string, Action)[] {
             (nameof(NodesDeclareEntities), NodesDeclareEntities),
             (nameof(AListOnTheGraphIsIgnored), AListOnTheGraphIsIgnored),
+            (nameof(ANameOfSpacesIsNoName), ANameOfSpacesIsNoName),
             (nameof(AGraphOfTheWrongShapeDeclaresNothing), AGraphOfTheWrongShapeDeclaresNothing),
             (nameof(TheNodeHasItsTypesPins), TheNodeHasItsTypesPins),
             (nameof(ACommandEntryThatIsNotAnObjectHasNoValues), ACommandEntryThatIsNotAnObjectHasNoValues),
@@ -51,6 +52,24 @@ static class EntityNodeTests
             "an entity's description is its node's settings without history and arguments");
         var merged = VisualNodeCatalog.WithGraphTypes(VisualNodeCatalog.Root, graph);
         Check(string.Join(",", VisualNodeCatalog.DefinitionItems(merged, "entities").Select(e => e["key"])) == "door,power", "the catalog of the graph lists them");
+    }
+
+    /// <summary>
+    /// A name that is blank once trimmed is no name: the entity it declares has none, so Home Assistant, the messages and
+    /// the run names see none, and its runs are named by its key. A name with text keeps its spaces in the description.
+    /// </summary>
+    static void ANameOfSpacesIsNoName()
+    {
+        var blank = Hub("p", "power", "switch", new() { ["name"] = " \t ", ["arguments"] = new JsonObject { ["is_on"] = new JsonObject { ["kind"] = "literal", ["type"] = "boolean", ["value"] = true } } });
+        var described = VisualNodeCatalog.EntityDescription(blank);
+        Check(!described.ContainsKey("name") && described["key"]!.GetValue<string>() == "power", "a blank name is left out: " + described.ToJsonString());
+        var graph = Graph(null, blank);
+        Check(VisualNodeCatalog.DefinitionItems(VisualNodeCatalog.WithGraphTypes(VisualNodeCatalog.Root, graph), "entities").Single()["name"] == null, "the graph's entity has none");
+        var flows = DefinitionGraph.HubFlows(blank, graph, VisualCatalogSnapshot.BuiltIn);
+        Check(flows.Count > 0 && flows.All(f => f.Label.StartsWith("power: ", StringComparison.Ordinal)), "its runs are named by its key: " + string.Join(",", flows.Select(f => f.Label)));
+        Check(VisualNodeCatalog.EntityDescription(Hub("p", "power", "switch", new() { ["name"] = " Power " }))["name"]!.GetValue<string>() == " Power ", "a name with text is kept as given");
+        // Only a text is trimmed: a name of another type is the validator's to refuse.
+        Check(VisualNodeCatalog.EntityDescription(Hub("p", "power", "switch", new() { ["name"] = 5 }))["name"]!.GetValue<int>() == 5, "a name that is not text is kept");
     }
 
     static void AListOnTheGraphIsIgnored()

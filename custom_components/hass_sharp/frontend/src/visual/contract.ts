@@ -229,11 +229,13 @@ function definitionItems(catalog: VisualCatalogSnapshot, list: 'entities' | 'set
 }
 /**
  * The entity an Entity node declares, as a definition lists one: a copy of its settings without its run history and
- * state values. Mirrors `VisualNodeCatalog.EntityDescription`.
+ * state values, and without a name that is blank once trimmed (no name: the messages and run names see none). Mirrors
+ * `VisualNodeCatalog.EntityDescription`.
  */
 export function entityDescription(node: GraphNode): Record<string, unknown> {
   if (!record(node.config)) return {}
   const { history: _history, arguments: _arguments, ...entity } = structuredClone(node.config)
+  if (typeof entity.name === 'string' && !entity.name.replace(blankEnds, '')) delete entity.name
   return entity
 }
 /**
@@ -799,7 +801,7 @@ export function entityNodeName(node: GraphNode, catalog: VisualCatalogSnapshot =
   return text(config.name).replace(blankEnds, '') || text(config.key).replace(blankEnds, '') || kindName(node, catalog)
 }
 /** JavaScript's whitespace, spelled out so `VisualGraphValidator.Words.Name` trims the very same characters. */
-const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g
+export const blankEnds = /^[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g
 const youSound = ['uni', 'use', 'usa', 'usu', 'uti', 'ura', 'ure', 'uri', 'uro', 'ubi']
 /** How many accepted types a type mismatch names before it says how many more (`VisualGraphValidator.Shown`). */
 const Shown = 4
@@ -1003,7 +1005,11 @@ export const words = {
   /** A state value of an Entity node that reads a step's output: its state is worked out in no flow. */
   stateSource: (value: string, name: string, step: string) => `${value} of ${name} cannot read ${step}, which runs in a flow: use a Set state step after ${step} instead`,
   /** A step reading a command's value that another flow runs too, named by where that flow starts. */
-  flowValue: (step: string, value: string, command: string, name: string, other: string) => `${step} reads ${value} from ${command} of ${name} but also runs from ${other}, where there is no ${value}`,
+  /** `also` when the command whose value the step reads runs it as well, else it runs only from the other. */
+  flowValue: (step: string, value: string, command: string, name: string, other: string, also: boolean) => `${step} reads ${value} from ${command} of ${name} but ${also ? 'also ' : ''}runs from ${other}, where there is no ${value}`,
+  historyMember: (member: string) => `Run history has no ${member}; it takes state, commands or frame`,
+  historyValue: (member: string) => `${words.key(member)} of Run history must be true or false`,
+  historyNotTrack: 'An Entity node has no trackHistory: its history says which of its flows record their runs (state, commands, frame)',
   /** A command pin of an Entity node with no step connected. */
   nothingOn: (name: string, command: string) => `${name} does nothing on ${command}: connect a step to ${command}`,
 }
@@ -1311,11 +1317,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (output && input) {
       const wrong = wireTypeError(source, output, target, input, edge.targetPort, catalog, isAssignable)
       if (wrong) error(target.id, wrong.message, edge.targetPort, edge.targetPort, wrong.code)
-      // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable.
-      if (scopes.has(source.id) && scopes.has(target.id) && !visible(source, target, output))
+      // A wire to or from a step not in the flow yet gets nothing: that step carries node.unreachable. A state value of an
+      // Entity node reads no step in a flow at all, which scope.stateSource says instead.
+      const stateValue = nodeSpec(target.kind)?.declares === 'entity'
+      if (!stateValue && scopes.has(source.id) && scopes.has(target.id) && !visible(source, target, output))
         error(target.id, words.scopeData(inputSubject(target, input, edge.targetPort, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
       // A step reading a value node reads, in effect, every step output that value node uses.
-      if (pure(source) && !pure(target) && scopes.has(target.id))
+      if (!stateValue && pure(source) && !pure(target) && scopes.has(target.id))
         for (const { node: producer, port, output: spec } of pureSources(source))
           if (scopes.has(producer.id) && !visible(producer, target, spec))
             error(target.id, words.pureScope(words.stepName(source, catalog), words.stepName(producer, catalog), words.portLabel(spec, port), words.stepName(target, catalog)), edge.targetPort, edge.targetPort, 'scope.data')
@@ -1477,6 +1485,14 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
           if (!supplied(node, port) && (record(entry) && typeof entry.required === 'boolean' ? entry.required : true))
             error(node.id, words.partialState(words.stepName(node, catalog), given.map(([p, i]) => words.portLabel(i, p)).join(', '), words.portLabel(input, port)), port, undefined, 'entity.partialState')
         }
+      // Its run history: only its flows, each true or false (one that is not an object is the config rule's). A step's
+      // trackHistory is not its: it would be ignored.
+      const history = node.config.history
+      if (record(history))
+        for (const [member, value] of Object.entries(history))
+          if (!['state', 'commands', 'frame'].includes(member)) error(node.id, words.historyMember(member), 'history')
+          else if (typeof value !== 'boolean') error(node.id, words.historyValue(member), 'history')
+      if (Object.hasOwn(node.config, 'trackHistory')) error(node.id, words.historyNotTrack, 'history')
     }
     if (entityGraph && node.kind === 'setting' && typeof node.config.key === 'string' && !definitionItems(catalog, 'settings').some(s => s.key === node.config.key))
       error(node.id, words.unknownSetting(node.config.key, configLabel(spec.config.key, 'key')), 'key', undefined, 'setting.unknown')
@@ -1718,8 +1734,9 @@ export function entityScopes(nodes: ReadonlyMap<string, GraphNode>, data: readon
       if (!declares(hub) || typeof own !== 'string' || !own) continue
       const other = pins.find(p => p.reached.has(reader.id) && !(p.root === hub && p.port === own))
       if (!other) continue
+      const also = pins.some(p => p.root === hub && p.port === own && p.reached.has(reader.id))
       error(reader.id, words.flowValue(words.stepName(reader, catalog), words.portLabel(value, port), pinLabel(hub, own, catalog), words.stepName(hub, catalog),
-        other.port === undefined ? words.stepName(other.root, catalog) : `${pinLabel(other.root, other.port, catalog)} of ${words.stepName(other.root, catalog)}`), input, 'scope.flow')
+        other.port === undefined ? words.stepName(other.root, catalog) : `${pinLabel(other.root, other.port, catalog)} of ${words.stepName(other.root, catalog)}`, also), input, 'scope.flow')
       break
     }
   }

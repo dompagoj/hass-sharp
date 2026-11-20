@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { addGraphNode, connectData, dataInputs, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, nodeCatalog, setInput, validateGraph, withGraphTypes, words } from '../src/visual/contract'
-import { definitionNames, runName } from '../src/components/TriggerSummary'
+import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { catalogPalette, connectNodes, dataConnectionError, updateNode, type VisualGraph } from '../src/visual/graph'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
@@ -327,4 +327,17 @@ it('deleting Entity nodes says how many steps use them, and "these entities" onl
   expect(entityRemoval(graph, ['l', 'd', 'h'], nodeCatalog)).toEqual({ title: 'Delete these entities?', body: '3 steps use these entities. They will show a problem until you change or remove them.' })
   expect(entityRemoval(graph, ['l', 'd', 's1', 's2'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
   expect(entityRemoval(graph, ['h'], nodeCatalog)).toBeUndefined()
+})
+
+it('a name of spaces is no name: the entity has none, and its runs and commands are named by its key', () => {
+  const graph = add(empty(), 'entity', 'p', { key: 'power', domain: 'switch', name: ' \t ' })
+  const [declared] = declaredEntities(graph, nodeCatalog)
+  expect(declared.entity).not.toHaveProperty('name')
+  expect(withGraphTypes(nodeCatalog, graph).definition!.entities[0]).not.toHaveProperty('name')
+  const names = definitionNames(graph, nodeCatalog)!
+  expect(runName(flowMethod(graph.nodes[0], 'command:turn_on'), names)).toBe('power: Turn on')
+  expect(summarizeTrigger({ kind: 'command', entity: 'power', command: 'turn_on' }, names)).toBe('power: Turn on')
+  // A name with text is kept as given; a name that is not text is the validator's to refuse.
+  expect(declaredEntities(add(empty(), 'entity', 'p', { key: 'power', domain: 'switch', name: ' Power ' }), nodeCatalog)[0].entity.name).toBe(' Power ')
+  expect(declaredEntities(add(empty(), 'entity', 'p', { key: 'power', domain: 'switch', name: 5 }), nodeCatalog)[0].entity.name).toBe(5)
 })

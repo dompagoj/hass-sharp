@@ -466,12 +466,12 @@ public sealed class VisualRuntime
     /// </summary>
     string AbsentCommandValue(string reader,string command,string port,string? reason) {
         var node=nodes[command];
-        var key=EntityKey(command);var given=port.Split(':')[1];
+        var given=port.Split(':')[1];
         var row=VisualNodeCatalog.DeclaredDomain(node,catalog);
-        var entity=VisualNodeCatalog.EntityDescription(node);
         var commandLabel=Text(row?["commands"]?[given],"label",given);
         var value=VisualGraphValidator.Words.PortLabel(CommandOutputs(command)[port],port).ToLowerInvariant();
-        var name=Text(entity,"name") is {Length:>0} named?named:key;
+        // As the run names it: its name, else its key, each trimmed, else Entity.
+        var name=VisualGraphValidator.Words.EntityName(node,Spec(command));
         return reason==null
             ? $"{Title(reader)}: {commandLabel} came without {VisualGraphValidator.Words.Article(value)} {value}, and {name} has none"
             : $"{Title(reader)}: {commandLabel} came with {VisualGraphValidator.Words.Article(value)} {value} that cannot be read";

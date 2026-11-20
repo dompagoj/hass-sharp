@@ -44,13 +44,16 @@ public static class VisualNodeCatalog
     internal static bool Declares(JsonNode? spec, string what) => Text(spec, "declares") == what;
     /// <summary>
     /// The entity an Entity node declares, as a definition lists one (the shape <see cref="SharpDomains.Create"/> reads):
-    /// a copy of its settings without its run history and state values; empty when its config is not an object.
+    /// a copy of its settings without its run history and state values, and without a name that is blank once trimmed
+    /// (no name: Home Assistant, the messages and the run names see none); empty when its config is not an object.
+    /// Mirrored by <c>entityDescription</c> in <c>contract.ts</c>.
     /// </summary>
     internal static JsonObject EntityDescription(JsonObject node)
     {
         if (node["config"] is not JsonObject config) return [];
         var entity = (JsonObject)config.DeepClone();
         entity.Remove("history"); entity.Remove("arguments");
+        if (entity["name"] is JsonValue name && name.TryGetValue<string>(out var text) && VisualGraphValidator.Words.Trimmed(text).Length == 0) entity.Remove("name");
         return entity;
     }
     /// <summary>

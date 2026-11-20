@@ -1,4 +1,4 @@
-import { declaredEntities, entityTypeLabel, freeKey, words, type ConfigSpec, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
+import { blankEnds, declaredEntities, entityTypeLabel, freeKey, words, type ConfigSpec, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionDevice, type DefinitionEntity, type DefinitionSetting, type DefinitionVia, type EditorDefinition, type EntityDocument } from './model'
@@ -106,7 +106,7 @@ const nodeOptionProblem = (nodeId: string, option: string, message: string): Vis
 /** An option as a problem names it: its label, else its key in words, as its field is labelled. */
 export const optionLabel = (option: string, rule: ConfigSpec | undefined) =>
   typeof rule?.label === 'string' && rule.label ? rule.label : words.key(option)
-const hasName = (entity: { name?: unknown }) => typeof entity.name === 'string' && entity.name.trim() !== ''
+const hasName = (entity: { name?: unknown }) => typeof entity.name === 'string' && entity.name.replace(blankEnds, '') !== ''
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 /**
  * The range a number option's rule gives (its `min` and `max`, such as a camera's seconds between frames), in the words
@@ -131,7 +131,10 @@ export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapsho
     const row = domains && typeof entity.domain === 'string' && Object.hasOwn(domains, entity.domain) ? domains[entity.domain] : undefined
     if (!row || typeof entity.key !== 'string' || typeof entity.domain !== 'string') return
     if (entity.options !== undefined && (entity.options === null || typeof entity.options !== 'object' || Array.isArray(entity.options))) return
-    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = hasName(entity) ? entity.name as string : entity.key
+    // As entityNodeName names it: its name, else its key, each trimmed, else Entity; a sentence that starts with it says
+    // Entity and its key when it has no name.
+    const key = entity.key.replace(blankEnds, ''), subject = key ? `Entity ${key}` : 'Entity'
+    const options = entity.options ?? {}, label = entityTypeLabel(catalog, entity.domain), named = hasName(entity) ? (entity.name as string).replace(blankEnds, '') : key || 'Entity'
     for (const [option, rule] of Object.entries(row.options ?? {})) {
       const value = Object.hasOwn(options, option) ? options[option] : undefined
       const range = rule.type === 'number' && typeof value === 'number' && Number.isFinite(value) ? outsideRange(rule, value) : undefined
@@ -139,7 +142,7 @@ export function optionProblems(graph: VisualGraph, catalog: VisualCatalogSnapsho
       else if (range) problems.push(problem(option, `${optionLabel(option, rule)} of ${named} takes ${range}, not ${value}`))
       else if (rule.required === true && (value === undefined || value === null))
         // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
-        problems.push(problem(option, `${hasName(entity) ? named : `Entity ${entity.key}`} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
+        problems.push(problem(option, `${hasName(entity) ? named : subject} needs ${lowerFirst(optionLabel(option, rule))}: ${words.article(label)} ${label.toLowerCase()} cannot work without it`))
     }
   }
   // A node without a text key is named by none, as the server names it.

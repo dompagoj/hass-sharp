@@ -74,8 +74,12 @@ internal static class DefinitionDocument
         var given = entity["options"];
         var known = spec["options"] as JsonObject ?? [];
         var label = VisualNodeCatalog.Text(spec, "label", key);
-        var hasName = IsText(entity["name"], out var name) && name.Trim().Length > 0;
-        var named = hasName ? name! : key;
+        // The entity as Words.EntityName names it: its name, else its key, each trimmed, else "Entity"; a sentence that
+        // starts with it says "Entity" and its key when it has no name.
+        var trimmedKey = VisualGraphValidator.Words.Trimmed(key);
+        var hasName = IsText(entity["name"], out var name) && VisualGraphValidator.Words.Trimmed(name!).Length > 0;
+        var named = hasName ? VisualGraphValidator.Words.Trimmed(name!) : trimmedKey.Length > 0 ? trimmedKey : "Entity";
+        var subject = hasName ? named : trimmedKey.Length > 0 ? "Entity " + trimmedKey : "Entity";
         // An option as people read it: its label, else its key in words.
         string Option(string option) => known[option] is JsonObject rule && VisualNodeCatalog.Text(rule, "label") is { Length: > 0 } shown ? shown : VisualGraphValidator.Words.KeyWords(option);
         static string Lower(string text) => text.Length == 0 ? text : char.ToLowerInvariant(text[0]) + text[1..];
@@ -87,8 +91,8 @@ internal static class DefinitionDocument
             if (known[option] is not JsonObject rule)
             {
                 Problem(option, known.Count == 0
-                    ? $"Entity {key} has the option {option}, but {Article(label)} {label.ToLowerInvariant()} takes no options; remove it"
-                    : $"Entity {key} has no option {option}; {Article(label)} {label.ToLowerInvariant()} takes {Or(known.Select(o => o.Key))}");
+                    ? $"{(trimmedKey.Length > 0 ? "Entity " + trimmedKey : "Entity")} has the option {option}, but {Article(label)} {label.ToLowerInvariant()} takes no options; remove it"
+                    : $"{(trimmedKey.Length > 0 ? "Entity " + trimmedKey : "Entity")} has no option {option}; {Article(label)} {label.ToLowerInvariant()} takes {Or(known.Select(o => o.Key))}");
                 continue;
             }
             if (value == null || value.GetValueKind() == JsonValueKind.Null) continue;
@@ -117,7 +121,7 @@ internal static class DefinitionDocument
         foreach (var (option, rule) in known)
             if (rule is JsonObject required && Required(required) && (options[option] is not { } value || value.GetValueKind() == JsonValueKind.Null))
                 // A sentence starts with the entity: its name, else "Entity" and its key, which may start lower-case.
-                Problem(option, $"{(hasName ? named : "Entity " + key)} needs {Lower(Option(option))}: {Article(label)} {label.ToLowerInvariant()} cannot work without it");
+                Problem(option, $"{subject} needs {Lower(Option(option))}: {Article(label)} {label.ToLowerInvariant()} cannot work without it");
         if (!bounded && known.ContainsKey("min") && known.ContainsKey("max") && (options.ContainsKey("min") || options.ContainsKey("max")))
         {
             var defaults = SharpDomains.DefaultOptions(domainId);

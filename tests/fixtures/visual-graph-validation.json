@@ -37413,7 +37413,7 @@
     ]
   },
   {
-    "name": "an Entity node that runs nothing is warned about on its pins, not by the rules of When commanded and Show frame steps",
+    "name": "an Entity node that runs nothing is warned about on its command and frame pins",
     "graph": {
       "version": 5,
       "name": "Relay",
@@ -38380,6 +38380,470 @@
     ],
     "codes": [
       "state.dynamicSource"
+    ]
+  },
+  {
+    "name": "a state value read through a value step from inside a loop is told only that it cannot read a step in a flow",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "read",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.motion"
+            }
+          }
+        },
+        {
+          "id": "c",
+          "kind": "convert",
+          "config": {
+            "type": "boolean",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r"
+        },
+        {
+          "id": "r:body:read",
+          "source": "r",
+          "target": "read",
+          "port": "body"
+        },
+        {
+          "id": "read.value:c.value",
+          "kind": "data",
+          "source": "read",
+          "target": "c",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "c.value:door.is_on",
+          "kind": "data",
+          "source": "c",
+          "target": "door",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "is_on",
+    "portId": "is_on",
+    "messages": [
+      "On of Door cannot read Read entity, which runs in a flow: use a Set state step after Read entity instead"
+    ],
+    "codes": [
+      "scope.stateSource"
+    ]
+  },
+  {
+    "name": "a state value wired to a step inside a loop is told only that it cannot read a step in a flow",
+    "graph": {
+      "version": 5,
+      "name": "Power",
+      "nodes": [
+        {
+          "id": "power",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power"
+          }
+        },
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "r",
+          "kind": "repeat",
+          "config": {
+            "count": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "read",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.motion"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:r",
+          "source": "t",
+          "target": "r"
+        },
+        {
+          "id": "r:body:read",
+          "source": "r",
+          "target": "read",
+          "port": "body"
+        },
+        {
+          "id": "read.value:power.value",
+          "kind": "data",
+          "source": "read",
+          "target": "power",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "power",
+    "inputId": "value",
+    "portId": "value",
+    "messages": [
+      "Value accepts Number or Text, not Entity state",
+      "Value of Power cannot read Read entity, which runs in a flow: use a Set state step after Read entity instead"
+    ],
+    "codes": [
+      "scope.stateSource"
+    ]
+  },
+  {
+    "name": "a step that reads a command's value but runs only from another command is told it runs from that one",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp"
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "l:command:turn_off:log",
+          "source": "l",
+          "target": "log",
+          "port": "command:turn_off"
+        },
+        {
+          "id": "l.command:turn_on:brightness:log.value",
+          "kind": "data",
+          "source": "l",
+          "target": "log",
+          "sourcePort": "command:turn_on:brightness",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "log",
+    "inputId": "value",
+    "portId": "value",
+    "messages": [
+      "Lamp does nothing on Turn on: connect a step to Turn on",
+      "Log reads Brightness from Turn on of Lamp but runs from Turn off of Lamp, where there is no Brightness"
+    ],
+    "codes": [
+      "command.unhandled",
+      "scope.flow"
+    ]
+  },
+  {
+    "name": "a step that reads a command's value but runs only from a trigger is told it runs from the trigger",
+    "graph": {
+      "version": 5,
+      "name": "Lamp",
+      "nodes": [
+        {
+          "id": "l",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "light",
+            "name": "Lamp"
+          }
+        },
+        {
+          "id": "log",
+          "kind": "log",
+          "config": {
+            "level": "Info",
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:log",
+          "source": "t",
+          "target": "log"
+        },
+        {
+          "id": "l.command:turn_on:brightness:log.value",
+          "kind": "data",
+          "source": "l",
+          "target": "log",
+          "sourcePort": "command:turn_on:brightness",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "log",
+    "inputId": "value",
+    "portId": "value",
+    "messages": [
+      "Lamp does nothing on Turn off: connect a step to Turn off",
+      "Lamp does nothing on Turn on: connect a step to Turn on",
+      "Log reads Brightness from Turn on of Lamp but runs from Trigger, where there is no Brightness"
+    ],
+    "codes": [
+      "command.unhandled",
+      "command.unhandled",
+      "scope.flow"
+    ]
+  },
+  {
+    "name": "an entity whose name is only spaces is named by its key, with a device",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "p",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "switch",
+            "name": "  "
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {
+          "manufacturer": "Acme"
+        }
+      }
+    },
+    "valid": true,
+    "messages": [
+      "power does nothing on Turn off: connect a step to Turn off",
+      "power does nothing on Turn on: connect a step to Turn on"
+    ],
+    "codes": [
+      "command.unhandled",
+      "command.unhandled"
+    ]
+  },
+  {
+    "name": "an Entity node's run history takes only state, commands and frame",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "p",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power",
+            "history": {
+              "command": true
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "p",
+    "inputId": "history",
+    "messages": [
+      "Run history has no command; it takes state, commands or frame"
+    ]
+  },
+  {
+    "name": "each member of an Entity node's run history is true or false",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "p",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power",
+            "history": {
+              "state": "yes",
+              "commands": true,
+              "frame": 1
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "p",
+    "inputId": "history",
+    "messages": [
+      "Frame of Run history must be true or false",
+      "State of Run history must be true or false"
+    ]
+  },
+  {
+    "name": "an Entity node's run history is an object",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "p",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power",
+            "history": true
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "p",
+    "inputId": "history",
+    "messages": [
+      "Run history must be an object"
+    ]
+  },
+  {
+    "name": "an Entity node has no trackHistory: its run history says which runs are recorded",
+    "graph": {
+      "version": 5,
+      "name": "Plug",
+      "nodes": [
+        {
+          "id": "p",
+          "kind": "entity",
+          "config": {
+            "key": "power",
+            "domain": "sensor",
+            "name": "Power",
+            "trackHistory": true
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "p",
+    "inputId": "history",
+    "messages": [
+      "An Entity node has no trackHistory: its history says which of its flows record their runs (state, commands, frame)"
     ]
   }
 ]

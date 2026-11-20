@@ -726,9 +726,10 @@ internal sealed partial class DefinitionHost
         _ => value.GetType().Name,
     };
 
-    // An entity as a message names it: its name and key, or its key alone.
+    // An entity as a message names it: its name (trimmed, as run names have it) and key, or its key alone.
     string Named(string key) =>
-        definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } described && VisualNodeCatalog.Text(described, "name") is { Length: > 0 } name
+        definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == key) is { } described
+            && VisualGraphValidator.Words.Trimmed(VisualNodeCatalog.Text(described, "name") ?? "") is { Length: > 0 } name
             ? $"{name} ({key})" : key;
 
     // Under the gate.

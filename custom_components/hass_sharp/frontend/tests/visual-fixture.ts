@@ -263,7 +263,10 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
    */
   const optionProblems = (key: string, domain: string, given: unknown, name: string | undefined): VisualDiagnostic[] => {
     const out: VisualDiagnostic[] = []
-    const named = name ?? key
+    // As Words.EntityName names it: its name, else its key, each trimmed, else Entity; a sentence starts with Entity and its key.
+    const trimmed = (text: string) => text.replace(/^\s+|\s+$/g, '')
+    const entity = trimmed(key) ? `Entity ${trimmed(key)}` : 'Entity'
+    const named = name !== undefined ? trimmed(name) : trimmed(key) || 'Entity'
     const row = nodeCatalog.entityDomains![domain], known = row.options ?? {}
     const label = row.label || key, a = `${words.article(label)} ${label.toLowerCase()}`
     const shown = (option: string) => (Object.hasOwn(known, option) && known[option].label) || words.key(option)
@@ -283,8 +286,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     let bounded = false
     for (const [option, value] of Object.entries(options)) {
       if (!Object.hasOwn(known, option)) {
-        error(option, Object.keys(known).length === 0 ? `Entity ${key} has the option ${option}, but ${a} takes no options; remove it`
-          : `Entity ${key} has no option ${option}; ${a} takes ${words.or(Object.keys(known))}`)
+        error(option, Object.keys(known).length === 0 ? `${entity} has the option ${option}, but ${a} takes no options; remove it`
+          : `${entity} has no option ${option}; ${a} takes ${words.or(Object.keys(known))}`)
         continue
       }
       if (value === null) continue
@@ -304,7 +307,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
         try { new RegExp(value) } catch (failure) { error(option, `${of} is not a regular expression: ${(failure as Error).message}`) }
     }
     for (const [option, rule] of Object.entries(known))
-      if (rule.required === true && (options[option] === undefined || options[option] === null)) error(option, `${name ?? `Entity ${key}`} needs ${lower(shown(option))}: ${a} cannot work without it`)
+      if (rule.required === true && (options[option] === undefined || options[option] === null)) error(option, `${name !== undefined ? named : entity} needs ${lower(shown(option))}: ${a} cannot work without it`)
     // A number's and a text's own min and max are 0 and 100 (`SharpDomains.DefaultOptions`).
     if (!bounded && Object.hasOwn(known, 'min') && Object.hasOwn(known, 'max') && (Object.hasOwn(options, 'min') || Object.hasOwn(options, 'max'))) {
       const min = number(options.min) ?? 0, max = number(options.max) ?? 100
