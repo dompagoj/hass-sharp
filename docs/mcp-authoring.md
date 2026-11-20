@@ -394,7 +394,9 @@ a definition can trip:
   devices each part of the next, are errors (`device.viaUnknown`,
   `device.viaCycle`).
 - `configurationUrl` starts with `http://`, `https://` or `homeassistant://`,
-  followed by an address, as Home Assistant requires (`device.configurationUrl`). A Device node no entity is wired to is a warning
+  followed by an address; the rule is narrower than Home Assistant's own, so a few
+  addresses it would take, such as one with a user name before the host, are refused
+  (`device.configurationUrl`). A Device node no entity is wired to is a warning
   (`device.empty`).
 
 The device of the example *Plug over HTTP*, and the wires that put its relay and

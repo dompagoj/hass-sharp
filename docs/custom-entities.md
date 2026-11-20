@@ -263,7 +263,8 @@ A device groups entities on one device page in Home Assistant. Each device is a
   state, and a Device node is never part of the run order.
 - **Manufacturer**, **Model**, **Software version**, **Hardware version**,
   **Configuration URL** (`http://`, `https://` or `homeassistant://` followed by an
-  address, such as `http://192.168.1.20`, as Home Assistant requires) and **Suggested area** (the area Home Assistant puts the device
+  address, such as `http://192.168.1.20`; a few addresses Home Assistant would take,
+  such as one with a user name before the host, are refused here) and **Suggested area** (the area Home Assistant puts the device
   in when it first adds it) are shown on the device's page. Each can be left out.
 - **Part of** says which device this one is connected through, such as a hub:
   Nothing, **Another device of this definition** (another Device node, chosen by its
@@ -498,8 +499,8 @@ choose **Use a class from the node library** and select **Continue**. Under
 **Class**, choose **Smart plug**; under **Settings**, enter the plug's address;
 select **Save**. A class definition's **Device** fields, which a graph definition
 does not have, override what the class sets when you fill them in, and its **Part
-of** offers Nothing, another entity definition's device or **A Home Assistant
-device…**. A class that is one entity has **Group this entity as a device** instead. Its **Entities** appear after it has
+of** offers Nothing, each other class definition that makes a device, or **A Home
+Assistant device…**. A class that is one entity has **Group this entity as a device** instead. Its **Entities** appear after it has
 started once.
 
 ### SharpDevice and SharpEntity

@@ -41090,5 +41090,429 @@
     },
     "valid": true,
     "noDiagnostics": true
+  },
+  {
+    "name": "a step-order wire from a Device node to itself is refused once",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "plug:next:plug",
+          "source": "plug",
+          "target": "plug"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "contains": "Hall plug is a device and is not part of the run order",
+    "messages": [
+      "Hall plug is a device and is not part of the run order"
+    ],
+    "codes": [
+      "flow.declaration"
+    ]
+  },
+  {
+    "name": "a step-order wire from a value node to a Device node is refused on both",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "lit",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.door"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "lit:next:plug",
+          "source": "lit",
+          "target": "plug"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "contains": "Hall plug is a device and is not part of the run order",
+    "messages": [
+      "Hall plug is a device and is not part of the run order",
+      "Has state is a value and is not part of the run order",
+      "Has state is not used"
+    ],
+    "codes": [
+      "flow.declaration",
+      "flow.pure",
+      "pure.unused"
+    ]
+  },
+  {
+    "name": "a step-order wire from a Device node to a value node is refused on both",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "lit",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "binary_sensor.door"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "plug:next:lit",
+          "source": "plug",
+          "target": "lit"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lit",
+    "contains": "Has state is a value and is not part of the run order",
+    "messages": [
+      "Hall plug is a device and is not part of the run order",
+      "Has state is a value and is not part of the run order",
+      "Has state is not used"
+    ],
+    "codes": [
+      "flow.declaration",
+      "flow.pure",
+      "pure.unused"
+    ]
+  },
+  {
+    "name": "a Device node's Part of that is not an object is refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": "hub"
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "via",
+    "contains": "Part of must be an object",
+    "messages": [
+      "Part of must be an object"
+    ]
+  },
+  {
+    "name": "a Device node's key and Part of device that are not text are refused",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": 5,
+            "name": "Hall plug",
+            "via": {
+              "device": 5
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "key",
+    "contains": "Key must be text",
+    "messages": [
+      "Key must be text",
+      "Part of must be nothing, a Home Assistant device or another device of this definition"
+    ],
+    "codes": [
+      "device.via"
+    ]
+  },
+  {
+    "name": "a Device node part of a key with spaces around it is part of no device",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {
+            "key": "plug",
+            "name": "Hall plug",
+            "via": {
+              "device": " hub "
+            }
+          }
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "device",
+          "config": {
+            "key": "hub",
+            "name": "Hub"
+          }
+        },
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug.entities:motion.device",
+          "kind": "data",
+          "source": "plug",
+          "target": "motion",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        },
+        {
+          "id": "hub.entities:door.device",
+          "kind": "data",
+          "source": "hub",
+          "target": "door",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "inputId": "via",
+    "contains": "part of the device  hub , which is not a device of this definition",
+    "messages": [
+      "Hall plug is part of the device  hub , which is not a device of this definition: choose another, or none"
+    ],
+    "codes": [
+      "device.viaUnknown"
+    ]
+  },
+  {
+    "name": "a Device node with neither a key nor a name is called Device",
+    "graph": {
+      "version": 5,
+      "name": "Hall",
+      "nodes": [
+        {
+          "id": "plug",
+          "kind": "device",
+          "config": {}
+        },
+        {
+          "id": "motion",
+          "kind": "entity",
+          "config": {
+            "key": "motion",
+            "domain": "binary_sensor",
+            "name": "Motion"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "plug:next:plug",
+          "source": "plug",
+          "target": "plug"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "plug",
+    "contains": "Device is a device and is not part of the run order",
+    "messages": [
+      "Device has no entities: connect its Entities pin to an entity's Device pin",
+      "Device is a device and is not part of the run order",
+      "Give this device a key, such as plug",
+      "Name this device: Home Assistant shows it by this name"
+    ],
+    "codes": [
+      "definition.deviceKey",
+      "device.empty",
+      "device.name",
+      "flow.declaration"
+    ]
   }
 ]

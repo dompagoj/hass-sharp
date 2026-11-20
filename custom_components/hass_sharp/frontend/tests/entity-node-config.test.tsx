@@ -517,7 +517,7 @@ describe('devices in the right panel', () => {
     expect(el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!.value).toBe('Hall plug')
     for (const id of ['key', 'manufacturer', 'model', 'swVersion', 'hwVersion', 'configurationUrl', 'suggestedArea', 'via'])
       expect(el.querySelectorAll(`.hs-inspector [data-input-id="${id}"]`), id).toHaveLength(1)
-    // The labels, placeholders and hints of the definition's device form.
+    // The labels, placeholders and hints a class definition's device form has too.
     expect(control(el, 'Model').placeholder).toBe('Not set')
     expect(control(el, 'Configuration URL').type).toBe('url')
     expect(field(el, 'configurationUrl').textContent).toContain("A page of the device's own, linked from its page in Home Assistant.")
@@ -585,6 +585,31 @@ describe('devices in the right panel', () => {
     expect(node().config).not.toHaveProperty('via')
     history.undo()
     expect(node().config.via).toEqual({ deviceId: 'router' })
+  })
+
+  it('Part of offers another device of this definition only when there is one to pick, or one is named', async () => {
+    const partOf = (el: Element) => [...select(el, 'via').options].map(o => o.textContent)
+    // The only other Device node has no key: it cannot be picked, so the choice is not offered.
+    const lone = () => add(entityGraph({ nodes: [{ key: 'relay', domain: 'switch', name: 'Relay' }] }), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+    const spare = (graph: VisualGraph) => updateNode(add(graph, 'device', 'spare'), 'spare', { config: {} })
+    let { el } = mount(spare(lone()), 'plug')
+    expect(partOf(el)).toEqual(['Nothing', 'A Home Assistant device…'])
+    dispose?.(); document.body.innerHTML = ''
+    // Alone in the definition, the same.
+    ;({ el } = mount(lone(), 'plug'))
+    expect(partOf(el)).toEqual(['Nothing', 'A Home Assistant device…'])
+    dispose?.(); document.body.innerHTML = ''
+    // Part of a device the definition does not have: the choice is offered and chosen, so the missing one is seen and can be cleared.
+    const missing = updateNode(spare(lone()), 'plug', { config: { key: 'plug', name: 'Hall plug', via: { device: 'hub' } } })
+    const mounted = mount(missing, 'plug')
+    el = mounted.el
+    expect(partOf(el)).toEqual(['Nothing', 'Another device of this definition', 'A Home Assistant device…'])
+    expect(select(el, 'via').selectedOptions[0].textContent).toBe('Another device of this definition')
+    const local = el.querySelector<HTMLElement>('.hs-inspector [data-field="viaLocal"]')!
+    expect(local.querySelector<HTMLInputElement>('input[role="combobox"]')!.value).toBe('Missing device: hub')
+    pick(select(el, 'via'), '')
+    expect(mounted.node().config).not.toHaveProperty('via')
+    await vi.waitFor(() => expect(partOf(el)).toEqual(['Nothing', 'A Home Assistant device…']))
   })
 
   it('a saved device\'s key is read-only', () => {

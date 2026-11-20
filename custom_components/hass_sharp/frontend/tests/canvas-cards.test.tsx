@@ -1330,6 +1330,28 @@ describe('the Device pin and the Device card', () => {
     await vi.waitFor(() => expect(device()).toBeNull())
   })
 
+  it('a Device card in a run trace is drawn as outside a trace: it is not a step that did not run', async () => {
+    const el = host()
+    // The hub's flow ran; a Log step did not: it is drawn as not reached, the Device node is not.
+    const graph = add(wired(), 'log', 'stray', { value: lit('string', 'Hi') })
+    const trace: FlowTrace = { nodes: { hub: { status: 'ok', runs: 1 } }, edges: new Set() }
+    dispose = render(() => <FlowAdapter graph={graph} readOnly trace={trace} onSelect={() => {}} />, el)
+    await vi.waitFor(() => expect(el.querySelector('[data-id="plug"] .hs-card')).not.toBeNull())
+    const card = (id: string) => el.querySelector(`[data-id="${id}"] .hs-card`)!
+    expect(card('stray').classList).toContain('hs-card--unreached')
+    expect(card('stray').querySelector('.hs-card__trace-word')!.textContent).toBe('Not reached')
+    expect(card('hub').classList).toContain('hs-card--status-ok')
+    // No dashed, faded card, no status chip or tip, and its name says nothing of the run.
+    const plug = card('plug')
+    for (const name of ['hs-card--unreached', 'hs-card--traced', 'hs-card--focus']) expect(plug.classList, name).not.toContain(name)
+    expect([...plug.classList].filter(name => name.startsWith('hs-card--status-'))).toEqual([])
+    expect(plug.querySelector('.hs-card__trace')).toBeNull()
+    expect(plug.querySelector('[role="tooltip"]')).toBeNull()
+    expect(plug.getAttribute('aria-describedby')).toBeNull()
+    expect(el.querySelector('[data-id="plug"]')!.getAttribute('aria-label')).not.toContain('Run:')
+    expect(el.querySelector('[data-id="stray"]')!.getAttribute('aria-label')).toMatch(/\. Run: Not reached$/)
+  })
+
   it('a Device card has an Entities pin and no step pins', () => {
     const el = host()
     // A Log step outside the flow, which is drawn muted: the Device node, which never runs, is not.

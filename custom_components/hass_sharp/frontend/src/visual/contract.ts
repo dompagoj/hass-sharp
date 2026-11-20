@@ -1098,7 +1098,7 @@ export const words = {
   keyTaken: (key: string, first: string) => `The key ${key} is already used by ${first}: give this entity its own`,
   /** An Entity node of a type the catalog's `entityDomains` does not describe. */
   notAnEntityType: (domain: string) => `${domain} is not an entity type: choose one from the list`,
-  /** An Entity node on no device (none wired to it, and the definition is none), with no name. */
+  /** An Entity node on no device (no Device node wired to it), with no name. */
   entityNameMissing: 'Name this entity: it has no device, so Home Assistant shows it by its own name',
   // A Device node's device, named by entityNodeName.
   /** A Device node without a key. */
@@ -1231,11 +1231,12 @@ export type DiagnosticCode = typeof diagnosticCodes[number]
 export const blockingDiagnostic = (d: { code?: string }) => d.code !== undefined && (d.code.startsWith('cycle.') || d.code.startsWith('scope.'))
 /**
  * The configuration URLs a Device node may have: http, https or homeassistant in any case, then :// and an ASCII host
- * name or an IPv6 address in brackets, an optional port up to 65535, and then nothing or a path, query or fragment with
- * no white space, control character, backslash or character beyond U+FFFF. It is narrower than Home Assistant's own
- * check, which also takes a user before the host, a host that is not ASCII, an empty port or a trailing line break, so
- * that it stays small and its text means the same in .NET and JavaScript; every URL it takes, Home Assistant takes. Its
- * text is `VisualGraphValidator` `ConfigurationUrlPattern`'s.
+ * name or an address in brackets, an optional port up to 65535, and then nothing or a path, query or fragment with no
+ * white space, control character, backslash or surrogate. A lone surrogate cannot be encoded for Home Assistant, and the
+ * pattern does not tell it from one of a pair, so a character beyond U+FFFF (an emoji) in a path is refused too. It is
+ * narrower than Home Assistant's own check, which also takes a user before the host, a host that is not ASCII, an empty
+ * port or a trailing line break, so that it stays small; every URL it takes, Home Assistant takes. Its text is
+ * `VisualGraphValidator` `ConfigurationUrlPattern`'s.
  */
 export const configurationUrlPattern = new RegExp(String.raw`^(?:[Hh][Tt][Tt][Pp][Ss]?|[Hh][Oo][Mm][Ee][Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt])://(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?|\[[0-9A-Fa-f.:]*:[0-9A-Fa-f.:]*\])(?::(?<port>[0-9]{1,5}))?(?:[/?#][^\s\x00-\x1F\x7F-\x9F\uD800-\uDFFF\uFEFF\\]*)?(?![\s\S])`)
 /** Whether a Device node may have `url` as its configuration URL: `configurationUrlPattern`, its port at most 65535. */
@@ -1619,8 +1620,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     // A text setting of an Entity or a Device node: '' when left out, undefined when it is not text (the config rule's below).
     const typed = (field: string) => !Object.hasOwn(node.config, field) ? '' : typeof node.config[field] === 'string' ? node.config[field] as string : undefined
     // An Entity node: a key of the form entity keys take, a type Home Assistant has, a name unless it is on a device (a
-    // Device node wired to it, or the definition's device), and none of its state values or each one its type needs. A
-    // field that is not text is the config rule's below.
+    // Device node wired to it), and none of its state values or each one its type needs. A field that is not text is the
+    // config rule's below.
     if (entityGraph && spec.declares === 'entity') {
       const key = typed('key')
       if (key !== undefined) {

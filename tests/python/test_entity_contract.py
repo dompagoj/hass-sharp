@@ -3,7 +3,7 @@
 Runs without Home Assistant: the modules are read as source, not imported. For every domain of the catalog there is a
 platform module that attaches itself under that domain and is in PLATFORMS, in the catalog's order; the commands it
 sends are exactly the domain's commands, and every data value it sends is one the command names. With Home Assistant,
-also that the validators' fixture refuses a Device node's configuration URL exactly when its device registry would.
+also that every configuration URL of a Device node the validators accept, its device registry takes.
 """
 import ast
 import importlib.util
@@ -87,14 +87,22 @@ class ConfigurationUrlTests(unittest.TestCase):
     def test_every_url_the_validators_accept_home_assistant_takes(self):
         from homeassistant.helpers import device_registry
 
-        # As _validate_device_info_fields checks a configuration_url given as text: its scheme one of
-        # CONFIGURATION_URL_SCHEMES and a host, parsed by _cached_parse_url (which raises for an address it cannot read).
+        # The device registry's own check of a device's fields on create and update, which raises ValueError for a
+        # configuration URL it does not take. It is given every field it checks, each None but the URL; a rename of the
+        # check or of its fields fails here.
+        fields = dict.fromkeys(device_registry._ValidatedDeviceInfoFields.__annotations__, None)
+
         def taken(url):
             try:
-                parsed = device_registry._cached_parse_url(url)
+                device_registry._validate_device_info_fields(**{**fields, 'configuration_url': url})
             except ValueError:
                 return False
-            return parsed.scheme in device_registry.CONFIGURATION_URL_SCHEMES and bool(parsed.host)
+            return True
+
+        # The check refuses what Home Assistant refuses, so a URL it is shown is really checked.
+        for refused in ('ftp://router.local', 'http://', 'router.local'):
+            with self.subTest(refused=refused):
+                self.assertFalse(taken(refused))
 
         cases = json.loads((ROOT / 'tests/fixtures/visual-graph-validation.json').read_text())
         accepted = [url for case in cases if case['valid'] for node in case['graph'].get('nodes', [])

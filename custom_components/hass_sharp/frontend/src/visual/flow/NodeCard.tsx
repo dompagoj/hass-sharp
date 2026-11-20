@@ -100,7 +100,8 @@ export function NodeCard(props: NodeProps) {
       }),
     ),
   )
-  const trace = () => flow.trace()
+  // A declaration (a Device node) never runs: in a run trace its card is drawn as outside one.
+  const trace = () => (view()?.declaration ? undefined : flow.trace())
   const reached = () => trace()?.nodes[id]
   const pinErrors = (pin: PinView, port: string) =>
     (view()?.problems ?? []).filter(p => p.severity === 3 && (p.inputId === port || p.portId === port || p.inputId === pin.id)).map(p => p.message)

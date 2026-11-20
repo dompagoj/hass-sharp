@@ -56,7 +56,8 @@ export function DeviceNodeSection(props: { ctx: StepPickerContext }) {
   const options = () => keyed().map(d => ({ value: d.key, label: d.name || d.key, detail: d.key }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.value.localeCompare(b.value))
   const parents: PartOfParents = {
-    choices: () => [{ value: localChoice, label: 'Another device of this definition' }],
+    // Offered when another Device node can be picked, or Part of names one, so a missing one is seen and can be cleared.
+    choices: () => (keyed().length || typeof via()?.device === 'string' ? [{ value: localChoice, label: 'Another device of this definition' }] : []),
     chosen: current => (typeof current?.device === 'string' ? localChoice : undefined),
     named: current => deviceName(text(current.device)),
     list: {

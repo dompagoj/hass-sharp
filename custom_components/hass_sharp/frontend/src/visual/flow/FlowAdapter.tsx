@@ -776,7 +776,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
                   touchDrag?.graph === props.graph && touchDrag.id === node.id
                     ? { ...nodes.find(n => n.id === node.id)!.position }
                     : { ...(moved.get(node.id) ?? basePosition(node, index)) },
-                domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace ? `. Run: ${traceText(trace.nodes[node.id])}` : ''}` },
+                domAttributes: { 'aria-label': `${built.get(node.id)?.view.label ?? node.id}${trace && !built.get(node.id)?.view.declaration ? `. Run: ${traceText(trace.nodes[node.id])}` : ''}` },
                 selected: selectedSet().has(node.id),
               })),
               { key: 'id' },

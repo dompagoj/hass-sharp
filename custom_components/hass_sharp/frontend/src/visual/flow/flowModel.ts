@@ -117,6 +117,8 @@ export interface NodeView {
   unreachable: boolean
   /** A value node: worked out each time a step reads it, with no execution pins and no error path. */
   pure: boolean
+  /** A declaration (a Device node): neither a step nor a value, never run, so a run trace says nothing of it. */
+  declaration: boolean
   /** Accessible name of the whole card. */
   label: string
 }
@@ -261,10 +263,11 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   }
   const execInConnected = incoming.some(e => e.kind !== 'data')
   const pure = isPure(node, catalog)
+  const declaration = isDeclaration(node.kind, catalog)
   // Unknown kinds keep their execution input, so wires into a node whose library vanished still show. A value node has
   // none, and neither has a root: a trigger, or an entity definition's Entity node and When started; nor a declaration
   // (a Device node), which is neither a step nor a value.
-  const execIn: PinView | undefined = isRoot(node, catalog) || pure || isDeclaration(node.kind, catalog) ? undefined : {
+  const execIn: PinView | undefined = isRoot(node, catalog) || pure || declaration ? undefined : {
     id: 'in', side: 'in', kind: 'exec', label: 'Execution input', name: `Execution input, ${connectedText(execInConnected)}`,
     color: 'var(--hs-port-execution)', list: false, connected: execInConnected, error: false,
   }
@@ -349,7 +352,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     id: node.id, kind: node.kind, known, title, kindLabel: spec?.label ?? node.kind, summary, identity,
     execIn, ...(headerInput ? { headerInput } : {}), next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
-    problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure,
+    problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure, declaration,
     // A value node says so: it has no place in the run order, which a sighted reader sees from its missing pins.
     label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary].filter(Boolean).join('. ')}${problemText}`,
   }

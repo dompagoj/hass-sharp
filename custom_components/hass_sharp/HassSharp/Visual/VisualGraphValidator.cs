@@ -481,11 +481,12 @@ public static class VisualGraphValidator
 
     /// <summary>
     /// The configuration URLs a Device node may have: http, https or homeassistant in any case, then :// and an ASCII
-    /// host name or an IPv6 address in brackets, an optional port up to 65535, and then nothing or a path, query or
-    /// fragment with no white space, control character, backslash or character beyond U+FFFF. It is narrower than Home
-    /// Assistant's own check, which also takes a user before the host, a host that is not ASCII, an empty port or a
-    /// trailing line break, so that it stays small and its text means the same in .NET and JavaScript; every URL it
-    /// takes, Home Assistant takes.
+    /// host name or an address in brackets, an optional port up to 65535, and then nothing or a path, query or fragment
+    /// with no white space, control character, backslash or surrogate. A lone surrogate cannot be encoded for Home
+    /// Assistant, and the pattern does not tell it from one of a pair, so a character beyond U+FFFF (an emoji) in a path
+    /// is refused too. It is narrower than Home Assistant's own check, which also takes a user before the host, a host
+    /// that is not ASCII, an empty port or a trailing line break, so that it stays small; every URL it takes, Home
+    /// Assistant takes.
     /// </summary>
     internal static readonly Regex ConfigurationUrlPattern = new(@"^(?:[Hh][Tt][Tt][Pp][Ss]?|[Hh][Oo][Mm][Ee][Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt])://(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?|\[[0-9A-Fa-f.:]*:[0-9A-Fa-f.:]*\])(?::(?<port>[0-9]{1,5}))?(?:[/?#][^\s\x00-\x1F\x7F-\x9F\uD800-\uDFFF\uFEFF\\]*)?(?![\s\S])", RegexOptions.CultureInvariant);
     /// <summary>Whether a Device node may have <paramref name="url"/> as its configuration URL: <see cref="ConfigurationUrlPattern"/>, mirrored by

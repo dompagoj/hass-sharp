@@ -4,7 +4,7 @@ import { definitionNames, TriggerSummary, type TriggerNames } from '../../compon
 import { Glyph } from '../Glyph'
 import { SheetBar, SheetPeek } from '../Inspector'
 import { TypeChip } from '../InputRow'
-import { isPure, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { isDeclaration, isPure, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { durationLabel, execLabel, nodeTitle, traceStatusLabel, traceText } from '../flow/flowModel'
 import { icons, nodeIdentity } from '../icons'
 import { focusSoon } from '../soon'
@@ -85,7 +85,8 @@ export function TraceInspector(props: TraceInspectorProps) {
     const line = () => {
       const current = node()
       if (!current) return [props.run.status, runDuration(props.run.durationMs)].filter(t => t !== '—').join(' · ')
-      if (!props.model) return ''
+      // A declaration (a Device node) never runs: the run says nothing of it.
+      if (!props.model || isDeclaration(current.kind, props.catalog)) return ''
       return traceText(props.event ? { status: props.event.status, runs: props.model.runs(current.id), ms: props.event.ms } : undefined, isPure(current, props.catalog))
     }
     return (
@@ -155,6 +156,8 @@ function StepValues(props: {
   const frameLabel = () => props.model?.frameLabel(props.frame) ?? ''
   // A value node is worked out each time a step reads it; one no step read was not used.
   const pure = () => isPure(props.node, props.catalog)
+  // A declaration (a Device node) is neither a step nor a value: it never runs.
+  const declaration = () => isDeclaration(props.node.kind, props.catalog)
   // Values that were too large to record take their wires' highlight with them.
   const readsValues = () => props.graph.edges.some(e => e.kind === 'data' && e.target === props.node.id)
   const count = () => props.model?.runs(props.node.id) ?? 0
@@ -196,7 +199,8 @@ function StepValues(props: {
       </Show>
       <Show when={props.model && props.event} fallback={
         <p class="hs-insp-note">
-          {!props.model ? 'No values were recorded for this run.'
+          {declaration() ? 'A device is not a step: it does not run.'
+            : !props.model ? 'No values were recorded for this run.'
             : pure() ? (runs().length && !whole() ? `Not used in ${frameLabel()}: no step read this value there.` : 'Not used: no step read this value.')
               : runs().length && !whole() ? `This step did not run in ${frameLabel()}.` : 'This step did not run.'}
         </p>

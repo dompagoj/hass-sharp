@@ -726,6 +726,35 @@ it('shows a definition\'s run on its own graph, its entity steps by name, and go
   await vi.waitFor(() => expect(history.get()).toBe('/entities/plug?drawer=runs'))
 })
 
+it('says a Device node of a definition\'s run is not a step, and draws it as outside the run', async () => {
+  // The relay on a Device node Hall plug, in the definition as stored and in the run's graph alike.
+  const withDevice = <T extends Graph>(graph: T): T => ({
+    ...graph,
+    nodes: [...graph.nodes, { id: 'hall', kind: 'device', config: { key: 'plug', name: 'Hall plug' }, position: { x: 60, y: 700 } }],
+    edges: [...graph.edges, { id: 'hall.entities:relay.device', kind: 'data', source: 'hall', sourcePort: 'entities', target: 'relay', targetPort: 'device' }],
+  })
+  const base = definitionResponse()
+  const { root } = mountDefinition(async () => ({ ...base, snapshot: { ...base.snapshot!, graph: withDevice(storedGraph()) } }), {
+    prepare: fixture => fixture.entities.seed('plug', { ...plugBody(), logic: { kind: 'graph', graph: withDevice(plugGraph()) } }),
+  })
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  const hall = () => card(root, 'hall').querySelector('.hs-card')!
+  // A step that did not run is drawn and named so; the Device node is not.
+  expect(card(root, 'power').querySelector('.hs-card__trace-word')!.textContent).toBe('Not reached')
+  expect(hall().classList).not.toContain('hs-card--unreached')
+  expect(hall().querySelector('.hs-card__trace')).toBeNull()
+  // Chosen on the canvas, it says what it is, never that it did not run.
+  hall().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Hall plug'))
+  expect(panel(root).querySelector('.hs-insp-note')!.textContent).toBe('A device is not a step: it does not run.')
+  expect(panel(root).textContent).not.toContain('did not run')
+  expect(panel(root).querySelector('select')).toBeNull()
+  // A step that did not run still says so.
+  card(root, 'power').querySelector('.hs-card')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe('Power'))
+  expect(panel(root).querySelector('.hs-insp-note')!.textContent).toBe('This step did not run.')
+})
+
 it('titles a definition\'s run by its root step when it carries that step\'s generated method name', async () => {
   const { root } = mountDefinition(async () => definitionResponse({ run: run({ runId: 'run-7', automationId: 'entity:plug', visualId: 'plug', visualRevision: 1, triggerNodeId: 'relay', cause: 'Command', actionLabel: turnOn(), trigger: { kind: 'command', entity: 'relay', command: 'turn_on' } }) }))
   await vi.waitFor(() => expect(steps(root)).toHaveLength(3))

@@ -76,9 +76,10 @@ definition envelope"), `storage` (the file could not be read or written) and
   configurationUrl?, suggestedArea?, via?}`. `key` follows the entity key rule and is
   unique among the devices (device and entity keys are apart); `name` is required;
   `configurationUrl` is `http://`, `https://` or `homeassistant://` (in any case)
-  followed by an ASCII host name or a bracketed IPv6 address, an optional port of at
+  followed by an ASCII host name or an address in brackets, an optional port of at
   most 65535, and an optional path, query or fragment without white space, control
-  characters or backslashes (narrower than Home Assistant's own check); `via`
+  characters, backslashes or characters beyond U+FFFF such as an emoji (narrower
+  than Home Assistant's own check); `via`
   is `{deviceId:"<Home Assistant device id>"}` or `{device:"<key of another Device
   node>"}`, and a key no Device node has or a circle is refused. An entity is on a
   device when a data edge goes from the Device node's `entities` output to the
@@ -107,8 +108,7 @@ definition envelope"), `storage` (the file could not be read or written) and
   class always makes its device, a class of one entity then has none), or
   `{manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
   suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` (the device of
-  another class definition that makes one; a graph definition is no device, so its
-  id names none) or `{deviceId:"<Home Assistant device id>"}`. Each field
+  another class definition that makes one; a graph definition is not a device) or `{deviceId:"<Home Assistant device id>"}`. Each field
   given overrides the class's own. `via` is not checked on save, and a cycle is not
   refused either; when the device is set up, a parent Home Assistant does not have
   is left out.
@@ -151,8 +151,8 @@ Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID
 new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a
 key makes a new entity. A Device node's device is `<definition id>:<device key>`
 in Home Assistant (a class definition's device is `<definition id>:main`; a graph
-definition has no such device, and one an earlier build made is removed at the next
-sync), so
+definition is not a device itself, and the device `<definition id>` an earlier build
+made for it is removed at the next sync), so
 changing a device key makes a new device, and an entity moved to another device
 keeps its registry entry, entity id and history. Creation uses expectedRevision 0; updates and deletes need the
 stored revision, and expectedRevision 0 deletes a corrupt file. `enabled` may be
