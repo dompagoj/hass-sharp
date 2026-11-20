@@ -2,6 +2,8 @@ import { createContext, useContext } from 'solid-js'
 import {
   customSignature,
   dataOutputs,
+  definitionCatalog,
+  definitionEntity,
   entityNodeName,
   executionLabel,
   executionPorts,
@@ -23,6 +25,7 @@ import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummar
 import { domainWords, typeColor, typeIsList, typeLabel } from '../typeLabels'
 import { comparedEnumInput, targetIds, widgetFor, type NameResolver, type StateEntity } from '../widgets'
 import type { VisualDiagnostic } from '../api'
+import { definitionEntityKinds } from '../../entities/model'
 import type { TraceEventStatus, TraceValue } from '../../types'
 
 /** C11 trace statuses and traced values (the C10 event status and value shapes). */
@@ -355,11 +358,14 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
   // Unset ports resolve to undefined, which JSON would drop: keep them as null.
   const resolved = Object.entries(index.analysis.resolved.get(node.id) ?? {}).map(([port, type]) => [port, type ?? null])
   const stateContext = node.kind === 'condition' ? entityStateContext(graph, node, 'entity', catalog) : undefined
+  // A Set state, Set available or Show frame shows the name of the Entity node it names, which is that node's config.
+  const named = definitionEntityKinds.includes(node.kind) && typeof node.config.entity === 'string'
+    ? definitionEntity(definitionCatalog(catalog, graph), node.config.entity)?.name ?? null : undefined
   const diagnostics = ctx.diagnostics.filter(d => d.nodeId === node.id).map(d => [d.severity, d.message, d.inputId ?? '', d.portId ?? ''])
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
   return JSON.stringify([
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
-    rejected ?? null, stateContext ?? null,
+    rejected ?? null, stateContext ?? null, named ?? null,
   ])
 }
 

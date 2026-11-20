@@ -8,7 +8,7 @@ import { VisualEditor } from '../src/visual/VisualEditor'
 import { HassCtx } from '../src/context'
 import * as contract from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
-import { visualFixture } from './visual-fixture'
+import { add, empty, visualFixture } from './visual-fixture'
 import { Timeline } from '../src/visual/trace/Timeline'
 import { nodeSummary } from '../src/visual/nodeSummary'
 import { chipValue, flowTrace, traceModel } from '../src/visual/trace/traceModel'
@@ -1250,4 +1250,21 @@ it('finds the timeline row in the Tab order once per selection, not once per row
   expect(rows[1499].tabIndex).toBe(0)
   expect(rows[0].tabIndex).toBe(-1)
   expect(scans).toBeLessThanOrEqual(3)
+})
+
+it('a step that names an entity follows a rename and a retype of its Entity node on the card', async () => {
+  const el = host()
+  const start = connectNodes(add(add(empty(), 'entity', 'l', { key: 'lamp', domain: 'switch', name: 'Lamp' }), 'set_entity_state', 's', { entity: 'lamp' }), 'l', 's', 'command:turn_on')
+  const [graph, setGraph] = createSignal(start)
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+  const summary = () => el.querySelector('[data-id="s"] .hs-card__summary')?.textContent
+  const inputs = () => [...el.querySelectorAll('[data-id="s"] .hs-pin--in')].map(pin => pin.getAttribute('aria-label') ?? '')
+  expect(summary()).toBe('Set state ▸ Lamp')
+  const hub = () => graph().nodes.find(n => n.id === 'l')!
+  setGraph(updateNode(graph(), 'l', { config: { ...hub().config, name: 'Desk lamp' } }))
+  await vi.waitFor(() => expect(summary()).toBe('Set state ▸ Desk lamp'))
+  expect(inputs().some(name => name.startsWith('Input Brightness'))).toBe(false)
+  setGraph(updateNode(graph(), 'l', { config: { ...hub().config, domain: 'light' } }))
+  await vi.waitFor(() => expect(inputs().some(name => name.startsWith('Input Brightness'))).toBe(true))
+  expect(summary()).toBe('Set state ▸ Desk lamp')
 })
