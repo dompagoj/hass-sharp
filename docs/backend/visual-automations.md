@@ -146,7 +146,12 @@ code of a C# entity or C# device node is one class, and its `signature` is the c
 signature `{title, description, domain, settings}` read from it (its `[Node]` title
 else its name in words, its summary, an entity's domain or null, and each `[Setting]`
 property with its type, `secret`, an enum's `options` and its range). The class is
-never created to read it.
+never created to read it. A C# node's code, like a Custom C# node's, cannot name a
+type another node's code declares; the problem names the type in full and that
+node's kind and id: "`NodeLib.Custom_plug.Speed` belongs to the C# device node
+`plug`; declare the type in this code or in a node library to use it here" (C#
+entity node, C# device node or Custom C# node). A class
+in a node library is in reach, and a node's class may derive from it.
 
 The actual catalog comes from `NodeLibraryRequest({operation:"catalog"})`, merged
 by Roslyn from the packaged built-ins and saved library sources. MCP

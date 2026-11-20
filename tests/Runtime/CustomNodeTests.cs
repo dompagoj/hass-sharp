@@ -237,7 +237,12 @@ static class CustomNodeTests
         Check(device.Valid && device.TypeExpression == "global::NodeLib.Custom_c.DoublePlug"
             && VisualGenerator.SameJson(device.Signature, JsonNode.Parse("""{"title": "Double plug", "description": "Two relays.", "domain": null, "settings": []}""")),
             "a device gives domain null, its entity classes being its helpers: " + Messages(device.Diagnostics) + " " + device.Signature?.ToJsonString());
-        Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range; a secret's value is never shown");
+        // An entity class of a node library is used by deriving from it in a node's code: its settings come first.
+        var library = new NodeLibrarySource("plugs", "public abstract class HttpRelay : SharpSwitch\n{\n    [Setting(\"Address\")] public string Address { get; set; } = \"\";\n}", 1);
+        var derived = ClassCompiled("csharp_entity", "public class Kitchen : HttpRelay\n{\n    [Setting] public bool Loud { get; set; }\n}", libraries: [library]);
+        Check(derived.Valid && VisualGenerator.SameJson(derived.Signature, JsonNode.Parse("""{"title": "Kitchen", "description": "", "domain": "switch", "settings": [{"key": "Address", "label": "Address", "description": "", "type": "string", "secret": false}, {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false}]}""")),
+            "a C# entity derives from a library's entity class, its settings first: " + Messages(derived.Diagnostics) + " " + derived.Signature?.ToJsonString());
+        Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range, a library base's first; a secret's value is never shown");
     }
 
     // Each problem a class node's code can have, said in the node's own lines.
@@ -297,9 +302,19 @@ static class CustomNodeTests
             "two device nodes each with a class Plug are both valid, as two classes: " + Messages(a.Diagnostics) + Messages(b.Diagnostics) + $" {a.TypeExpression} {b.TypeExpression}");
         var borrowing = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("a", plug, "csharp_device"),
             new CustomNodeSource("b", "public class Fan : SharpSwitch\n{\n    [Setting] public NodeLib.Custom_a.Speed Speed { get; set; }\n}", "csharp_entity")]).Snapshot.Custom["b"];
-        Check(!borrowing.Valid && borrowing.Diagnostics.Any(d => d.Message == "NodeLib.Custom_a.Speed belongs to the Custom C# node a; declare the type in this code or in a node library to use it here"),
-            "a setting of a type another node declares is refused: " + Messages(borrowing.Diagnostics));
-        Console.WriteLine("PASS two class nodes with one class name: both valid, each its own class; another node's type is refused");
+        Check(!borrowing.Valid && borrowing.Diagnostics.Any(d => d.Message == "NodeLib.Custom_a.Speed belongs to the C# device node a; declare the type in this code or in a node library to use it here"),
+            "a setting of a type another node declares is refused, naming that node's kind: " + Messages(borrowing.Diagnostics));
+        // The sentence names the kind of the node that declares the type: a C# entity's, a C# device's, a Custom C# step's.
+        const string fan = "public enum Level { Low, High }\npublic class Fan : SharpSwitch\n{\n    [Setting] public Level Level { get; set; }\n}";
+        var fromEntity = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("e", fan, "csharp_entity"),
+            new CustomNodeSource("d", "public class Hub : SharpDevice\n{\n    [Setting] public NodeLib.Custom_e.Level Level { get; set; }\n}", "csharp_device")]).Snapshot.Custom["d"];
+        Check(fromEntity.Diagnostics.Any(d => d.Message == "NodeLib.Custom_e.Level belongs to the C# entity node e; declare the type in this code or in a node library to use it here"),
+            "a type a C# entity node declares is named as that node's: " + Messages(fromEntity.Diagnostics));
+        var fromStep = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("s", "public enum Mode { Off, On }\npublic static class Step\n{\n    [Node(\"Mode\")]\n    public static Mode Run() => Mode.On;\n}"),
+            new CustomNodeSource("d", "public class Hub : SharpDevice\n{\n    [Setting] public NodeLib.Custom_s.Mode Mode { get; set; }\n}", "csharp_device")]).Snapshot.Custom["d"];
+        Check(fromStep.Diagnostics.Any(d => d.Message == "NodeLib.Custom_s.Mode belongs to the Custom C# node s; declare the type in this code or in a node library to use it here"),
+            "a type a Custom C# step declares keeps the step's sentence: " + Messages(fromStep.Diagnostics));
+        Console.WriteLine("PASS two class nodes with one class name: both valid, each its own class; another node's type is refused, naming that node's kind");
     }
 
     // Compiling a class node's code never creates its class: a constructor and a static constructor that throw (and say

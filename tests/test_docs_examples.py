@@ -36,6 +36,54 @@ def fenced_block_after(text, marker, language):
     return "\n".join(lines[opening + 1:closing])
 
 
+def class_node(title, kind):
+    """The one node of `kind` (csharp_entity or csharp_device) of the example definition `title`."""
+    nodes = [node for node in example_definition(title)["definition"]["logic"]["graph"]["nodes"] if node["kind"] == kind]
+    if len(nodes) != 1:
+        raise AssertionError(f"{title} has {len(nodes)} nodes of kind {kind}, not one")
+    return nodes[0]
+
+
+# A C# node a document shows as JSON may write its code as this, for the code block shown beside it.
+ELIDED = "…"
+
+
+def llm_constants():
+    """SEMANTICS and the tool tables (SPECS, ENTITY_SPECS) of llm.py, read from its source: importing it needs Home
+    Assistant. A tool's description is a plain string or an f-string; an f-string's text is joined without its fields."""
+    tree = ast.parse((INTEGRATION / "llm.py").read_text(encoding="utf-8"))
+    found = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in ("SEMANTICS", "SPECS", "ENTITY_SPECS") for t in node.targets):
+            name = next(t.id for t in node.targets if isinstance(t, ast.Name))
+            if name == "SEMANTICS":
+                found[name] = ast.literal_eval(node.value)
+                continue
+            table = {}
+            for key, value in zip(node.value.keys, node.value.values):
+                description = value.elts[1]
+                table[key.value] = description.value if isinstance(description, ast.Constant) else "".join(
+                    part.value for part in description.values if isinstance(part, ast.Constant))
+            found[name] = table
+    return found
+
+
+def members(listed):
+    """The member names of a written-out config such as `{key, name, via?}`: without backticks, white space or ?."""
+    inner = listed.strip().strip("`").strip()
+    if not (inner.startswith("{") and inner.endswith("}")):
+        raise AssertionError(f"not a written-out config: {listed!r}")
+    return [member.strip().strip("`").strip().rstrip("?") for member in inner[1:-1].replace("\n", " ").split(",")]
+
+
+def config_after(text, start):
+    """The first `{…}` in `text` at or after `start`, with no brace inside it."""
+    match = re.compile(r"\{[^{}]*\}").search(text, start)
+    if match is None:
+        raise AssertionError(f"no written-out config after {text[start:start + 60]!r}")
+    return match.group(0)
+
+
 def tool_names():
     """The keys of the tool tables in llm.py (SPECS for the automations' and libraries' tools, ENTITY_SPECS for the
     entity definitions'), read from its source: importing it needs Home Assistant."""
@@ -48,9 +96,61 @@ def tool_names():
 
 
 class DocsExamplesTests(unittest.TestCase):
-    def test_the_class_example_is_the_example_library_word_for_word(self):
-        block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), "<!-- example: Plug from a class -->", "csharp")
-        self.assertEqual(block, example_definition("Plug from a class")["library"]["source"])
+    def test_the_code_of_each_csharp_node_shown_is_the_examples_word_for_word(self):
+        # The plug's C# device and the thermometer's C# entity: the code the guide shows is the node's source.
+        for title, kind in (("Plug from a class", "csharp_device"), ("Thermometer over HTTP", "csharp_entity")):
+            with self.subTest(title):
+                block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), f"<!-- example: {title} -->", "csharp")
+                self.assertEqual(block, class_node(title, kind)["config"]["source"])
+
+    def test_the_csharp_nodes_shown_as_json_are_the_examples(self):
+        # Each node and edge a document shows of a C# node example is the example's of the same id, word for word, but
+        # that a C# node's source may be written as … for the code the guide shows; every node and edge of the graph is shown.
+        canonical = lambda value: json.dumps(value, sort_keys=True)
+        for doc, title in ((GUIDE, "Plug from a class"), (MCP, "Plug from a class"), (MCP, "Thermometer over HTTP")):
+            graph = example_definition(title)["definition"]["logic"]["graph"]
+            shown = json.loads(fenced_block_after(doc.read_text(encoding="utf-8"), f"<!-- example: {title}, its nodes -->", "json"))
+            with self.subTest(doc.name, title=title):
+                for part in ("nodes", "edges"):
+                    own = {item["id"]: item for item in graph[part]}
+                    self.assertEqual(sorted(item["id"] for item in shown[part]), sorted(own), part)
+                    for item in shown[part]:
+                        expected = json.loads(json.dumps(own[item["id"]]))
+                        if part == "nodes" and expected["kind"] in ("csharp_entity", "csharp_device") and item["config"].get("source") == ELIDED:
+                            expected["config"]["source"] = ELIDED
+                        self.assertEqual(canonical(item), canonical(expected), item["id"])
+                self.assertTrue(any(node["kind"] in ("csharp_entity", "csharp_device") for node in shown["nodes"]))
+
+    def test_the_config_members_written_out_are_the_catalogs(self):
+        # Wherever the members of a Device node's, a C# device node's or a C# entity node's config are written out (the MCP
+        # guide's rules, get_node_schema's description and the three documents, each list marked <!-- config: <kind> -->),
+        # they are the catalog's, in its order.
+        catalog = json.loads((INTEGRATION / "visual_node_catalog.json").read_text(encoding="utf-8"))
+        constants = llm_constants()
+        texts = {'SEMANTICS["definitions"]': constants["SEMANTICS"]["definitions"], "get_node_schema": constants["SPECS"]["get_node_schema"]}
+        docs = (GUIDE, MCP, ROOT / "docs/backend/entity-definitions.md")
+        for kind in ("device", "csharp_device", "csharp_entity"):
+            expected = list(catalog["nodes"][kind]["config"])
+            for name, text in texts.items():
+                with self.subTest(name, kind=kind):
+                    found = re.search(rf"\bkind {kind}\b[^{{]*?config is (?=\{{)", text)
+                    self.assertIsNotNone(found, f"{name} writes out no config of kind {kind}")
+                    self.assertEqual(members(config_after(text, found.end())), expected)
+            for doc in docs:
+                text = doc.read_text(encoding="utf-8")
+                marker = f"<!-- config: {kind} -->"
+                with self.subTest(doc.name, kind=kind):
+                    self.assertTrue(marker in text, f"{doc.name} marks no written-out config with {marker}")
+                    start = 0
+                    while (at := text.find(marker, start)) >= 0:
+                        self.assertEqual(members(config_after(text, at + len(marker))), expected, f"the list after {marker} at offset {at}")
+                        start = at + len(marker)
+
+    def test_the_config_check_reads_a_list(self):
+        # The parts the check above stands on: a list read with its marks, and a list that leaves a member out differs.
+        self.assertEqual(members("`{key, name, manufacturer?,\n  via?}`"), ["key", "name", "manufacturer", "via"])
+        self.assertEqual(members(config_after("Its config is `{key,\nname?}` and `{other}`", 0)), ["key", "name"])
+        self.assertNotEqual(members("{key, via?}"), list(json.loads((INTEGRATION / "visual_node_catalog.json").read_text(encoding="utf-8"))["nodes"]["device"]["config"]))
 
     def test_the_derived_sensor_is_the_example_definition(self):
         block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), "<!-- example: Motion in either room -->", "json")

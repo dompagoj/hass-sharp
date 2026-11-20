@@ -1,25 +1,29 @@
-"""Real Python.NET entity bridge boundary: a device class from a node library, and a graph of nodes, each become a running
-definition. No Home Assistant.
+"""Real Python.NET entity bridge boundary: a graph whose C# device node holds a device class, and a graph of nodes, each
+become a running definition; so do C# camera entity nodes, and a class from a node library, which the class kind of
+definition still takes until it is removed. No Home Assistant.
 
 Run in a fresh process against the published library: python tests/packaging/entity_bridge_smoke.py INTEGRATION_DIR [DOTNET_ROOT]
 Python callables stand in for Home Assistant's bridge on the five entity delegates (sync, push, remove, prune, camera snapshot), and the
 sync is answered from Python as the bridge answers it, or the definition never becomes active. A manager runs over a
 temporary configuration directory. For each definition, checks that the sync, the pushed states and a command's effect
-arrive in Python as str on .NET's threads, and that delete removes the entities. For the class, that a command it
-rejects fails with its message, and that its number is described with its range, takes a value a command sets and refuses
-one beyond it with a message naming it. For the graph, that its Device node reaches the sync as a device with the two entities wired to it, the others
+arrive in Python as str on .NET's threads, and that delete removes the entities. For the C# device, saved with its
+signature left out (deriveSignatures works it out from its code), that it reaches the sync as a device of its node's key
+and name with the details its class sets and every entity its code adds on it, under <definition>:<device key>:<entity key>,
+that the saved document lists it and none of its entities, that a command it rejects fails with its message, and that its
+number is described with its range, takes a value a command sets and refuses one beyond it with a message naming it. For
+the graph, that its Device node reaches the sync as a device with the two entities wired to it, the others
 standalone, that a dimmable light's turn on flow reads the brightness its
 command gives and its turn off flow keeps it, and that its binary sensor follows a source entity Python answers for (through
 PyInterop.Entity, asked with a str on .NET's threads, and changed through the manager as the bridge reports a change),
 that it subscribes to that source with a str and unsubscribes from it on delete, that a switch's turn on and turn off
 flows set its state, that the save warns of the one command no flow handles, naming its entity, that a command no flow
 handles fails naming the entity and the command, and that nothing logged at warning or above names the graph.
-For pictures, which cross as bytes both ways: a class camera shows a blank picture, which comes out of CameraImage as a
-System.Byte[]; another, whose frames take a picture of the first through BeginCameraSnapshot (answered as the bridge
-answers, with a System.Byte[] the bridge's own code builds) and draw a rectangle and a label on it, gives a JPEG that
-differs from its source, which takes libjpeg-turbo and the embedded font. A camera that only shows its frames keeps its
-picture across a save: the request right after it gets the frame the replaced revision showed, which the new one never
-shows itself.
+For pictures, which cross as bytes both ways: a C# camera entity node shows a blank picture, which comes out of
+CameraImage as a System.Byte[]; another, whose frames take a picture of the first through BeginCameraSnapshot (answered
+as the bridge answers, with a System.Byte[] the bridge's own code builds) and draw a rectangle and a label on it, gives a
+JPEG that differs from its source, which takes libjpeg-turbo and the embedded font. A camera class from a node library
+that only shows its frames keeps its picture across a save: the request right after it gets the frame the replaced
+revision showed, which the new one never shows itself.
 Exits non-zero with a message on the first mismatch.
 """
 import ast
@@ -46,15 +50,17 @@ from System.Collections.Generic import Dictionary
 from System.Threading.Tasks import Task
 
 DEFINITION = 'smoke_plug'
-# The cameras' definitions, and the entity id the smoke's sync answers for the still one.
-STILL, LENS = 'smoke_still', 'smoke_lens'
-# A camera that shows a green frame as it starts only while the smoke says so (AppContext data), so that a revision saved
-# without it shows none of its own.
+# The key of its C# device node, and so of its device: each entity its class adds is <definition>:<device key>:<entity key>.
+PLUG = 'plug'
+# The cameras' definitions, each one C# camera entity node of this key, and the entity id the smoke's sync answers for the still one.
+STILL, LENS, CAMERA = 'smoke_still', 'smoke_lens', 'camera'
+# A camera class from a node library (the class kind, until it is removed) that shows a green frame as it starts only
+# while the smoke says so (AppContext data), so that a revision saved without it shows none of its own.
 PUSH, PUSH_SHOWS = 'smoke_push', 'HassSharp.Smoke.PushShows'
-STILL_CAMERA = f'camera.{STILL}_main'
-TYPE = 'library:smoke:NodeLib.SmokePlug'
+STILL_CAMERA = f'camera.{STILL}_{CAMERA}'
+TYPE = 'library:smoke:NodeLib.SmokePush'
 REFUSAL = 'the smoke plug refuses to turn on'
-LIBRARY = '''
+PLUG_SOURCE = '''
 public class SmokePlug : SharpDevice
 {
     readonly SharpSwitch relay;
@@ -75,10 +81,21 @@ public class SmokePlug : SharpDevice
         return Task.CompletedTask;
     }
 }
+'''
+STILL_SOURCE = '''
 public class SmokeStill : SharpCamera
 {
     protected override Task Start() { Show(SharpImage.Blank(64, 48, SharpColor.Blue)); return Task.CompletedTask; }
 }
+'''
+LENS_SOURCE = '''
+public class SmokeLens : SharpCamera
+{
+    protected override async Task<SharpImage?> Frame() =>
+        (await CameraSnapshot("''' + STILL_CAMERA + '''")).DrawRect(4, 4, 40, 24, SharpColor.Yellow, 3).DrawText("Smoke", 6, 30, SharpColor.White, 14);
+}
+'''
+LIBRARY = '''
 public class SmokePush : SharpCamera
 {
     protected override Task Start()
@@ -86,11 +103,6 @@ public class SmokePush : SharpCamera
         if (AppContext.GetData("''' + PUSH_SHOWS + '''") is true) Show(SharpImage.Blank(64, 48, SharpColor.Green));
         return Task.CompletedTask;
     }
-}
-public class SmokeLens : SharpCamera
-{
-    protected override async Task<SharpImage?> Frame() =>
-        (await CameraSnapshot("''' + STILL_CAMERA + '''")).DrawRect(4, 4, 40, 24, SharpColor.Yellow, 3).DrawText("Smoke", 6, 30, SharpColor.White, 14);
 }
 '''
 EXPECTED = [('relay', 'switch'), ('power', 'sensor'), ('problem', 'binary_sensor'), ('guard', 'switch'), ('target', 'number')]
@@ -120,6 +132,18 @@ def data(source, target, target_port, source_port='value'):
 def step(source, target, port):
     """An execution edge from `port` of `source`: next, or an Entity node's command:<command>."""
     return {'id': f'{source}:{port}:{target}', 'source': source, 'target': target, 'port': port}
+
+
+def csharp_definition(title, kind, key, source, **config):
+    """A graph definition called `title` of one C# entity or C# device node, of id and key `key` and the rest of its
+    config, its code `source`; its signature is left out, for the save's deriveSignatures to work out from the code."""
+    return {'name': title, 'settings': [], 'logic': {'kind': 'graph', 'graph': {'version': 5, 'name': title, 'nodes': [
+        node(key, kind, {'key': key, **config, 'source': source, 'arguments': {}})], 'edges': []}}}
+
+
+def save_csharp(definition_id, definition, what):
+    return request(manager.EntityRequest, {'operation': 'save', 'id': definition_id, 'expectedRevision': 0, 'deriveSignatures': True,
+                                           'definition': definition}, what)
 
 
 # Each: key, domain, name, commands, options; each is an Entity node of that id, in this order.
@@ -283,7 +307,7 @@ def camera_snapshot(definition_id, entity_id, on_bytes, on_error):
         if entity_id != STILL_CAMERA:
             on_error('Camera not found')
             return
-        picture = call(lambda: manager.CameraImage(f'{STILL}:main'), "the still camera's frame for the snapshot")
+        picture = call(lambda: manager.CameraImage(f'{STILL}:{CAMERA}'), "the still camera's frame for the snapshot")
         on_bytes(dotnet_bytes(bytes(picture)))
     later(answer)
 
@@ -380,28 +404,29 @@ try:
         call(manager.Init, 'Init')
         check(arguments('prune') == ['[]'], f"Init prunes every definition but none: {recorded('prune')}")
 
-        library = request(manager.NodeLibraryRequest, {'operation': 'save', 'id': 'smoke', 'name': 'Smoke', 'expectedRevision': 0, 'source': LIBRARY}, 'the library save')
-        check(library.get('saved') is True, f'the library is not saved: {library}')
-        types = request(manager.EntityRequest, {'operation': 'types'}, 'types')
-        check(any(t['id'] == TYPE and t['kind'] == 'device' for t in types['types']), f'types does not list {TYPE}: {types}')
-
-        saved = request(manager.EntityRequest, {'operation': 'save', 'id': DEFINITION, 'expectedRevision': 0, 'definition': {
-            'name': 'Smoke plug', 'settings': [], 'logic': {'kind': 'class', 'type': TYPE}}}, 'the definition save')
+        # ---- A graph whose C# device node holds the plug's class ----
+        saved = save_csharp(DEFINITION, csharp_definition('Smoke plug', 'csharp_device', PLUG, PLUG_SOURCE, name='Smoke plug device'), 'the definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the definition does not run: {saved}')
         live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
-        check(live == {f'{DEFINITION}:{key}': f'{domain}.{DEFINITION}_{key}' for key, domain in EXPECTED},
+        check(live == {f'{DEFINITION}:{PLUG}:{key}': f'{domain}.{DEFINITION}_{key}' for key, domain in EXPECTED},
               f"the live entities are not the entity ids Python answered: {saved['document']['liveEntities']}")
+        # The saved document lists the C# device, and none of the entities its code adds.
+        check(saved['document']['devices'] == [{'key': PLUG, 'name': 'Smoke plug device', 'csharp': True}] and saved['document']['entities'] == [],
+              f"the saved document's devices and entities: {saved['document']['devices']} {saved['document']['entities']}")
+        node_signature = saved['document']['logic']['graph']['nodes'][0]['config'].get('signature')
+        check(node_signature == {'title': 'Smoke plug', 'description': '', 'domain': None, 'settings': []},
+              f"the save did not work the C# device's signature out from its code: {node_signature}")
 
         synced = arguments('sync')
         check(len(synced) == 1, f'one save synced {len(synced)} times')
         definition = json.loads(synced[0])
         check(definition['definitionId'] == DEFINITION and definition['name'] == 'Smoke plug', f'the sync names another definition: {definition}')
         devices = definition['devices']
-        check(len(devices) == 1 and devices[0]['key'] == 'main' and devices[0]['name'] == 'Smoke plug'
+        check(len(devices) == 1 and devices[0]['key'] == PLUG and devices[0]['name'] == 'Smoke plug device'
               and devices[0]['manufacturer'] == 'Smoke' and 'device' not in definition, f"the sync's devices: {devices}")
-        check(all(e['device'] == 'main' for e in definition['entities']), f"the entities are not all on the device main: {definition['entities']}")
+        check(all(e['device'] == PLUG for e in definition['entities']), f"the entities are not all on the device {PLUG}: {definition['entities']}")
         described = [(e['uniqueId'], e['key'], e['domain']) for e in definition['entities']]
-        check(described == [(f'{DEFINITION}:{key}', key, domain) for key, domain in EXPECTED], f'the sync describes {described}')
+        check(described == [(f'{DEFINITION}:{PLUG}:{key}', key, domain) for key, domain in EXPECTED], f'the sync describes {described}')
         power = definition['entities'][1]
         check(power['deviceClass'] == 'power' and power['options']['unit'] == 'W', f'the power sensor is described as {power}')
         check(definition['entities'][0]['commands'] == ['turn_on', 'turn_off'], f"the relay's commands: {definition['entities'][0]}")
@@ -410,28 +435,28 @@ try:
               and target['options'] == {'min': 5, 'max': 30, 'step': 0.5, 'mode': 'auto', 'unit': '°C'}, f'the number is described as {target}')
 
         # Every's first run, and the binary sensor's first state, come in a push from .NET's pump.
-        until(shows(f'{DEFINITION}:power', 'value', 42.5), 'the power sensor pushed 42.5')
-        until(shows(f'{DEFINITION}:problem', 'is_on', False), 'the binary sensor pushed off')
+        until(shows(f'{DEFINITION}:{PLUG}:power', 'value', 42.5), 'the power sensor pushed 42.5')
+        until(shows(f'{DEFINITION}:{PLUG}:problem', 'is_on', False), 'the binary sensor pushed off')
 
-        call(lambda: manager.EntityCommand(f'{DEFINITION}:relay', 'turn_on', '{}'), 'turn_on')
-        until(shows(f'{DEFINITION}:relay', 'is_on', True), 'the relay pushed on after turn_on')
-        call(lambda: manager.EntityCommand(f'{DEFINITION}:relay', 'turn_off', '{}'), 'turn_off')
-        until(lambda: [s['values'].get('is_on') for s in snapshots() if s['uniqueId'] == f'{DEFINITION}:relay'][-1] is False, 'the relay pushed off after turn_off')
+        call(lambda: manager.EntityCommand(f'{DEFINITION}:{PLUG}:relay', 'turn_on', '{}'), 'turn_on')
+        until(shows(f'{DEFINITION}:{PLUG}:relay', 'is_on', True), 'the relay pushed on after turn_on')
+        call(lambda: manager.EntityCommand(f'{DEFINITION}:{PLUG}:relay', 'turn_off', '{}'), 'turn_off')
+        until(lambda: [s['values'].get('is_on') for s in snapshots() if s['uniqueId'] == f'{DEFINITION}:{PLUG}:relay'][-1] is False, 'the relay pushed off after turn_off')
 
-        call(lambda: manager.EntityCommand(f'{DEFINITION}:target', 'set_value', '{"value": 21.5}'), 'set_value')
-        until(shows(f'{DEFINITION}:target', 'value', 21.5), 'the number pushed 21.5 after set_value')
+        call(lambda: manager.EntityCommand(f'{DEFINITION}:{PLUG}:target', 'set_value', '{"value": 21.5}'), 'set_value')
+        until(shows(f'{DEFINITION}:{PLUG}:target', 'value', 21.5), 'the number pushed 21.5 after set_value')
         # A value beyond the range is refused before the handler runs, with a message naming the number and the value.
         try:
-            call(lambda: manager.EntityCommand(f'{DEFINITION}:target', 'set_value', '{"value": 45}'), 'the set_value beyond the range')
+            call(lambda: manager.EntityCommand(f'{DEFINITION}:{PLUG}:target', 'set_value', '{"value": 45}'), 'the set_value beyond the range')
         except Exception as error:
             check(getattr(error, 'Message', None) == BEYOND, f'the value beyond the range failed with {getattr(error, "Message", error)!r}, not {BEYOND!r}')
         else:
             fail('a value beyond the range was set')
-        check(lasts(f'{DEFINITION}:target', 'value', 21.5)(), 'the refused value changed the number')
+        check(lasts(f'{DEFINITION}:{PLUG}:target', 'value', 21.5)(), 'the refused value changed the number')
 
         # A handler that throws faults the command's Task with its own message, which the bridge reads as .Message.
         try:
-            call(lambda: manager.EntityCommand(f'{DEFINITION}:guard', 'turn_on', '{}'), 'the rejected turn_on')
+            call(lambda: manager.EntityCommand(f'{DEFINITION}:{PLUG}:guard', 'turn_on', '{}'), 'the rejected turn_on')
         except Exception as error:
             check(getattr(error, 'Message', None) == REFUSAL, f'the rejected command failed with {getattr(error, "Message", error)!r}, not {REFUSAL!r}')
         else:
@@ -441,7 +466,7 @@ try:
         check(deleted == {'deleted': True}, f'the delete answered {deleted}')
         check(arguments('remove') == [DEFINITION], f"delete asked to remove {recorded('remove')}")
         try:
-            call(lambda: manager.EntityCommand(f'{DEFINITION}:relay', 'turn_on', '{}'), 'a command after delete')
+            call(lambda: manager.EntityCommand(f'{DEFINITION}:{PLUG}:relay', 'turn_on', '{}'), 'a command after delete')
         except Exception as error:
             check(getattr(error, 'Message', None) == 'The entity is not running', f'a command after delete failed with {error}')
         else:
@@ -452,7 +477,7 @@ try:
         saved = request(manager.EntityRequest, {'operation': 'save', 'id': GRAPH_DEFINITION, 'expectedRevision': 0, 'definition': {
             'name': 'Smoke graph', 'settings': [], 'logic': {'kind': 'graph', 'graph': GRAPH}}}, 'the graph definition save')
         check(saved.get('active') is True and saved['document']['status'] == 'running', f'the graph definition does not run: {saved}')
-        # The saved libraries' compiler warnings come along (the class above has some); of the graph, only the one command.
+        # A saved library's compiler warnings would come along (none is saved yet); of the graph, only the one command.
         own = [d for d in saved.get('diagnostics') or [] if not str(d.get('nodeId')).startswith('$library:')]
         check([d.get('code') for d in own] == ['command.unhandled'], f"the save warns only of the command no flow handles: {saved.get('diagnostics')}")
         check(own[0].get('nodeId') == 'bare' and own[0].get('portId') == 'command:turn_on' and 'Bare' in own[0].get('message', '') and 'Turn on' in own[0]['message'],
@@ -523,14 +548,12 @@ try:
             fail('a graph command after delete succeeded')
         check(len(recorded('sync')) == 2, f"syncs after the graph save: {recorded('sync')}")
 
-        # ---- Pictures: bytes from .NET to Python and back ----
-        for definition_id, type_ in ((STILL, 'SmokeStill'), (LENS, 'SmokeLens')):
-            saved = request(manager.EntityRequest, {'operation': 'save', 'id': definition_id, 'expectedRevision': 0, 'definition': {
-                'name': definition_id, 'settings': [], 'logic': {'kind': 'class', 'type': f'library:smoke:NodeLib.{type_}'}}},
-                f'the {definition_id} save')
+        # ---- Pictures: bytes from .NET to Python and back, from C# camera entity nodes ----
+        for definition_id, source in ((STILL, STILL_SOURCE), (LENS, LENS_SOURCE)):
+            saved = save_csharp(definition_id, csharp_definition(definition_id, 'csharp_entity', CAMERA, source), f'the {definition_id} save')
             check(saved.get('active') is True and saved['document']['status'] == 'running', f'{definition_id} does not run: {saved}')
         live = {e['uniqueId']: e['entityId'] for e in saved['document']['liveEntities']}
-        check(live == {f'{LENS}:main': f'camera.{LENS}_main'}, f"the lens's live entities: {saved['document']['liveEntities']}")
+        check(live == {f'{LENS}:{CAMERA}': f'camera.{LENS}_{CAMERA}'}, f"the lens's live entities: {saved['document']['liveEntities']}")
 
         def frame(unique_id, what):
             """A camera's frame through CameraImage, as bytes; retried while its Start has not shown one yet."""
@@ -545,10 +568,10 @@ try:
                     time.sleep(0.05)
             check(picture.GetType().FullName == 'System.Byte[]', f'{what} is a {picture.GetType().FullName}, not System.Byte[]')
             return bytes(picture)
-        still = frame(f'{STILL}:main', "the still camera's frame")
+        still = frame(f'{STILL}:{CAMERA}', "the still camera's frame")
         check(still[:2] == b'\xff\xd8', f"the still camera's frame is not a JPEG: it starts {still[:4].hex()}")
         check(arguments('snapshot') == [], f"the still camera took a picture: {arguments('snapshot')}")
-        lens = frame(f'{LENS}:main', "the lens's frame")
+        lens = frame(f'{LENS}:{CAMERA}', "the lens's frame")
         check(arguments('snapshot') == [LENS, STILL_CAMERA], f"the lens asked for {arguments('snapshot')}, not a picture of {STILL_CAMERA} for {LENS}")
         check(lens[:2] == b'\xff\xd8' and lens[-2:] == b'\xff\xd9', f"the lens's frame is not a JPEG: it starts {lens[:4].hex()}, ends {lens[-2:].hex()}")
         check(lens != still, "the lens's frame is its source unchanged: nothing was drawn")
@@ -558,10 +581,15 @@ try:
             deleted = request(manager.EntityRequest, {'operation': 'delete', 'id': definition_id, 'expectedRevision': 1}, f'the {definition_id} delete')
             check(deleted == {'deleted': True}, f'the {definition_id} delete answered {deleted}')
 
-        # ---- A camera that only shows its frames, across a save ----
+        # ---- The class kind, until it is removed: a camera class from a node library that only shows its frames, across a save ----
+        library = request(manager.NodeLibraryRequest, {'operation': 'save', 'id': 'smoke', 'name': 'Smoke', 'expectedRevision': 0, 'source': LIBRARY}, 'the library save')
+        check(library.get('saved') is True, f'the library is not saved: {library}')
+        types = request(manager.EntityRequest, {'operation': 'types'}, 'types')
+        check(any(t['id'] == TYPE and t['kind'] == 'entity' and t['domain'] == 'camera' for t in types['types']), f'types does not list {TYPE}: {types}')
+
         def save_push(revision):
             saved = request(manager.EntityRequest, {'operation': 'save', 'id': PUSH, 'expectedRevision': revision, 'definition': {
-                'name': PUSH, 'settings': [], 'logic': {'kind': 'class', 'type': 'library:smoke:NodeLib.SmokePush'}}},
+                'name': PUSH, 'settings': [], 'logic': {'kind': 'class', 'type': TYPE}}},
                 f'the {PUSH} save at revision {revision}')
             check(saved.get('active') is True and saved['document']['status'] == 'running', f'{PUSH} does not run: {saved}')
         AppContext.SetData(PUSH_SHOWS, Boolean(True))

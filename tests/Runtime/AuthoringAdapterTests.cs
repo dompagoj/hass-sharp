@@ -6,6 +6,7 @@ using static VisualExecutionTests;
 static class AuthoringAdapterTests
 {
     static async Task<JsonNode> Request(HassSharpManager manager, object request) => JsonNode.Parse(await manager.VisualRequest(JsonSerializer.Serialize(request)))!;
+    static async Task<JsonNode> EntityRequest(HassSharpManager manager, object request) => JsonNode.Parse(await manager.EntityRequest(JsonSerializer.Serialize(request)))!;
     [RuntimeSuite("--authoring-adapter", Order = 13)]
     public static async Task Run()
     {
@@ -69,6 +70,7 @@ static class AuthoringAdapterTests
             var pureKinds=library["graph"]!["nodes"]!.AsArray().Select(n=>n!["kind"]!.GetValue<string>()).Where(k=>candidate.Snapshot.Root["nodes"]?[k]?["pure"]?.GetValue<bool>()==true).ToArray();
             VisualExecutionTests.Check(pureKinds.Length==1&&pureKinds[0].StartsWith("library:example:",StringComparison.Ordinal),"the library example uses a pure library method: "+string.Join(", ",pureKinds));
             ExampleDefinitions(examples["definitions"]!.AsArray(),exampleDiagnostics,builtIn,services);
+            await ExampleDefinitionsThroughTheApi(manager,examples["definitions"]!.AsArray());
             // service_ports: the ports MCP shows for a service are the validator's own (DataInputs/DataOutputs).
             manager.SetServiceDescriptions(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"ha-service-descriptions.json")));
             async Task<JsonNode> Ports(string service)=>JsonNode.Parse(await manager.NodeLibraryRequest(JsonSerializer.Serialize(new{operation="service_ports",service})))!;
@@ -138,65 +140,129 @@ static class AuthoringAdapterTests
         finally { await manager.UnloadAsync(); HassPath.HassConfiguration=previous; Directory.Delete(path,true); }
     }
 
-    /// <summary>The entities each graph example creates, as its preview derives them from its Entity nodes (each member given must be there and match; device: the key of the Device node it is on, or null).</summary>
+    /// <summary>
+    /// The entities each graph example lists, as a save stores them: its Entity nodes', then its C# entity nodes'
+    /// (<c>DefinitionGraph.ListedEntities</c>; each member given must be there and match; device: the key of the Device node
+    /// it is on, or null). A C# device's own entities are not listed: its code adds them as it runs.
+    /// </summary>
     static readonly Dictionary<string,string> DerivedEntities=new()
     {
         ["Motion in either room"]="""[{"key":"any_motion","domain":"binary_sensor","name":"Any motion","deviceClass":"motion","device":null}]""",
         ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet","device":"plug"},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"},"device":"plug"}]""",
         ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","options":{"frame_interval":2},"device":null}]""",
         ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic","device":null}]""",
+        ["Plug from a class"]="[]",
+        ["Thermometer over HTTP"]="""[{"key":"thermometer","domain":"sensor","name":null,"device":null,"csharp":true}]""",
+    };
+
+    /// <summary>The devices each graph example lists, as a save stores them (<c>DefinitionGraph.Devices</c>), exactly: its Device nodes', then its C# device nodes'.</summary>
+    static readonly Dictionary<string,string> DerivedDevices=new()
+    {
+        ["Motion in either room"]="[]",
+        ["Plug over HTTP"]="""[{"key":"plug","name":"Plug over HTTP","model":"Smart plug","suggestedArea":"Living room"}]""",
+        ["Camera with a box"]="[]",
+        ["File at setup"]="[]",
+        ["Plug from a class"]="""[{"key":"plug","name":"Smart plug","csharp":true}]""",
+        ["Thermometer over HTTP"]="[]",
+    };
+
+    /// <summary>What each C# node of an example is given when the definition starts, by node id: each setting's key and value (<c>DefinitionGraph.Components</c>), a wired Setting's saved value included.</summary>
+    static readonly Dictionary<string,string> ComponentSettings=new()
+    {
+        ["Plug from a class"]="""{"plug":{"Address":"http://192.168.1.50/rpc"}}""",
+        ["Thermometer over HTTP"]="""{"thermometer":{"Address":"http://192.168.1.60/temperature","Interval":60}}""",
     };
 
     /// <summary>
     /// The example definitions <c>get_capabilities</c> gives for an entity document, in their order: each previews with no
-    /// diagnostics at all, with and without the service schemas (with its library compiled into the snapshot when it has
-    /// one), lays out every step and carries no secret's value; together they use every kind an author is shown by them;
-    /// the class example's library compiles alone and declares a device with a setting, which the definition creates.
+    /// diagnostics at all, with and without the service schemas, lays out every step and carries no secret's value; each
+    /// C# node's stored signature is the one its code gives; each lists the entities and devices a save stores, and gives
+    /// its C# nodes their settings; together they use every kind an author is shown by them, a C# entity and a C# device
+    /// among them. None is a class definition: a C# class is written in a node of the graph.
     /// </summary>
     static void ExampleDefinitions(JsonArray definitions,DiagnosticsProvider diagnostics,VisualCatalogSnapshot builtIn,ServiceSchemaCatalog services)
     {
-        string[] titles=["Motion in either room","Plug over HTTP","Camera with a box","File at setup","Plug from a class"];
-        VisualExecutionTests.Check(definitions.Select(d=>d!["title"]!.GetValue<string>()).SequenceEqual(titles),"the example definitions are the five, in order: "+string.Join(", ",definitions.Select(d=>d!["title"])));
+        string[] titles=["Motion in either room","Plug over HTTP","Camera with a box","File at setup","Plug from a class","Thermometer over HTTP"];
+        VisualExecutionTests.Check(definitions.Select(d=>d!["title"]!.GetValue<string>()).SequenceEqual(titles),"the example definitions are the six, in order: "+string.Join(", ",definitions.Select(d=>d!["title"])));
         var kinds=new HashSet<string>(StringComparer.Ordinal);
         foreach(var example in definitions)
         {
             var title=example!["title"]!.GetValue<string>();
             VisualExecutionTests.Check(!string.IsNullOrWhiteSpace(example["description"]?.GetValue<string>()),$"example definition {title} has a description");
+            VisualExecutionTests.Check(example["library"]==null&&example["definition"]!["logic"]!["kind"]!.GetValue<string>()=="graph",$"example definition {title} is a graph, with no library of its own");
             var snapshot=builtIn;
-            if(example["library"] is JsonObject library)
-            {
-                var compiled=new NodeLibraryCompiler(diagnostics).Preview([new(library["id"]!.GetValue<string>(),library["source"]!.GetValue<string>(),1)]);
-                VisualExecutionTests.Check(compiled.Valid&&compiled.Diagnostics.Length==0,$"example definition {title}: its library compiles alone with no diagnostics: "+JsonSerializer.Serialize(compiled.Diagnostics));
-                var devices=compiled.Snapshot.EntityTypes.Values.Where(t=>t.Kind=="device"&&t.Settings.Length>0).ToArray();
-                VisualExecutionTests.Check(devices.Length>0,$"example definition {title}: its library declares a SharpDevice with a [Setting]");
-                VisualExecutionTests.Check(devices.Any(t=>t.Id==example["definition"]!["logic"]!["type"]?.GetValue<string>()),$"example definition {title} creates the library's device: "+example["definition"]!["logic"]!.ToJsonString());
-                snapshot=compiled.Snapshot;
-            }
             var body=example["definition"]!.Deserialize<DefinitionBody>(VisualStore.Json)!;
+            var graph=body.Logic.Graph!;
+            // Each C# node's stored signature is exactly the one deriving writes from its code, and deriving removes nothing.
+            var rederived=new VisualGenerator(diagnostics).DeriveSignatures((JsonObject)graph.DeepClone(),snapshot,out var dropped);
+            VisualExecutionTests.Check(dropped.Count==0,$"example definition {title}: deriving its signatures removes nothing: "+JsonSerializer.Serialize(dropped));
+            foreach(var node in graph["nodes"]!.AsArray().Where(n=>n!["kind"]!.GetValue<string>() is "csharp_entity" or "csharp_device"))
+            {
+                var written=rederived["nodes"]!.AsArray().Single(n=>n!["id"]!.GetValue<string>()==node!["id"]!.GetValue<string>())!["config"]!["signature"];
+                VisualExecutionTests.Check(JsonNode.DeepEquals(node!["config"]!["signature"],written),$"example definition {title}: the stored signature of {node["id"]} is its code's: "+written?.ToJsonString());
+            }
             foreach(var (name,attached) in new[]{("without services",snapshot),("with services",snapshot.WithServices(services))})
             {
                 var preview=new DefinitionGenerator(diagnostics).Preview(body,attached);
                 VisualExecutionTests.Check(preview.Valid&&preview.Diagnostics.Count==0,$"example definition {title} validates and compiles {name} with no diagnostics: "+JsonSerializer.Serialize(preview.Diagnostics));
             }
             VisualExecutionTests.Check((body.Settings??[]).All(s=>!s.Secret||s.Value==null),$"example definition {title}: no secret setting carries a value");
-            if(body.Logic.Graph is not { } graph) continue;
             // A graph example lists no entities: its Entity nodes declare them, and the preview derives each as it is listed here.
             VisualExecutionTests.Check(example["definition"]!["entities"]==null,$"example definition {title} lists no entities: its Entity nodes declare them");
             // Nor does it send a device of its own: its devices are its Device nodes.
             VisualExecutionTests.Check(!example["definition"]!.AsObject().ContainsKey("device"),$"example definition {title} sends no device: its Device nodes are its devices");
             var composed=new DefinitionGenerator(diagnostics).Preview(body,snapshot).Graph!;
-            var derived=DefinitionGraph.Entities(composed,snapshot);
+            var derived=DefinitionGraph.ListedEntities(composed,snapshot);
             var expected=JsonNode.Parse(DerivedEntities[title])!.AsArray();
             VisualExecutionTests.Check(derived.Count==expected.Count&&expected.Select((e,i)=>e!.AsObject().All(p=>derived[i]!.AsObject().ContainsKey(p.Key)&&JsonNode.DeepEquals(p.Value,derived[i]![p.Key]))).All(x=>x),
                 $"example definition {title} derives its entities {expected.ToJsonString()}: "+derived.ToJsonString());
+            var devices=DefinitionGraph.Devices(composed,snapshot.Root);
+            VisualExecutionTests.Check(JsonNode.DeepEquals(devices,JsonNode.Parse(DerivedDevices[title])),$"example definition {title} derives its devices {DerivedDevices[title]}: "+devices.ToJsonString());
+            var given=new JsonObject();
+            foreach(var component in DefinitionGraph.Components(composed,snapshot,body.Settings??[]))
+                given[component.NodeId]=new JsonObject(component.Settings.Select(s=>KeyValuePair.Create(s.Key,s.Value?.DeepClone())));
+            VisualExecutionTests.Check(JsonNode.DeepEquals(given,JsonNode.Parse(ComponentSettings.GetValueOrDefault(title,"{}"))),$"example definition {title} gives its C# nodes their settings: "+given.ToJsonString());
             foreach(var node in graph["nodes"]!.AsArray())
             {
                 VisualExecutionTests.Check(node!["position"] is JsonObject&&node["size"]==null,$"example definition {title}: step {node["id"]} has a position and no size");
                 kinds.Add(node["kind"]!.GetValue<string>());
             }
         }
-        string[] shown=["entity","device","camera_snapshot","image_draw_rect","image_draw_text","show_frame","http_request","download_file","entity_setup","set_entity_state","entity_is","setting","set_entity_available"];
+        string[] shown=["entity","device","csharp_entity","csharp_device","camera_snapshot","image_draw_rect","image_draw_text","show_frame","http_request","download_file","entity_setup","set_entity_state","entity_is","setting","set_entity_available"];
         VisualExecutionTests.Check(shown.All(kinds.Contains),"the example definitions use every kind they show: missing "+string.Join(", ",shown.Where(k=>!kinds.Contains(k))));
-        Console.WriteLine("PASS the example definitions preview with no diagnostics, lay out their steps, carry no secret and use every kind they show");
+        Console.WriteLine("PASS the example definitions preview with no diagnostics, lay out their steps, carry no secret, hold their code's signatures, list what a save stores and use every kind they show");
+    }
+
+    /// <summary>
+    /// Each example definition through the entity API, as MCP authoring sends it: with <c>deriveSignatures</c>, its C# nodes'
+    /// signatures left out, it previews with no problem and the graph answered carries each C# node's stored signature; as
+    /// stored, without deriving, it previews with no problem too.
+    /// </summary>
+    static async Task ExampleDefinitionsThroughTheApi(HassSharpManager manager,JsonArray definitions)
+    {
+        var withCode=0;
+        foreach(var example in definitions)
+        {
+            var title=example!["title"]!.GetValue<string>();
+            var stored=example["definition"]!.AsObject();
+            var sent=(JsonObject)stored.DeepClone();
+            var classNodes=sent["logic"]!["graph"]!["nodes"]!.AsArray().Where(n=>n!["kind"]!.GetValue<string>() is "csharp_entity" or "csharp_device").ToArray();
+            foreach(var node in classNodes) node!["config"]!.AsObject().Remove("signature");
+            withCode+=classNodes.Length>0?1:0;
+            var derived=await EntityRequest(manager,new{operation="preview",definition=sent,deriveSignatures=true});
+            VisualExecutionTests.Check(derived["ok"]!.GetValue<bool>()&&derived["result"]!["valid"]!.GetValue<bool>()&&derived["result"]!["diagnostics"]!.AsArray().Count==0,
+                $"example definition {title}, its signatures left out, previews through the API with deriveSignatures and no problem: "+derived.ToJsonString());
+            var answered=derived["result"]!["graph"]!["nodes"]!.AsArray();
+            foreach(var node in stored["logic"]!["graph"]!["nodes"]!.AsArray().Where(n=>n!["kind"]!.GetValue<string>() is "csharp_entity" or "csharp_device"))
+            {
+                var signature=answered.Single(n=>n!["id"]!.GetValue<string>()==node!["id"]!.GetValue<string>())!["config"]!["signature"];
+                VisualExecutionTests.Check(JsonNode.DeepEquals(node!["config"]!["signature"],signature),$"example definition {title}: the API derives the stored signature of {node["id"]}: "+signature?.ToJsonString());
+            }
+            var asStored=await EntityRequest(manager,new{operation="preview",definition=stored});
+            VisualExecutionTests.Check(asStored["ok"]!.GetValue<bool>()&&asStored["result"]!["valid"]!.GetValue<bool>()&&asStored["result"]!["diagnostics"]!.AsArray().Count==0,
+                $"example definition {title} previews through the API as stored, without deriving, with no problem: "+asStored.ToJsonString());
+        }
+        VisualExecutionTests.Check(withCode==2,"two example definitions hold C# nodes: "+withCode);
+        Console.WriteLine("PASS the example definitions preview through the entity API with no problem, derived and as stored, and derive their stored signatures");
     }
 }

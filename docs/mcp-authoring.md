@@ -227,17 +227,21 @@ envelope; validation, conflicts and revisions work as above.
 1. Call `get_capabilities({document:"entity"})`. The catalog then holds the steps a
    definition may use and its `entityDomains` (each entity type's state values,
    commands and options), `semantics` gains `definitions` (the rules) and `examples`
-   is `{definitions:[…]}`: complete definitions that validate, the five in
+   is `{definitions:[…]}`: complete definitions that validate, the six in
    [`authoring_examples.json`](../custom_components/hass_sharp/authoring_examples.json),
-   the class one with its library source. `get_node_schema({kind})` adds
-   `entityDomains` for `entity` (the Entity node) and `set_entity_state`, whose
-   ports come from the entity's type; for `device` (the Device node) it gives its
-   config and its `entities` output.
+   two of them written in C# as a C# device node and a C# entity node. Each is a
+   graph. `get_node_schema({kind})` adds `entityDomains` for `entity` (the Entity
+   node) and `set_entity_state`, whose ports come from the entity's type; for
+   `device` (the Device node) it gives its config and its `entities` output, and for
+   `csharp_entity` and `csharp_device` their config (see
+   [C# entity and C# device nodes](#c-entity-and-c-device-nodes)).
 2. `entities_types({})` lists the classes the node libraries offer:
    `{types:[…], generation}`, each type `{id, sourceId, typeExpression, title,
    description, kind, domain, settings:[{key, label, description, type, secret,
    options, minimum?, maximum?}]}` (`minimum` and `maximum` only when the setting has
-   them). A class is written with `library_save`.
+   them). A class is written with `library_save`. A class from a node library can
+   still be a whole definition (`logic: {kind: "class", type}`) for now; write new C#
+   in the graph instead, as C# entity and C# device nodes.
 3. `entities_list({})` summarises every definition without its graph: `{id, name,
    revision, enabled, status, activationError, logic, devices, entities:[{key,
    domain, name, device, entityId}], triggers:[{triggerId, label?, type, config,
@@ -276,8 +280,8 @@ envelope; validation, conflicts and revisions work as above.
    to use Device nodes); a class
    definition is `{name, device?, settings?, logic}` with `logic`
    `{kind:"class", type}`. It returns `valid`,
-   `diagnostics` and, for a graph, `graph` with each Custom C# step's pins worked
-   out (no settings come back). Unlike the panel's API, it leaves out the generated
+   `diagnostics` and, for a graph, `graph` with each Custom C# step's pins and each
+   C# node's signature worked out (no settings come back). Unlike the panel's API, it leaves out the generated
    `source` and `sourceMap`, and so does a refusal for errors (`validation`) from it
    or from `entities_save`, whose detail is the preview; `entities_read` has a saved
    definition's `source`. A graph definition that carries `entities`, even an empty
@@ -382,17 +386,19 @@ succeeds and a When started flow that stops lets the definition start.
 ### The Device node
 
 Each device of a graph definition is a node of kind `device`; a definition may have
-several, or none, and is not a device itself. Its `config` is `{key, name,
-manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?, suggestedArea?,
-via?}`. It has no inputs and no execution ports, and is never part of the run order:
+several, or none, and is not a device itself; so is a C# device node (see
+[C# entity and C# device nodes](#c-entity-and-c-device-nodes)). Its `config` is
+<!-- config: device -->
+`{key, name, manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
+suggestedArea?, via?}`. It has no inputs and no execution ports, and is never part of the run order:
 an execution edge into or out of it is an error. Its one output, `entities`, connects
-only to an Entity node's `device` input, with the data edge `{kind: "data", source:
-<the Device node>, sourcePort: "entities", target: <the Entity node>, targetPort:
-"device"}`; that wire puts the entity on the device and carries no value. The rules
+only to the `device` input of an Entity node or a C# entity node, with the data edge
+`{kind: "data", source: <the Device node>, sourcePort: "entities", target: <the
+Entity node>, targetPort: "device"}`; that wire puts the entity on the device and carries no value. The rules
 a definition can trip:
 
 - **A key and a name.** `key` follows the entity key rule (`^[a-z][a-z0-9_]{0,39}$`)
-  and is unique among the definition's devices (`definition.deviceKey`,
+  and is unique among the definition's devices, its C# devices included (`definition.deviceKey`,
   `definition.duplicateDevice`); device keys and entity keys are apart. A changed key
   makes a new device in Home Assistant. `name` is what Home Assistant shows: a Device
   node without one is an error (`device.name`).
@@ -400,7 +406,8 @@ a definition can trip:
   not wired stands alone and needs its own `name` (`entity.name`).
 - **Part of.** `via` is left out (or null), `{"deviceId": "<Home Assistant device
   id>"}` (an id from `discover` with `kind: "devices"`) or `{"device": "<the key of
-  another Device node>"}` (`device.via`); a key no Device node has, and a circle of
+  another Device node or C# device node>"}` (`device.via`); a key no device of the
+  definition has, and a circle of
   devices each part of the next, are errors (`device.viaUnknown`,
   `device.viaCycle`).
 - `configurationUrl` starts with `http://`, `https://` or `homeassistant://`,
@@ -426,10 +433,103 @@ its power sensor on it:
 ```
 
 A saved graph definition's `entities_read` answer lists `devices` (the config of each Device
-node with a key, without its blank texts) and gives each of its `entities` its
-`device`. Nobody sends them: `devices` sent back with a definition are ignored.
+node with a key, without its blank texts, then each C# device node's `{key, name,
+via?, csharp: true}`) and gives each of its `entities` its `device`. Nobody sends them: `devices` sent back with a definition are ignored.
 Home Assistant knows a device by the definition's id and the device's key, and an
 entity keeps its entity id when it moves to another device or off one.
+
+### C# entity and C# device nodes
+
+Write C# for a definition as nodes of its graph, not as a class definition: an
+entity is a C# entity node (kind `csharp_entity`) and a device a C# device node (kind
+`csharp_device`), each with one class in `config.source`. A C# entity node's
+`config` is
+<!-- config: csharp_entity -->
+`{key, source, signature?, arguments?}`, and a C# device node's
+<!-- config: csharp_device -->
+`{key, name, via?, source, signature?, arguments?}`.
+
+- **The class.** A C# entity's class derives from an entity class (`SharpBinarySensor`,
+  `SharpSensor`, `SharpSwitch`, `SharpButton`, `SharpNumber`, `SharpSelect`,
+  `SharpText`, `SharpLight`, `SharpCover` or `SharpCamera`), whose domain is the
+  entity's. A C# device's derives from `SharpDevice` and adds its entities with
+  `Add(new SharpSwitch("relay", "Relay") { OnTurnOn = …, OnTurnOff = … })` in its
+  constructor or `Setup()`. It is public, not abstract or generic, with a public
+  constructor that takes nothing; helper types may sit beside it. Each node's code
+  is compiled in a namespace of its own: a type it declares cannot be named by
+  another node's code (declare it there too, or in a node library). The members a
+  class has are in [custom entities](custom-entities.md#c-nodes).
+- **The signature.** `config.signature`, `{title, description, domain, settings:
+  [{key, label, description, type, secret, options?, minimum?, maximum?}]}`, is worked
+  out from the code: `entities_preview` and `entities_save` do it (they pass
+  `deriveSignatures: true`) and preview returns the `graph` with it, so leave it out.
+  A signature out of date with the code is an error (`csharp.signature`); a value or
+  wire of a setting the code no longer has is removed, with a warning naming it.
+- **Settings are pins.** Each public `[Setting("Label")]` property is an input pin
+  whose id is the property's name. Give it a value under
+  `config.arguments.<property name>` as `{"kind": "literal", "type": …, "value": …}`,
+  `type` being `string` for a string or an enum (one of its `options`), `number` for
+  an int, long or double (whole for an int or a long, within `minimum` and
+  `maximum`) and `boolean` for a bool; a value the setting does not take is an error
+  (`setting.value`). Or wire a Setting step to it, `{kind: "data", source: <the
+  Setting step>, sourcePort: "value", target: <the node>, targetPort: <property
+  name>}`, leaving it out of `arguments`; a wire from any other step is an error
+  (`scope.settingSource`). A pin given neither keeps the class's own value. A secret
+  setting takes only a wire from a Setting step: a value is refused
+  (`setting.secretLiteral`), so add a secret setting to the definition and let the
+  user enter it in the panel.
+- **Device.** A C# entity node has the `device` input of an Entity node, which a
+  Device node's `entities` output is wired to; without it the entity stands alone. A
+  C# device node has no inputs: no entity is put on it, its entities are the ones its
+  code adds. Its `via` is a Device node's. Neither has outputs or execution ports,
+  nor is part of the run order: no step sets a C# entity's state or names it in
+  `config.entity`, and no command pin starts a step; the class does both.
+- **Keys and ids.** A C# entity's key is among the entity keys and its unique id is
+  `<definition id>:<key>`; a C# device's key is among the device keys and its
+  device is `<definition id>:<device key>`. An entity its code adds keeps the key the
+  code gives it, with the unique id `<definition id>:<device key>:<entity key>`. A
+  C# entity is called the `Name` its code sets, else, standing alone, its class's
+  title; a C# device is called its `config.name`.
+- **Starting.** Every C# node's constructor and `Setup()` together have the
+  definition's set-up time, 60 seconds; one that throws or takes longer keeps the
+  definition from starting, with an `activationError` that names the node
+  (`<definition>: <node name>: <reason>`, or `<definition>: <node name> could not be
+  created: <reason>`). When started has its own time. Each node's `Start()` runs
+  after the definition's own start, in node order (a device before its entities),
+  and `Stop()` when it stops or is replaced. Each save makes new instances, whose
+  entities take back their last states.
+
+The example *Plug from a class* is one C# device whose Address takes the
+definition's `address` setting (its code, given here as `…`, is in the example):
+
+<!-- example: Plug from a class, its nodes -->
+```json
+{
+  "nodes": [
+    {"id": "address", "kind": "setting", "config": {"key": "address"}, "position": {"x": 60, "y": 100}},
+    {"id": "plug", "kind": "csharp_device", "config": {"key": "plug", "name": "Smart plug", "source": "…", "signature": {"title": "Smart plug", "description": "A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.", "domain": null, "settings": [{"key": "Address", "label": "Address", "description": "Where the plug answers, such as http://192.168.1.50/rpc.", "type": "string", "secret": false}]}, "arguments": {}}, "position": {"x": 360, "y": 100}}
+  ],
+  "edges": [
+    {"id": "address.value:plug.Address", "kind": "data", "source": "address", "target": "plug", "sourcePort": "value", "targetPort": "Address"}
+  ]
+}
+```
+
+The example *Thermometer over HTTP* is one C# entity, a sensor on no device, with
+its Address wired from a setting and its Interval given a value:
+
+<!-- example: Thermometer over HTTP, its nodes -->
+```json
+{
+  "nodes": [
+    {"id": "address", "kind": "setting", "config": {"key": "address"}, "position": {"x": 60, "y": 100}},
+    {"id": "thermometer", "kind": "csharp_entity", "config": {"key": "thermometer", "source": "…", "signature": {"title": "Thermometer", "description": "A thermometer that answers with the temperature in degrees Celsius at its address.", "domain": "sensor", "settings": [{"key": "Address", "label": "Address", "description": "Where the thermometer answers, such as http://192.168.1.60/temperature.", "type": "string", "secret": false}, {"key": "Interval", "label": "Interval", "description": "How many seconds pass between two readings.", "type": "integer", "secret": false, "minimum": 10, "maximum": 3600}]}, "arguments": {"Interval": {"kind": "literal", "type": "number", "value": 60}}}, "position": {"x": 360, "y": 100}}
+  ],
+  "edges": [
+    {"id": "address.value:thermometer.Address", "kind": "data", "source": "address", "target": "thermometer", "sourcePort": "value", "targetPort": "Address"}
+  ]
+}
+```
 
 ## Libraries
 

@@ -417,6 +417,14 @@ left out, or the previous methods are kept, and the log says which.
 
 ## Custom C# nodes
 
+A Custom C# node is a step whose code is one method. An entity definition also has
+two nodes whose code is one class: a **C# entity**, one entity whose class derives
+from an entity class such as `SharpSwitch`, and a **C# device**, one device whose
+class derives from `SharpDevice` and adds its entities. Their code is compiled as a
+Custom C# node's is, in a namespace of the node's own, and their `[Setting]`
+properties are their inputs; see [C# nodes](custom-entities.md#c-nodes). The rest of
+this section is about the Custom C# step.
+
 A new Custom C# node starts from a template method. Its stored configuration is:
 
 - `source`: the code;
@@ -446,7 +454,10 @@ other's type, and its trace shows the values as given. Less than, at most, great
 than and at least take any number type on either side; with a nullable side that is
 null they are false. A type that one Custom C# node declares belongs to that node:
 another node's code cannot name it (declare the type in a node library to share it),
-though a wire can carry it into `object` or an interface it implements.
+though a wire can carry it into `object` or an interface it implements. The same
+holds for a type a C# entity or C# device declares, and the problem names the kind
+of node that has it: "NodeLib.Custom_thermometer.Level belongs to the C# entity node
+thermometer; declare the type in this code or in a node library to use it here".
 
 Between two Custom C# nodes, a type that only Custom C# code uses (not the catalog
 or a node library) is matched by what each node's compile records about it. Each
@@ -565,20 +576,36 @@ diagnostics.
 
 ## Entity classes
 
-A node library can also hold the classes that [entity definitions](custom-entities.md)
-create: a public, concrete, non-generic top-level class with a public constructor
-that takes nothing, deriving from `SharpDevice` (a device with several entities) or
-from one typed entity such as `SharpSwitch` or `SharpCamera`. It needs no `[Node]`
-method, and a library may hold classes and node methods side by side. Each such
-class is offered under **Use a class from the node library** when a definition is
-created; its type id is `library:<source id>:` and the class's full name, such as
-`library:example_plug:NodeLib.SmartPlug` (a class in a namespace of its own is
-`NodeLib.<namespace>.<type>`). Its `[Setting]` properties are the values
-each definition fills in.
+A node library can hold classes for [entity definitions](custom-entities.md),
+deriving from `SharpDevice` or from an entity class such as `SharpSwitch` or
+`SharpCamera`. One is used by deriving from it in a node's code: the class of a C#
+entity or a C# device node derives from the library's class and takes its settings
+and its code, so several nodes, in one definition or several, share it. It needs no
+`[Node]` method, and a library may hold classes and node methods side by side.
 
-[Custom entities](custom-entities.md#classes) has a complete class, the base
-classes, settings, the life cycle (`Setup`, `Start`, `Stop`), timers, entity tracks,
-HTTP, downloads and cameras.
+```csharp
+/// <summary>A relay that answers HTTP at its address.</summary>
+public abstract class HttpRelay : SharpSwitch
+{
+    [Setting("Address")]
+    public string Address { get; set; } = "";
+}
+```
+
+A C# entity's code is then `public class KitchenRelay : HttpRelay { … }`, and the
+node has the Address input with the settings of its own class after it.
+
+A public, concrete, non-generic top-level library class with a public constructor
+that takes nothing can still be used as a whole definition for now: it is offered
+under **Use a class from the node library** when a definition is created, by the
+type id `library:<source id>:` and the class's full name, such as
+`library:example_plug:NodeLib.SmartPlug` (a class in a namespace of its own is
+`NodeLib.<namespace>.<type>`), and its `[Setting]` properties are the values each
+such definition fills in.
+
+[C# nodes](custom-entities.md#c-nodes) has complete classes, the base classes,
+settings, the life cycle (`Setup`, `Start`, `Stop`), timers, entity tracks, HTTP,
+downloads and cameras.
 
 ## Scope snapshots
 

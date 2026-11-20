@@ -467,13 +467,16 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         foreach (var method in methods)
             foreach (var (_, input) in root["nodes"]![method.Kind]!["inputs"]!.AsObject())
                 if (input is JsonObject rule && rule["default"] is JsonObject operand && !VisualNodeCatalog.ValidLiteral(VisualNodeCatalog.Text(operand, "type"), operand["value"], operand.ContainsKey("value"), root)) rule.Remove("default");
-        // A type declared in one Custom C# node's code is that node's own: another node's pins may not use it.
+        // A type declared in one node's code is that node's own: another node's pins may not use it. The sentence names the
+        // kind of the node that declares it.
         bool OwnTypesArePrivate(Location at, SyntaxTree tree, IEnumerable<ITypeSymbol> used)
         {
             foreach (var type in used)
                 if (type.OriginalDefinition.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).FirstOrDefault(t => t != tree && customTrees.ContainsKey(t)) is { } other)
                 {
-                    Report(at, $"{type.ToDisplayString()} belongs to the Custom C# node {customTrees[other].NodeId}; declare the type in this code or in a node library to use it here");
+                    var owner = customTrees[other];
+                    var kind = owner.Kind switch { "csharp_entity" => "C# entity node", "csharp_device" => "C# device node", _ => "Custom C# node" };
+                    Report(at, $"{type.ToDisplayString()} belongs to the {kind} {owner.NodeId}; declare the type in this code or in a node library to use it here");
                     return false;
                 }
             return true;

@@ -1690,26 +1690,162 @@
     },
     {
       "title": "Plug from a class",
-      "description": "The plug over HTTP written as a C# class in a node library: SmartPlug is a SharpDevice with an Address setting, a relay switch and a power sensor, which it polls every 10 seconds with Every and turns on and off over Http. While the plug does not answer, both entities are unavailable, and the definition will not start without an address that begins with http:// or https://. The definition creates the class and gives its setting a value; save the library first.",
+      "description": "The plug over HTTP written as one C# class, in a C# device node: SmartPlug is a SharpDevice with an Address setting, a relay switch and a power sensor, which it polls every 10 seconds with Every and turns on and off over Http. The node's Address pin is connected to a Setting step, so the address is the definition's Address setting. While the plug does not answer, both entities are unavailable, and the definition will not start without an address that begins with http:// or https://. The node is the plug's device in Home Assistant, Smart plug, with its two entities on it; they are listed once the definition has started.",
       "definition": {
         "name": "Plug from a class",
-        "device": null,
         "settings": [
           {
-            "key": "Address",
+            "key": "address",
+            "label": "Address",
+            "type": "string",
             "value": "http://192.168.1.50/rpc"
           }
         ],
-        "entities": [],
         "logic": {
-          "kind": "class",
-          "type": "library:example_plug:NodeLib.SmartPlug"
+          "kind": "graph",
+          "graph": {
+            "version": 5,
+            "name": "Plug from a class",
+            "nodes": [
+              {
+                "id": "address",
+                "kind": "setting",
+                "config": {
+                  "key": "address"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 100
+                }
+              },
+              {
+                "id": "plug",
+                "kind": "csharp_device",
+                "config": {
+                  "key": "plug",
+                  "name": "Smart plug",
+                  "source": "using System.Net.Http;\nusing System.Text;\nusing System.Text.Json.Nodes;\n\n/// <summary>A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.</summary>\npublic class SmartPlug : SharpDevice\n{\n    /// <summary>The plug's JSON-RPC address.</summary>\n    [Setting(\"Address\", Description = \"Where the plug answers, such as http://192.168.1.50/rpc.\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n    readonly SharpSensor power;\n\n    /// <summary>Adds the plug's two entities, the switch turning the plug on and off.</summary>\n    public SmartPlug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n        power = Add(new SharpSensor(\"power\", \"Power\") { DeviceClass = \"power\", Unit = \"W\", StateClass = \"measurement\" });\n    }\n\n    /// <summary>Refuses to start without an address the plug can be reached at.</summary>\n    protected override Task Setup()\n    {\n        if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not (\"http\" or \"https\"))\n            throw new InvalidOperationException(\"The plug's address must start with http:// or https://, such as http://192.168.1.50/rpc.\");\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Reads the plug's status every 10 seconds while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromSeconds(10), Poll);\n        return Task.CompletedTask;\n    }\n\n    /// <summary>\n    /// Sets the switch and the sensor from the plug's status. While the plug does not answer, both are unavailable, and\n    /// Every logs why once.\n    /// </summary>\n    async Task Poll()\n    {\n        try\n        {\n            var status = await Call(\"Switch.GetStatus\", new JsonObject { [\"id\"] = 0 });\n            relay.IsOn = status?[\"output\"]?.GetValue<bool>();\n            power.Value = status?[\"apower\"]?.GetValue<double>();\n            relay.Available = true;\n            power.Available = true;\n        }\n        catch\n        {\n            relay.Available = false;\n            power.Available = false;\n            throw;\n        }\n    }\n\n    /// <summary>Turns the plug on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        await Call(\"Switch.Set\", new JsonObject { [\"id\"] = 0, [\"on\"] = on });\n        relay.IsOn = on;\n    }\n\n    /// <summary>Sends one request to the plug and returns its result.</summary>\n    async Task<JsonNode?> Call(string method, JsonObject parameters)\n    {\n        var request = new JsonObject { [\"id\"] = 1, [\"method\"] = method, [\"params\"] = parameters };\n        using var content = new StringContent(request.ToJsonString(), Encoding.UTF8, \"application/json\");\n        using var response = await Http.PostAsync(Address, content, Stopping);\n        response.EnsureSuccessStatusCode();\n        return JsonNode.Parse(await response.Content.ReadAsStringAsync(Stopping))?[\"result\"];\n    }\n}",
+                  "signature": {
+                    "title": "Smart plug",
+                    "description": "A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.",
+                    "domain": null,
+                    "settings": [
+                      {
+                        "key": "Address",
+                        "label": "Address",
+                        "description": "Where the plug answers, such as http://192.168.1.50/rpc.",
+                        "type": "string",
+                        "secret": false
+                      }
+                    ]
+                  },
+                  "arguments": {}
+                },
+                "position": {
+                  "x": 360,
+                  "y": 100
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "address.value:plug.Address",
+                "kind": "data",
+                "source": "address",
+                "target": "plug",
+                "sourcePort": "value",
+                "targetPort": "Address"
+              }
+            ]
+          }
         }
-      },
-      "library": {
-        "id": "example_plug",
-        "name": "SmartPlug.cs",
-        "source": "using System.Net.Http;\nusing System.Text;\nusing System.Text.Json.Nodes;\n\n/// <summary>A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.</summary>\npublic class SmartPlug : SharpDevice\n{\n    /// <summary>The plug's JSON-RPC address.</summary>\n    [Setting(\"Address\", Description = \"Where the plug answers, such as http://192.168.1.50/rpc.\")]\n    public string Address { get; set; } = \"\";\n\n    readonly SharpSwitch relay;\n    readonly SharpSensor power;\n\n    /// <summary>Adds the plug's two entities, the switch turning the plug on and off.</summary>\n    public SmartPlug()\n    {\n        relay = Add(new SharpSwitch(\"relay\", \"Relay\") { DeviceClass = \"outlet\", OnTurnOn = () => Turn(true), OnTurnOff = () => Turn(false) });\n        power = Add(new SharpSensor(\"power\", \"Power\") { DeviceClass = \"power\", Unit = \"W\", StateClass = \"measurement\" });\n    }\n\n    /// <summary>Refuses to start without an address the plug can be reached at.</summary>\n    protected override Task Setup()\n    {\n        if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not (\"http\" or \"https\"))\n            throw new InvalidOperationException(\"The plug's address must start with http:// or https://, such as http://192.168.1.50/rpc.\");\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Reads the plug's status every 10 seconds while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromSeconds(10), Poll);\n        return Task.CompletedTask;\n    }\n\n    /// <summary>\n    /// Sets the switch and the sensor from the plug's status. While the plug does not answer, both are unavailable, and\n    /// Every logs why once.\n    /// </summary>\n    async Task Poll()\n    {\n        try\n        {\n            var status = await Call(\"Switch.GetStatus\", new JsonObject { [\"id\"] = 0 });\n            relay.IsOn = status?[\"output\"]?.GetValue<bool>();\n            power.Value = status?[\"apower\"]?.GetValue<double>();\n            relay.Available = true;\n            power.Available = true;\n        }\n        catch\n        {\n            relay.Available = false;\n            power.Available = false;\n            throw;\n        }\n    }\n\n    /// <summary>Turns the plug on or off, and the switch with it.</summary>\n    async Task Turn(bool on)\n    {\n        await Call(\"Switch.Set\", new JsonObject { [\"id\"] = 0, [\"on\"] = on });\n        relay.IsOn = on;\n    }\n\n    /// <summary>Sends one request to the plug and returns its result.</summary>\n    async Task<JsonNode?> Call(string method, JsonObject parameters)\n    {\n        var request = new JsonObject { [\"id\"] = 1, [\"method\"] = method, [\"params\"] = parameters };\n        using var content = new StringContent(request.ToJsonString(), Encoding.UTF8, \"application/json\");\n        using var response = await Http.PostAsync(Address, content, Stopping);\n        response.EnsureSuccessStatusCode();\n        return JsonNode.Parse(await response.Content.ReadAsStringAsync(Stopping))?[\"result\"];\n    }\n}"
+      }
+    },
+    {
+      "title": "Thermometer over HTTP",
+      "description": "A temperature sensor written as one C# class, in a C# entity node: Thermometer is a SharpSensor that reads the temperature in degrees Celsius from its address every Interval seconds with Every, over Http. Its Address pin is connected to a Setting step, so the address is the definition's Address setting, and its Interval pin holds the value 60, typed in. While the thermometer does not answer, the sensor is unavailable, and the definition will not start without an address that begins with http:// or https://. It stands alone, on no device, and is called Thermometer, its class's title.",
+      "definition": {
+        "name": "Thermometer over HTTP",
+        "settings": [
+          {
+            "key": "address",
+            "label": "Address",
+            "type": "string",
+            "value": "http://192.168.1.60/temperature"
+          }
+        ],
+        "logic": {
+          "kind": "graph",
+          "graph": {
+            "version": 5,
+            "name": "Thermometer over HTTP",
+            "nodes": [
+              {
+                "id": "address",
+                "kind": "setting",
+                "config": {
+                  "key": "address"
+                },
+                "position": {
+                  "x": 60,
+                  "y": 100
+                }
+              },
+              {
+                "id": "thermometer",
+                "kind": "csharp_entity",
+                "config": {
+                  "key": "thermometer",
+                  "source": "using System.Globalization;\n\n/// <summary>A thermometer that answers with the temperature in degrees Celsius at its address.</summary>\npublic class Thermometer : SharpSensor\n{\n    /// <summary>Where the thermometer answers, such as http://192.168.1.60/temperature.</summary>\n    [Setting(\"Address\")]\n    public string Address { get; set; } = \"\";\n\n    /// <summary>How many seconds pass between two readings.</summary>\n    [Setting(\"Interval\", Minimum = 10, Maximum = 3600)]\n    public int Interval { get; set; } = 60;\n\n    /// <summary>A temperature in degrees Celsius.</summary>\n    public Thermometer()\n    {\n        DeviceClass = \"temperature\";\n        Unit = \"°C\";\n        StateClass = \"measurement\";\n    }\n\n    /// <summary>Refuses to start without an address the thermometer can be reached at.</summary>\n    protected override Task Setup()\n    {\n        if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not (\"http\" or \"https\"))\n            throw new InvalidOperationException(\"The thermometer's address must start with http:// or https://, such as http://192.168.1.60/temperature.\");\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Reads the temperature every Interval seconds while the definition runs.</summary>\n    protected override Task Start()\n    {\n        Every(TimeSpan.FromSeconds(Interval), Read);\n        return Task.CompletedTask;\n    }\n\n    /// <summary>Sets the sensor from the thermometer's answer. While it does not answer, the sensor is unavailable, and Every logs why once.</summary>\n    async Task Read()\n    {\n        try\n        {\n            Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture);\n            Available = true;\n        }\n        catch\n        {\n            Available = false;\n            throw;\n        }\n    }\n}",
+                  "signature": {
+                    "title": "Thermometer",
+                    "description": "A thermometer that answers with the temperature in degrees Celsius at its address.",
+                    "domain": "sensor",
+                    "settings": [
+                      {
+                        "key": "Address",
+                        "label": "Address",
+                        "description": "Where the thermometer answers, such as http://192.168.1.60/temperature.",
+                        "type": "string",
+                        "secret": false
+                      },
+                      {
+                        "key": "Interval",
+                        "label": "Interval",
+                        "description": "How many seconds pass between two readings.",
+                        "type": "integer",
+                        "secret": false,
+                        "minimum": 10,
+                        "maximum": 3600
+                      }
+                    ]
+                  },
+                  "arguments": {
+                    "Interval": {
+                      "kind": "literal",
+                      "type": "number",
+                      "value": 60
+                    }
+                  }
+                },
+                "position": {
+                  "x": 360,
+                  "y": 100
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "address.value:thermometer.Address",
+                "kind": "data",
+                "source": "address",
+                "target": "thermometer",
+                "sourcePort": "value",
+                "targetPort": "Address"
+              }
+            ]
+          }
+        }
       }
     }
   ]

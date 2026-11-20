@@ -1149,7 +1149,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('trigger',result['catalog']['nodes']); self.assertIn('entity_is',result['catalog']['nodes'])
         self.assertEqual(result['catalog']['entityDomains'],self.CATALOG['entityDomains'])
         self.assertEqual(result['examples'],{'definitions':examples['definitions']})
-        self.assertEqual(result['examples']['definitions'][-1]['library']['id'],examples['definitions'][-1]['library']['id'])
+        # The examples write C# as C# entity and C# device nodes of a graph: none is a class picked from a node library.
+        self.assertFalse([example['title'] for example in result['examples']['definitions'] if 'library' in example or example['definition']['logic']['kind']!='graph'])
+        self.assertEqual({node['kind'] for example in result['examples']['definitions'] for node in example['definition']['logic']['graph']['nodes']}&{'csharp_entity','csharp_device'},
+                         {'csharp_entity','csharp_device'})
         self.assertEqual(set(result['semantics']),{'execution','types','triggers','service','runs','csharp','definitions'})
         definitions=result['semantics']['definitions']
         for phrase in ('Entity node (kind entity)','command:<command>','command:<command>:<value>','config.arguments.<name>','targetPort <name>',
@@ -1174,6 +1177,23 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('such as the entity of a Has state or a Current state step, or of a Constant of an entity id type',definitions)
         self.assertNotIn('Entity field step',definitions)
         self.assertIn('own camera (it is refused at once)',definitions)
+        # C# entity and C# device nodes: their config, that signature is worked out (leave it out), what a setting pin takes,
+        # a secret only by wire, the keys and unique ids, and that a C# device's own entities are known once it has run.
+        for phrase in ('C# entity node (kind csharp_entity)','C# device node (kind csharp_device)','its config is {key, source, signature?, arguments?}',
+                       'its config is {key, name, via?, source, signature?, arguments?}','derives from an entity class','derives from SharpDevice',
+                       'entities_preview and entities_save do it for you and preview returns the graph with it, so leave it out','csharp.signature',
+                       'config.arguments.<property name>','{kind: literal, type, value}','setting.value',
+                       '{kind: data, source: <a Setting step>, sourcePort: value, target: <the node>, targetPort: <property name>}','scope.settingSource',
+                       'A secret setting takes only a wire from a Setting step: a value typed in is refused (setting.secretLiteral)',
+                       'its unique id is <definition id>:<key>','<definition id>:<device key>','<definition id>:<device key>:<entity key>',
+                       'two C# devices of one class are two devices, each with its own entities',
+                       'The entities a C# device\'s code adds are in neither list: they are known once the definition has run',
+                       "each C# entity node's as {key, domain, name: null, device, csharp: true}","each C# device node's as {key, name, via?, csharp: true}",
+                       "entities_list gives each definition's entities as {key, domain, name, device, entityId}",
+                       'For now logic may instead be {kind: \"class\", type}','Write C# for a definition as C# entity and C# device nodes in its graph'):
+            self.assertIn(phrase,definitions)
+        self.assertIn('in a C# entity node or a C# device node: see definitions',result['semantics']['csharp'])
+        self.assertIn('kind csharp_entity',result['guidance']); self.assertIn('kind csharp_device',result['guidance'])
         self.assertEqual(result['guidance'],self.adapter.PROMPT)
         whole=(await self.call('get_node_schema',{'document':'entity'})).data['result']['catalog']
         self.assertEqual(set(whole['nodes']),set(result['catalog']['nodes']))
@@ -1221,6 +1241,18 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # get_node_schema says how a Device node is wired, and what its Part of takes.
         self.assertIn('wire it with {kind: data, sourcePort: entities, targetPort: device} to each Entity node on the device',descriptions['get_node_schema'])
         self.assertIn('via is {deviceId: <Home Assistant device id>} or {device: <the key of another Device node>}',descriptions['get_node_schema'])
+        # get_node_schema writes out the config of a Device node and of the two C# nodes (tests/test_docs_examples.py ties
+        # each list to the catalog), and says that a C# node's signature is worked out from its code.
+        self.assertIn('For kind device (a Device node, of an entity definition) its config is {key, name, manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?, suggestedArea?, via?}',descriptions['get_node_schema'])
+        self.assertIn('For kind csharp_entity (a C# entity node) its config is {key, source, signature?, arguments?}',descriptions['get_node_schema'])
+        self.assertIn('for kind csharp_device (a C# device node) its config is {key, name, via?, source, signature?, arguments?}',descriptions['get_node_schema'])
+        self.assertIn('signature, worked out from the code by entities_preview and entities_save',descriptions['get_node_schema'])
+        # The class kind stays, but the tools no longer present it as the way to write C#.
+        self.assertIn('A class from a node library can still be a whole definition for now, but write new C# in the definition\'s graph instead, as a C# entity or C# device node',descriptions['entities_types'])
+        self.assertNotIn('typed entity',descriptions['entities_types'])
+        self.assertIn('with an Entity node or a C# entity node for each entity and a Device node or a C# device node for each device',descriptions['entities_preview'])
+        self.assertIn("each C# entity and C# device node's settings (config.signature) are first worked out from its code",descriptions['entities_preview'])
+        self.assertIn("each C# node's settings worked out from its code as preview does",descriptions['entities_save'])
         # A class's read answer lists no entities (its stored list is the one it was sent): they are in registeredEntities.
         self.assertIn("a class's entities come from its code and are in registeredEntities",descriptions['entities_read'])
         self.assertNotIn("or a class's code",descriptions['entities_read'])

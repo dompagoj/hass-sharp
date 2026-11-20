@@ -348,22 +348,54 @@ class GuidanceTests(unittest.TestCase):
     of a graph as an Entity node, with its state and commands on it."""
 
     def test_every_graph_example_declares_its_entities_as_nodes(self):
+        # Every example is a graph: each entity is an Entity node, or a C# entity or C# device node whose class makes it.
+        # A C# class is written in a node, never picked from a node library as the whole definition.
         examples = json.loads((ROOT / 'custom_components/hass_sharp/authoring_examples.json').read_text())
         graphs = [example['definition'] for example in examples['definitions'] if example['definition']['logic']['kind'] == 'graph']
-        self.assertEqual(len(graphs), 4)
+        self.assertEqual(len(graphs), 6)
+        self.assertEqual(len(graphs), len(examples['definitions']))
+        self.assertFalse([example['title'] for example in examples['definitions'] if 'library' in example])
         for definition in graphs:
             kinds = [node['kind'] for node in definition['logic']['graph']['nodes']]
             with self.subTest(definition['name']):
                 self.assertNotIn('entities', definition)
-                self.assertIn('entity', kinds)
+                self.assertTrue({'entity', 'csharp_entity', 'csharp_device'} & set(kinds))
                 self.assertFalse({'entity_state', 'entity_command', 'camera_frame'} & set(kinds))
+        csharp = {example['title']: [node['kind'] for node in example['definition']['logic']['graph']['nodes'] if node['kind'].startswith('csharp_')]
+                  for example in examples['definitions']}
+        self.assertEqual({title: kinds for title, kinds in csharp.items() if kinds},
+                         {'Plug from a class': ['csharp_device'], 'Thermometer over HTTP': ['csharp_entity']})
+
+    def test_each_csharp_node_example_takes_its_settings_from_a_setting_or_a_value(self):
+        # A C# node's setting pin takes a value typed in or a wire from a Setting step; no secret is typed in an example.
+        examples = json.loads((ROOT / 'custom_components/hass_sharp/authoring_examples.json').read_text())
+        for example in examples['definitions']:
+            definition = example['definition']
+            graph = definition['logic']['graph']
+            nodes = {node['id']: node for node in graph['nodes']}
+            for node in (n for n in graph['nodes'] if n['kind'] in ('csharp_entity', 'csharp_device')):
+                with self.subTest(example['title'], node=node['id']):
+                    settings = {s['key']: s for s in node['config']['signature']['settings']}
+                    wired = {edge['targetPort']: nodes[edge['source']] for edge in graph['edges'] if edge.get('kind') == 'data' and edge['target'] == node['id']}
+                    self.assertTrue(wired, 'the example wires a Setting into the node')
+                    for pin, source in wired.items():
+                        if pin != 'device':
+                            self.assertIn(pin, settings)
+                            self.assertEqual(source['kind'], 'setting', pin)
+                            self.assertIn(source['config']['key'], [s['key'] for s in definition['settings']], pin)
+                    for pin, value in node['config'].get('arguments', {}).items():
+                        self.assertIn(pin, settings)
+                        self.assertNotIn(pin, wired)
+                        self.assertFalse(settings[pin]['secret'], f'{pin} is a secret typed in')
+                        self.assertEqual(value.get('kind'), 'literal', pin)
+            self.assertFalse([s['key'] for s in definition['settings'] if s.get('secret') and s.get('value') is not None])
 
     def test_no_graph_example_sends_a_device(self):
         # A graph definition's devices are its Device nodes: no graph example sends the definition's own device, and the
         # plug is a Device node whose Entities pin is wired to the Device pin of each of its two entities.
         examples = json.loads((ROOT / 'custom_components/hass_sharp/authoring_examples.json').read_text())
         graphs = {example['title']: example['definition'] for example in examples['definitions'] if example['definition']['logic']['kind'] == 'graph'}
-        self.assertEqual(len(graphs), 4)
+        self.assertEqual(len(graphs), 6)
         for title, definition in graphs.items():
             with self.subTest(title):
                 self.assertNotIn('device', definition)
@@ -376,9 +408,9 @@ class GuidanceTests(unittest.TestCase):
         self.assertEqual(wired, ['power', 'relay'])
         for edge in (edge for edge in graph['edges'] if edge['source'] == plug['id']):
             self.assertEqual((edge.get('kind'), edge.get('sourcePort'), edge.get('targetPort')), ('data', 'entities', 'device'), edge['id'])
-        # Neither entity is on a device any other way, and the class example still leaves its device to the class.
-        classes = [example['definition'] for example in examples['definitions'] if example['definition']['logic']['kind'] == 'class']
-        self.assertEqual([definition['device'] for definition in classes], [None])
+        # The plug written in C# is a C# device node: its own device, with no Device node beside it.
+        plug = graphs['Plug from a class']['logic']['graph']
+        self.assertEqual([node['kind'] for node in plug['nodes'] if node['kind'] in ('device', 'csharp_device')], ['csharp_device'])
 
     def test_the_guidance_describes_a_device_as_a_node(self):
         # SEMANTICS["definitions"] (read from llm.py's source: importing it needs Home Assistant) and the custom entities

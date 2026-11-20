@@ -4,17 +4,22 @@ An **entity definition** creates entities in Home Assistant and decides what the
 Each entity is one of ten types: a binary sensor, a sensor, a switch, a button, a
 number, a select, a text, a light, a cover or a camera. A definition can group its
 entities into devices, each with a device page of its own (see [Devices](#devices)).
-What the entities do comes from one of two places:
+What the entities do is a graph of the same kind as an automation's (graph version
+5), built on the canvas from nodes:
 
-- **Steps.** A graph of the same kind as an automation's (graph version 5), with
-  one **Entity** node for each entity and a few steps only a definition has: Set
-  state, When started and the rest below. Everything in
+- **Steps.** One **Entity** node for each entity, and a few steps only a definition
+  has: Set state, When started and the rest below. Everything in
   [Writing visual automations](writing-visual-automations.md) about wires, types,
   value steps and Custom C# steps holds here too.
-- **A C# class** in a [node library](node-libraries.md), deriving from `SharpDevice`
-  or from one typed entity such as `SharpSwitch`. The definition picks the class and
-  fills in its settings; one class can back several definitions. See
-  [Classes](#classes).
+- **C# code.** A **C# entity** node is one entity written as a C# class that derives
+  from an entity class such as `SharpSwitch`; a **C# device** node is one device
+  written as a class that derives from `SharpDevice` and adds its entities. Their
+  settings are inputs on the node, which take a value or a Setting. See
+  [C# nodes](#c-nodes).
+
+One definition can hold Entity nodes, Device nodes, C# entities and C# devices
+together. A class in a [node library](node-libraries.md) can still be used as a
+whole definition for now; see [A class as the whole definition](#a-class-as-the-whole-definition).
 
 Definitions live in the panel's **Entities** section, beside Automations and Node
 library. An assistant can build them too; see [Through MCP](#through-mcp).
@@ -106,8 +111,9 @@ The other example definitions in that file are *Plug over HTTP* (a setting, a
 Trigger that polls a plug every 10 seconds, steps on the relay's **Turn on** and
 **Turn off** that switch it, and a Device node that puts the relay and the power
 sensor on one device), *Camera with a box* (the camera steps), *File at setup*
-(a download when the definition starts; its address and checksum are placeholders)
-and *Plug from a class* (below).
+(a download when the definition starts; its address and checksum are placeholders),
+and two written in C# (see [C# nodes](#c-nodes)): *Plug from a class*, the same plug
+as one C# device node, and *Thermometer over HTTP*, a sensor as one C# entity node.
 
 ## Entity types
 
@@ -115,7 +121,7 @@ Each type's row says what its state takes (one input on the left of its Entity n
 per value; Set state takes the same), the commands Home Assistant sends it (one pin
 each on the right of its Entity node, with the values each gives under it), the
 options its Entity node shows (each left empty takes the default shown), and its
-class for [classes](#classes).
+entity class, which the class of a [C# entity](#c-nodes) derives from.
 
 | Type | State inputs | Commands (and their values) | Options | Class |
 |---|---|---|---|---|
@@ -240,19 +246,23 @@ of quoting it. Two things can still show it: a true or false worked out from a s
 is recorded as it is, and a step that returns what it was given (a custom step or a
 service response) records its output as it is.
 
-A class's settings are the class's own `[Setting]` properties (see
-[Classes](#classes)); the definition gives each a value.
+A C# node's settings are its class's own `[Setting]` properties, each an input of
+the node: type a value into it, or connect a Setting step to it (see
+[Settings as inputs](#settings-as-inputs)). A secret one takes only a Setting.
 
 ## Devices
 
 A device groups entities on one device page in Home Assistant. Each device is a
 **Device** node, from the **Entity** category of the step library (a node of kind
-`device`); a definition can have several, or none, and is not a device itself.
+`device`), or a [C# device](#c-nodes) node, whose code adds its own entities; a
+definition can have several, or none, and is not a device itself. This section is
+about the Device node.
 
 - **Its key** names it inside the definition and is part of its identity in Home
   Assistant: a lower-case letter, then up to 39 lower-case letters, digits or
-  underscores, such as `plug`, and one key per device. Once saved it cannot change.
-  Device keys and entity keys are apart: a device and an entity may have the same key.
+  underscores, such as `plug`, and one key per device, a C# device's included. Once
+  saved it cannot change. Device keys and entity keys are apart: a device and an
+  entity may have the same key.
 - **Its name**, at the top of its panel, is what Home Assistant shows. A Device node
   needs one: "Name this device: Home Assistant shows it by this name".
 - **Its entities.** Connect its **Entities** pin (its `entities` output) to the
@@ -267,16 +277,18 @@ A device groups entities on one device page in Home Assistant. Each device is a
   such as one with a user name before the host, are refused here) and **Suggested area** (the area Home Assistant puts the device
   in when it first adds it) are shown on the device's page. Each can be left out.
 - **Part of** says which device this one is connected through, such as a hub:
-  Nothing, **Another device of this definition** (another Device node, chosen by its
-  name) or **A Home Assistant device…**, which offers the devices Home Assistant has.
-  A device part of a key no Device node of the definition has, or a circle of devices
+  Nothing, **Another device of this definition** (another Device node or a C# device,
+  chosen by its name) or **A Home Assistant device…**, which offers the devices Home
+  Assistant has. A device part of a key no device of the definition has, or a circle of devices
   each part of the next, is a problem on the Device node. When the device is set up, a
   Home Assistant device that is gone is left out, and clears an earlier link.
 
-As a document, a Device node's `config` is `{key, name}` with any of `manufacturer`,
-`model`, `swVersion`, `hwVersion`, `configurationUrl`, `suggestedArea` and `via`
-beside them; `via` is `{"deviceId": "<Home Assistant device id>"}` or
-`{"device": "<the key of another Device node>"}`. The wire is a data edge from the
+As a document, a Device node's `config` is
+<!-- config: device -->
+`{key, name, manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
+suggestedArea?, via?}`, a `?` marking what can be left out; `via` is
+`{"deviceId": "<Home Assistant device id>"}` or `{"device": "<the key of another
+device of the definition>"}`. The wire is a data edge from the
 Device node's `entities` output to the Entity node's `device` input. In *Plug over
 HTTP* the relay and the power sensor are on the device `plug`:
 
@@ -293,17 +305,20 @@ HTTP* the relay and the power sensor are on the device `plug`:
 }
 ```
 
-A saved definition lists its devices under `devices` and gives each of its entities
-the key of the device it is on, or null, under `entities`; both are worked out from
-the graph, for reading only. Home Assistant knows a device by the definition's id
-and the device's key, and an entity by the definition's id and the entity's key, so
-an entity moved to another device, or off its device, keeps its entity id and its
-history.
+A saved definition lists its devices under `devices`, its Device nodes' and then
+its C# devices', and gives each of its entities the key of the device it is on, or
+null, under `entities`, its Entity nodes' and then its C# entities'; both are worked
+out from the graph, for reading only. The entities a C# device's code adds are not
+listed there: Home Assistant has them once it has started. Home Assistant knows a
+device by the definition's id and the device's key, and an entity by the
+definition's id and the entity's key, so an entity moved to another device, or off
+its device, keeps its entity id and its history.
 
 Home Assistant makes the entity ids. On a device, an entity's id comes from the
 device's name and the entity's name; an entity without a name takes the device's
 name alone. Without a device, the id comes from the entity's name alone, which is
-why such an Entity node needs one (a class's entity without one takes the
+why such an Entity node needs one (a C# entity on no device whose code gives it no
+name is called its class's title; a class definition's entity without one takes the
 definition's name); name it with clashes in mind: the derived sensor above is
 `binary_sensor.any_motion`.
 
@@ -351,7 +366,7 @@ Assistant restarts or the definition is saved, with the state they last had: swi
 lights and covers set by commands, for example. A value the entity no longer takes,
 such as an option removed from a select, is left out. In a graph, a light turned on
 without a brightness keeps its last one, or comes on at full brightness the first
-time. A class chooses this per entity with `RestoreState`.
+time. A C# node's class chooses this per entity with `RestoreState`.
 
 ## Cameras
 
@@ -377,8 +392,8 @@ ends without Show frame keeps the current picture, and a camera that no Show fra
 step names is a warning: "Front door with a box never shows a frame: add a Show
 frame step for it". The example "Camera with a box" takes a picture of
 `camera.front_door`, draws a box and a caption on it and shows it.
-A class does the same with `Frame()` or `OnFrame`, and `Show`; see
-[Classes](#classes).
+A camera written in C# does the same with `Frame()` or `OnFrame`, and `Show`; see
+[Cameras in C#](#cameras-in-c).
 
 While someone watches, Home Assistant asks for a frame every **Seconds between
 frames**. Viewers share one frame: a request within 0.8 of an interval of the last
@@ -400,16 +415,58 @@ Assistant Core in a virtual environment this is unverified. Without it, a pictur
 passed on unchanged still works, and drawing fails with one log line saying the
 library is missing.
 
-## Classes
+## C# nodes
 
-A class is C# in a [node library](node-libraries.md). Each public, concrete,
-non-generic top-level class with a public constructor that takes nothing, and that
-derives from `SharpDevice` or from one of the typed entities in the
-[table](#entity-types), is offered when you create a definition from a class. Its
-title is its name in words ("Smart plug"), or the title of a `[Node("…")]` on the
-class; its summary comment is its description.
+An entity or a device can be written in C# as one class, in a node on the canvas:
 
-This complete library is the example "Plug from a class": a plug with a relay and a
+- A **C# entity** node is one entity. Its class derives from one of the entity
+  classes of the [table](#entity-types), such as `SharpSwitch` or `SharpSensor`, which
+  is its type. Like an Entity node it has a **Device** pin: connect a Device node's
+  **Entities** to it to put it on that device, or leave it unconnected and it stands
+  alone.
+- A **C# device** node is one device. Its class derives from `SharpDevice` and adds
+  its entities itself, so nothing is connected to it, and it has **Name** and **Part
+  of** as a Device node has.
+
+Both are in the **Entity** category of the step library. A C# entity dropped on the
+canvas gets the key `sensor` (then `sensor_2` and so on), and a C# device a key made
+from `device`; each starts with example code you replace. Neither is a step: they
+have no step order, nothing runs them, and the class sets its entities' states and
+handles their commands itself. A step cannot set a C# entity's state or start from
+its commands.
+
+The node's card shows the class's title. A C# entity's card says its type and key,
+such as **Sensor · thermometer**; a C# device's says **C# device · plug** and lists
+its entities once it has started, until then **Its entities appear here after it has
+started once**. In the right panel are its **Key**, a C# device's **Name** and
+**Part of**, **Edit code**, and a field for each setting of its class (see
+[Settings as inputs](#settings-as-inputs)).
+
+### Write the code
+
+**Edit code** opens the code in the editor, titled **C# entity code** or **C# device
+code**, with completion and the problems of the code as you type. The **Settings**
+panel beside it shows the settings the code gives; a class without any says "This
+class has no settings. Mark a property with [Setting] to make it an input." **Reset
+to example** puts back the example code, and the help explains what a class can do,
+as this section does.
+
+The code is one public class, not abstract or generic, with a public constructor
+that takes nothing. Helper types can sit beside it and `using` lines go at the top.
+Each node's code is compiled on its own, so a type one node declares cannot be named
+in another node's code: declare it in both, or in a [node library](node-libraries.md),
+which every node's code can use. Its title is its name in words ("Smart plug"), or
+the title of a `[Node("…")]` on the class, and its summary comment is its
+description.
+
+**Apply** writes the code to the node, once it has been checked and has no errors,
+and fits the node to it: a setting the code no longer has loses its pin, a value that
+no longer fits its setting is cleared, and a wire into a setting that is gone or of
+another type is removed. The editor says what it removed: "Removed 1 connection that
+no longer fits: Address" or "Cleared 2 values that no longer fit: Interval, Mode".
+Undo puts it all back in one step.
+
+This is the C# device of the example "Plug from a class": a plug with a relay and a
 power sensor, polled every 10 seconds, that answers JSON-RPC at the address in its
 Address setting.
 
@@ -492,16 +549,132 @@ public class SmartPlug : SharpDevice
 }
 ```
 
-To use it, open **Node library**, select **Add file**, enter the **File name**
-`SmartPlug.cs` and choose **Create file**; replace what the file holds with the code
-and select **Save**. Then choose **Entities → New entity definition**, enter a name,
-choose **Use a class from the node library** and select **Continue**. Under
-**Class**, choose **Smart plug**; under **Settings**, enter the plug's address;
-select **Save**. A class definition's **Device** fields, which a graph definition
-does not have, override what the class sets when you fill them in, and its **Part
-of** offers Nothing, each other class definition that makes a device, or **A Home
-Assistant device…**. A class that is one entity has **Group this entity as a device** instead. Its **Entities** appear after it has
-started once.
+In the definition, the device's Address takes the definition's Address setting
+through a Setting step, so the address is changed under **Settings** without opening
+the code. As stored (the code written as `…`), its nodes and the wire are:
+
+<!-- example: Plug from a class, its nodes -->
+```json
+{
+  "nodes": [
+    {"id": "address", "kind": "setting", "config": {"key": "address"}, "position": {"x": 60, "y": 100}},
+    {"id": "plug", "kind": "csharp_device", "config": {"key": "plug", "name": "Smart plug", "source": "…", "signature": {"title": "Smart plug", "description": "A smart plug that answers JSON-RPC requests: a switch for its relay and a sensor for the power it draws.", "domain": null, "settings": [{"key": "Address", "label": "Address", "description": "Where the plug answers, such as http://192.168.1.50/rpc.", "type": "string", "secret": false}]}, "arguments": {}}, "position": {"x": 360, "y": 100}}
+  ],
+  "edges": [
+    {"id": "address.value:plug.Address", "kind": "data", "source": "address", "target": "plug", "sourcePort": "value", "targetPort": "Address"}
+  ]
+}
+```
+
+The example "Thermometer over HTTP" is one C# entity, a sensor that reads the
+temperature at its Address every Interval seconds. Its Address takes a Setting, as
+the plug's does, and its Interval is typed into the node: 60.
+
+<!-- example: Thermometer over HTTP -->
+```csharp
+using System.Globalization;
+
+/// <summary>A thermometer that answers with the temperature in degrees Celsius at its address.</summary>
+public class Thermometer : SharpSensor
+{
+    /// <summary>Where the thermometer answers, such as http://192.168.1.60/temperature.</summary>
+    [Setting("Address")]
+    public string Address { get; set; } = "";
+
+    /// <summary>How many seconds pass between two readings.</summary>
+    [Setting("Interval", Minimum = 10, Maximum = 3600)]
+    public int Interval { get; set; } = 60;
+
+    /// <summary>A temperature in degrees Celsius.</summary>
+    public Thermometer()
+    {
+        DeviceClass = "temperature";
+        Unit = "°C";
+        StateClass = "measurement";
+    }
+
+    /// <summary>Refuses to start without an address the thermometer can be reached at.</summary>
+    protected override Task Setup()
+    {
+        if (!Uri.TryCreate(Address, UriKind.Absolute, out var address) || address.Scheme is not ("http" or "https"))
+            throw new InvalidOperationException("The thermometer's address must start with http:// or https://, such as http://192.168.1.60/temperature.");
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Reads the temperature every Interval seconds while the definition runs.</summary>
+    protected override Task Start()
+    {
+        Every(TimeSpan.FromSeconds(Interval), Read);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Sets the sensor from the thermometer's answer. While it does not answer, the sensor is unavailable, and Every logs why once.</summary>
+    async Task Read()
+    {
+        try
+        {
+            Value = double.Parse(await Http.GetStringAsync(Address, Stopping), CultureInfo.InvariantCulture);
+            Available = true;
+        }
+        catch
+        {
+            Available = false;
+            throw;
+        }
+    }
+}
+```
+
+As a document, a C# entity node's `config` is
+<!-- config: csharp_entity -->
+`{key, source, signature?, arguments?}` and a C# device node's is
+<!-- config: csharp_device -->
+`{key, name, via?, source, signature?, arguments?}`: `source` is the code,
+`signature` the settings worked out from it (the panel writes it when you apply the
+code), and `arguments` the values typed into its settings. A C# device's `via` is
+as a Device node's.
+
+### Settings as inputs
+
+`[Setting("Label")]` on a public property with a public setter makes it a setting:
+an input of the node, named by the label, whose pin id is the property's name. It may
+be a `string`, `bool`, `int`, `long`, `double` or an enum. `Description` is a line of
+help (the property's summary comment, when it has none); `Secret = true` makes it a
+secret; `Minimum` and `Maximum` bound an `int`, `long` or `double`. A C# entity's
+property cannot be named `device`, the id of its Device pin.
+
+Each setting takes one of these:
+
+- **A value typed into the node**, in its field in the right panel: a text, a number,
+  a switch for a `bool`, a list for an enum. A value outside the bounds, or a fraction
+  for an `int`, is refused when you save.
+- **A wire from a Setting step**, which gives one of the definition's
+  [settings](#settings-and-secrets); no other step can feed it. Use this for what
+  changes from one home to another, such as an address, so it is changed under
+  **Settings**.
+- **Nothing**: the property keeps the value the class gives it.
+
+A secret is never typed into the node: its field says "A secret is not typed here:
+connect a Setting". Add a secret setting to the definition, a Setting step for it,
+and connect the step to the node. The values are applied before `Setup()` runs, and
+a Setting step's value is read when the definition starts.
+
+### Keys and names
+
+A C# entity's key is one of the definition's entity keys, beside its Entity nodes',
+and a C# device's key one of its device keys, beside its Device nodes'. Like theirs,
+a key is a lower-case letter, then up to 39 lower-case letters, digits or
+underscores, and cannot change once saved.
+
+- A C# entity is the entity `<definition id>:<key>` in Home Assistant, as an Entity
+  node is.
+- A C# device is the device `<definition id>:<device key>`, and each entity its code
+  adds is `<definition id>:<device key>:<entity key>`, with the key the code gives it
+  (`"relay"` above). Two C# devices of the same code are two devices, each with its
+  own entities.
+- A C# entity is called the `Name` its code sets. Without one, standing alone, it is
+  called its class's title; on a device, Home Assistant shows the device's name. A
+  C# device is called its **Name**.
 
 ### SharpDevice and SharpEntity
 
@@ -510,13 +683,12 @@ started once.
   which returns it so it can be kept in a field; after that `Add` throws. Its
   `Manufacturer`, `Model`, `SwVersion`, `HwVersion`, `ConfigurationUrl` and
   `SuggestedArea` are read once, after `Setup()`.
-- **`SharpEntity`** is the base of the typed entities. Derive a class from one of
-  them for a definition that is one entity (its key is `main`), or create them inside
-  a device with a key of their own: a lower-case letter, then up to 39 lower-case
-  letters, digits or underscores. Each has `Key`, `Name`, `Icon`, `DeviceClass`,
-  `Category` (`EntityCategory.Config` or `Diagnostic`), `EnabledByDefault`,
-  `Available`, `Attributes` (extra attributes Home Assistant shows with the state),
-  `RestoreState` and `Publish()`.
+- **`SharpEntity`** is the base of the typed entities. A C# entity's class derives
+  from one of them; inside a device, create them with a key of their own: a
+  lower-case letter, then up to 39 lower-case letters, digits or underscores. Each
+  has `Key`, `Name`, `Icon`, `DeviceClass`, `Category` (`EntityCategory.Config` or
+  `Diagnostic`), `EnabledByDefault`, `Available`, `Attributes` (extra attributes
+  Home Assistant shows with the state), `RestoreState` and `Publish()`.
 - **The typed entities** are the classes of the [table](#entity-types). Setting a
   state property (`IsOn`, `Value`, `Option`, `Brightness`, `IsClosed`, `Position`)
   publishes the new state; null is unknown. A command is handled by overriding its
@@ -524,40 +696,40 @@ started once.
   `StopMoving`, `SetPosition`) or, inside a device, by setting its `On…` property, as
   `OnTurnOn` above. A value outside a number's range, an option a select does not
   have, a text that does not fit, a brightness outside 0 to 255 or a position
-  outside 0 to 100 is refused before the handler runs. The options are properties
-  too: `Unit`, `StateClass`, `Options`, `Min`, `Max`, `Step`, `Mode`
-  (`SharpNumberMode`, `SharpTextMode`), `Pattern`, `Dimmable`, `Positionable` and a
-  camera's `FrameInterval`.
-
-### Settings
-
-`[Setting("Label")]` on a public property with a public setter makes it a setting
-that each definition of the class fills in, applied before `Setup()` runs. It may be
-a `string`, `bool`, `int`, `long`, `double` or an enum. `Description` is a line of
-help under the field; `Secret = true` hides the value as a graph's secret setting is
-hidden; `Minimum` and `Maximum` bound an `int`, `long` or `double`, and a value
-outside them is refused when you save and when the definition starts. A setting the
-definition gives no value keeps the property's own.
+  outside 0 to 100 is refused before the handler runs, and a handler that throws
+  fails the command with its message. The options are properties too: `Unit`,
+  `StateClass`, `Options`, `Min`, `Max`, `Step`, `Mode` (`SharpNumberMode`,
+  `SharpTextMode`), `Pattern`, `Dimmable`, `Positionable` and a camera's
+  `FrameInterval`.
 
 ### Setup, Start and Stop
 
 - **`Setup()`** runs once before the entities are registered, with the settings
-  applied: the place to check the settings or fetch what the device needs. The
-  `Setup()`s of a device and its entities have 60 seconds together, not counting the
-  time a download receives. One that throws keeps the definition from starting, and
-  the definition says why.
-- **`Start()`** runs after the entities are registered: the place to start timers
-  and tracks. It must return; the entities stay unavailable until every `Start()` of
-  the definition has, so poll with `Every`, not in a loop.
+  applied: the place to check the settings or fetch what is needed. Creating every
+  C# node of the definition and running their `Setup()`s have 60 seconds together,
+  not counting the time a download receives. A constructor or a `Setup()` that throws
+  or takes longer keeps the definition from starting, and the definition says why,
+  naming the node: "Plug from a class: Smart plug: The plug's address must start with
+  http:// or https://…". The When started steps run after every `Setup()`, with 60
+  seconds of their own.
+- **`Start()`** runs after the entities are registered, one C# node's after
+  another's, a device's before its entities'. It is the place to
+  start timers and tracks. It must return; the entities stay unavailable
+  until every `Start()` of the definition has, so poll with `Every`, not in a loop.
 - **`Stop()`** runs when the definition stops or is replaced, after its timer and
-  track callbacks and commands have ended; it may still call services. It runs only
-  once the definition has started, so a definition whose `Setup()` threw gets no
-  `Stop()`: undo what a failing `Setup()` opened in `Setup()` itself. It runs on the
-  device and every entity, also one whose `Start()` never ran, so it must not count
-  on what `Start()` set up. It does not run when Home Assistant shuts down:
-  then only `Stopping` is cancelled.
+  track callbacks and commands have ended, node by node, a device's entities before
+  the device; it may still call services. It runs only once the definition has
+  started, so a definition whose `Setup()` threw gets no `Stop()`: undo what a
+  failing `Setup()` opened in `Setup()` itself. It runs on the device and every
+  entity, also one whose `Start()` never ran, so it must not count on what `Start()`
+  set up. It does not run when Home Assistant shuts down: then only `Stopping` is
+  cancelled.
 - **`Stopping`** is a cancellation token that is cancelled when the definition stops
   or is replaced, and when Home Assistant shuts down. Pass it to what you wait for.
+
+Each save makes new instances of the classes. Their entities take back the states
+they had (see [restored state](#http-downloads-and-restored-state)) unless
+`RestoreState` is false.
 
 ### Timers, tracks and Home Assistant
 
@@ -580,22 +752,22 @@ definition gives no value keeps the property's own.
 
 ### Http and Files
 
-- **`Http`** is the definition's own `HttpClient`, the same for its device and every
-  entity: 30 seconds per request, at most 5 redirects, certificates always checked,
-  no cookies and `User-Agent: HassSharp`. Pass `Stopping` to each request. It is
-  disposed after the last `Stop()`.
+- **`Http`** is the definition's own `HttpClient`, the same for all its C# nodes and
+  their entities: 30 seconds per request, at most 5 redirects, certificates always
+  checked, no cookies and `User-Agent: HassSharp`. Pass `Stopping` to each request.
+  It is disposed after the last `Stop()`.
 - **`Files.Download(url, sha256, name, cancellationToken)`** downloads a file once
   and returns its path, as the Download file step does (same folder, checksum, limits
   and timeouts): `var path = await Files.Download(url, sha256, cancellationToken:
   Stopping);` in `Setup()`. It throws on a malformed address or checksum, a file that
   does not match, an error status, or 60 seconds without data.
 
-### Cameras in a class
+### Cameras in C#
 
 A `SharpCamera` shows a picture with `Show(image)`, from any thread, or makes one
 when it is needed by overriding `Frame()` (or, inside a device, setting `OnFrame`),
 which returns the picture to show, or null to keep the one shown. `Frame()` has 8
-seconds; class code cannot be cancelled, so one that takes longer is left to finish
+seconds; C# code cannot be cancelled, so one that takes longer is left to finish
 and what it gives is not shown, and no second one starts meanwhile. A `SharpImage`
 comes from `SharpImage.Load(jpeg)` or `SharpImage.Blank(width, height, color)`,
 takes `DrawRect(x, y, width, height, color, thickness)` and `DrawText(text, x, y,
@@ -603,6 +775,8 @@ color, size, background)`, each of which returns the same image, and gives its
 bytes with `ToJpeg()`. Colours are `SharpColor.Red` (the default), `Green`, `Blue`,
 `Yellow`, `Orange`, `White`, `Black` or `SharpColor.FromRgb(r, g, b)`. A picture is
 for one flow at a time: hand another thread a `Copy()`.
+
+This is the code of a C# entity that is a camera:
 
 ```csharp
 /// <summary>The front door's camera with a box drawn on its picture.</summary>
@@ -620,6 +794,21 @@ public class BoxedDoor : SharpCamera
 }
 ```
 
+### A class as the whole definition
+
+A class from a node library can still be used as a whole definition for now, but
+write new C# as C# nodes. Such a class is public, concrete and not generic, has a
+public constructor that takes nothing, and derives from `SharpDevice` or from one of
+the typed entities; it is offered when you choose **Entities → New entity
+definition**, enter a name, choose **Use a class from the node library** and select
+**Continue**. Under **Class**, choose it; under **Settings**, fill in its settings;
+select **Save**. Its **Device** fields override what the class sets when you fill
+them in, and its **Part of** offers Nothing, each other class definition that makes
+a device, or **A Home Assistant device…**. A class that is one entity (its key is
+`main`) has **Group this entity as a device** instead. Its **Entities** appear after
+it has started once. A secret setting of such a class is typed in and hidden, as a
+definition's secret setting is.
+
 ## Run history
 
 Each definition lists its runs under **Runs** in the editor's bottom drawer, and
@@ -630,8 +819,9 @@ commands** is on unless turned off, and **Record state updates** and **Record
 frames** are off unless turned on. Each other step's **Track in run history**
 decides for its runs: on unless turned off for When started, off unless turned on
 for a Trigger (unlike in an automation, where a Trigger is recorded unless turned
-off). A run started with Run now, or by an assistant, is always recorded. The runs
-of a class are not recorded: a class has no steps to trace.
+off). A run started with Run now, or by an assistant, is always recorded. What a C#
+node's code does is not recorded: it has no steps to trace, and neither has a class
+definition.
 
 ## Worth knowing
 
@@ -666,7 +856,7 @@ of a class are not recorded: a class has no steps to trace.
   says how many devices its definition makes: **Device** for one, **2 devices** and so
   on for more, nothing for none.
 - A definition built with steps is not a device itself: its devices are its Device
-  nodes. One sent with a device, through MCP or the panel's API, is refused with
+  nodes and C# devices. One sent with a device, through MCP or the panel's API, is refused with
   "Devices are Device nodes in the graph now: leave device out, add a Device node and
   connect its Entities pin to each entity's Device pin".
 - Turned off, the definition's entities stay in Home Assistant as unavailable. A
@@ -676,7 +866,14 @@ of a class are not recorded: a class has no steps to trace.
   of the definition's form. Deleting removes the entities and the devices, the run
   history and the entities' stored states, and cannot be undone.
 - An entity removed from a saved definition, or given another Type, is removed from
-  Home Assistant when the saved definition next starts.
+  Home Assistant when the saved definition next starts. So is an entity a C# device's
+  code no longer adds, or a C# entity whose class now derives from another entity
+  class.
+- Saving compiles the code of each C# node. A save is refused while that code has
+  errors, or while the node's settings are out of date with its code: open **Edit
+  code** and apply it. Replacing a running definition stops its classes and makes new
+  ones from the saved code: what a class keeps in its fields starts again, and its
+  entities take back their states.
 - A node library save rebuilds every definition, as it rebuilds every automation,
   and is refused when it would break one that works.
 - An Entity node's state updates only for entities chosen on its steps' pins. An
@@ -695,9 +892,9 @@ of a class are not recorded: a class has no steps to trace.
 - A value the command did not send but its Entity node gives, such as a brightness
   of 255 the first time a dimmable light is turned on, appears in the trace as if it
   was sent.
-- A class's light turned on without a brightness gets null, every time: keep its
-  `Brightness` yourself.
-- A class's number or text whose `Min` is above its `Max` refuses every value.
+- A light written in C# that is turned on without a brightness gets null, every
+  time: keep its `Brightness` yourself.
+- A number or text written in C# whose `Min` is above its `Max` refuses every value.
 - A command or a callback that stops its own definition (turning it off through a
   service, say) waits out 10 seconds before it is cut off.
 
@@ -722,7 +919,7 @@ of a class are not recorded: a class has no steps to trace.
   failures, traces and the download log line name them. Its path, query and user
   information, and the headers and body, are never shown. A file a Download file
   step fetches from a secret address, with no **File name**, is saved as `file`; a
-  class's `Files.Download` names it from the address unless it is given a name.
+  C# node's `Files.Download` names it from the address unless it is given a name.
 - A text entity shown as a password is not a secret: Home Assistant keeps its state
   in clear. Messages still do not quote it.
 
