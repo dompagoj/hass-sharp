@@ -103,9 +103,13 @@ public partial class HassSharpManager
         script.VisualTriggers = triggers;
         script.VisualGraph = graph.ToJsonString();
         script.VisualCatalog = catalog;
-        // A graph's devices are its Device nodes alone: it is no device itself.
+        // A graph's devices are its Device nodes and its C# devices: it is no device itself. Its C# nodes take their
+        // settings' values here, from the document, which only the host reads (they may be secret).
         script.Definition = new(document.Id, document.Name, null, document.Settings)
-            { Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots };
+        {
+            Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots,
+            Components = DefinitionGraph.Components(graph, snapshot, document.Settings),
+        };
         return script;
     }
 
@@ -113,7 +117,8 @@ public partial class HassSharpManager
     /// The devices a graph's Device nodes declare, as its host hands them to Home Assistant, worked out from the graph again
     /// as its entities are (<see cref="DefinitionGraph.Devices"/>); one whose config is not a device's is left out, which a
     /// saved graph, checked as it was saved, does not have. A C# device's entry (<see cref="VisualNodeCatalog.IsCSharpDevice"/>)
-    /// is left out too: its code makes its device, and its key, name and Part of make none.
+    /// is left out too: it reaches the host as one of the graph's components (<see cref="DefinitionGraph.Components"/>),
+    /// whose class gives the rest of its device once set up.
     /// </summary>
     internal static List<DefinitionDevice> GraphDevices(JsonObject graph, VisualCatalogSnapshot snapshot)
     {

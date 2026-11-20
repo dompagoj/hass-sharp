@@ -25,6 +25,7 @@ public abstract partial class SharpEntity : SharpComponent
 {
     bool available = true;
     bool? restoreState;
+    string? name;
     readonly ConcurrentDictionary<string, object?> attributes = new();
 
     /// <summary>An entity whose key is <c>main</c>: the one entity of a definition without a device.</summary>
@@ -44,9 +45,24 @@ public abstract partial class SharpEntity : SharpComponent
     }
 
     /// <summary>What identifies the entity within its device; part of its unique id.</summary>
-    public string Key { get; }
+    public string Key { get; private set; }
     /// <summary>What Home Assistant calls the entity; null for the device's name alone.</summary>
-    public string? Name { get; init; }
+    public string? Name { get => name; init => name = value; }
+
+    /// <summary>The device that added the entity (<see cref="SharpDevice.Add{T}"/>); null for one no device added.</summary>
+    internal SharpDevice? AddedTo { get; set; }
+
+    /// <summary>
+    /// For a C# entity node: the host gives the entity its node's key, in place of the one its code gave it (<c>main</c>
+    /// unless it chose one), and <paramref name="defaultName"/> as its name when its code set none. A name the code sets wins.
+    /// </summary>
+    /// <param name="defaultName">The name of an entity whose code names none: its class's title when it stands alone, null
+    /// on a device (Home Assistant then shows the device's name).</param>
+    internal void Adopt(string key, string? defaultName)
+    {
+        Key = key;
+        name ??= defaultName;
+    }
     /// <summary>The entity's icon, such as <c>mdi:power-plug</c>; null for the default of its domain and device class.</summary>
     public string? Icon { get; init; }
     /// <summary>Home Assistant's device class, such as <c>power</c> or <c>motion</c>; null for none.</summary>

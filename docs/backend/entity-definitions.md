@@ -149,7 +149,9 @@ reason, and with **Delete** when it is `deletable`; one that is not has no
 
 Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID:
 new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a
-key makes a new entity. A Device node's device is `<definition id>:<device key>`
+key makes a new entity; an entity a C# device node's class adds is
+`<definition id>:<device key>:<entity key>`, so two C# devices of one class are two
+devices with entities of their own. A Device node's or a C# device's device is `<definition id>:<device key>`
 in Home Assistant (a class definition's device is `<definition id>:main`; a graph
 definition is not a device itself, and the device `<definition id>` an earlier build
 made for it is removed at the next sync), so
@@ -230,6 +232,21 @@ it is read when the definition starts. Previewing never creates a class.
 off), replacing the revision running. It waits up to 5 seconds for the
 definition's `Start()`; one still starting is answered with status `setup`. The
 answer's `diagnostics` are the preview's warnings.
+
+A graph's C# entity and C# device nodes run beside its Entity nodes, each as a
+class definition's class runs: created, its settings applied (a typed value, or the
+saved value of the Setting wired to it), its entities' last states restored, its
+`Setup()` run, all of them within one set-up time, before Home Assistant is told of
+any entity; started after the graph's own entities, a device before its entities;
+stopped, entities first. A C# entity's key is its node's, and it is called what its
+code names it, else its class's title when it stands alone (none on a device, which
+Home Assistant then shows). A C# device is its own device, with its node's key, name
+and Part of and what its class's device page shows. Its commands reach its class. A
+new revision makes new instances, which restore their states; the old one stops after
+the new one is set up and registered and before it starts. One that cannot be created
+fails the start with "`{Definition}: {Name} could not be created: {reason}`"; a
+`Setup()` that throws, or does not finish, with "`{Definition}: {Name}: {reason}`";
+nothing of the definition is then registered.
 
 **set_enabled** turns a saved definition on or off without a new revision. Turned
 on, it is rebuilt against the libraries as saved now; off, it is unloaded and the

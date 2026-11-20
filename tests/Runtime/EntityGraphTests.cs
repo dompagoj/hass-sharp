@@ -121,7 +121,18 @@ static class EntityGraphTests
             (nameof(AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers), AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers),
             (nameof(ARevisionSavedWhileAFrameFlowRunsServesFrames), ARevisionSavedWhileAFrameFlowRunsServesFrames),
             (nameof(APushedFrameStaysAcrossASave), APushedFrameStaysAcrossASave),
-            (nameof(AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure), AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure) })
+            (nameof(AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure), AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure),
+            (nameof(ACSharpEntityRunsBesideAHub), ACSharpEntityRunsBesideAHub),
+            (nameof(ACSharpEntityTakesItsCommands), ACSharpEntityTakesItsCommands),
+            (nameof(TwoPlugsOfOneClassAreTwoDevices), TwoPlugsOfOneClassAreTwoDevices),
+            (nameof(AGraphWithCSharpNodesHasNoMainDevice), AGraphWithCSharpNodesHasNoMainDevice),
+            (nameof(ADeviceCanBePartOfACSharpDeviceDeclaredLater), ADeviceCanBePartOfACSharpDeviceDeclaredLater),
+            (nameof(ACSharpEntityOnADeviceTakesItsName), ACSharpEntityOnADeviceTakesItsName),
+            (nameof(ACSharpEntityAloneIsCalledItsTitle), ACSharpEntityAloneIsCalledItsTitle),
+            (nameof(SettingsAreAppliedBeforeSetup), SettingsAreAppliedBeforeSetup),
+            (nameof(AClassThatCannotStartFailsTheDefinition), AClassThatCannotStartFailsTheDefinition),
+            (nameof(ACSharpEntityIsRestoredAndAHubCarriedOver), ACSharpEntityIsRestoredAndAHubCarriedOver),
+            (nameof(TwoEntitiesWithOneUniqueIdAreRefused), TwoEntitiesWithOneUniqueIdAreRefused) })
         {
             try
             {
@@ -3177,5 +3188,345 @@ static class EntityGraphTests
         var run = rig.History(automationId).Single(r => r["status"]!.GetValue<string>() == "Cancelled");
         Check(run["error"]?.GetValue<string>() == CancelReasons.Stopping, "the run says why it was cancelled: " + run.ToJsonString());
         Check(!Problems(rig).Any(line => line.Contains("could not make a frame", StringComparison.Ordinal)), "a flow cancelled as Home Assistant stops is no failure: " + Lines(Problems(rig)));
+    }
+
+    // ---- C# entity and C# device nodes ----
+
+    // Where the classes below note what they do, so that two revisions (two assemblies) note on one list, in order.
+    const string CallsSlot = "hass-sharp-entity-graph-calls";
+    const string NoteMethod = "static void Note(string what) => ((System.Collections.Concurrent.ConcurrentQueue<string>?)System.AppDomain.CurrentDomain.GetData(\"" + CallsSlot + "\"))?.Enqueue(what);";
+    /// <summary>A new list for the classes' notes, which they write from now on.</summary>
+    static ConcurrentQueue<string> Calls()
+    {
+        var calls = new ConcurrentQueue<string>();
+        AppDomain.CurrentDomain.SetData(CallsSlot, calls);
+        return calls;
+    }
+    /// <summary>Notes each sync of the rig on <paramref name="calls"/> as <c>sync</c>, before it is answered.</summary>
+    static void NoteSyncs(ConcurrentQueue<string> calls)
+    {
+        var sync = PyInterop.BeginSyncEntities;
+        PyInterop.BeginSyncEntities = (json, ok, fail) => { calls.Enqueue("sync"); sync(json, ok, fail); };
+    }
+    /// <summary>The signature the compiler derives from the code of a node of the kind, as the editor stores it.</summary>
+    static JsonObject Signature(string kind, string source)
+    {
+        var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
+        Check(descriptor.Valid, $"the {kind} code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+        return (JsonObject)descriptor.Signature!.DeepClone();
+    }
+    /// <summary>A C# entity or C# device node of the code, with the signature its code gives and <paramref name="arguments"/> (typed values) under arguments.</summary>
+    static JsonObject CSharp(string kind, string id, string key, string source, JsonObject? arguments = null, string? name = null)
+    {
+        var more = new JsonObject { ["source"] = source, ["signature"] = Signature(kind, source), ["arguments"] = arguments ?? new JsonObject() };
+        return kind == "csharp_entity" ? EntityNodeTests.CSharpEntity(id, key, more) : EntityNodeTests.CSharpDevice(id, key, name ?? key, more);
+    }
+    static JsonObject Nodes(JsonObject definition) => definition["logic"]!["graph"]!.AsObject();
+    static JsonObject LastSync(Rig rig, string id) => JsonNode.Parse(rig.Home.Syncs(id).Last())!.AsObject();
+    static JsonObject Described(JsonObject sync, string uniqueId) => sync["entities"]!.AsArray().Single(e => e!["uniqueId"]!.GetValue<string>() == uniqueId)!.AsObject();
+    static string UniqueIds(JsonObject sync) => string.Join(",", sync["entities"]!.AsArray().Select(e => e!["uniqueId"]!.GetValue<string>()));
+
+    /// <summary>A sensor that shows 21.5 °C once started.</summary>
+    const string TempSource = """
+        public class Temp : SharpSensor
+        {
+            public Temp() { Unit = "°C"; }
+            protected override Task Start() { Value = 21.5; return Task.CompletedTask; }
+        }
+        """;
+    /// <summary>A switch whose commands set its state, noting its Setup, Start and Stop after <paramref name="tag"/>.</summary>
+    static string LampSource(string tag) => $$"""
+        public class Lamp : SharpSwitch
+        {
+            {{NoteMethod}}
+            protected override Task Setup() { Note("{{tag}}.Setup"); return Task.CompletedTask; }
+            protected override Task Start() { Note("{{tag}}.Start"); return Task.CompletedTask; }
+            protected override Task Stop() { Note("{{tag}}.Stop"); return Task.CompletedTask; }
+            protected override Task TurnOn() { IsOn = true; return Task.CompletedTask; }
+            protected override Task TurnOff() { IsOn = false; return Task.CompletedTask; }
+        }
+        """;
+    /// <summary>A plug at an address with one relay, which notes its address as it is set up and as its relay is turned on; its device page shows its maker and model.</summary>
+    static readonly string PlugSource = $$"""
+        public class Plug : SharpDevice
+        {
+            {{NoteMethod}}
+            [Setting("Address")]
+            public string Address { get; set; } = "";
+            public Plug() { Add(new SharpSwitch("relay", "Relay") { OnTurnOn = () => { Note("on " + Address); return Task.CompletedTask; } }); }
+            protected override Task Setup()
+            {
+                Note("setup " + Address);
+                Manufacturer = "Acme";
+                Model = "Plug at " + Address;
+                return Task.CompletedTask;
+            }
+        }
+        """;
+
+    /// <summary>
+    /// A hub switch with its flows and a C# sensor in one definition: both are synced, each under its own unique id; the
+    /// hub's Turn on runs its flow, and the sensor shows what its class set as it started. The sensor is named after its
+    /// class's title, on no device.
+    /// </summary>
+    static async Task ACSharpEntityRunsBesideAHub()
+    {
+        await using var rig = await Rig.Start("csharp-beside");
+        var definition = Relay();
+        Nodes(definition)["nodes"]!.AsArray().Add(CSharp("csharp_entity", "temp", "temp", TempSource));
+        var saved = await rig.Save("hall", definition);
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+        var sync = LastSync(rig, "hall");
+        Check(UniqueIds(sync) == "hall:relay,hall:temp", "both are synced: " + sync.ToJsonString());
+        var temp = Described(sync, "hall:temp");
+        Check(temp["domain"]!.GetValue<string>() == "sensor" && temp["key"]!.GetValue<string>() == "temp" && temp["device"] == null && temp["options"]!["unit"]!.GetValue<string>() == "°C",
+            "the C# sensor is described by its class, on no device: " + temp.ToJsonString());
+        Check(saved["document"]!["liveEntities"]!.AsArray().Select(e => e!["uniqueId"]!.GetValue<string>()).SequenceEqual(["hall:relay", "hall:temp"]), "both are live: " + saved["document"]!["liveEntities"]!.ToJsonString());
+        await rig.Until("hall:temp", s => Available(s) && Is(s, "value", 21.5), "the sensor shows what its class set as it started");
+        await rig.Api.EntityCommand("hall:relay", "turn_on", null);
+        await rig.Until("hall:relay", s => Is(s, "is_on", true), "the hub's Turn on runs its flow");
+    }
+
+    /// <summary>A command for a C# switch reaches its class, as a class definition's does: no flow is looked for.</summary>
+    static async Task ACSharpEntityTakesItsCommands()
+    {
+        await using var rig = await Rig.Start("csharp-commands");
+        Calls();
+        await rig.Save("hall", Definition("Hall", Graph("Hall", [CSharp("csharp_entity", "lamp", "lamp", LampSource("lamp"))])));
+        await rig.Started("hall");
+        await rig.Api.EntityCommand("hall:lamp", "turn_on", null);
+        await rig.Until("hall:lamp", s => Available(s) && Is(s, "is_on", true), "turn on reaches the class");
+        await rig.Api.EntityCommand("hall:lamp", "turn_off", null);
+        await rig.Until("hall:lamp", s => Is(s, "is_on", false), "turn off reaches the class");
+        var refused = await Throws<NotSupportedException>(() => rig.Api.EntityCommand("hall:lamp", "toggle", null), "a command the class does not take");
+        Check(!refused.Message.Contains("has no flow", StringComparison.Ordinal), "the class refuses it, not the graph: " + refused.Message);
+    }
+
+    /// <summary>
+    /// Two C# device nodes of one class at two addresses are two devices: each its own entry, with what its class's
+    /// device page shows, and its own relay under a unique id of its device; each instance had its own address when it
+    /// was set up, and a command reaches the relay of its own. Without one of them, the next revision syncs the other alone.
+    /// </summary>
+    static async Task TwoPlugsOfOneClassAreTwoDevices()
+    {
+        await using var rig = await Rig.Start("csharp-plugs");
+        var calls = Calls();
+        JsonObject Plug(string key, string address) => CSharp("csharp_device", key, key, PlugSource, new JsonObject { ["Address"] = Lit("string", address) }, name: key == "plug_a" ? "Desk plug" : "Shelf plug");
+        var saved = await rig.Save("hall", Definition("Hall", Graph("Hall", [Plug("plug_a", "10.0.0.1"), Plug("plug_b", "10.0.0.2")])));
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+        var sync = LastSync(rig, "hall");
+        Check(sync["devices"]!.ToJsonString() == """[{"key":"plug_a","name":"Desk plug","manufacturer":"Acme","model":"Plug at 10.0.0.1","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null},"""
+            + """{"key":"plug_b","name":"Shelf plug","manufacturer":"Acme","model":"Plug at 10.0.0.2","swVersion":null,"hwVersion":null,"configurationUrl":null,"suggestedArea":null,"via":null}]""",
+            "two devices, each with what its class shows: " + sync["devices"]!.ToJsonString());
+        Check(UniqueIds(sync) == "hall:plug_a:relay,hall:plug_b:relay"
+            && Described(sync, "hall:plug_a:relay")["device"]!.GetValue<string>() == "plug_a" && Described(sync, "hall:plug_b:relay")["device"]!.GetValue<string>() == "plug_b"
+            && Described(sync, "hall:plug_a:relay")["key"]!.GetValue<string>() == "relay",
+            "each relay under its device's unique id, on its device: " + sync["entities"]!.ToJsonString());
+        Check(calls.Where(c => c.StartsWith("setup", StringComparison.Ordinal)).SequenceEqual(["setup 10.0.0.1", "setup 10.0.0.2"]), "each had its own address before its Setup(): " + string.Join(", ", calls));
+        await rig.Api.EntityCommand("hall:plug_b:relay", "turn_on", null);
+        Check(calls.Where(c => c.StartsWith("on", StringComparison.Ordinal)).SequenceEqual(["on 10.0.0.2"]), "the command reached plug_b's relay alone: " + string.Join(", ", calls));
+        await rig.Save("hall", Definition("Hall", Graph("Hall", [Plug("plug_a", "10.0.0.1")])), 1);
+        var after = LastSync(rig, "hall");
+        Check(after["devices"]!.AsArray().Select(d => d!["key"]!.GetValue<string>()).SequenceEqual(["plug_a"]) && UniqueIds(after) == "hall:plug_a:relay",
+            "without plug_b its device and relay are no longer synced: " + after.ToJsonString());
+    }
+
+    /// <summary>
+    /// An Entity node wired to no Device node, beside a C# device, stands alone: the graph has no device of its own (no
+    /// <c>main</c>), and Home Assistant gets the C# device alone.
+    /// </summary>
+    static async Task AGraphWithCSharpNodesHasNoMainDevice()
+    {
+        await using var rig = await Rig.Start("csharp-no-main");
+        var definition = Relay();
+        Nodes(definition)["nodes"]!.AsArray().Add(CSharp("csharp_device", "plug", "plug", PlugSource, name: "Plug"));
+        await rig.Save("hall", definition);
+        var sync = LastSync(rig, "hall");
+        Check(sync["devices"]!.AsArray().Select(d => d!["key"]!.GetValue<string>()).SequenceEqual(["plug"]) && !sync.ContainsKey("device"), "the C# device is the only device: " + sync.ToJsonString());
+        Check(Described(sync, "hall:relay")["device"] == null && Described(sync, "hall:plug:relay")["device"]!.GetValue<string>() == "plug",
+            "the hub stands alone, the plug's relay is on the plug: " + sync["entities"]!.ToJsonString());
+    }
+
+    /// <summary>
+    /// A Device node that is part of a C# device declared after it: Home Assistant gets the C# device first, then the
+    /// Device node, part of it.
+    /// </summary>
+    static async Task ADeviceCanBePartOfACSharpDeviceDeclaredLater()
+    {
+        await using var rig = await Rig.Start("csharp-part-of");
+        var graph = Graph("Hall", [DeviceNode("strip", "Strip", new { via = new { device = "plug" } }), Entity("socket", "socket", "binary_sensor", new { name = "Socket" }, On(true)),
+            CSharp("csharp_device", "plug", "plug", PlugSource, name: "Plug")]);
+        Wire(graph, "strip", "socket");
+        var saved = await rig.Save("hall", Definition("Hall", graph));
+        Check(saved["active"]!.GetValue<bool>(), "the definition runs: " + saved.ToJsonString());
+        var devices = LastSync(rig, "hall")["devices"]!.AsArray();
+        Check(devices.Select(d => d!["key"]!.GetValue<string>()).SequenceEqual(["plug", "strip"]) && devices[1]!["via"]!.ToJsonString() == """{"device":"plug"}""",
+            "the C# device comes first, and the strip is part of it: " + devices.ToJsonString());
+    }
+
+    /// <summary>A sensor whose code names it none, and one that names itself.</summary>
+    const string ProbeSource = "public class Probe : SharpSensor { }";
+    const string NamedSource = "public class Named : SharpSensor { public Named() { Name = \"Kitchen probe\"; } }";
+
+    /// <summary>A C# entity wired to a Device node takes no name of its own (Home Assistant shows the device's) unless its code names it.</summary>
+    static async Task ACSharpEntityOnADeviceTakesItsName()
+    {
+        await using var rig = await Rig.Start("csharp-on-device");
+        var graph = Graph("Hall", [DeviceNode("hall", "Hall"), CSharp("csharp_entity", "probe", "probe", ProbeSource), CSharp("csharp_entity", "named", "named", NamedSource)]);
+        Wire(graph, "hall", "probe");
+        Wire(graph, "hall", "named");
+        await rig.Save("hall", Definition("Hall", graph));
+        var sync = LastSync(rig, "hall");
+        Check(Described(sync, "hall:probe") is { } probe && probe["name"] == null && probe["device"]!.GetValue<string>() == "hall", "unnamed on the device: " + sync["entities"]!.ToJsonString());
+        Check(Described(sync, "hall:named") is { } named && named["name"]!.GetValue<string>() == "Kitchen probe" && named["device"]!.GetValue<string>() == "hall", "its code's name wins: " + sync["entities"]!.ToJsonString());
+    }
+
+    /// <summary>
+    /// A C# entity that stands alone is called its class's title when its code names it none, so Home Assistant never
+    /// falls back to the definition's name for it; a name its code sets wins.
+    /// </summary>
+    static async Task ACSharpEntityAloneIsCalledItsTitle()
+    {
+        await using var rig = await Rig.Start("csharp-alone");
+        var title = Signature("csharp_entity", ProbeSource)["title"]!.GetValue<string>();
+        Check(title.Length > 0 && title != "Hall", "the class has a title of its own: " + title);
+        await rig.Save("hall", Definition("Hall", Graph("Hall", [CSharp("csharp_entity", "probe", "probe", ProbeSource), CSharp("csharp_entity", "named", "named", NamedSource)])));
+        var sync = LastSync(rig, "hall");
+        Check(Described(sync, "hall:probe") is { } probe && probe["name"]?.GetValue<string>() == title && probe["device"] == null, "alone, it is called its title: " + sync["entities"]!.ToJsonString());
+        Check(Described(sync, "hall:named")["name"]!.GetValue<string>() == "Kitchen probe", "its code's name wins: " + sync["entities"]!.ToJsonString());
+    }
+
+    /// <summary>
+    /// The value of a wired secret Setting and a typed whole number are on the instance when its <c>Setup()</c> runs; the
+    /// secret is in no log line, no sync, no push and no answer.
+    /// </summary>
+    static async Task SettingsAreAppliedBeforeSetup()
+    {
+        await using var rig = await Rig.Start("csharp-settings");
+        var calls = Calls();
+        const string secret = "s3cret-t0ken";
+        var source = $$"""
+            public class Router : SharpDevice
+            {
+                {{NoteMethod}}
+                [Setting("Token", Secret = true)]
+                public string Token { get; set; } = "";
+                [Setting("Port")]
+                public int Port { get; set; }
+                public Router() { Add(new SharpSensor("uptime", "Uptime")); }
+                protected override Task Setup() { Note($"setup {Token} {Port}"); return Task.CompletedTask; }
+            }
+            """;
+        var graph = Graph("Hall", [N("token", "setting", new { key = "token" }), CSharp("csharp_device", "router", "router", source, new JsonObject { ["Port"] = Lit("number", 8080) }, name: "Router")],
+            Data("token", "router", "Token"));
+        var saved = await rig.Save("hall", Definition("Hall", graph, [new JsonObject { ["key"] = "token", ["label"] = "Token", ["type"] = "string", ["secret"] = true, ["value"] = secret }]));
+        Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
+        Check(calls.Contains($"setup {secret} 8080"), "both are set before Setup(): " + calls.Count);
+        await rig.Started("hall");
+        var read = await rig.Read("hall");
+        Check(!saved.ToJsonString().Contains(secret, StringComparison.Ordinal) && !read.ToJsonString().Contains(secret, StringComparison.Ordinal), "no answer holds the secret");
+        Check(!rig.Home.Syncs("hall").Any(s => s.Contains(secret, StringComparison.Ordinal)) && !rig.Home.Pushes().Any(p => p.Contains(secret, StringComparison.Ordinal))
+            && !rig.Home.Logs().Any(l => l.Contains(secret, StringComparison.Ordinal)), "no sync, push or log line holds the secret");
+    }
+
+    /// <summary>
+    /// A C# node whose constructor throws, whose <c>Setup()</c> throws, or whose <c>Setup()</c> never returns fails the
+    /// definition's start with a sentence naming the node: nothing of the definition is registered or shown available,
+    /// not even its Entity node's entity; another definition keeps running.
+    /// </summary>
+    static async Task AClassThatCannotStartFailsTheDefinition()
+    {
+        await using var rig = await Rig.Start("csharp-failing");
+        await rig.Save("relay", Relay());
+        await rig.Started("relay");
+        DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
+        foreach (var (id, source, title, error) in new[] {
+            ("fuse", "public class Fuse : SharpSensor { public Fuse() { throw new InvalidOperationException(\"no wiring\"); } }", "Fuse", "Bomb: {0} could not be created: no wiring"),
+            ("faulty", "public class Faulty : SharpSensor { protected override Task Setup() => throw new InvalidOperationException(\"no answer\"); }", "Faulty", "Bomb: {0}: no answer"),
+            ("hang", "public class Hang : SharpSensor { protected override Task Setup() => Task.Delay(Timeout.Infinite, Stopping); }", "Hang", "Bomb: {0}: Setup() did not finish within 0.3 s") })
+        {
+            var node = CSharp("csharp_entity", id, id, source);
+            var called = node["config"]!["signature"]!["title"]!.GetValue<string>();
+            var graph = Graph("Bomb", [Entity("lamp", "lamp", "binary_sensor", new { name = "Lamp" }, On(true)), node]);
+            var saved = await rig.Save("bomb_" + id, Definition("Bomb", graph));
+            var expected = string.Format(System.Globalization.CultureInfo.InvariantCulture, error, called);
+            Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == expected && Status(saved["document"]!.AsObject()) == "failed",
+                $"{title}: the start fails naming the node ({expected}): " + saved.ToJsonString());
+            Check(rig.Home.Syncs("bomb_" + id).Length == 0 && !rig.Home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("bomb_" + id + ":", StringComparison.Ordinal) && Available(s)),
+                $"{title}: nothing of it is registered or shown available");
+        }
+        await rig.Api.EntityCommand("relay:relay", "turn_on", null);
+        await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", true), "the other definition keeps running");
+    }
+
+    /// <summary>
+    /// A hub and a C# switch, both turned on, then a new revision: the new class is set up and synced, then the old one
+    /// stopped, then the new one started (as a class definition's hot replace); the hub's state is carried over and the
+    /// C# switch's restored from what it last showed. After a restart both come back on.
+    /// </summary>
+    static async Task ACSharpEntityIsRestoredAndAHubCarriedOver()
+    {
+        await using var rig = await Rig.Start("csharp-restore");
+        var calls = Calls();
+        NoteSyncs(calls);
+        JsonObject Revision(string tag)
+        {
+            var definition = Relay();
+            Nodes(definition)["nodes"]!.AsArray().Add(CSharp("csharp_entity", "lamp", "lamp", LampSource(tag)));
+            return definition;
+        }
+        await rig.Save("hall", Revision("old"));
+        await rig.Started("hall");
+        await rig.Api.EntityCommand("hall:relay", "turn_on", null);
+        await rig.Api.EntityCommand("hall:lamp", "turn_on", null);
+        await rig.Until("hall:relay", s => Is(s, "is_on", true), "the hub is on");
+        await rig.Until("hall:lamp", s => Is(s, "is_on", true), "the C# switch is on");
+        await rig.Flush();
+        calls.Clear();
+        var batches = rig.Batches;
+        await rig.Save("hall", Revision("new"), 1);
+        await rig.Started("hall");
+        Check(calls.SequenceEqual(["new.Setup", "sync", "old.Stop", "new.Start"]), "hot replace order: " + string.Join(", ", calls));
+        await rig.Until("hall:relay", s => Available(s) && Is(s, "is_on", true), "the hub's state is carried over", batches);
+        await rig.Until("hall:lamp", s => Available(s) && Is(s, "is_on", true), "the C# switch's state is restored", batches);
+        Check(!rig.Pushed("hall:lamp", batches).Any(s => !Is(s, "is_on", true)) && !rig.Pushed("hall:relay", batches).Any(s => !Available(s)), "nothing else is pushed for them: " + Lines(rig.Home.Pushes().Skip(batches)));
+        batches = rig.Batches;
+        await rig.Restart();
+        await rig.Started("hall");
+        await rig.Until("hall:relay", s => Available(s) && Is(s, "is_on", true), "the hub comes back on after a restart", batches);
+        await rig.Until("hall:lamp", s => Available(s) && Is(s, "is_on", true), "the C# switch comes back on after a restart", batches);
+        await rig.Api.EntityCommand("hall:lamp", "turn_off", null);
+        await rig.Until("hall:lamp", s => Is(s, "is_on", false), "it takes commands after the restart", batches);
+    }
+
+    /// <summary>
+    /// A C# device that adds two entities of one key fails with the sentence its class gives; a hub and a C# entity of one
+    /// key, loaded past the validator, have one unique id and are refused with the host's key sentence. Two C# devices
+    /// that each add an entity of one key are not (<see cref="TwoPlugsOfOneClassAreTwoDevices"/>).
+    /// </summary>
+    static async Task TwoEntitiesWithOneUniqueIdAreRefused()
+    {
+        await using var rig = await Rig.Start("csharp-unique");
+        const string twice = "public class Twice : SharpDevice { public Twice() { Add(new SharpSwitch(\"relay\")); Add(new SharpSwitch(\"relay\")); } }";
+        var saved = await rig.Save("twice", Definition("Twice", Graph("Twice", [CSharp("csharp_device", "pair", "pair", twice, name: "Pair")])));
+        Check(saved["activationError"]?.GetValue<string>() == "Twice: Pair could not be created: Twice already has an entity with key 'relay'. (Parameter 'entity')",
+            "the class's own sentence: " + saved.ToJsonString());
+        // A hub lamp and a C# entity temp, saved; then the same compiled graph loaded as another definition whose C# entity's key is lamp.
+        var graph = Graph("Dup", [Entity("lamp", "lamp", "binary_sensor", new { name = "Lamp" }, On(true)), CSharp("csharp_entity", "temp", "temp", TempSource)]);
+        var document = (await rig.Save("dup", Definition("Dup", graph)))["document"]!;
+        var running = rig.Scripts.GetUserScripts().Single(s => s.CompiledScript.Definition?.Id == "dup").CompiledScript;
+        var compiled = await new CodeCompiler(Diagnostics).CompileSingleFile(Path.Combine(rig.Home.Root, "entity_dup_twin.cs"), document["source"]!.GetValue<string>());
+        compiled.DesignatedRootType = running.DesignatedRootType;
+        compiled.VisualId = "dup_twin";
+        compiled.VisualTriggers = running.VisualTriggers;
+        compiled.VisualGraph = running.VisualGraph;
+        compiled.VisualCatalog = running.VisualCatalog;
+        var given = running.Definition!;
+        compiled.Definition = new("dup_twin", "Dup twin", null, given.Settings)
+            { Entities = given.Entities, Devices = given.Devices, Roots = given.Roots, Components = [.. given.Components.Select(c => c with { Key = "lamp" })] };
+        Exception? failure = null;
+        await rig.Scripts.LoadUserScripts([compiled], (_, error) => failure = error);
+        Check(failure?.Message == "Dup twin: two entities have the key 'lamp'", "the host's key sentence: " + failure?.Message);
+        Check(rig.Home.Syncs("dup_twin").Length == 0, "nothing of it is registered");
     }
 }

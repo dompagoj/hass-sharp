@@ -42,7 +42,8 @@ internal sealed partial class DefinitionHost
     readonly HashSet<(string Entity, string State)> own = [];
 
     /// <summary>
-    /// A definition built from nodes: creates the entities its document describes, then runs its When started flow, if it
+    /// A definition built from nodes: creates the entities its document describes, then sets up its C# nodes' classes
+    /// (<see cref="SetUpComponents"/>) and checks that every entity has a unique id of its own, then runs its When started flow, if it
     /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
     /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
     /// entity no state flow works out starts with the state, and availability, its namesake of the same domain has there
@@ -53,17 +54,24 @@ internal sealed partial class DefinitionHost
     async Task<SharpEntity[]> PrepareGraph(JsonArray described)
     {
         graphSettings = GraphSettings(definition.Settings);
-        var all = described.OfType<JsonObject>().Select(entity => SharpDomains.Create(VisualNodeCatalog.Text(entity, "domain"), entity)).ToArray();
-        CheckKeys(all);
+        var hubs = described.OfType<JsonObject>().Select(entity => SharpDomains.Create(VisualNodeCatalog.Text(entity, "domain"), entity)).ToArray();
+        CheckKeys(hubs);
+        var all = hubs;
+        if (definition.Components.Count > 0)
+        {
+            all = [.. hubs, .. await SetUpComponents()];
+            // One unique id each, over the Entity nodes' entities and the C# nodes' together.
+            CheckKeys(all);
+        }
         // Read before the lock: the running revision's lock is taken alone, never inside this one.
         var carried = Replaced();
         var stored = Manager.States is { } states
-            ? all.Where(Restorable).Select(entity => (Entity: entity, Found: states.TryGet(UniqueId(entity), out var values), Values: values)).Where(s => s.Found).ToArray()
+            ? hubs.Where(Restorable).Select(entity => (Entity: entity, Found: states.TryGet(UniqueId(entity), out var values), Values: values)).Where(s => s.Found).ToArray()
             : [];
         List<string> dropped = [];
         lock (gate)
         {
-            graphEntities = all.ToDictionary(entity => entity.Key, StringComparer.Ordinal);
+            graphEntities = hubs.ToDictionary(entity => entity.Key, StringComparer.Ordinal);
             // Each entity a state flow works out is published first by its state flow, once a run worked it out (see StartAsync).
             awaiting.UnionWith(stateKeys.Where(graphEntities.ContainsKey));
             handed = carried;
@@ -77,6 +85,7 @@ internal sealed partial class DefinitionHost
         }
         // Outside the lock: logging calls into Python.
         foreach (var line in dropped) Report(line, PyLogLevel.Debug);
+        lifecycle = [(null, hubs), .. parts.Select(part => (part.Root as SharpDevice, part.Entities))];
         entities = all;
         foreach (var (key, method) in definition.Roots?.Frames ?? new Dictionary<string, string>())
             FrameNeeded(key, () => RunFrame(method));
@@ -104,6 +113,89 @@ internal sealed partial class DefinitionHost
                 _ => $"{definition.Name} does not start: its When started flow did not run",
             });
         return all;
+    }
+
+    /// <summary>One C# node of a graph as its host set it up: what its node says, the class it made, and that class's entities.</summary>
+    sealed record Part(DefinitionComponent Node, SharpComponent Root, SharpEntity[] Entities);
+
+    // A graph's C# nodes as they were set up, in node order; none for a class, and once stopped.
+    volatile Part[] parts = [];
+    // The node of each class a graph's C# node made, by the class (a C# entity's entity, a C# device), from the moment it
+    // is made: the unique ids of a C# device's entities, restored before its Setup(), depend on it. Empty for a class.
+    readonly System.Collections.Concurrent.ConcurrentDictionary<SharpComponent, DefinitionComponent> nodes = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>The C# node the entity is of: a C# entity's own, or the C# device's that added it; null for any other.</summary>
+    DefinitionComponent? Node(SharpEntity entity) =>
+        nodes.TryGetValue(entity, out var own) ? own : entity.AddedTo is { } device && nodes.TryGetValue(device, out var added) ? added : null;
+
+    /// <summary>Whether the host made the entity from one of the graph's Entity nodes, whose flows are its behaviour; a C# node's class is its own.</summary>
+    bool IsHub(SharpEntity entity) => definition.Entities != null && Node(entity) == null;
+
+    /// <summary>
+    /// The graph's C# devices as Home Assistant gets them, in node order: each its node's key, name and Part of, and what
+    /// its class's device page shows, read after its <c>Setup()</c>, null where it sets none (as a class's own device is).
+    /// </summary>
+    IEnumerable<DefinitionDevice> ClassDevices() => parts.Where(part => part.Root is SharpDevice).Select(part =>
+    {
+        var made = (SharpDevice)part.Root;
+        return new DefinitionDevice(made.Manufacturer, made.Model, made.SwVersion, made.HwVersion, made.ConfigurationUrl, made.SuggestedArea, part.Node.Via)
+            { Key = part.Node.Key, Name = part.Node.Name };
+    });
+
+    /// <summary>
+    /// Sets up the graph's C# entity and C# device nodes, in node order, each with the class kind's steps
+    /// (<see cref="SetUpClass"/>): creates its class (<c>SharpNodes.Create</c> of the compiled graph), applies its settings,
+    /// gives a C# entity its node's key and, when its code names it none, its class's title if it stands alone (none on a
+    /// device, whose name Home Assistant then shows), restores, sets up and seals. Every <c>Setup()</c> of them runs within
+    /// <see cref="SetupTimeout"/> on one clock. A failure fails the definition's start, naming the node: nothing of it is
+    /// registered.
+    /// </summary>
+    /// <returns>Their entities, in node order.</returns>
+    async Task<SharpEntity[]> SetUpComponents()
+    {
+        List<Part> made = [];
+        try
+        {
+            foreach (var node in definition.Components)
+            {
+                var who = $"{definition.Name}: {Called(node)}";
+                var root = CreateNode(node, who);
+                nodes[root] = node;
+                var standalone = node.Device == null;
+                var all = await SetUpClass(root, who, node.Settings, entity => entity.Adopt(node.Key, standalone ? node.Title : null), named: true);
+                made.Add(new(node, root, all));
+            }
+        }
+        // Also after a Setup() that failed or ran out of time: a download it left running no longer stops a clock.
+        finally { setupClock = null; }
+        parts = [.. made];
+        return [.. made.SelectMany(part => part.Entities)];
+    }
+
+    /// <summary>A C# node as the host's messages name it: a C# entity its class's title, else its key; a C# device its name, else its key; else its kind.</summary>
+    static string Called(DefinitionComponent node) =>
+        VisualGraphValidator.Words.Trimmed(node.Kind == "entity" ? node.Title : node.Name ?? "") is { Length: > 0 } name ? name
+        : VisualGraphValidator.Words.Trimmed(node.Key) is { Length: > 0 } key ? key
+        : node.Kind == "entity" ? "C# entity" : "C# device";
+
+    /// <summary>
+    /// The class of the C# node, as the compiled graph's <c>SharpNodes.Create</c> makes it: a C# entity's an entity, a C#
+    /// device's a device. What its constructor throws, or none made, is <c>{who} could not be created: {reason}</c>.
+    /// </summary>
+    SharpComponent CreateNode(DefinitionComponent node, string who)
+    {
+        var create = script.CompiledScript.Assembly.GetType("SharpNodes")?.GetMethod("Create", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string)]);
+        object? made;
+        try { made = create?.Invoke(null, System.Reflection.BindingFlags.DoNotWrapExceptions, null, [node.NodeId], null); }
+        // Its message is user code, read once here.
+        catch (Exception failure) { throw new InvalidOperationException($"{who} could not be created: {Text(failure)}", failure); }
+        return (node.Kind, made) switch
+        {
+            ("entity", SharpEntity entity) => entity,
+            ("device", SharpDevice device) => device,
+            (_, null) => throw new InvalidOperationException($"{who} could not be created: the compiled definition has no class for its node"),
+            _ => throw new InvalidOperationException($"{who} could not be created: {made.GetType().Name} is not {(node.Kind == "entity" ? "an entity" : "a device")}"),
+        };
     }
 
     /// <summary>
@@ -165,12 +257,12 @@ internal sealed partial class DefinitionHost
     /// The revision this one was to replace stops, with <paramref name="final"/> its entities' last states: each value that
     /// changed there since <see cref="HandOver"/> reaches the entity here that took that revision's state
     /// (<see cref="Carry"/>), unless a run here has set that value itself; a value the entity here refuses is left out.
-    /// Each camera here whose key was a camera's there takes over its current and last good frame
+    /// Each camera here whose unique id was a camera's there takes over its current and last good frame
     /// (<see cref="CameraFrames.TakeOver"/>), so that a picture being watched stays; nothing else of it. Nothing once this
     /// one stops. Never throws.
     /// </summary>
-    /// <param name="cameras">The frames of the replaced revision's cameras, by key.</param>
-    internal void Inherit(DefinitionHost from, GraphEntityState[] final, (string Key, CameraFrames.Handover Frames)[] cameras)
+    /// <param name="cameras">The frames of the replaced revision's cameras, by unique id.</param>
+    internal void Inherit(DefinitionHost from, GraphEntityState[] final, (string UniqueId, CameraFrames.Handover Frames)[] cameras)
     {
         List<string> dropped = [];
         var live = false;
@@ -193,8 +285,8 @@ internal sealed partial class DefinitionHost
         catch (Exception) { }
         // Outside the lock: each camera takes its own.
         if (live)
-            foreach (var (key, frames) in cameras)
-                try { if (entities.FirstOrDefault(entity => entity.Key == key) is SharpCamera camera) camera.Frames.TakeOver(frames); }
+            foreach (var (id, frames) in cameras)
+                try { if (entities.FirstOrDefault(entity => UniqueId(entity) == id) is SharpCamera camera) camera.Frames.TakeOver(frames); }
                 catch (Exception) { }
         foreach (var line in dropped) Report(line, PyLogLevel.Debug);
     }

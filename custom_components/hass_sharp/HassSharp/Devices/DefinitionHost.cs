@@ -30,6 +30,12 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
     internal IReadOnlyList<DefinitionDevice> Devices { get; init; } = [];
     /// <summary>For a definition built from nodes, the methods of its graph's When started step and of its Entity nodes' flows; null for a class definition.</summary>
     internal DefinitionRoots? Roots { get; init; }
+    /// <summary>
+    /// For a definition built from nodes, its C# entity and C# device nodes, in node order, each with its settings resolved
+    /// (<see cref="DefinitionGraph.Components"/>), which the host sets up beside its Entity nodes; none for a class
+    /// definition and for a graph without such nodes.
+    /// </summary>
+    internal IReadOnlyList<DefinitionComponent> Components { get; init; } = [];
 }
 
 /// <summary>
@@ -67,6 +73,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     CancellationTokenSource stopping = new();
     SharpDevice? device;
     volatile SharpEntity[] entities = [];
+    // What starts and stops, in order: each device, if any, with its entities. A class's one; a graph's the entities its
+    // Entity nodes create first (with no device), then each C# node's class (a C# device with the entities it added).
+    volatile (SharpDevice? Device, SharpEntity[] Entities)[] lifecycle = [];
     volatile string status = SettingUp;
     volatile string? error;
     Task? starting;
@@ -170,56 +179,79 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         var root = (definition.Factory ?? CreateCompiled)();
         if (root is not (SharpDevice or SharpEntity))
             throw new InvalidOperationException($"{definition.Name}: {root?.GetType().Name ?? "null"} is neither a SharpDevice nor a SharpEntity");
-        DefinitionSettings.Apply(definition.Name, definition.Settings, (SharpComponent)root);
+        // The definition's own device, which Home Assistant gets as its main device (Devices).
         device = root as SharpDevice;
-        SharpEntity[] Collect() => device != null ? [.. device.Entities] : [(SharpEntity)root];
+        SharpEntity[] all;
+        // Also after a Setup() that failed or ran out of time: a download it left running no longer stops a clock.
+        try { all = await SetUpClass((SharpComponent)root, definition.Name, definition.Settings); }
+        finally { setupClock = null; }
+        CheckKeys(all);
+        // A revision that replaces a running one takes over its cameras' frames as that one stops (Inherit).
+        Replaced();
+        lifecycle = [(device, all)];
+        entities = all;
+        return all;
+    }
+
+    /// <summary>
+    /// The class kind's steps for one class, which a class definition and each C# node of a graph take alike: applies its
+    /// settings, then <paramref name="adopt"/>s its entity (a graph's C# entity, whose node gives its key and name);
+    /// restores the state each entity last showed, before any <c>Setup()</c> that may see it; runs <c>Setup()</c> on the
+    /// device, then on each entity, one added in a <c>Setup()</c> too, all within <see cref="SetupTimeout"/> on the clock
+    /// the definition's set-up shares (the first makes it; the caller ends it); then seals a device. It never sets the
+    /// host's own <c>device</c>: a graph's C# device is no main device.
+    /// </summary>
+    /// <param name="who">What its failures start with: the definition's name, or for a C# node the definition's and the node's.</param>
+    /// <param name="named">Whether a <c>Setup()</c> that throws fails after <paramref name="who"/> (a graph's C# node, one
+    /// of several), rather than as it threw (a class, the definition's one).</param>
+    /// <returns>Its entities: the entity, or the device's in the order it added them.</returns>
+    async Task<SharpEntity[]> SetUpClass(SharpComponent root, string who, IReadOnlyList<DefinitionSetting> settings, Action<SharpEntity>? adopt = null, bool named = false)
+    {
+        DefinitionSettings.Apply(who, settings, root);
+        var owner = root as SharpDevice;
+        if (root is SharpEntity alone) adopt?.Invoke(alone);
+        SharpEntity[] Collect() => owner != null ? [.. owner.Entities] : [(SharpEntity)root];
         // Each entity takes the state it last showed before any Setup() that may see it: those of the constructor now,
         // before the device's; one added in a Setup() as it is added, so that whatever that Setup() then sets wins.
         foreach (var entity in Collect()) RestoreClass(entity);
-        if (device != null) device.Added = RestoreClass;
+        if (owner != null) owner.Added = RestoreClass;
         // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
         // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
         // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
         // cancelled. One that ignores Stopping cannot be stopped, and keeps its component (and so this host) until it
         // returns. The time a download receives is not counted (see SetupClock).
-        var clock = setupClock = new SetupClock();
+        var clock = setupClock ??= new SetupClock();
         async Task SetUp(SharpComponent component)
         {
             var setup = Task.Factory.StartNew(async () => await component.Setup(), CancellationToken.None,
                 TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default).Unwrap();
-            if (!await Within(setup, clock))
-                throw new TimeoutException($"{definition.Name}: Setup() did not finish within {Seconds(SetupTimeout)} s");
+            bool ended;
+            try { ended = await Within(setup, clock); }
+            // Its message is user code, read once here.
+            catch (Exception failure) when (named && failure is not OperationCanceledException) { throw new InvalidOperationException($"{who}: {Text(failure)}", failure); }
+            if (!ended)
+                throw new TimeoutException($"{who}: Setup() did not finish within {Seconds(SetupTimeout)} s");
         }
-        try
+        if (owner != null)
         {
-            if (device != null)
-            {
-                device.Host = this;
-                await SetUp(device);
-            }
-            // An entity added during a Setup() is set up too.
-            var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
-            while (Collect().FirstOrDefault(entity => !setUp.Contains(entity)) is { } next)
-            {
-                setUp.Add(next);
-                next.Host = this;
-                await SetUp(next);
-            }
+            owner.Host = this;
+            await SetUp(owner);
         }
-        // Also after a Setup() that failed or ran out of time: a download it left running no longer stops a clock.
-        finally { setupClock = null; }
+        // An entity added during a Setup() is set up too.
+        var setUp = new HashSet<SharpEntity>(ReferenceEqualityComparer.Instance);
+        while (Collect().FirstOrDefault(entity => !setUp.Contains(entity)) is { } next)
+        {
+            setUp.Add(next);
+            next.Host = this;
+            await SetUp(next);
+        }
         // From now on the host would not see an entity added, so the device refuses one (and has none to restore).
-        if (device != null)
+        if (owner != null)
         {
-            device.Sealed = true;
-            device.Added = null;
+            owner.Sealed = true;
+            owner.Added = null;
         }
-        var all = Collect();
-        CheckKeys(all);
-        // A revision that replaces a running one takes over its cameras' frames as that one stops (Inherit).
-        Replaced();
-        entities = all;
-        return all;
+        return Collect();
     }
 
     /// <summary>
@@ -287,7 +319,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     async Task StartAsync()
     {
-        var (root, all) = (device, entities);
+        var (cycle, all) = (lifecycle, entities);
         // The revision this one replaced has stopped by now.
         ReleasePredecessor();
         // A replaced revision may have sent the same states: they are sent again, as the new entities' first.
@@ -307,8 +339,11 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         _ = WarnSlowStart(started.Token);
         try
         {
-            if (root != null) await root.Start();
-            foreach (var entity in all) await entity.Start();
+            foreach (var (owner, members) in cycle)
+            {
+                if (owner != null) await owner.Start();
+                foreach (var entity in members) await entity.Start();
+            }
             lock (gate) if (stopped == null) status = Running;
         }
         catch (Exception failure)
@@ -331,7 +366,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         foreach (var entity in all)
         {
             bool waiting;
-            lock (gate) waiting = awaiting.Contains(entity.Key);
+            lock (gate) waiting = IsHub(entity) && awaiting.Contains(entity.Key);
             if (!waiting) Publish(entity);
         }
     }
@@ -420,11 +455,14 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                 Report($"{left} timer callback(s), track callback(s), command(s) or frame(s) did not finish within {Seconds()} s of stopping; going on without them", PyLogLevel.Warn);
             }
             if (start == null) return;
-            var (root, all) = (device, entities);
+            var cycle = lifecycle;
             var stops = Task.Run(async () =>
             {
-                foreach (var entity in all) await StopOne(entity);
-                if (root != null) await StopOne(root);
+                foreach (var (owner, members) in cycle)
+                {
+                    foreach (var entity in members) await StopOne(entity);
+                    if (owner != null) await StopOne(owner);
+                }
             });
             if (!await UserScript.Drain([stops], Left()))
                 Report($"Stop() did not finish within {Seconds()} s; unloading without waiting for it", PyLogLevel.Warn);
@@ -438,6 +476,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             // Nothing of the user's code stays reachable from the host once stopped.
             device = null;
             entities = [];
+            lifecycle = [];
+            parts = [];
+            nodes.Clear();
             // After the last Stop(), which may still make requests: disposing the client cancels what is still in flight on
             // it, and closing the downloads ends those still running.
             HttpClient? client;
@@ -531,7 +572,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         try
         {
             // A command the entity does not take is refused by the entity, as a class's is.
-            if (definition.Roots is { } roots && entity.Commands.Contains(name, StringComparer.Ordinal)) await RunFlow(roots, entity, name, data);
+            // An Entity node's command runs its flow; a C# node's entity takes its own, as a class's does.
+            if (definition.Roots is { } roots && IsHub(entity) && entity.Commands.Contains(name, StringComparer.Ordinal)) await RunFlow(roots, entity, name, data);
             else await entity.Command(name, data);
         }
         finally
@@ -609,8 +651,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     // the camera only shows them.
     Func<Task<SharpImage?>>? Maker(SharpCamera camera)
     {
-        Func<Task>? flow;
-        lock (gate) frameFlows.TryGetValue(camera.Key, out flow);
+        Func<Task>? flow = null;
+        // A frame flow is an Entity node's, for its own camera.
+        if (IsHub(camera)) lock (gate) frameFlows.TryGetValue(camera.Key, out flow);
         if (flow != null) return async () => { await flow(); return null; };
         return camera.MakesFrames ? camera.MakeFrame : null;
     }
@@ -676,10 +719,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     static readonly CameraFrames.Outcome Cancelled = new("the definition stopped"), Starting = new("the definition is starting");
 
-    // Each of this revision's cameras' frames, by key, for the revision that replaces it (CameraFrames.TakeOver). Never throws.
-    (string Key, CameraFrames.Handover Frames)[] HandedFrames()
+    // Each of this revision's cameras' frames, by unique id, for the revision that replaces it (CameraFrames.TakeOver). Never throws.
+    (string UniqueId, CameraFrames.Handover Frames)[] HandedFrames()
     {
-        try { return [.. entities.OfType<SharpCamera>().Select(camera => (camera.Key, camera.Frames.Handed()))]; }
+        try { return [.. entities.OfType<SharpCamera>().Select(camera => (UniqueId(camera), camera.Frames.Handed()))]; }
         catch (Exception) { return []; }
     }
 
@@ -714,11 +757,11 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     }
 
     /// <summary>
-    /// Whether the entity comes back with the state it last showed, and so has it remembered: in a graph, each entity no
-    /// State works out (one that does is worked out again as it starts); in a class, each whose
-    /// <see cref="SharpEntity.RestoreState"/> is true.
+    /// Whether the entity comes back with the state it last showed, and so has it remembered: of a graph's Entity nodes,
+    /// each entity no State works out (one that does is worked out again as it starts); of a class, and of a graph's C#
+    /// node, each whose <see cref="SharpEntity.RestoreState"/> is true.
     /// </summary>
-    bool Restorable(SharpEntity entity) => definition.Entities != null ? !stateKeys.Contains(entity.Key) : entity.RestoreState;
+    bool Restorable(SharpEntity entity) => IsHub(entity) ? !stateKeys.Contains(entity.Key) : entity.RestoreState;
 
     // A class's entity takes the values remembered for it, before its Setup(), through its own setters: nothing is
     // published before the start. A value it no longer takes is left out, which the debug log says. Never throws: it runs
@@ -892,7 +935,13 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         Report($"{what} failed", failure, PyLogLevel.Error);
     }
 
-    string UniqueId(SharpEntity entity) => $"{definition.Id}:{entity.Key}";
+    /// <summary>
+    /// The entity's unique id, made here alone: <c>&lt;definition id&gt;:&lt;key&gt;</c>, but
+    /// <c>&lt;definition id&gt;:&lt;device key&gt;:&lt;entity key&gt;</c> for an entity a graph's C# device added, so that two C#
+    /// devices of one class are two devices, each with entities of its own.
+    /// </summary>
+    string UniqueId(SharpEntity entity) =>
+        Node(entity) is { Kind: "device" } added ? $"{definition.Id}:{added.Key}:{entity.Key}" : $"{definition.Id}:{entity.Key}";
 
     object CreateCompiled()
     {
@@ -909,7 +958,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             if (entity.Key == null || !SharpEntity.KeyPattern().IsMatch(entity.Key))
                 throw new InvalidOperationException($"{definition.Name}: entity key '{entity.Key}' must be a lower-case letter followed by up to 39 lower-case letters, digits or underscores");
-            if (!seen.Add(entity.Key)) throw new InvalidOperationException($"{definition.Name}: two entities have the key '{entity.Key}'");
+            // One unique id each: of a class, and of a graph's Entity nodes and C# entities, one key each; two C# devices may
+            // each add an entity of one key.
+            if (!seen.Add(UniqueId(entity))) throw new InvalidOperationException($"{definition.Name}: two entities have the key '{entity.Key}'");
         }
     }
 
@@ -921,7 +972,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// graph's Device nodes; a class definition's own device, keyed <see cref="MainDevice"/> and named after the
     /// definition. That one is a class's device, each field replaced by the document's when it gives one; for a class's
     /// entity, the document's device alone; none when there is neither. A graph has no device of its own
-    /// (<see cref="CompiledDefinition.Device"/> is null), so its Device nodes are all it gets, one keyed <c>main</c> too.
+    /// (<see cref="CompiledDefinition.Device"/> is null, and its host sets no <c>device</c>), so its Device nodes and then
+    /// its C# devices (<see cref="ClassDevices"/>) are all it gets, one keyed <c>main</c> too, ordered over both kinds.
     /// </summary>
     List<DefinitionDevice> Devices()
     {
@@ -930,17 +982,19 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             : new DefinitionDevice(given?.Manufacturer ?? device?.Manufacturer, given?.Model ?? device?.Model, given?.SwVersion ?? device?.SwVersion,
                 given?.HwVersion ?? device?.HwVersion, given?.ConfigurationUrl ?? device?.ConfigurationUrl, given?.SuggestedArea ?? device?.SuggestedArea, given?.Via)
             { Key = MainDevice, Name = definition.Name };
-        return InOrder(main == null ? definition.Devices : [.. definition.Devices, main]);
+        return InOrder(main == null ? [.. definition.Devices, .. ClassDevices()] : [.. definition.Devices, main]);
     }
 
     /// <summary>
     /// The key of the device <paramref name="entity"/> is on, among <paramref name="keys"/>, or null for none: a graph's
-    /// entity is on the device its description names, else on none; every entity of a class is on the definition's own
-    /// device when it has one (<see cref="MainDevice"/>), else on none.
+    /// entity is on the device its description names, a C# entity on the Device node it is wired to, an entity a C# device
+    /// added on that device, each else on none; every entity of a class is on the definition's own device when it has one
+    /// (<see cref="MainDevice"/>), else on none. A graph has none of its own: its host sets no <c>device</c>.
     /// </summary>
     string? DeviceOf(SharpEntity entity, IReadOnlySet<string> keys)
     {
-        var named = definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == entity.Key)?["device"] is JsonValue value
+        var named = Node(entity) is { } node ? node.Kind == "device" ? node.Key : node.Device
+            : definition.Entities?.OfType<JsonObject>().FirstOrDefault(e => VisualNodeCatalog.Text(e, "key") == entity.Key)?["device"] is JsonValue value
             && value.TryGetValue<string>(out var key) ? key : null;
         var on = named ?? (device != null || definition.Device != null ? MainDevice : null);
         return on != null && keys.Contains(on) ? on : null;

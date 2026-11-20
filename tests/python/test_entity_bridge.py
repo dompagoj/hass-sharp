@@ -846,6 +846,34 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(definition(description('relay', device='plug'), devices=[device('Hall plug', 'plug', via={'device': 'hub'})]))
         self.assertIsNone(identified(self.devices, 'plug1:plug').via_device_id)
 
+    async def test_the_entities_a_csharp_device_adds_stay_while_it_is_described(self):
+        # Two C# devices of one class each add a relay: the host gives each the unique id <definition id>:<device key>:
+        # <entity key> (tests/Runtime/EntityGraphTests.cs). Each stays while its device is described, goes with its
+        # device, is kept by a prune that keeps its definition and goes with a prune or a removal of it.
+        def plugs(*keys):
+            return definition(*[description('relay', device=key, uniqueId=f'plug1:{key}:relay') for key in keys],
+                              devices=[device(f'Plug {key}', key) for key in keys])
+        result = await self.sync(plugs('plug_a', 'plug_b'))
+        self.assertEqual(sorted(result['entities']), ['plug1:plug_a:relay', 'plug1:plug_b:relay'])
+        plug_a, plug_b = identified(self.devices, 'plug1:plug_a'), identified(self.devices, 'plug1:plug_b')
+        on = {e.unique_id: e.device_id for e in self.entities.entities.values()}
+        self.assertEqual(on, {'plug1:plug_a:relay': plug_a.id, 'plug1:plug_b:relay': plug_b.id})
+        relay_a = self.live('plug1:plug_a:relay')
+        await self.sync(plugs('plug_a'))
+        self.assertIsNone(identified(self.devices, 'plug1:plug_b'))
+        self.assertEqual({e.unique_id: e.device_id for e in self.entities.entities.values()}, {'plug1:plug_a:relay': plug_a.id})
+        self.assertIs(self.live('plug1:plug_a:relay'), relay_a)
+        self.assertNotIn('plug1:plug_b:relay', self.bridge._live)
+        # Another definition's entity of three parts, whose definition is gone, is pruned by its definition id alone.
+        self.entities.add('switch', 'gone:plug:relay')
+        answers = await self.answers(self.bridge.begin_prune, json.dumps(['plug1']))
+        self.assertEqual(answers, [('success',)])
+        self.assertEqual([e.unique_id for e in self.entities.entities.values()], ['plug1:plug_a:relay'])
+        self.assertIs(identified(self.devices, 'plug1:plug_a'), plug_a)
+        answers = await self.answers(self.bridge.begin_remove, 'plug1')
+        self.assertEqual(answers, [('success',)])
+        self.assertEqual((self.entities.entities, self.devices.devices, self.bridge._live), ({}, {}, {}))
+
     # Push
 
     async def test_push_applies_state_and_availability(self):

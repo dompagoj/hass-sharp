@@ -46,6 +46,7 @@ public abstract class SharpDevice : SharpComponent
         if (entities.Any(existing => existing.Key == entity.Key))
             throw new ArgumentException($"{GetType().Name} already has an entity with key '{entity.Key}'.", nameof(entity));
         entities.Add(entity);
+        entity.AddedTo = this;
         Added?.Invoke(entity);
         return entity;
     }

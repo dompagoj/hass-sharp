@@ -31,7 +31,7 @@ static class EntityNodeTests
             (nameof(ACSharpNodeIsNoHub), ACSharpNodeIsNoHub),
             (nameof(NothingDerivedCarriesCode), NothingDerivedCarriesCode),
             (nameof(EveryDeclaringKindIsDerivedOnPurpose), EveryDeclaringKindIsDerivedOnPurpose),
-            (nameof(TheHostIsSentNoCSharpDeviceYet), TheHostIsSentNoCSharpDeviceYet),
+            (nameof(TheHostGetsACSharpDeviceAsAComponent), TheHostGetsACSharpDeviceAsAComponent),
             (nameof(ADeviceIsADeviceByItsKind), ADeviceIsADeviceByItsKind),
             (nameof(TheRuntimeNeverWalksACSharpNode), TheRuntimeNeverWalksACSharpNode),
             (nameof(ASettingTakesATypedValueOrASettingNode), ASettingTakesATypedValueOrASettingNode) })
@@ -439,16 +439,20 @@ static class EntityNodeTests
     }
 
     /// <summary>
-    /// Until a C# device is set up by its own code, the host is handed none: the devices of a compiled graph definition
-    /// are its Device nodes', and a C# device's settings never make a plain device.
+    /// A C# device reaches the host as one of the graph's components, which its own code sets up, never as a plain device:
+    /// the devices of a compiled graph definition are its Device nodes', and a C# device's config (even a member a device
+    /// has, such as a manufacturer) makes none; the component carries its node's key and name, and no such member.
     /// </summary>
-    static void TheHostIsSentNoCSharpDeviceYet()
+    static void TheHostGetsACSharpDeviceAsAComponent()
     {
         var graph = Graph(null, N("hall", "device", new { key = "hall", name = "Hall plug", model = "P1" }), Hub("relay", "relay", "switch"),
             CSharpDevice("plug", "plug", "Plug", new() { ["manufacturer"] = "Not mine" }));
         graph["edges"] = new JsonArray(D("hall", "relay", "device", "entities"));
         var sent = HassSharpManager.GraphDevices(graph, VisualCatalogSnapshot.BuiltIn);
-        Check(sent.Count == 1 && sent[0] is { Key: "hall", Name: "Hall plug", Model: "P1" }, "the host is handed the Device node alone: " + JsonSerializer.Serialize(sent, VisualStore.Json));
+        Check(sent.Count == 1 && sent[0] is { Key: "hall", Name: "Hall plug", Model: "P1" }, "the host is handed the Device node alone as a device: " + JsonSerializer.Serialize(sent, VisualStore.Json));
+        var components = DefinitionGraph.Components(graph, VisualCatalogSnapshot.BuiltIn, []);
+        Check(components.Count == 1 && components[0] is { NodeId: "plug", Kind: "device", Key: "plug", Name: "Plug", Via: null, Device: null },
+            "and the C# device as a component: " + string.Join(" | ", components));
         Check(DefinitionGraph.Devices(graph, VisualNodeCatalog.Root).Count == 2, "while the stored list has both");
     }
 
