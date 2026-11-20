@@ -161,10 +161,12 @@ public static class VisualNodeCatalog
     }
     /// <summary>
     /// The devices the graph's device nodes declare (<c>"declares": "device"</c>), each with its node's id, in the order of
-    /// the graph's <c>nodes</c>: a Device node's a copy of its config (empty when it is not an object); a C# device's the
-    /// key, name and Part of its config has, as it has them, marked <c>csharp</c>, and never its code,
-    /// settings or their values. None for a graph of the wrong shape. A declaring kind this does not know is refused, as
-    /// in <see cref="DeclaredEntities"/>. Mirrored by <c>declaredDevices</c> in <c>contract.ts</c>.
+    /// the graph's <c>nodes</c>: a Device node's the members of a device its config has (<see cref="DeviceMembers"/>), as it
+    /// has them, and no other; a C# device's the key, name and Part of its config has, as it has them, marked
+    /// <c>csharp</c> (<see cref="IsCSharpDevice"/>), and never its code, settings or their values. Each is empty of what
+    /// its config does not have, all of it when the config is not an object. None for a graph of the wrong shape. A
+    /// declaring kind this does not know is refused, as in <see cref="DeclaredEntities"/>. Mirrored by
+    /// <c>declaredDevices</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<(string NodeId, JsonObject Device)> DeclaredDevices(JsonObject graph, JsonObject catalog)
     {
@@ -172,15 +174,28 @@ public static class VisualNodeCatalog
             if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "device"))
                 switch (Text(node, "kind"))
                 {
-                    case "device": yield return (Text(node, "id"), node["config"] is JsonObject config ? (JsonObject)config.DeepClone() : []); break;
+                    case "device": yield return (Text(node, "id"), Picked(node["config"], DeviceMembers)); break;
                     case "csharp_device":
-                        var picked = new JsonObject();
-                        if (node["config"] is JsonObject own) foreach (var member in new[] { "key", "name", "via" }) if (own.TryGetPropertyValue(member, out var value)) picked[member] = value?.DeepClone();
+                        var picked = Picked(node["config"], CSharpDeviceMembers);
                         picked["csharp"] = true;
                         yield return (Text(node, "id"), picked);
                         break;
                     case var kind: throw new InvalidOperationException($"The kind {kind} declares a device that no list knows how to describe");
                 }
+    }
+    /// <summary>
+    /// The members a Device node's device has: those of the Device kind's config in the built-in catalog (key, name,
+    /// manufacturer… Part of), whatever a graph's own catalog says. Mirrored by <c>deviceMembers</c> in <c>contract.ts</c>.
+    /// </summary>
+    static IEnumerable<string> DeviceMembers => (Root["nodes"]?["device"]?["config"] as JsonObject ?? []).Select(member => member.Key);
+    /// <summary>The members of a C# device's config its device lists: its code gives the rest.</summary>
+    static readonly string[] CSharpDeviceMembers = ["key", "name", "via"];
+    /// <summary>A copy of the <paramref name="members"/> the config has, as it has them; empty when it is not an object.</summary>
+    static JsonObject Picked(JsonNode? config, IEnumerable<string> members)
+    {
+        var picked = new JsonObject();
+        if (config is JsonObject own) foreach (var member in members) if (own.TryGetPropertyValue(member, out var value)) picked[member] = value?.DeepClone();
+        return picked;
     }
     /// <summary>
     /// The id of the Device node an Entity node is on: the source of the first value wire into its Device pin, as the
@@ -220,7 +235,11 @@ public static class VisualNodeCatalog
     /// </summary>
     internal static IEnumerable<JsonObject> DerivedDevices(JsonObject graph, JsonObject catalog) =>
         DeclaredDevices(graph, catalog).Where(d => DeviceKey(d.Device) != null).OrderBy(d => IsCSharpDevice(d.Device)).Select(d => DeviceDescription(d.Device));
-    /// <summary>Whether a device a graph lists is a C# device's (<c>"csharp": true</c>), which its own code sets up.</summary>
+    /// <summary>
+    /// Whether a device a graph lists is a C# device's (<c>"csharp": true</c>), which its own code sets up. Only
+    /// <see cref="DeclaredDevices"/> sets the member, for a node of the C# device kind: a Device node's config that holds
+    /// one does not pass it on.
+    /// </summary>
     internal static bool IsCSharpDevice(JsonNode? device) => Flag(device, "csharp");
     /// <summary>
     /// The definition's entities as a graph gives them: those its Entity nodes declare (<see cref="DeclaredEntities"/>),

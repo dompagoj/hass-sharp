@@ -33,6 +33,7 @@ static class EntityNodeTests
             (nameof(NothingDerivedCarriesCode), NothingDerivedCarriesCode),
             (nameof(EveryDeclaringKindIsDerivedOnPurpose), EveryDeclaringKindIsDerivedOnPurpose),
             (nameof(TheHostIsSentNoCSharpDeviceYet), TheHostIsSentNoCSharpDeviceYet),
+            (nameof(ADeviceIsADeviceByItsKind), ADeviceIsADeviceByItsKind),
             (nameof(TheRuntimeNeverWalksACSharpNode), TheRuntimeNeverWalksACSharpNode),
             (nameof(ASettingTakesATypedValueOrASettingNode), ASettingTakesATypedValueOrASettingNode) })
         {
@@ -478,20 +479,77 @@ static class EntityNodeTests
     }
 
     /// <summary>
-    /// The runtime never walks a C# node, nor reads a wire into one: a run started at one is refused in its kind's words,
-    /// and the wires into its pins are no values it holds.
+    /// A Device node's device is the members a device has, and what makes a device a C# device is its node's kind: a
+    /// Device node whose config carries <c>csharp</c> (an MCP save, or a copy of a read answer's devices) and a member no
+    /// device has derives neither, is listed among the Device nodes, and is handed to the host. A config of every member
+    /// a device has derives all of them, as before.
+    /// </summary>
+    static void ADeviceIsADeviceByItsKind()
+    {
+        var full = new JsonObject
+        {
+            ["key"] = "hall", ["name"] = "Hall plug", ["manufacturer"] = "Acme", ["model"] = "P1", ["swVersion"] = "1.2", ["hwVersion"] = "A",
+            ["configurationUrl"] = "http://192.168.1.50", ["suggestedArea"] = "Hall", ["via"] = new JsonObject { ["device"] = "hub" },
+        };
+        Check(string.Join(",", full.Select(m => m.Key)) == string.Join(",", VisualNodeCatalog.GetNode("device")!["config"]!.AsObject().Select(m => m.Key)), "the config has every member the Device kind has");
+        var stray = N("stray", "device", new JsonObject { ["key"] = "stray", ["name"] = "Stray", ["csharp"] = true, ["colour"] = "red" });
+        var graph = Graph(null, CSharpDevice("plug", "plug", "Plug"), stray, N("hall", "device", full.DeepClone()), N("hub", "device", new { key = "hub", name = "Hub" }));
+        var declared = VisualNodeCatalog.DeclaredDevices(graph, VisualNodeCatalog.Root).ToDictionary(d => d.NodeId, d => d.Device);
+        Check(JsonNode.DeepEquals(declared["stray"], JsonNode.Parse("""{"key":"stray","name":"Stray"}""")), "a Device node's config passes on no member a device does not have: " + declared["stray"].ToJsonString());
+        Check(JsonNode.DeepEquals(declared["hall"], full), "a Device node of every member passes on all of them: " + declared["hall"].ToJsonString());
+        Check(!VisualNodeCatalog.IsCSharpDevice(declared["stray"]) && VisualNodeCatalog.IsCSharpDevice(declared["plug"]), "only the C# device kind is a C# device");
+        var devices = DefinitionGraph.Devices(graph, VisualNodeCatalog.Root);
+        Check(string.Join(",", devices.Select(d => d!["key"])) == "stray,hall,hub,plug", "the Device nodes in node order, then the C# device: " + devices.ToJsonString());
+        Check(JsonNode.DeepEquals(devices[1], full), "the listed device of every member is its config: " + devices[1]!.ToJsonString());
+        var sent = HassSharpManager.GraphDevices(graph, VisualCatalogSnapshot.BuiltIn);
+        Check(string.Join(",", sent.Select(d => d.Key)) == "stray,hall,hub", "the host is handed every Device node, the one whose config says csharp too: " + JsonSerializer.Serialize(sent, VisualStore.Json));
+    }
+
+    /// <summary>The definition a run of <see cref="TheRuntimeNeverWalksACSharpNode"/> reaches: settings by key, none secret; it is handed nothing else.</summary>
+    sealed class SettingsOnly(Dictionary<string, object?> settings) : IDefinitionRuntime
+    {
+        public string DefinitionId => "settings";
+        public void SetState(string entityKey, IReadOnlyDictionary<string, object?> values, IReadOnlySet<string> hidden) => throw new InvalidOperationException("No state is set here");
+        public void SetAvailable(string entityKey, bool available) => throw new InvalidOperationException("No entity is marked here");
+        public object? Setting(string key) => settings[key];
+        public bool IsSecret(string key) => false;
+        public SharpFiles Files => throw new InvalidOperationException("This definition downloads nothing");
+        public void ShowFrame(string entityKey, SharpImage image) => throw new InvalidOperationException("No frame is shown here");
+    }
+    /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
+    sealed class Traces : IRunTraceSink
+    {
+        readonly List<string> writes = [];
+        public void Write(string json, int eventCount, bool truncated, bool final, bool immediate = false) { lock (writes) writes.Add(json); }
+        public JsonObject Final { get { lock (writes) return JsonNode.Parse(writes[^1])!.AsObject(); } }
+    }
+
+    /// <summary>
+    /// The runtime never walks a C# node, nor works out a wire into one: a run whose step reads a Setting that is also
+    /// wired into a C# entity's and a C# device's setting pins runs that step alone, and its trace has neither C# node; a
+    /// run started at one is refused in its kind's words.
     /// </summary>
     static void TheRuntimeNeverWalksACSharpNode()
     {
-        var graph = Graph(null, N("address", "setting", new { key = "address" }),
+        var graph = Graph(null, N("setup", "entity_setup"), N("address", "setting", new { key = "address" }), N("say", "log", new { value = new { kind = "unset" } }),
             CSharpEntity("thermo", "hall_temperature"), CSharpDevice("plug", "plug", "Plug"), N("hall", "device", new { key = "hall", name = "Hall" }));
         graph["definition"]!["settings"] = new JsonArray(new JsonObject { ["key"] = "address", ["type"] = "string" });
-        graph["edges"] = new JsonArray(D("address", "thermo", "Address"), D("address", "plug", "Address"), D("hall", "thermo", "device", "entities"));
+        graph["edges"] = new JsonArray(E("setup", "say"), D("address", "say", "value"), D("address", "thermo", "Address"), D("address", "plug", "Address"), D("hall", "thermo", "device", "entities"));
         // A run is one: each is started over a runtime of its own.
         VisualRuntime Runtime() => new(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), [], TriggerPayload.Manual(), CancellationToken.None,
             (_, _, _) => throw new InvalidOperationException("Unknown compiled node"));
-        var held = (System.Collections.IDictionary)typeof(VisualRuntime).GetField("data", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(Runtime())!;
-        Check(held.Count == 0, $"no wire into a declaration is a value the run reads: {held.Count} held");
+        var log = PyInterop.Log; var prior = InvocationContext.Current; var said = new List<string>(); var traces = new Traces();
+        try
+        {
+            PyInterop.Log = (_, message) => { lock (said) said.Add(message); };
+            InvocationContext.Current = new("run-" + Guid.NewGuid().ToString("N"), InvocationCause.Entity, null, TriggerPayload.Manual())
+                { Definition = new SettingsOnly(new() { ["address"] = "http://192.168.1.60" }), TraceSink = traces };
+            Runtime().RunAsync("setup").GetAwaiter().GetResult();
+        }
+        finally { PyInterop.Log = log; InvocationContext.Current = prior; }
+        Check(said.SequenceEqual(["http://192.168.1.60"]), "the step reads the Setting the C# nodes are wired to: " + string.Join(" | ", said));
+        var traced = traces.Final["events"]!.AsArray().Select(e => VisualNodeCatalog.Text(e, "node")).ToList();
+        Check(traced.Contains("say") && !traced.Contains("thermo") && !traced.Contains("plug"), "the trace has the step and neither C# node: " + string.Join(",", traced));
         foreach (var (id, words) in new[] { ("thermo", "Thermometer is an entity and is not part of the run order"), ("plug", "Plug is a device and is not part of the run order") })
         {
             try { Runtime().RunAsync(id).GetAwaiter().GetResult(); throw new Exception($"a run started at {id} ran"); }

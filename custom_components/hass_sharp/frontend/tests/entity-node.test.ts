@@ -522,6 +522,24 @@ it('a definition\'s devices are its Device nodes, and an entity is on the one wi
   expect([canvas.devices, canvas.entities]).toEqual([lifted.devices, lifted.entities])
 })
 
+it('a Device node\'s device is the members a device has, and only the C# device kind makes a C# device', () => {
+  // Every member the Device kind's config has, as a full Device node gives them: its device is all of them, as before.
+  const full = { key: 'hall', name: 'Hall plug', manufacturer: 'Acme', model: 'P1', swVersion: '1.2', hwVersion: 'A', configurationUrl: 'http://192.168.1.50', suggestedArea: 'Hall', via: { device: 'hub' } }
+  expect(Object.keys(full)).toEqual(Object.keys(nodeCatalog.nodes.device.config ?? {}))
+  // A config that says csharp (an MCP save, or a copy of a read answer's devices) and has a member no device has.
+  let graph = add(empty(), 'csharp_device', 'plug', { key: 'plug', name: 'Plug', via: null })
+  graph = add(graph, 'device', 'stray', { key: 'stray', name: 'Stray', csharp: true, colour: 'red' })
+  graph = add(graph, 'device', 'hall', full)
+  graph = add(graph, 'device', 'hub', { key: 'hub', name: 'Hub' })
+  const declared = Object.fromEntries(declaredDevices(graph).map(d => [d.nodeId, d.device]))
+  expect(declared.stray).toEqual({ key: 'stray', name: 'Stray' })
+  expect(declared.hall).toEqual(full)
+  expect(declared.plug).toEqual({ key: 'plug', name: 'Plug', via: null, csharp: true })
+  // Listed among the Device nodes, in node order, and the C# device after them.
+  expect(derivedDevices(graph, nodeCatalog)).toEqual([{ key: 'stray', name: 'Stray' }, full, { key: 'hub', name: 'Hub' }, { key: 'plug', name: 'Plug', csharp: true }])
+  expect(withGraphTypes(nodeCatalog, graph).definition!.devices).toEqual(derivedDevices(graph, nodeCatalog))
+})
+
 it('a text left blank and Part of nothing are no part of a listed device, and a device without a key is none', () => {
   let graph = add(empty(), 'device', 'a', { key: 'desk', name: 'Desk', manufacturer: ' \t ', model: '', via: null })
   graph = add(graph, 'device', 'b', { key: '  ', name: 'Blank' })

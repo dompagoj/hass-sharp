@@ -294,20 +294,29 @@ export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnaps
 }
 /**
  * The devices the graph's device nodes declare (a kind with `declares: 'device'`), each with its node's id, in the order
- * of the graph's `nodes`: a Device node's a copy of its config (empty when it is not an object); a C# device's the key,
- * name and Part of its config has, as it has them, marked `csharp`, and never its code, settings or
- * their values. None for a graph of the wrong shape. A declaring kind this does not know is refused, as in
- * `declaredEntities`. Mirrors `VisualNodeCatalog.DeclaredDevices`.
+ * of the graph's `nodes`: a Device node's the members of a device its config has (`deviceMembers`), as it has them, and
+ * no other; a C# device's the key, name and Part of its config has, as it has them, marked `csharp`, and never its code,
+ * settings or their values. Each is empty of what its config does not have, all of it when the config is not an object.
+ * None for a graph of the wrong shape. A declaring kind this does not know is refused, as in `declaredEntities`. Only
+ * this sets `csharp`, for a node of the C# device kind. Mirrors `VisualNodeCatalog.DeclaredDevices`.
  */
 export function declaredDevices(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; device: Record<string, unknown> }[] {
   return declaringNodes(graph, 'device', catalog).map(node => {
-    const config = record(node.config) ? node.config : undefined
-    if (node.kind === 'device') return { nodeId: text(node.id), device: config ? structuredClone(config) : {} }
-    if (node.kind === 'csharp_device')
-      return { nodeId: text(node.id), device: { ...structuredClone(Object.fromEntries(['key', 'name', 'via'].filter(member => config && Object.hasOwn(config, member)).map(member => [member, config![member]]))), csharp: true } }
+    if (node.kind === 'device') return { nodeId: text(node.id), device: picked(node.config, deviceMembers()) }
+    if (node.kind === 'csharp_device') return { nodeId: text(node.id), device: { ...picked(node.config, csharpDeviceMembers), csharp: true } }
     throw new Error(`The kind ${text(node.kind)} declares a device that no list knows how to describe`)
   })
 }
+/**
+ * The members a Device node's device has: those of the Device kind's config in the built-in catalog (key, name,
+ * manufacturer… Part of), whatever a graph's own catalog says. Mirrors `VisualNodeCatalog.DeviceMembers`.
+ */
+const deviceMembers = () => Object.keys(nodeCatalog.nodes.device?.config ?? {})
+/** The members of a C# device's config its device lists: its code gives the rest. */
+const csharpDeviceMembers = ['key', 'name', 'via']
+/** A copy of the `members` the config has, as it has them; empty when it is not an object. */
+const picked = (config: unknown, members: readonly string[]): Record<string, unknown> =>
+  record(config) ? structuredClone(Object.fromEntries(members.filter(member => Object.hasOwn(config, member)).map(member => [member, config[member]]))) : {}
 /** The keys a graph already gives its devices: those its Device nodes and C# devices have, each text key once; none without either. */
 export function definitionDeviceKeys(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): string[] {
   const keys = declaredDevices(graph, catalog).map(d => d.device.key)

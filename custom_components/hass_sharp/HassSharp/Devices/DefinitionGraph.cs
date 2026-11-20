@@ -64,7 +64,8 @@ internal static class DefinitionGraph
     /// <summary>
     /// The devices of a composed graph (<see cref="Compose"/>), as a copy: those its Device nodes declare, as
     /// <see cref="VisualNodeCatalog.WithGraphTypes"/> lists them (<see cref="VisualNodeCatalog.DerivedDevices"/>): each
-    /// Device node's config in node order, without a text left blank or a Part of of null; one without a key is left
+    /// Device node's device members (<see cref="VisualNodeCatalog.DeclaredDevices"/>) in node order, then each C# device's,
+    /// without a text left blank or a Part of of null; one without a key is left
     /// out, and two of one key are both listed. Empty for a graph that has none, or past the catalog's limits.
     /// </summary>
     internal static JsonArray Devices(JsonObject composed, JsonObject catalog) =>
