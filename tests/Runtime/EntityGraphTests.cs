@@ -3419,8 +3419,9 @@ static class EntityGraphTests
                 protected override Task Setup() { Note($"setup {Token} {Port}"); return Task.CompletedTask; }
             }
             """;
-        var graph = Graph("Hall", [N("token", "setting", new { key = "token" }), CSharp("csharp_device", "router", "router", source, new JsonObject { ["Port"] = Lit("number", 8080) }, name: "Router")],
-            Data("token", "router", "Token"));
+        // A When started step, so that the definition has a recorded run and a trace to look into.
+        var graph = Graph("Hall", [N("token", "setting", new { key = "token" }), CSharp("csharp_device", "router", "router", source, new JsonObject { ["Port"] = Lit("number", 8080) }, name: "Router"),
+            N("start", "entity_setup")], Data("token", "router", "Token"));
         var saved = await rig.Save("hall", Definition("Hall", graph, [new JsonObject { ["key"] = "token", ["label"] = "Token", ["type"] = "string", ["secret"] = true, ["value"] = secret }]));
         Check(saved["active"]!.GetValue<bool>() && saved["activationError"] == null, "the definition runs: " + saved.ToJsonString());
         Check(calls.Contains($"setup {secret} 8080"), "both are set before Setup(): " + calls.Count);
@@ -3429,12 +3430,18 @@ static class EntityGraphTests
         Check(!saved.ToJsonString().Contains(secret, StringComparison.Ordinal) && !read.ToJsonString().Contains(secret, StringComparison.Ordinal), "no answer holds the secret");
         Check(!rig.Home.Syncs("hall").Any(s => s.Contains(secret, StringComparison.Ordinal)) && !rig.Home.Pushes().Any(p => p.Contains(secret, StringComparison.Ordinal))
             && !rig.Home.Logs().Any(l => l.Contains(secret, StringComparison.Ordinal)), "no sync, push or log line holds the secret");
+        var runs = rig.History(saved["document"]!["automationId"]!.GetValue<string>());
+        Check(runs.Length > 0, "the definition has a recorded run");
+        Check(runs.All(run => !run.ToJsonString().Contains(secret, StringComparison.Ordinal) && !rig.Api.GetRunTrace(run["runId"]!.GetValue<string>()).Contains(secret, StringComparison.Ordinal)),
+            "no run or trace holds the secret");
     }
 
     /// <summary>
-    /// A C# node whose constructor throws, whose <c>Setup()</c> throws, or whose <c>Setup()</c> never returns fails the
-    /// definition's start with a sentence naming the node: nothing of the definition is registered or shown available,
-    /// not even its Entity node's entity; another definition keeps running.
+    /// A C# node whose constructor throws or never returns (an instance's, or its class's static one), whose
+    /// <c>[Setting]</c> setter throws, whose <c>Setup()</c> throws, or whose <c>Setup()</c> never returns fails the
+    /// definition's start with a sentence naming the node, within the set-up time: nothing of the definition is
+    /// registered or shown available, not even its Entity node's entity; another definition keeps running. The value a
+    /// setter refused is not in the sentence.
     /// </summary>
     static async Task AClassThatCannotStartFailsTheDefinition()
     {
@@ -3442,24 +3449,39 @@ static class EntityGraphTests
         await rig.Save("relay", Relay());
         await rig.Started("relay");
         DefinitionHost.SetupTimeout = TimeSpan.FromMilliseconds(300);
-        foreach (var (id, source, title, error) in new[] {
-            ("fuse", "public class Fuse : SharpSensor { public Fuse() { throw new InvalidOperationException(\"no wiring\"); } }", "Fuse", "Bomb: {0} could not be created: no wiring"),
-            ("faulty", "public class Faulty : SharpSensor { protected override Task Setup() => throw new InvalidOperationException(\"no answer\"); }", "Faulty", "Bomb: {0}: no answer"),
-            ("hang", "public class Hang : SharpSensor { protected override Task Setup() => Task.Delay(Timeout.Infinite, Stopping); }", "Hang", "Bomb: {0}: Setup() did not finish within 0.3 s") })
+        // What a constructor that never returns waits on: let go once the test has its answer (or after a while, so that a
+        // host that waits for it without a bound answers, and fails the check, rather than holding up the suite).
+        using var stuck = new ManualResetEventSlim();
+        AppDomain.CurrentDomain.SetData(StuckSlot, stuck);
+        _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(_ => { try { stuck.Set(); } catch (ObjectDisposedException) { } }, TaskScheduler.Default);
+        const string wait = "((System.Threading.ManualResetEventSlim)System.AppDomain.CurrentDomain.GetData(\"" + StuckSlot + "\")!).Wait();";
+        foreach (var (id, source, title, arguments, error) in new (string, string, string, JsonObject?, string)[] {
+            ("fuse", "public class Fuse : SharpSensor { public Fuse() { throw new InvalidOperationException(\"no wiring\"); } }", "Fuse", null, "Bomb: {0} could not be created: no wiring"),
+            ("stuck", "public class Stuck : SharpSensor { public Stuck() { " + wait + " } }", "Stuck", null, "Bomb: {0} could not be created: its constructor did not finish within 0.3 s"),
+            ("frozen", "public class Frozen : SharpSensor { static Frozen() { " + wait + " } }", "Frozen", null, "Bomb: {0} could not be created: its constructor did not finish within 0.3 s"),
+            ("picky", "public class Picky : SharpSensor { [Setting(\"Level\")] public int Level { get => 0; set => throw new InvalidOperationException(\"the level is out of reach\"); } }", "Picky",
+                new JsonObject { ["Level"] = Lit("number", 4711) }, "Bomb: {0}: the level is out of reach"),
+            ("faulty", "public class Faulty : SharpSensor { protected override Task Setup() => throw new InvalidOperationException(\"no answer\"); }", "Faulty", null, "Bomb: {0}: no answer"),
+            ("hang", "public class Hang : SharpSensor { protected override Task Setup() => Task.Delay(Timeout.Infinite, Stopping); }", "Hang", null, "Bomb: {0}: Setup() did not finish within 0.3 s") })
         {
-            var node = CSharp("csharp_entity", id, id, source);
+            var node = CSharp("csharp_entity", id, id, source, arguments);
             var called = node["config"]!["signature"]!["title"]!.GetValue<string>();
             var graph = Graph("Bomb", [Entity("lamp", "lamp", "binary_sensor", new { name = "Lamp" }, On(true)), node]);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             var saved = await rig.Save("bomb_" + id, Definition("Bomb", graph));
             var expected = string.Format(System.Globalization.CultureInfo.InvariantCulture, error, called);
             Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == expected && Status(saved["document"]!.AsObject()) == "failed",
                 $"{title}: the start fails naming the node ({expected}): " + saved.ToJsonString());
+            Check(clock.Elapsed < TimeSpan.FromSeconds(2), $"{title}: the start fails within the set-up time: {clock.Elapsed}");
             Check(rig.Home.Syncs("bomb_" + id).Length == 0 && !rig.Home.Snapshots().Any(s => s["uniqueId"]!.GetValue<string>().StartsWith("bomb_" + id + ":", StringComparison.Ordinal) && Available(s)),
                 $"{title}: nothing of it is registered or shown available");
+            Check(!expected.Contains("4711", StringComparison.Ordinal) && !rig.Home.Logs().Any(l => l.Contains("4711", StringComparison.Ordinal)), $"{title}: no value a setter refused is quoted");
         }
+        stuck.Set();
         await rig.Api.EntityCommand("relay:relay", "turn_on", null);
         await rig.Until("relay:relay", s => Available(s) && Is(s, "is_on", true), "the other definition keeps running");
     }
+    const string StuckSlot = "hass-sharp-entity-graph-stuck";
 
     /// <summary>
     /// A hub and a C# switch, both turned on, then a new revision: the new class is set up and synced, then the old one

@@ -146,9 +146,9 @@ internal sealed partial class DefinitionHost
     /// Sets up the graph's C# entity and C# device nodes, in node order, each with the class kind's steps
     /// (<see cref="SetUpClass"/>): creates its class (<c>SharpNodes.Create</c> of the compiled graph), applies its settings,
     /// gives a C# entity its node's key and, when its code names it none, its class's title if it stands alone (none on a
-    /// device, whose name Home Assistant then shows), restores, sets up and seals. Every <c>Setup()</c> of them runs within
-    /// <see cref="SetupTimeout"/> on one clock. A failure fails the definition's start, naming the node: nothing of it is
-    /// registered.
+    /// device, whose name Home Assistant then shows), restores, sets up and seals. Every constructor and <c>Setup()</c> of
+    /// them runs within <see cref="SetupTimeout"/> on one clock. A failure fails the definition's start, naming the node:
+    /// nothing of it is registered.
     /// </summary>
     /// <returns>Their entities, in node order.</returns>
     async Task<SharpEntity[]> SetUpComponents()
@@ -159,7 +159,7 @@ internal sealed partial class DefinitionHost
             foreach (var node in definition.Components)
             {
                 var who = $"{definition.Name}: {Called(node)}";
-                var root = CreateNode(node, who);
+                var root = await CreateNode(node, who);
                 nodes[root] = node;
                 var standalone = node.Device == null;
                 var all = await SetUpClass(root, who, node.Settings, entity => entity.Adopt(node.Key, standalone ? node.Title : null), named: true);
@@ -180,15 +180,25 @@ internal sealed partial class DefinitionHost
 
     /// <summary>
     /// The class of the C# node, as the compiled graph's <c>SharpNodes.Create</c> makes it: a C# entity's an entity, a C#
-    /// device's a device. What its constructor throws, or none made, is <c>{who} could not be created: {reason}</c>.
+    /// device's a device. Made on a thread of its own, within <see cref="SetupTimeout"/> on the clock the C# nodes'
+    /// set-up shares (the first makes it), as a <c>Setup()</c> is: a constructor, or a static one, that never returns
+    /// fails the start (<c>{who} could not be created: its constructor did not finish within {n} s</c>) and is left to
+    /// run on in the background, as such a <c>Setup()</c> is. What its constructor throws, or none made, is
+    /// <c>{who} could not be created: {reason}</c>.
     /// </summary>
-    SharpComponent CreateNode(DefinitionComponent node, string who)
+    async Task<SharpComponent> CreateNode(DefinitionComponent node, string who)
     {
         var create = script.CompiledScript.Assembly.GetType("SharpNodes")?.GetMethod("Create", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string)]);
-        object? made;
-        try { made = create?.Invoke(null, System.Reflection.BindingFlags.DoNotWrapExceptions, null, [node.NodeId], null); }
-        // Its message is user code, read once here.
-        catch (Exception failure) { throw new InvalidOperationException($"{who} could not be created: {Text(failure)}", failure); }
+        var clock = setupClock ??= new SetupClock();
+        var creating = Task.Factory.StartNew(() => create?.Invoke(null, System.Reflection.BindingFlags.DoNotWrapExceptions, null, [node.NodeId], null),
+            CancellationToken.None, TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default);
+        bool ended;
+        try { ended = await Within(creating, clock); }
+        // Its message is user code, read once here. A stop of the definition meanwhile is no failure of the class.
+        catch (Exception failure) when (!(failure is OperationCanceledException && Stopping.IsCancellationRequested))
+        { throw new InvalidOperationException($"{who} could not be created: {Text(failure)}", failure); }
+        if (!ended) throw new TimeoutException($"{who} could not be created: its constructor did not finish within {Seconds(SetupTimeout)} s");
+        var made = await creating;
         return (node.Kind, made) switch
         {
             ("entity", SharpEntity entity) => entity,

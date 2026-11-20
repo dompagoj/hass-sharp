@@ -243,10 +243,13 @@ code names it, else its class's title when it stands alone (none on a device, wh
 Home Assistant then shows). A C# device is its own device, with its node's key, name
 and Part of and what its class's device page shows. Its commands reach its class. A
 new revision makes new instances, which restore their states; the old one stops after
-the new one is set up and registered and before it starts. One that cannot be created
-fails the start with "`{Definition}: {Name} could not be created: {reason}`"; a
-`Setup()` that throws, or does not finish, with "`{Definition}: {Name}: {reason}`";
-nothing of the definition is then registered.
+the new one is set up and registered and before it starts. Every C# node's
+constructor and `Setup()` together have the set-up time. One that cannot be created
+fails the start with "`{Definition}: {Name} could not be created: {reason}`" (a
+constructor that does not finish in time: "`its constructor did not finish within
+{n} s`"); a `[Setting]` setter or a `Setup()` that throws, or a `Setup()` that does
+not finish, with "`{Definition}: {Name}: {reason}`"; nothing of the definition is
+then registered.
 
 **set_enabled** turns a saved definition on or off without a new revision. Turned
 on, it is rebuilt against the libraries as saved now; off, it is unloaded and the

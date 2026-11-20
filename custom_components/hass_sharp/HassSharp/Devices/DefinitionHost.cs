@@ -41,9 +41,10 @@ public sealed record CompiledDefinition(string Id, string Name, DefinitionDevice
 /// <summary>
 /// Runs one entity definition inside its script: builds the user's device or entity, applies the settings, sets it up,
 /// tells Home Assistant which entities exist, starts and stops it, and carries its states, timers, tracks and commands.
-/// A definition built from nodes has no user class: the host creates the entities its document describes, its graph's
-/// runs set their states through it (<see cref="IDefinitionRuntime"/>), and it runs the graph's When started flow as it
-/// prepares and an Entity node's command flow for each command. It owns the definition's HTTP client and downloads, which it ends
+/// A definition built from nodes has no user class of its own: the host creates the entities its Entity nodes describe,
+/// its graph's runs set their states through it (<see cref="IDefinitionRuntime"/>), and it runs the graph's When started
+/// flow as it prepares and an Entity node's command flow for each command; beside them it creates and sets up each C#
+/// entity and C# device node's class, as it does a class definition's, and starts and stops them. It owns the definition's HTTP client and downloads, which it ends
 /// once the definition has stopped. It answers Home Assistant's requests for its cameras' pictures, making their frames
 /// (<see cref="CameraImage"/>).
 /// </summary>
@@ -142,7 +143,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// <summary>
     /// For a class, builds the device or entity, applies the settings and runs <c>Setup()</c> on the device, then on each
     /// entity, all within <see cref="SetupTimeout"/>, then checks the entity keys; for a graph, creates the entities its
-    /// document describes and runs its When started flow within <see cref="SetupTimeout"/>. Last, registers the entities
+    /// Entity nodes describe, creates each C# entity and C# device node's class, applies its settings and runs its
+    /// <c>Setup()</c> (every C# node's creation and <c>Setup()</c> within one <see cref="SetupTimeout"/>), checks the entity
+    /// keys, and runs its When started flow within a <see cref="SetupTimeout"/> of its own. Last, registers the entities
     /// with Home Assistant, waiting for it no longer than <see cref="SyncTimeout"/>. A failure leaves Home Assistant
     /// untouched. Cancelled with <paramref name="lifetime"/>.
     /// </summary>
@@ -202,12 +205,16 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// host's own <c>device</c>: a graph's C# device is no main device.
     /// </summary>
     /// <param name="who">What its failures start with: the definition's name, or for a C# node the definition's and the node's.</param>
-    /// <param name="named">Whether a <c>Setup()</c> that throws fails after <paramref name="who"/> (a graph's C# node, one
-    /// of several), rather than as it threw (a class, the definition's one).</param>
+    /// <param name="named">Whether a <c>[Setting]</c> setter or a <c>Setup()</c> that throws fails after
+    /// <paramref name="who"/> (a graph's C# node, one of several), rather than as it threw (a class, the definition's one).</param>
     /// <returns>Its entities: the entity, or the device's in the order it added them.</returns>
     async Task<SharpEntity[]> SetUpClass(SharpComponent root, string who, IReadOnlyList<DefinitionSetting> settings, Action<SharpEntity>? adopt = null, bool named = false)
     {
-        DefinitionSettings.Apply(who, settings, root);
+        try { DefinitionSettings.Apply(who, settings, root); }
+        // A setter that throws (user code: its message, read once here, never with the value) after the node's name;
+        // Apply's own sentences already start with it.
+        catch (Exception failure) when (named && Text(failure) is var message && !(failure is InvalidOperationException && message.StartsWith(who + ": ", StringComparison.Ordinal)))
+        { throw new InvalidOperationException($"{who}: {message}", failure); }
         var owner = root as SharpDevice;
         if (root is SharpEntity alone) adopt?.Invoke(alone);
         SharpEntity[] Collect() => owner != null ? [.. owner.Entities] : [(SharpEntity)root];
