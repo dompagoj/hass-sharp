@@ -221,6 +221,14 @@ it('a dropped C# entity or C# device is keyed past the keys it shares, and has n
   expect(addGraphNode(devices, 'device', 'r', nodeCatalog).nodes.at(-1)!.config.key).toBe('device_4')
   // Neither has a label: each is named by what it declares.
   for (const node of [...graph.nodes, ...devices.nodes]) expect(node).not.toHaveProperty('label')
+  // Each starts from its kind's template, as its own copy: the code editor's Apply writes into the node, never the catalog.
+  const [p, q] = devices.nodes.slice(1)
+  expect(p.config.source).toBe(nodeCatalog.nodes.csharp_device.config.source.default)
+  expect(p.config.signature).toEqual(nodeCatalog.nodes.csharp_device.config.signature.default)
+  expect(p.config.signature).not.toBe(nodeCatalog.nodes.csharp_device.config.signature.default)
+  expect(p.config.signature).not.toBe(q.config.signature)
+  expect(a.config.signature).not.toBe(nodeCatalog.nodes.csharp_entity.config.signature.default)
+  expect(a.config.arguments).not.toBe(b.config.arguments)
   // Dropped from the palette, or from a wire dragged out of a Device node's Entities pin, alike.
   const dropped = createNodeAt(graph, 'csharp_entity', { x: 400, y: 200 }, undefined, nodeCatalog)
   expect(dropped.nodes.at(-1)!.config.key).toBe('sensor_4')

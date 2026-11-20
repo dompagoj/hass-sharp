@@ -28,7 +28,8 @@ export interface CustomCodeHandle {
 let sessions = 0
 
 /**
- * Monaco on a Custom C# node's code, in the language-service mode for custom code (see `useEditorActions`): the
+ * Monaco on a node's code (a Custom C# step's, a C# entity's or a C# device's), in the language-service mode for custom
+ * code (see `useEditorActions`): the
  * node's own model, completion, hover, signature help, go to definition and formatting for its unsaved code, and
  * checks by `custom_preview`. Loaded only when the code editor opens; nothing else on the editor page imports it.
  */
@@ -36,6 +37,8 @@ export function CustomCodeSurface(props: {
   nodeId: string
   initial: string
   readOnly?: boolean
+  /** The node's kind, which its code is checked as: a Custom C# step's (the default), a C# entity's or a C# device's. */
+  kind?: string
   /** The editor's accessible name. */
   label: string
   onReady(handle: CustomCodeHandle): void
@@ -49,7 +52,7 @@ export function CustomCodeSurface(props: {
   const [source, setSource] = createSignal(props.initial)
   // One editing session: language-service replies name it, so a reply to an earlier session is never used.
   const context = { id: props.nodeId, source: '', workspaceVersion: `custom-${++sessions}`, generation: '', sources: [] }
-  const actions = useEditorActions(hass, { context: () => context, custom: { readOnly: props.readOnly } })
+  const actions = useEditorActions(hass, { context: () => context, custom: { readOnly: props.readOnly, kind: props.kind } })
 
   onMount(() => {
     const uri = customModelUri(props.nodeId)

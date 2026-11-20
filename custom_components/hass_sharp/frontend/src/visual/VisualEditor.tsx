@@ -17,17 +17,17 @@ import { NodeLibraryPanel } from './NodeLibraryPanel'
 import { BottomDrawer, CodePanel, ProblemsPanel } from './BottomDrawer'
 import { createFullscreen, createFullscreenPage, FullscreenButton } from './fullscreen'
 import { media } from './media'
-import { createVisualSession } from './session'
+import { createVisualSession, type UnappliedCode } from './session'
 import { visualError, type VisualDiagnostic, type VisualDocument } from './api'
 import { serializeGraph, type NodeKind } from './graph'
-import { graphDocument } from './contract'
+import { graphDocument, hasCode, isClassNode, type ClassSignature, type CustomSignature, type NodeSpec } from './contract'
 import { automationAdapter, type EditorAdapter, type EditorContext, type EditorDocument } from './adapter'
 import { runHistoryInterval } from '../components/runDispatch'
 import { EnabledSwitch } from '../automations/EnabledSwitch'
 import { soon } from './soon'
 import { createNotice, TopBar } from './TopBar'
 import { CodeLeftBehind, CustomCodeEditor } from './CustomCodeEditor'
-import { applyCustomCode } from './customCode'
+import { applyClassCode, applyCustomCode } from './customCode'
 import { libraryApi } from './library-api'
 import { TypeDefinitions } from './typeDefinition'
 
@@ -79,29 +79,45 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   const inspector = () => editor.querySelector<HTMLElement>('.hs-inspector')
   const card = (id: string) => [...editor.querySelectorAll<HTMLElement>('.solid-flow__node')].find(el => el.dataset.id === id)
 
-  // ---- The code editor of a Custom C# node; its unapplied changes count as unsaved.
+  // ---- The code editor of a node with code (a Custom C# step, a C# entity, a C# device); its unapplied changes count as unsaved.
+  const specOf = (kind: string | undefined): NodeSpec | undefined => (kind !== undefined && Object.hasOwn(session.catalog().nodes, kind) ? session.catalog().nodes[kind] : undefined)
   const [codeNodeId, setCodeNodeId] = createSignal<string>()
   const [codeDirty, setCodeDirty] = createSignal(false)
   const codeNode = createMemo(() => graph().nodes.find(node => node.id === codeNodeId()))
   /** The open editor's unapplied text, if any: kept in the draft, and for when its step disappears under it (a reload). */
   const [codeDraft, setCodeDraft] = createSignal<string>()
+  /** The kind of the node whose code is open, kept for when the node disappears under it. */
+  const [codeKind, setCodeKind] = createSignal<string>()
+  createEffect(() => { const kind = codeNode()?.kind; if (kind !== undefined) setCodeKind(kind) })
   /** Unapplied code taken back from a draft: the code editor opens with it. */
   const [codeRestore, setCodeRestore] = createSignal<string>()
-  const unappliedCode = () => { const nodeId = codeNodeId(), text = codeDraft(); return codeDirty() && nodeId && text !== undefined ? { nodeId, text } : undefined }
-  const [orphanCode, setOrphanCode] = createSignal<string>()
-  const closeCode = () => batch(() => { setCodeNodeId(undefined); setCodeDirty(false); setCodeDraft(undefined); setCodeRestore(undefined) })
+  /**
+   * The unapplied code with its node's id and, for a C# entity's or C# device's, its kind: the draft keeps it so, and a
+   * draft's code opens only in a node of that kind (no kind: a Custom C# step's, as drafts always had it).
+   */
+  const unappliedCode = (): UnappliedCode | undefined => {
+    const nodeId = codeNodeId(), text = codeDraft(), kind: string | undefined = codeNode()?.kind ?? codeKind()
+    if (!codeDirty() || !nodeId || text === undefined) return undefined
+    return { nodeId, text, ...(kind !== undefined && isClassNode(specOf(kind)) ? { kind } : {}) }
+  }
+  /** Code with unapplied changes whose node is gone, with the kind of node it was of, to offer to copy. */
+  const [orphan, setOrphan] = createSignal<{ text: string; kind?: string }>()
+  const setOrphanCode = (text: string | undefined, kind?: string) => setOrphan(text === undefined ? undefined : { text, ...(kind ? { kind } : {}) })
+  const closeCode = () => batch(() => { setCodeNodeId(undefined); setCodeDirty(false); setCodeDraft(undefined); setCodeRestore(undefined); setCodeKind(undefined) })
   createEffect(() => {
     if (!codeNodeId() || codeNode()) return
-    const draft = untrack(codeDraft)
+    const draft = untrack(codeDraft), kind = untrack(codeKind)
     closeCode()
-    if (draft !== undefined) setOrphanCode(draft)
+    if (draft !== undefined) setOrphanCode(draft, kind)
   })
   // A restored draft's unapplied code opens in its node's code editor, once the person has chosen what to keep.
   createEffect(() => {
     if (!session.restoredCode() || session.conflict() || session.restoreOffer() || session.loading()) return
     const code = session.takeRestoredCode()!
     untrack(() => {
-      if (!graph().nodes.some(node => node.id === code.nodeId && node.kind === 'custom')) return setOrphanCode(code.text)
+      // Only into a node of the kind it was typed for: a Custom C# step's code is no C# device's class.
+      const kind = code.kind ?? 'custom'
+      if (!graph().nodes.some(node => node.id === code.nodeId && node.kind === kind && hasCode(specOf(node.kind)))) return setOrphanCode(code.text, code.kind)
       batch(() => { setCodeRestore(code.text); setCodeNodeId(code.nodeId) })
     })
   })
@@ -314,18 +330,31 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     } else focusCard(nodeId)
   }
   const focusCard = (id: string) => soon(() => { const target = card(id); target?.focus(); return !!target }, editor)
-  /** Opens a Custom C# node's code (from its card or the panel), with the node selected. */
+  /** Opens a node's code (a Custom C# step's, a C# entity's or a C# device's; from its card or the panel), with the node selected. */
   const editCode = (id: string) => {
-    if (!graph().nodes.some(n => n.id === id)) return
+    if (!graph().nodes.some(n => n.id === id && hasCode(specOf(n.kind)))) return
     if (selectedId() !== id) choose(id)
     setCodeNodeId(id)
   }
-  /** Writes the code and its pins as one undo step, and says which values and wires no longer fit. */
-  const applyCode = (id: string, source: string, signature: Parameters<typeof applyCustomCode>[3]) => {
-    const result = applyCustomCode(graph(), id, source, signature, session.catalog())
-    commit(result.graph)
+  /**
+   * Writes the code and what it gives as one undo step, and says which values and wires no longer fit: a Custom C#
+   * step's pins, or a C# entity's or C# device's settings.
+   */
+  const applyCode = (id: string, source: string, signature: CustomSignature | ClassSignature) => {
+    const node = graph().nodes.find(n => n.id === id)
+    if (!node) return
+    let notice: string | undefined
+    if (isClassNode(specOf(node.kind))) {
+      const result = applyClassCode(graph(), id, source, signature as ClassSignature, session.catalog())
+      commit(result.graph)
+      notice = result.notices.length ? `${result.notices.join('. ')}.` : undefined
+    } else {
+      const result = applyCustomCode(graph(), id, source, signature as CustomSignature, session.catalog())
+      commit(result.graph)
+      notice = result.notice
+    }
     // What Apply removed stays on view until dismissed or the next change: the dialog closing moves focus away.
-    if (result.notice) flow?.notify(result.notice, { keep: true })
+    if (notice) flow?.notify(notice, { keep: true })
   }
 
   // ---- Runs: the adapter's run controls in the top bar, the last run in the overview.
@@ -734,7 +763,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             onClose={closeCode} />
         )}
       </Show>
-      <CodeLeftBehind source={orphanCode()} onClose={() => setOrphanCode(undefined)} />
+      <CodeLeftBehind source={orphan()?.text} kind={orphan()?.kind} onClose={() => setOrphanCode(undefined)} />
       </TypeDefinitions>
     </section>
   )

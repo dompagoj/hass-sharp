@@ -14,7 +14,7 @@ import { RemoveWire } from './RemoveWire'
 import { chooseProperty, PropertyPicker } from './selectProperty'
 import { graphTypes } from './connectionIndex'
 import { entityStateContext } from './entityStateContext'
-import { customSignature, executionPorts, graphDocument, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
+import { customSignature, executionPorts, graphDocument, hasCode, isClassNode, listedTypes, trackHistoryDefault, words, type ConfigSpec, type GraphNode, type VisualCatalogSnapshot } from './contract'
 import { stepDescription, updateNode, type VisualGraph } from './graph'
 import { icons } from './icons'
 import { typeLabel } from './typeLabels'
@@ -312,14 +312,14 @@ export function NodeConfig(props: NodeConfigProps) {
               if (result.notice) props.onNotice?.(result.notice)
             }} />
         </Show>
-        <Show when={kind() === 'custom'}>
+        <Show when={hasCode(spec())}>
           <div class="hs-insp-field hs-insp-code" data-input-id="source" aria-invalid={errorsFor('source').length > 0 || undefined}>
             <Show when={props.onEditCode}>
               <button type="button" class="hs-button hs-button--primary hs-insp-code__edit" onClick={() => props.onEditCode?.()}>
                 <Glyph paths={icons.code} />Edit code
               </button>
             </Show>
-            <small class="hs-field-hint">Its inputs and outputs come from the code.</small>
+            <small class="hs-field-hint">{isClassNode(spec()) ? 'Its settings come from the code.' : 'Its inputs and outputs come from the code.'}</small>
             <Errors list={errorsFor('source')} />
           </div>
         </Show>

@@ -1,7 +1,7 @@
 import * as monaco from 'monaco-editor'
 import type { CompletionItem, CompletionList, CompletionResolution, CompletionTextEdit, Diagnostic, HomeAssistant } from '../../types'
 import { createSignal, onCleanup } from 'solid-js'
-import { customDocumentId, libraryApi, type CustomPreview, type LibraryContext, type LibraryDiagnostic, type LibraryReply, type LibraryPreview, type LibraryDefinition, type LibraryRange, type LibrarySignatureHelp } from '../../visual/library-api'
+import { customDocumentId, libraryApi, type CodeKind, type CustomPreview, type LibraryContext, type LibraryDiagnostic, type LibraryReply, type LibraryPreview, type LibraryDefinition, type LibraryRange, type LibrarySignatureHelp } from '../../visual/library-api'
 
 function itemToLabel(item: CompletionItem) {
   if (!item.displayTextPrefix && !item.displayTextSuffix) return item.displayText
@@ -92,11 +92,13 @@ export interface LibraryEditorContext {
   /**
    * The third mode, beside a library file: a Custom C# node's code. Diagnostics come from `custom_preview` (about
    * 400 ms after the last keystroke) and the language services from the `custom: true` requests, both for this node's
-   * unsaved code beside the saved libraries. Read-only code is never checked.
+   * unsaved code beside the saved libraries. Read-only code is never checked. `kind` is the node's kind, which the
+   * check reads the code as (a Custom C# step's method unless told: `custom`, or a C# entity's or C# device's class);
+   * the language services read every kind's code alike.
    */
-  custom?: { readOnly?: boolean }
+  custom?: { readOnly?: boolean; kind?: CodeKind }
 }
-/** The latest check of a Custom C# node's code: the text checked, whether it compiles, and the signature it gives. */
+/** The latest check of a node's code: the text checked, whether it compiles, and the signature it gives (of its kind). */
 export interface CustomCheck { source: string; valid: boolean; signature: unknown }
 
 // Language services of the node library editor. Each registration owns its requests and providers;
@@ -195,7 +197,7 @@ export const useEditorActions = (hass: HomeAssistant, library: LibraryEditorCont
           const code = { nodeId: capturedContext.id, source: model.getValue(), workspaceVersion: capturedContext.workspaceVersion }
           const position = (fields as { position?: number }).position ?? 0
           if (kind === 'diagnostics') {
-            const preview = await api.customPreview(code)
+            const preview = await api.customPreview(code, custom?.kind ?? 'custom')
             return isCurrent() ? { value: preview as T, isCurrent } : null
           }
           let reply

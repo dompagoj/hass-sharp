@@ -40,9 +40,11 @@ const inWords = (name: string) => { const words = name.replace(/_/g, ' ').replac
  * A fixture's `custom_preview`: no compiler, only enough to try the code editor. The one `[Node("Title")]` method's
  * parameters (`string`, `int`, `double`, `bool`; `NodeContext` and `CancellationToken` are supplied by the run) and
  * its return value (one value, a named tuple, or `void`/`Task`) give the pins; `Pure = true` a value node. Code with
- * `!!` in it has an error there.
+ * `!!` in it has an error there. For a C# entity or C# device (`kind`), the code's one public class gives the class
+ * signature instead: see {@link fixtureClassPreview}.
  */
-export function fixtureCustomPreview(nodeId: string, source: string) {
+export function fixtureCustomPreview(nodeId: string, source: string, kind = 'custom') {
+  if (kind === 'csharp_entity' || kind === 'csharp_device') return fixtureClassPreview(nodeId, source, kind)
   const bad = source.indexOf('!!')
   if (bad >= 0) {
     const lines = source.slice(0, bad).split('\n')
@@ -68,6 +70,38 @@ export function fixtureCustomPreview(nodeId: string, source: string) {
     outputs[name.charAt(0).toLowerCase() + name.slice(1)] = { type: clrTypes[type] ?? clrTypes.string, label: inWords(name), description: '' }
   } else if (!['void', 'Task', 'ValueTask'].includes(result)) outputs.result = { type: clrTypes[result] ?? clrTypes.string, label: 'Result', description: '' }
   return { valid: true, diagnostics: [], signature: { title, description: summary, pure: /Pure\s*=\s*true/.test(options), inputs, outputs, types: {} } }
+}
+const settingTypes: Record<string, string> = { string: 'string', bool: 'boolean', int: 'integer', long: 'integer', double: 'number' }
+/**
+ * The fixture's `custom_preview` of a C# entity's or C# device's class: no compiler. The one `public class Name : Base`
+ * is titled by its name in words and described by the `<summary>` before it; a C# entity's domain is its base's name
+ * after `Sharp` in snake case (`SharpBinarySensor` is `binary_sensor`), a C# device's null. Each
+ * `[Setting("Label"…)] public T Name` is a setting keyed `Name` (`string`, `bool`, `int`, `long`, `double`, else an enum
+ * of the `enum T { … }` in the code), secret with `Secret = true`. Like the real check it does not refuse a setting
+ * named `device`. Code with `!!` in it has an error there.
+ */
+export function fixtureClassPreview(nodeId: string, source: string, kind: 'csharp_entity' | 'csharp_device') {
+  const bad = source.indexOf('!!')
+  const at = (offset: number) => { const lines = source.slice(0, offset).split('\n'); return { line: lines.length, column: lines.at(-1)!.length + 1 } }
+  if (bad >= 0) {
+    const { line, column } = at(bad)
+    return { valid: false, signature: null, diagnostics: [{ sourceId: nodeId, startLine: line, startColumn: column, endLine: line, endColumn: column + 2, severity: 3, message: "Unexpected '!!' (fixture)" }] }
+  }
+  const classes = [...source.matchAll(/public\s+class\s+(\w+)\s*:\s*(\w+)/g)]
+  if (classes.length !== 1) {
+    const message = kind === 'csharp_entity' ? 'Write one public class that derives from an entity class, such as SharpSwitch: it becomes this entity' : 'Write one public class that derives from SharpDevice: it becomes this device'
+    return { valid: false, signature: null, diagnostics: [{ sourceId: nodeId, startLine: 1, startColumn: 1, endLine: 1, endColumn: 2, severity: 3, message }] }
+  }
+  const [declaration, name, base] = classes[0]
+  const summary = /<summary>([\s\S]*?)<\/summary>\s*$/.exec(source.slice(0, classes[0].index).trimEnd())?.[1].trim() ?? ''
+  const domain = kind === 'csharp_entity' ? base.replace(/^Sharp/, '').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase() : null
+  const body = source.slice(classes[0].index! + declaration.length)
+  const settings = [...body.matchAll(/\[Setting\("([^"]*)"([^\]]*)\)\]\s*public\s+([\w?]+)\s+(\w+)/g)].map(([, label, options, type, key]) => {
+    const scalar = settingTypes[type.replace(/\?$/, '')]
+    const members = scalar ? undefined : new RegExp(`enum\\s+${type.replace(/\?$/, '')}\\s*\\{([^}]*)\\}`).exec(source)?.[1].split(',').map(m => m.trim()).filter(Boolean)
+    return { key, label, description: '', type: scalar ?? 'enum', secret: /Secret\s*=\s*true/.test(options), ...(members ? { options: members } : {}) }
+  })
+  return { valid: true, diagnostics: [], signature: { title: inWords(name), description: summary, domain, settings } }
 }
 
 /** The fixture's `EntityStateSnapshot`, as the server rebuilds a HassSharp type from its metadata. */
@@ -654,7 +688,7 @@ export function visualFixture(
       }
       if (request.generation && request.generation !== controls.generation) return fail('conflict', 'Saved library generation changed')
       if (controls.previewError) throw new Error('Library fixture offline')
-      if (request.operation === 'custom_preview') return ok(fixtureCustomPreview(request.nodeId ?? 'custom', request.source))
+      if (request.operation === 'custom_preview') return ok(fixtureCustomPreview(request.nodeId ?? 'custom', request.source, request.kind ?? 'custom'))
       // A Custom C# node's code (`custom: true`): replies name the node; its own code is the `$custom` document.
       const custom = request.custom === true
       const sources = new Map([...libraries.values()].map(d => [d.id, d.source]))

@@ -5,7 +5,7 @@ import { Dialog, openModal, trapTab } from '../components/Dialog'
 import { createLoader, LoadFailed } from '../components/LazyLoad'
 import { Menu, type MenuItem } from '../components/Menu'
 import type { CustomCodeHandle } from '../components/Editor/CustomCode'
-import { customSignature, wellFormedSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, isClassNode, wellFormedClassSignature, wellFormedSignature, type ClassSetting, type ClassSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
 import { exampleSource } from './customCode'
 import { nodeTitle } from './flow/flowModel'
 import { Glyph } from './Glyph'
@@ -28,8 +28,11 @@ export interface CustomCodeEditorProps {
   catalog: VisualCatalogSnapshot
   /** A run on view: the code is shown, never checked or applied. */
   readOnly?: boolean
-  /** The code and the pins its latest check gave; the dialog closes after it. */
-  onApply?(source: string, signature: CustomSignature): void
+  /**
+   * The code and what its latest check gave, of the node's kind: a Custom C# step's pins, or a C# entity's or C# device's
+   * class signature; the dialog closes after it.
+   */
+  onApply?(source: string, signature: CustomSignature | ClassSignature): void
   onClose(): void
   /**
    * Whether the text differs from the node's code (the page counts it as unsaved), with the text while it is open;
@@ -42,14 +45,31 @@ export interface CustomCodeEditorProps {
   document?: GraphDocument
 }
 
+/** What the code of a node of each kind with code is, as the dialog's header names it. */
+const codeKinds: Record<string, string> = { custom: 'Custom C# code', csharp_entity: 'C# entity code', csharp_device: 'C# device code' }
+/** A class node's kind in words, for its help. */
+const classWords = (kind: string) => (kind === 'csharp_device' ? 'C# device' : 'C# entity')
 /**
- * The code editor of a Custom C# node: a full-screen dialog with the node's title, the state of the latest check,
- * Apply and Cancel; Monaco on the code; the pins the code gives right now; and its problems (each goes to its line).
- * Apply writes the code and its pins as one undo step (the page does that); Cancel with unapplied changes asks first.
+ * Why the node cannot have a class whose signature is well formed (`classSignature` refuses it): a setting keyed as one of
+ * its kind's own pins, a C# entity's Device. Undefined when it can.
+ */
+function refusedSetting(node: GraphNode, signature: ClassSignature, catalog: VisualCatalogSnapshot): string | undefined {
+  const own = Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].inputs ?? {} : {}
+  const key = signature.settings.find(s => Object.hasOwn(own, s.key))?.key
+  return key === undefined ? undefined : `A setting cannot be called ${key}: that is the pin the entity's ${key} connects to`
+}
+
+/**
+ * The code editor of a node with C# code: a Custom C# step, a C# entity or a C# device. A full-screen dialog with the
+ * node's title, the state of the latest check, Apply and Cancel; Monaco on the code; what the code gives right now (a
+ * step's pins, a class's settings); and its problems (each goes to its line). The code is checked as its kind's.
+ * Apply writes the code and what it gives as one undo step (the page does that); Cancel with unapplied changes asks first.
  */
 export function CustomCodeEditor(props: CustomCodeEditorProps) {
   let dialog!: HTMLDialogElement
   const surface = loadSurface()
+  // A C# entity or C# device: one class, whose [Setting] properties are its settings.
+  const classKind = () => isClassNode(Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind] : undefined)
   const initial = typeof props.node.config.source === 'string' ? props.node.config.source : ''
   const [handle, setHandle] = createSignal<CustomCodeHandle>()
   const [confirm, setConfirm] = createSignal(false)
@@ -66,23 +86,44 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
   const checking = () => !props.readOnly && !surface.failed() && (!handle() || handle()!.checking())
   /** The latest check is of the text as it is now (not one from before an edit). */
   const current = () => { const c = check(); return c && c.source === source() ? c : undefined }
-  const checkedSignature = () => { const c = check(); return c && wellFormedSignature(c.signature) ? c.signature : undefined }
+  /** The latest check's class signature, when it is one as the compiler writes it (a class node's). */
+  const checkedClass = () => { const c = check(); return classKind() && c && wellFormedClassSignature(c.signature) ? c.signature : undefined }
+  /** What the latest check gave that the node can have: a step's pins, or a class signature the node's kind takes. */
+  const checkedSignature = (): CustomSignature | ClassSignature | undefined => {
+    const c = check()
+    if (!classKind()) return c && wellFormedSignature(c.signature) ? c.signature : undefined
+    const signature = checkedClass()
+    return signature && classSignature({ ...props.node, config: { ...props.node.config, signature } }, props.catalog) ? signature : undefined
+  }
   const canApply = () => !props.readOnly && !checking() && !error() && !!current()?.valid && !!checkedSignature()
   const problems = createMemo(() => (props.readOnly ? [] : (handle()?.diagnostics() ?? []).filter(d => d.severity >= 2)))
   /** Invalid code with no problem of its own to show. */
   const unexplained = () => !checking() && !error() && current()?.valid === false && !problems().some(d => d.severity === 3)
-  const problemCount = () => problems().length + (unexplained() ? 1 : 0)
+  /**
+   * Code that compiles to a class the node cannot have (a C# entity's setting called device): the reason, when no
+   * problem of the check already says it.
+   */
+  const refused = () => {
+    const signature = current() && checkedClass()
+    if (props.readOnly || checking() || error() || !signature) return undefined
+    const reason = refusedSetting(props.node, signature, props.catalog)
+    return reason && !problems().some(d => d.message === reason) ? reason : undefined
+  }
+  const problemCount = () => problems().length + (unexplained() ? 1 : 0) + (refused() ? 1 : 0)
   const status = () => {
     if (props.readOnly) return 'Read only'
     if (error() || surface.failed()) return 'Not checked'
     if (checking()) return 'Checking…'
     return problemCount() ? plural(problemCount(), 'problem') : 'No problems'
   }
-  const tone = () => (props.readOnly ? 'quiet' : error() || surface.failed() || problems().some(d => d.severity === 3) || unexplained() ? 'error' : checking() ? 'busy' : problemCount() ? 'warning' : 'ok')
-  // The pins of the latest code that compiled, else the node's own.
-  const shown = () => (checkedSignature() ?? customSignature(props.node, props.catalog))
+  const tone = () => (props.readOnly ? 'quiet' : error() || surface.failed() || problems().some(d => d.severity === 3) || unexplained() || refused() ? 'error' : checking() ? 'busy' : problemCount() ? 'warning' : 'ok')
+  // The pins of the latest code that compiled, else the node's own; for a class, its settings so.
+  const shown = () => (classKind() ? undefined : (checkedSignature() as CustomSignature | undefined) ?? customSignature(props.node, props.catalog))
+  const shownClass = () => (classKind() ? checkedClass() ?? classSignature(props.node, props.catalog) : undefined)
   const outdated = () => !props.readOnly && !checking() && !!check() && !current()?.valid
   const title = () => nodeTitle(props.node, props.catalog, 'Custom C#')
+  const kindLine = () => `${codeKinds[props.node.kind] ?? codeKinds.custom}${props.readOnly ? ', read only' : ''}`
+  const helpLabel = () => (classKind() ? `How to write a ${classWords(props.node.kind)}` : 'How to write a node')
   // Screen readers hear a change of result (the number of problems, or none), not every "Checking…" in between.
   const announced = createMemo<string>(previous => (props.readOnly || checking() ? previous : status()), '')
 
@@ -147,17 +188,17 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
       <header class="hs-code-bar">
         <span class="hs-code-bar__icon" aria-hidden="true"><Glyph paths={icons.code} /></span>
         <div class="hs-code-bar__titles">
-          <span class="hs-code-bar__kind">{props.readOnly ? 'Custom C# code, read only' : 'Custom C# code'}</span>
+          <span class="hs-code-bar__kind">{kindLine()}</span>
           <h2 class="hs-code-bar__title">{title()}</h2>
         </div>
         <span class={`hs-code-state hs-code-state--${tone()}`}>{status()}</span>
         <span class="hs-visually-hidden" role="status">{announced()}</span>
         <div class="hs-code-bar__actions">
-          <Button variant="ghost" class="hs-icon-button hs-code-help" aria-label="How to write a node" title="How to write a node" onClick={() => setHelp(true)}>?</Button>
+          <Button variant="ghost" class="hs-icon-button hs-code-help" aria-label={helpLabel()} title={helpLabel()} onClick={() => setHelp(true)}>?</Button>
           <Show when={menu().length}><Menu label="Code actions" items={menu()} /></Show>
           <Show when={!props.readOnly} fallback={<Button variant="primary" onClick={close}>Close</Button>}>
             <Button onClick={cancel}>Cancel</Button>
-            <Button variant="primary" disabled={!canApply()} title={canApply() ? 'Write this code and its pins to the node' : 'Apply when the code has been checked and has no errors'} onClick={apply}>Apply</Button>
+            <Button variant="primary" disabled={!canApply()} title={canApply() ? `Write this code and its ${classKind() ? 'settings' : 'pins'} to the node` : 'Apply when the code has been checked and has no errors'} onClick={apply}>Apply</Button>
           </Show>
         </div>
       </header>
@@ -168,7 +209,7 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
               <LoadFailed class="hs-code-failed" what="code editor" error={surface.error()} onRetry={surface.retry} />
             </Show>
           }>
-            {component => <Dynamic component={component()} nodeId={props.node.id} initial={opening} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />}
+            {component => <Dynamic component={component()} nodeId={props.node.id} kind={props.node.kind} initial={opening} readOnly={props.readOnly} label={`Code of ${title()}`} onReady={setHandle} onApply={apply} />}
           </Show>
           <Show when={error()}>
             {reason => (
@@ -195,17 +236,24 @@ export function CustomCodeEditor(props: CustomCodeEditorProps) {
                 <Show when={unexplained()}>
                   <li><span class="hs-code-problem"><Glyph paths={icons.problem} /><span class="hs-code-problem__message">{librariesBroken}</span></span></li>
                 </Show>
+                <Show when={refused()}>
+                  {reason => <li><span class="hs-code-problem"><Glyph paths={icons.problem} /><span class="hs-code-problem__message">{reason()}</span></span></li>}
+                </Show>
               </ul>
             </section>
           </Show>
         </div>
-        <Pins signature={shown()} catalog={props.catalog} outdated={outdated()} />
+        <Show when={classKind()} fallback={<Pins signature={shown()} catalog={props.catalog} outdated={outdated()} />}>
+          <Settings signature={shownClass()} catalog={props.catalog} outdated={outdated()} />
+        </Show>
       </div>
       <Dialog open={confirm()} title="Discard your changes to the code?" width="small" onClose={() => setConfirm(false)}
         footer={<><Button onClick={() => setConfirm(false)}>Keep editing</Button><Button variant="danger" onClick={() => { setConfirm(false); close() }}>Discard</Button></>}>
         <p>The node keeps its code as it was before you opened the editor.</p>
       </Dialog>
-      <CustomCodeHelp open={help()} onClose={() => setHelp(false)} document={props.document} />
+      <Show when={classKind()} fallback={<CustomCodeHelp open={help()} onClose={() => setHelp(false)} document={props.document} />}>
+        <ClassCodeHelp open={help()} onClose={() => setHelp(false)} kind={props.node.kind} />
+      </Show>
     </dialog>
   )
 }
@@ -268,11 +316,49 @@ function Pins(props: { signature?: CustomSignature; catalog: VisualCatalogSnapsh
   )
 }
 
+/** A setting's type in words, for the settings panel. */
+const settingTypeWords = (setting: ClassSetting) =>
+  setting.type === 'enum' ? (setting.options?.length ? `One of ${setting.options.join(', ')}` : 'A choice')
+    : ({ string: 'Text', integer: 'Whole number', number: 'Number', boolean: 'True or false' } as const)[setting.type]
+/** The catalog type of a setting's pin, as the node's input takes it. */
+const settingPinTypes: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
+
+/** The settings a class's code gives, as the node's inputs will be: each [Setting] property's label, type and whether it is secret. */
+function Settings(props: { signature?: ClassSignature; catalog: VisualCatalogSnapshot; outdated: boolean }) {
+  const chip = (type: string) => <TypeChip text={typeLabel(type, props.catalog)} color={typeColor(type, props.catalog)} list={typeIsList(type, props.catalog)} />
+  return (
+    <aside class="hs-code-pins" aria-label="Settings">
+      <h3 class="hs-insp-heading">Settings</h3>
+      <Show when={props.signature} fallback={<p class="hs-muted">The code gives no settings yet.</p>}>
+        {signature => (
+          <>
+            <Show when={props.outdated}><p class="hs-code-pins__note">From the last code that compiled.</p></Show>
+            <Show when={signature().settings.length} fallback={<p class="hs-muted">This class has no settings. Mark a property with [Setting] to make it an input.</p>}>
+              <ul class="hs-code-pins__list">
+                <For each={signature().settings}>
+                  {setting => (
+                    <li class="hs-code-pin" data-pin-id={setting.key}>
+                      <span class="hs-code-pin__name">{setting.label || setting.key}</span>
+                      <span class="hs-code-pin__types">{chip(settingPinTypes[setting.type])}</span>
+                      <span class="hs-code-pin__meta">{settingTypeWords(setting)}{setting.secret ? ' · Secret' : ''}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </>
+        )}
+      </Show>
+    </aside>
+  )
+}
+
 /**
  * The step whose code was open went away under the editor (a reload of the automation, say) while its code had
  * unapplied changes: says so, and offers the code to copy.
  */
-export function CodeLeftBehind(props: { source?: string; onClose(): void }) {
+export function CodeLeftBehind(props: { source?: string; /** The kind of node the code was of: a Custom C# step unless told. */ kind?: string; onClose(): void }) {
+  const what = () => (props.kind === 'csharp_entity' || props.kind === 'csharp_device' ? classWords(props.kind) : undefined)
   const [copied, setCopied] = createSignal<'idle' | 'copied' | 'failed'>('idle')
   let text: HTMLTextAreaElement | undefined
   const copy = async () => {
@@ -281,14 +367,14 @@ export function CodeLeftBehind(props: { source?: string; onClose(): void }) {
   }
   const close = () => { setCopied('idle'); props.onClose() }
   return (
-    <Dialog open={props.source !== undefined} title="This step no longer exists" width="medium" onClose={close}
+    <Dialog open={props.source !== undefined} title={what() ? 'This node no longer exists' : 'This step no longer exists'} width="medium" onClose={close}
       footer={<>
         <Button onClick={close}>Close</Button>
         <Show when={typeof navigator.clipboard?.writeText === 'function'}>
           <Button variant="primary" onClick={() => void copy()}>{copied() === 'copied' ? 'Copied' : 'Copy the code'}</Button>
         </Show>
       </>}>
-      <p>The Custom C# step whose code you were editing was removed, so your changes to its code were not applied. Copy the code to keep it.</p>
+      <p>{what() ? `The ${what()}` : 'The Custom C# step'} whose code you were editing was removed, so your changes to its code were not applied. Copy the code to keep it.</p>
       <Show when={copied() === 'failed'}><p class="hs-muted" role="alert">Could not copy: select the code below and copy it.</p></Show>
       <textarea ref={text} class="hs-code-left" readOnly aria-label="The code that was not applied" rows={10} value={props.source ?? ''} />
     </Dialog>
@@ -325,6 +411,34 @@ export function CustomCodeHelp(props: { open: boolean; onClose(): void; /** The 
       <p>If a service goes away, code that calls it stops compiling at its next compile; {props.document === 'entity' ? 'what is already running keeps running' : 'running automations keep running'}.</p>
       <h3>Descriptions</h3>
       <p>The XML <code>&lt;summary&gt;</code> is the node's description, each <code>&lt;param&gt;</code> describes an input and <code>&lt;returns&gt;</code> describes the output.</p>
+    </Dialog>
+  )
+}
+
+/** A short reference for writing a C# entity's or C# device's class (`kind`), in the style of the editor's help. */
+export function ClassCodeHelp(props: { open: boolean; onClose(): void; kind: string }) {
+  const device = () => props.kind === 'csharp_device'
+  return (
+    <Dialog open={props.open} title={`Writing a ${classWords(props.kind)}`} width="large" onClose={props.onClose}>
+      <Show when={device()} fallback={
+        <p>The code is one public class that derives from an entity class, such as <code>SharpSwitch</code>, <code>SharpSensor</code> or <code>SharpCamera</code>: it is this entity, and the class it derives from is its type. It must be public, not abstract or generic, and have a public constructor without parameters. Helper types can sit beside it, and <code>using</code> lines go at the top.</p>
+      }>
+        <p>The code is one public class that derives from <code>SharpDevice</code>: it is this device, and the entities it adds are its entities. It must be public, not abstract or generic, and have a public constructor without parameters. Helper types can sit beside it, and <code>using</code> lines go at the top.</p>
+        <h3>Its entities</h3>
+        <p>Add each entity in the constructor, or in <code>Setup()</code>, with <code>Add(entity)</code>, which returns it so it can be kept in a field: <code>relay = Add(new SharpSwitch("relay", "Relay"))</code>. The first argument is its key within this device. A command of an entity is handled by setting its <code>On…</code> property, such as <code>OnTurnOn</code>.</p>
+      </Show>
+      <h3>Settings</h3>
+      <p><code>[Setting("Label")]</code> on a public property with a public setter makes it a setting: an input of this node, which takes a typed value or a Setting of the definition, and is set before <code>Setup()</code> runs. It may be a <code>string</code>, <code>bool</code>, <code>int</code>, <code>long</code>, <code>double</code> or an enum. <code>Description</code> is a line of help; <code>Secret = true</code> makes it a secret, which only a Setting can give; <code>Minimum</code> and <code>Maximum</code> bound a number. A setting given nothing keeps the property's own value.</p>
+      <h3>Setup, Start and Stop</h3>
+      <ul>
+        <li><code>Setup()</code> runs once before {device() ? 'the entities are' : 'the entity is'} registered, with the settings applied: the place to check them or fetch what is needed. One that throws keeps the definition from starting.</li>
+        <li><code>Start()</code> runs after {device() ? 'they are' : 'it is'} registered: the place to start timers with <code>Every</code> and tracks with <code>Track</code>. It must return.</li>
+        <li><code>Stop()</code> runs when the definition stops or is replaced. <code>Stopping</code> is cancelled then, and when Home Assistant shuts down: pass it to what you wait for.</li>
+      </ul>
+      <h3>Home Assistant</h3>
+      <p><code>State(entityId)</code> reads an entity's state, <code>CallService(service, target, data, returnResponse)</code> calls a service, <code>Log(message, level)</code> writes to the Home Assistant log, and <code>Http</code> is the definition's own <code>HttpClient</code>.</p>
+      <h3>Descriptions</h3>
+      <p>The XML <code>&lt;summary&gt;</code> of the class describes it, and that of a setting's property is its line of help.</p>
     </Dialog>
   )
 }

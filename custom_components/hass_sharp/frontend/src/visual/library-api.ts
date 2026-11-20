@@ -13,7 +13,15 @@ export interface LibraryContext { id: string; source: string; workspaceVersion: 
 export interface LibraryReply<T> { id: string; workspaceVersion: string; generation: string; sourceGeneration: string; saved: false; data: T }
 /** A Custom C# node's unsaved code, for `custom_preview` and the `custom: true` language services. */
 export interface CustomCode { nodeId: string; source: string; workspaceVersion: string }
-/** What the compiler makes of a Custom C# node's code; diagnostics are 1-based in the node's own code. */
+/**
+ * The kinds of node whose code `custom_preview` checks: a Custom C# step, a C# entity and a C# device. The language
+ * services (`custom: true`) read every one alike, by its node's id.
+ */
+export type CodeKind = 'custom' | 'csharp_entity' | 'csharp_device' | (string & {})
+/**
+ * What the compiler makes of a node's code; diagnostics are 1-based in the node's own code. The signature is a Custom
+ * C# step's pins, or a class node's class signature (`ClassSignature`), by the kind checked.
+ */
 export interface CustomPreview { valid: boolean; diagnostics: LibraryDiagnostic[]; signature: unknown }
 /** A language-service reply about a Custom C# node's code: `id` is the node's id; definitions in its code name `$custom`. */
 export interface CustomReply<T> { id: string; workspaceVersion: string; generation: string; saved: false; data: T }
@@ -83,7 +91,11 @@ export function libraryApi(hass: Pick<HomeAssistant, 'callWS'>) {
   /** An item names itself to `completion_resolve` as the list gave it; the code and position are the list's. */
   const itemKey = (item: CompletionItem) => ({ displayText: item.displayText, displayTextPrefix: item.displayTextPrefix, displayTextSuffix: item.displayTextSuffix, inlineDescription: item.inlineDescription ?? '' })
   return {
-    customPreview: (code: Pick<CustomCode, 'nodeId' | 'source'>) => request<CustomPreview>('custom_preview', { nodeId: code.nodeId, source: code.source }),
+    /**
+     * Checks a node's unsaved code as the code of its kind: a Custom C# step's method (`custom`), or the class of a C#
+     * entity or a C# device, whose answer's signature is then a class signature.
+     */
+    customPreview: (code: Pick<CustomCode, 'nodeId' | 'source'>, kind: CodeKind) => request<CustomPreview>('custom_preview', { nodeId: code.nodeId, source: code.source, kind }),
     customCompletion: (code: CustomCode, position: number) => custom<CompletionList>('completion', code, position),
     customCompletionResolve: (code: CustomCode, position: number, item: CompletionItem) => custom<CompletionResolution>('completion_resolve', code, position, { item: itemKey(item) }),
     customHover: (code: CustomCode, position: number) => custom<{ text?: string; range?: LibraryRange }>('hover', code, position),

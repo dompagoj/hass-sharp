@@ -15,8 +15,11 @@ const draftDelay = 500
 export const notSavedYet = 'Not saved yet: fix the problems, then Save.'
 /** The draft keys of the sessions open in this page: a new document is never offered one still being edited here. */
 const liveKeys = new Set<string>()
-/** Unapplied code of a Custom C# node's code editor. */
-export type UnappliedCode = { nodeId: string; text: string }
+/**
+ * Unapplied code of a node's code editor, by its node's id; `kind` is the node's kind for a C# entity's or C# device's
+ * code, and absent for a Custom C# step's (as drafts made before there were other kinds have it).
+ */
+export type UnappliedCode = { nodeId: string; text: string; kind?: string }
 
 /**
  * A new document's first save: `save` under the id `newId` gives, and when that id was taken elsewhere since it was

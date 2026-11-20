@@ -292,6 +292,39 @@ it('a pasted device gets its own key, and a device pasted with it stays part of 
   expect(into[1].config.via).toEqual({ device: 'hub' })
 })
 
+it('a pasted or duplicated C# entity or C# device gets a fresh key in its own namespace, and its code, settings and values are its own', () => {
+  const signature = { title: 'Thermometer', description: '', domain: 'sensor', settings: [{ key: 'Address', label: 'Address', description: '', type: 'string', secret: false }] }
+  let graph = add(devices(), 'csharp_entity', 'thermo', { key: 'relay', source: 'public class Thermometer : SharpSensor { }', signature, arguments: { Address: lit('string', 'http://a') } }, { x: 800, y: 0 })
+  graph = add(graph, 'csharp_device', 'code', { key: 'hub', name: 'Code hub', via: null }, { x: 800, y: 300 })
+  graph = connectData(graph, 'plug', 'entities', 'thermo', 'device')
+  const before = structuredClone(graph)
+  // Duplicated in place: a C# entity is keyed past every entity key (the Entity node relay's and its own), a C# device past every device key.
+  const { graph: pasted, copies: [entity, device] } = pasteOf(graph, copySteps(graph, ['thermo', 'code'])!)
+  expect([entity.config.key, device.config.key]).toEqual(['relay_2', 'hub_2'])
+  // A C# device keeps its name, as a Device node does; a C# entity has none to keep.
+  expect(device.config.name).toBe('Code hub')
+  expect(entity.config).not.toHaveProperty('name')
+  expect(entity.config).toMatchObject({ source: 'public class Thermometer : SharpSensor { }', signature, arguments: { Address: lit('string', 'http://a') } })
+  expect(device.config.source).toBe(nodeCatalog.nodes.csharp_device.config.source.default)
+  // Its own copies: changing the copy changes nothing of the original.
+  const original = pasted.nodes.find(n => n.id === 'thermo')!
+  expect(entity.config.signature).not.toBe(original.config.signature)
+  expect(entity.config.arguments).not.toBe(original.config.arguments)
+  ;(entity.config.signature as typeof signature).settings[0].label = 'Changed'
+  ;(entity.config.arguments as Record<string, ReturnType<typeof lit>>).Address.value = 'changed'
+  expect(pasted.nodes.slice(0, graph.nodes.length)).toEqual(before.nodes)
+  // The C# entity's wire from a device not copied is left behind.
+  expect(pasted.edges.filter(e => e.target === entity.id)).toEqual([])
+  expect(validateGraph(pasted).filter(d => d.severity === 3 && (d.nodeId === entity.id || d.nodeId === device.id))).toEqual([])
+  // Into another definition: a C# device's key clashes only with device keys, a C# entity's only with entity keys.
+  const other = add(add(empty('Other'), 'entity', 'e', { key: 'hub', domain: 'switch', name: 'Hub' }), 'device', 'd', { key: 'relay', name: 'Relay' })
+  expect(pasteOf(other, copySteps(graph, ['thermo', 'code'])!).copies.map(n => n.config.key)).toEqual(['relay', 'hub'])
+  // Pasted with the Device node it is on, the C# entity's copy is on the device's copy.
+  const onPlug = pasteOf(graph, copySteps(graph, ['plug', 'thermo'])!)
+  expect(onPlug.copies.map(n => n.config.key)).toEqual(['plug_2', 'relay_2'])
+  expect(deviceNodeOf(onPlug.graph, onPlug.copies[1].id)).toBe(onPlug.copies[0].id)
+})
+
 it('an entity pasted without its device stands alone', () => {
   const graph = devices()
   const { graph: pasted, copies } = pasteOf(graph, copySteps(graph, ['relay'])!)

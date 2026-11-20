@@ -15,8 +15,11 @@ export interface VisualDraft {
   name: string
   /** When the changes were made (ms since the epoch): kept while the draft's content stays the same. */
   at: number
-  /** Code typed in a Custom C# node's code editor and not applied yet. */
-  code?: { nodeId: string; text: string }
+  /**
+   * Code typed in a node's code editor and not applied yet: a Custom C# step's, or (with its `kind`) a C# entity's or a
+   * C# device's.
+   */
+  code?: { nodeId: string; text: string; kind?: string }
 }
 
 const prefix = 'hass-sharp:draft:'
@@ -49,12 +52,13 @@ const parse = (text: string | null): VisualDraft | undefined => {
   if (!record(value) || !record(value.graph) || typeof value.revision !== 'number' || typeof value.at !== 'number' || !Number.isFinite(value.at)) return
   const graph = value.graph
   if (graph.version !== nodeCatalog.graphVersion || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return
-  const code = record(value.code) && typeof value.code.nodeId === 'string' && typeof value.code.text === 'string' ? { nodeId: value.code.nodeId, text: value.code.text } : undefined
+  const code = record(value.code) && typeof value.code.nodeId === 'string' && typeof value.code.text === 'string'
+    ? { nodeId: value.code.nodeId, text: value.code.text, ...(typeof value.code.kind === 'string' ? { kind: value.code.kind } : {}) } : undefined
   return { graph: graph as unknown as VisualGraph, revision: value.revision, name: typeof value.name === 'string' ? value.name : '', at: value.at, ...(code ? { code } : {}) }
 }
 /** The same changes: graph, base revision and unapplied code. */
 const sameContent = (a: VisualDraft, b: VisualDraft) =>
-  a.revision === b.revision && a.code?.nodeId === b.code?.nodeId && a.code?.text === b.code?.text && serializeGraph(a.graph) === serializeGraph(b.graph)
+  a.revision === b.revision && a.code?.nodeId === b.code?.nodeId && a.code?.text === b.code?.text && a.code?.kind === b.code?.kind && serializeGraph(a.graph) === serializeGraph(b.graph)
 /** Every draft kept, with its key (without the prefix). */
 function allDrafts(store: Storage): { key: string; draft: VisualDraft | undefined }[] {
   const keys: string[] = []

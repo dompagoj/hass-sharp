@@ -8,7 +8,7 @@ import { QuickAdd } from '../QuickAdd'
 import type { VisualDiagnostic } from '../api'
 import { HassCtx } from '../../context'
 import { useLoadedRegistry } from '../../registry'
-import { connectData, graphDocument, isRoot, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
+import { connectData, graphDocument, hasCode as kindHasCode, isRoot, nodeCatalog, setInput as writeInput, type Operand, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeEdge, removeNode, updateNode, type NodeKind, type VisualGraph } from '../graph'
 import { connectionIndex, graphTypes } from '../connectionIndex'
 import { media } from '../media'
@@ -1025,16 +1025,16 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const released = () => {
     pointerHeld = false
   }
-  /** Whether the node's code can be opened: a Custom C# node, on a page that has the code editor. */
+  /** Whether the node's code can be opened: a node with code (a Custom C# step, a C# entity, a C# device), on a page that has the code editor. */
   const hasCode = (id: string) => {
     const kind = graph().nodes.find(n => n.id === id)?.kind
-    return !!props.onEditCode && !!kind && Object.hasOwn(catalog().nodes, kind) && catalog().nodes[kind].dynamicInputs === 'custom'
+    return !!props.onEditCode && !!kind && Object.hasOwn(catalog().nodes, kind) && kindHasCode(catalog().nodes[kind])
   }
   const editCode = (id: string) => { if (hasCode(id)) props.onEditCode?.(id) }
   const doubleClick = (event: MouseEvent) => {
     const target = event.target as Element
     if (emptyPane(target)) return openQuickAdd({ x: event.clientX, y: event.clientY })
-    // A double-click on a Custom C# card (not in its own editors, pins or buttons) opens its code.
+    // A double-click on the card of a node with code (not in its own editors, pins or buttons) opens its code.
     const id = target.closest?.('.solid-flow__node')?.getAttribute('data-id')
     if (id && hasCode(id) && !target.closest('.hs-card-editor, .solid-flow__handle, input, textarea, select, button, a')) {
       event.preventDefault()

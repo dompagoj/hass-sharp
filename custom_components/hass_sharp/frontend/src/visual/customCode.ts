@@ -1,4 +1,4 @@
-import { dataOutputs, isAssignable, isPure, nodeCatalog, resolveTypeSpec, validLiteral, wellFormedSignature, withGraphTypes, type CustomSignature, type ExecutionEdge, type VisualCatalogSnapshot } from './contract'
+import { classSignature, dataOutputs, isAssignable, isClassNode, isPure, nodeCatalog, resolveTypeSpec, validLiteral, wellFormedClassSignature, wellFormedSignature, withGraphTypes, type ClassSetting, type ClassSignature, type CustomSignature, type ExecutionEdge, type VisualCatalogSnapshot } from './contract'
 import { connectNodes, edgePort, nodeInputs, removeEdge, updateNode, type VisualGraph } from './graph'
 import { nodeTitle } from './flow/flowModel'
 
@@ -100,4 +100,70 @@ export function applyCustomCode(graph: VisualGraph, nodeId: string, source: stri
   }
   if (!pure && wasPure) notes.push('It is now a step: connect it into the step order')
   return { graph: next, notice: notes.length ? `${notes.join('. ')}.` : undefined }
+}
+
+/** The catalog type of a setting's pin (as `contract`'s setting pins take): text for a string or an enum, a number for an integer or a number. */
+const settingPinType: Record<ClassSetting['type'], string> = { string: 'string', enum: 'string', integer: 'number', number: 'number', boolean: 'boolean' }
+/**
+ * Whether a typed value can stay in a setting: it is not secret (a secret is given by a Setting only), and the value is
+ * one of its type: a text (for an enum, one of its options), a finite number (for an integer, a whole one), true or false.
+ */
+function valueFits(setting: ClassSetting, value: Record<string, unknown>): boolean {
+  if (setting.secret) return false
+  const type = settingPinType[setting.type], v = value.value
+  if (typeof value.type === 'string' && value.type !== type) return false
+  if (type === 'string') return typeof v === 'string' && (setting.type !== 'enum' || !Array.isArray(setting.options) || setting.options.includes(v))
+  if (type === 'number') return typeof v === 'number' && Number.isFinite(v) && (setting.type !== 'integer' || Number.isInteger(v))
+  return typeof v === 'boolean'
+}
+
+/**
+ * Writes a C# entity's or C# device's new code and the class signature the compiler gave it, as one new graph (one undo
+ * step), and fits the node's settings to it. A typed value stays while its setting is still there, is not secret and
+ * takes it (an integer setting no fraction, an enum only one of its options); a wire stays while its setting is still
+ * there and takes the type of what feeds it (a wire into a secret setting stays: a Setting gives it). The kind's own pins
+ * (a C# entity's Device) are left alone, and so is a changed entity type: no step names a C# entity's type. What is
+ * removed is named, by the settings' labels before the change, in the Custom C# step's words (`notices`, each a sentence
+ * without its full stop). A signature the node cannot have (not as the compiler writes it, or with a setting keyed as one
+ * of its kind's own pins) changes nothing, as for a node without a class.
+ */
+export function applyClassCode(graph: VisualGraph, nodeId: string, source: string, signature: ClassSignature, catalog: VisualCatalogSnapshot = nodeCatalog): { graph: VisualGraph; notices: string[] } {
+  const node = graph.nodes.find(n => n.id === nodeId)
+  const spec = node && Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind] : undefined
+  if (!node || !isClassNode(spec) || !wellFormedClassSignature(signature)) return { graph, notices: [] }
+  const written = { ...node.config, source, signature: structuredClone(signature) }
+  if (!classSignature({ ...node, config: written }, catalog)) return { graph, notices: [] }
+  const own = spec!.inputs ?? {}
+  const settings = new Map(signature.settings.map(s => [s.key, s]))
+  const labels = new Map((classSignature(node, catalog)?.settings ?? []).map(s => [s.key, s.label || s.key]))
+  const label = (key: string) => labels.get(key) ?? key
+
+  // Values: each typed value its setting still takes; a value that is not typed (unset) while its setting is there.
+  const kept: Record<string, unknown> = {}, cleared: string[] = []
+  for (const [port, value] of Object.entries(record(node.config.arguments) ? node.config.arguments : {})) {
+    const setting = settings.get(port)
+    const literal = record(value) && value.kind === 'literal'
+    if (Object.hasOwn(own, port) || (setting && (!literal || valueFits(setting, value)))) kept[port] = value
+    else if (literal) cleared.push(label(port))
+  }
+  const types = withGraphTypes(catalog, graph)
+  let next = updateNode(graph, nodeId, { config: { ...written, arguments: kept } })
+
+  // Wires into the node's settings: each whose setting is still there and takes what feeds it.
+  const removed: string[] = []
+  for (const edge of graph.edges) {
+    if (edge.kind !== 'data' || edge.target !== nodeId || Object.hasOwn(own, edge.targetPort)) continue
+    const setting = settings.get(edge.targetPort)
+    const sourceNode = graph.nodes.find(n => n.id === edge.source)
+    const type = sourceNode ? dataOutputs(sourceNode, types)[edge.sourcePort]?.type : undefined
+    if (setting && type !== undefined && isAssignable(type, settingPinType[setting.type], types)) continue
+    next = removeEdge(next, edge.id, types)
+    removed.push(label(edge.targetPort))
+  }
+
+  const notices: string[] = []
+  const names = (items: string[]) => [...new Set(items)].length
+  if (removed.length) notices.push(`Removed ${removed.length} ${removed.length === 1 ? 'connection that no longer fits' : 'connections that no longer fit'}: ${list(removed)}`)
+  if (cleared.length) notices.push(`Cleared ${names(cleared) === 1 ? 'a value that no longer fits' : `${names(cleared)} values that no longer fit`}: ${list(cleared)}`)
+  return { graph: next, notices }
 }

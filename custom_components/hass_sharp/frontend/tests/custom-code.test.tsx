@@ -5,17 +5,18 @@ import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import rich from '../../../../tests/fixtures/visual-rich-catalog.json'
 import { completions, definitions, editors, formats, hovers, markers, resetHost, signatures } from './fake-monaco'
-import { visualFixture } from './visual-fixture'
+import { add, empty, visualFixture } from './visual-fixture'
 import { run } from './run-fixture'
+import { EntityDefinitionView } from '../src/views/EntityDefinitionView'
 import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { RunTraceView } from '../src/views/RunTraceView'
 import { HassCtx } from '../src/context'
 import { VisualEditor } from '../src/visual/VisualEditor'
 import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { CustomCodeEditor } from '../src/visual/CustomCodeEditor'
-import { applyCustomCode, exampleSource } from '../src/visual/customCode'
+import { applyClassCode, applyCustomCode, exampleSource } from '../src/visual/customCode'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
-import { connectData, customSignature, dataOutputs, type CustomSignature, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { connectData, customSignature, dataOutputs, type ClassSetting, type ClassSignature, type CustomSignature, type VisualCatalogSnapshot } from '../src/visual/contract'
 
 vi.mock('monaco-editor', async () => (await import('./fake-monaco')).host)
 vi.mock('monaco-vim', () => ({ initVimMode: () => ({ dispose() {} }) }))
@@ -689,4 +690,274 @@ it('words the help\'s note on services for an entity definition when the code is
   const help = [...dialog()!.querySelectorAll('dialog')].find(d => d.open)!
   expect(help.textContent).toContain('If a service goes away, code that calls it stops compiling at its next compile; what is already running keeps running.')
   expect(help.textContent).not.toContain('automation')
+})
+
+// ---- C# entity and C# device nodes: their code is one class, and its [Setting] properties are the node's settings.
+
+const setting = (key: string, type: ClassSetting['type'] = 'string', more: Partial<ClassSetting> = {}): ClassSetting => ({ key, label: key, description: '', type, secret: false, ...more })
+const classSig = (settings: ClassSetting[], domain: string | null = null, title = 'Plug'): ClassSignature => ({ title, description: '', domain, settings })
+/** An entity definition's graph with its settings `host` (text) and `level` (a number), and a Setting node of each. */
+function definitionGraph(): VisualGraph {
+  let graph: VisualGraph = { ...empty('Plug'), definition: { settings: [{ key: 'host', label: 'Host', type: 'string', value: '10.0.0.7' }, { key: 'level', label: 'Level', type: 'number', value: 3 }] } as never }
+  graph = add(graph, 'setting', 'host', { key: 'host' }, { x: 0, y: 100 })
+  return add(graph, 'setting', 'level', { key: 'level' }, { x: 0, y: 300 })
+}
+const argumentsOf = (graph: VisualGraph, id: string) => graph.nodes.find(n => n.id === id)!.config.arguments
+const wiresInto = (graph: VisualGraph, id: string) => graph.edges.flatMap(e => (e.kind === 'data' && e.target === id ? [`${e.source}.${e.sourcePort}->${e.targetPort}`] : []))
+
+it('applyClassCode keeps each typed value its setting still takes, and clears the rest by their labels', () => {
+  const before = [setting('Address'), setting('Port', 'integer'), setting('Whole', 'number'), setting('Ratio', 'number'), setting('Mode', 'enum', { options: ['eco', 'comfort'] }),
+    setting('Mode2', 'enum', { label: 'Second mode', options: ['eco', 'comfort'] }), setting('Flag', 'boolean'), setting('Gone', 'string', { label: 'Old setting' }), setting('Unset'), setting('Token')]
+  const graph = add(definitionGraph(), 'csharp_device', 'plug', { key: 'plug', name: 'Plug', signature: classSig(before), arguments: {
+    Address: lit('string', 'http://a'), Port: lit('number', 3), Whole: lit('number', 3), Ratio: lit('number', 2.5), Mode: lit('string', 'eco'), Mode2: lit('string', 'comfort'),
+    Flag: lit('boolean', true), Gone: lit('string', 'x'), Unset: { kind: 'unset' }, Token: lit('string', 'abc') } })
+  const after = [setting('Address'), setting('Port', 'number'), setting('Whole', 'integer'), setting('Ratio', 'integer'), setting('Mode', 'enum', { options: ['eco', 'away'] }),
+    setting('Mode2', 'enum', { label: 'Second mode', options: ['eco', 'away'] }), setting('Flag'), setting('Token', 'string', { secret: true })]
+  const result = applyClassCode(graph, 'plug', 'new code', classSig(after), catalog)
+  // Text into text, an integer into a number and a whole number into an integer, a text the enum still lists.
+  expect(argumentsOf(result.graph, 'plug')).toEqual({ Address: lit('string', 'http://a'), Port: lit('number', 3), Whole: lit('number', 3), Mode: lit('string', 'eco') })
+  // A fraction into an integer, a text the enum no longer lists, true into text, a setting gone, a setting now secret;
+  // the value of a setting gone that held none is dropped without a word.
+  expect(result.notices).toEqual(['Cleared 5 values that no longer fit: Ratio, Second mode, Flag, Old setting, Token'])
+  const node = result.graph.nodes.find(n => n.id === 'plug')!
+  expect(node.config.source).toBe('new code')
+  expect(node.config.signature).toEqual(classSig(after))
+  // Everything else of the node is as it was.
+  expect(node.config).toMatchObject({ key: 'plug', name: 'Plug' })
+})
+
+it('applyClassCode removes the wires into settings that are gone or no longer take the Setting, and keeps one into a setting now secret', () => {
+  let graph = add(definitionGraph(), 'device', 'hall', { key: 'hall', name: 'Hall' })
+  graph = add(graph, 'csharp_entity', 'thermo', { key: 'thermo', signature: classSig([setting('Address'), setting('Token'), setting('Count'), setting('Gone', 'string', { label: 'Old address' }), setting('Level', 'number')], 'sensor', 'Thermometer') })
+  graph = connectData(graph, 'hall', 'entities', 'thermo', 'device')
+  for (const port of ['Address', 'Token', 'Count', 'Gone']) graph = connectData(graph, 'host', 'value', 'thermo', port)
+  graph = connectData(graph, 'level', 'value', 'thermo', 'Level')
+  expect(wiresInto(graph, 'thermo')).toHaveLength(6)
+  const after = classSig([setting('Address'), setting('Token', 'string', { secret: true }), setting('Count', 'integer'), setting('Level', 'integer')], 'sensor', 'Thermometer')
+  const result = applyClassCode(graph, 'thermo', 'code', after, catalog)
+  // The device wire and the Setting wires that still fit stay: a secret is given by a Setting, a number Setting goes into an integer.
+  expect(wiresInto(result.graph, 'thermo')).toEqual(['hall.entities->device', 'host.value->Address', 'host.value->Token', 'level.value->Level'])
+  expect(result.notices).toEqual(['Removed 2 connections that no longer fit: Count, Old address'])
+  // Both notices together, in the Custom step's order.
+  const typed = updateNode(graph, 'thermo', { config: { ...graph.nodes.find(n => n.id === 'thermo')!.config, arguments: { Count: lit('string', 'x') } } })
+  const both = applyClassCode({ ...typed, edges: typed.edges.filter(e => !(e.kind === 'data' && e.targetPort === 'Count')) }, 'thermo', 'code', after, catalog)
+  expect(both.notices).toEqual(['Removed 1 connection that no longer fits: Old address', 'Cleared a value that no longer fits: Count'])
+})
+
+it('applyClassCode needs no refit for a changed type, and changes nothing for a signature its node cannot have', () => {
+  let graph = add(definitionGraph(), 'csharp_entity', 'thermo', { key: 'thermo', signature: classSig([setting('Address'), setting('Host')], 'sensor', 'Thermometer'), arguments: { Address: lit('string', 'http://a') } })
+  graph = connectData(graph, 'host', 'value', 'thermo', 'Host')
+  // A sensor becomes a switch: no step names it, so its values and wires stay.
+  const retyped = applyClassCode(graph, 'thermo', 'switch code', classSig([setting('Address'), setting('Host')], 'switch', 'Relay'), catalog)
+  expect(retyped.notices).toEqual([])
+  expect(argumentsOf(retyped.graph, 'thermo')).toMatchObject({ Address: lit('string', 'http://a') })
+  expect(argumentsOf(retyped.graph, 'thermo')).toEqual(argumentsOf(graph, 'thermo'))
+  expect(wiresInto(retyped.graph, 'thermo')).toEqual(['host.value->Host'])
+  expect(retyped.graph.nodes.find(n => n.id === 'thermo')!.config.signature).toMatchObject({ domain: 'switch', title: 'Relay' })
+  // The signature written is the node's own copy.
+  const given = classSig([setting('Address')], 'switch', 'Relay')
+  const own = applyClassCode(graph, 'thermo', 'code', given, catalog)
+  given.settings[0].label = 'Changed'
+  expect((own.graph.nodes.find(n => n.id === 'thermo')!.config.signature as ClassSignature).settings[0].label).toBe('Address')
+  // A setting keyed device (the C# entity's own pin), a signature not as the compiler writes it, a node without a class.
+  for (const refused of [classSig([setting('device')], 'sensor'), { title: 5 } as never])
+    expect(applyClassCode(graph, 'thermo', 'code', refused, catalog)).toEqual({ graph, notices: [] })
+  expect(applyClassCode(graph, 'host', 'code', classSig([]), catalog)).toEqual({ graph, notices: [] })
+  // A C# device has no device pin: a setting of that key is its own.
+  const device = add(definitionGraph(), 'csharp_device', 'plug', { key: 'plug', name: 'Plug' })
+  expect(applyClassCode(device, 'plug', 'code', classSig([setting('device')]), catalog).graph.nodes.at(-1)!.config.signature).toEqual(classSig([setting('device')]))
+})
+
+/** A C# device's code: Plug, with the settings Address and Token. */
+const plugCode = (token = '[Setting("Token")]') => `/// <summary>A plug.</summary>
+public class Plug : SharpDevice
+{
+    [Setting("Address")]
+    public string Address { get; set; } = "";
+
+    ${token}
+    public string Token { get; set; } = "";
+}`
+/** The saved entity definition `plug`: its C# device `plug` (Plug), its Address wired from the Setting `host`, its Token typed. */
+function plugDefinition(): VisualGraph {
+  const graph = add(definitionGraph(), 'csharp_device', 'plug', { key: 'plug', name: 'Plug', via: null, source: plugCode(),
+    signature: classSig([setting('Address'), setting('Token')]), arguments: { Token: lit('string', 'abc') } }, { x: 400, y: 100 })
+  return connectData(graph, 'host', 'value', 'plug', 'Address')
+}
+/** The editor page over a saved entity definition `plug` holding `graph`, as the panel mounts it. */
+function mountDefinition(graph: VisualGraph, options: { callWS?: (message: any) => unknown } = {}) {
+  const host = root(), fixture = visualFixture({ catalog })
+  const { definition, ...logic } = graph
+  fixture.entities.seed('plug', { name: 'Plug', settings: (definition as unknown as { settings: never[] }).settings, logic: { kind: 'graph', graph: logic as never } })
+  const callWS = vi.fn((message: any) => options.callWS?.(message) ?? fixture.callWS(message))
+  const hass = { ...fixture, callWS, user: { is_admin: true } }
+  const history = createMemoryHistory()
+  history.set({ value: '/entities/plug' })
+  dispose = render(() => <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <HassCtx.Provider value={hass as any}>
+      <MemoryRouter history={history}><Route path="/entities/:id" component={EntityDefinitionView} /></MemoryRouter>
+    </HassCtx.Provider></QueryClientProvider>, host)
+  // Unsaved changes, as the page shows them.
+  const dirty = () => host.querySelector('.hs-save-chip__text')?.textContent !== 'Saved'
+  return { host, fixture, callWS, dirty }
+}
+const kindLine = () => dialog()!.querySelector('.hs-code-bar__kind')!.textContent
+const settingNames = () => [...dialog()!.querySelectorAll('[aria-label="Settings"] .hs-code-pin__name')].map(el => el.textContent)
+
+it('opens a C# device\'s code from its card and its panel, headed by its kind, with its settings, checked as a C# device', async () => {
+  const { host, callWS } = mountDefinition(plugDefinition())
+  await vi.waitFor(() => expect(card(host, 'plug')).toBeTruthy())
+  button(card(host, 'plug'), 'Edit code of Plug')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  expect(kindLine()).toBe('C# device code')
+  expect(dialog()!.querySelector('h2')!.textContent).toBe('Plug')
+  expect(dialog()!.querySelector('[aria-label="Pins"]')).toBeNull()
+  expect(dialog()!.querySelector('[aria-label="Settings"] h3')!.textContent).toBe('Settings')
+  expect(settingNames()).toEqual(['Address', 'Token'])
+  await vi.waitFor(() => expect(state()).toBe('No problems'))
+  expect(previews(callWS).at(-1).request).toEqual({ operation: 'custom_preview', nodeId: 'plug', source: plugCode(), kind: 'csharp_device' })
+  expect(apply().disabled).toBe(false)
+  // A secret is said so; a code without settings says how to make one.
+  editors[0].change(plugCode('[Setting("Token", Secret = true)]'))
+  await vi.waitFor(() => expect(state()).toBe('No problems'))
+  expect([...dialog()!.querySelectorAll('[aria-label="Settings"] .hs-code-pin')].map(el => el.textContent)).toEqual([expect.not.stringContaining('Secret'), expect.stringContaining('Secret')])
+  editors[0].change('public class Plug : SharpDevice { }')
+  await vi.waitFor(() => expect(settingNames()).toEqual([]))
+  expect(dialog()!.querySelector('[aria-label="Settings"]')!.textContent).toContain('This class has no settings. Mark a property with [Setting] to make it an input.')
+  // Reset to example is the C# device's own template.
+  button(dialog()!, 'Code actions')!.click()
+  ;[...dialog()!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Reset to example')!.click()
+  expect(editors[0].model.getValue()).toBe(exampleSource('csharp_device', catalog))
+  button(dialog()!, 'Cancel')!.click()
+  button([...dialog()!.querySelectorAll('dialog')].find(d => d.open)!, 'Discard')!.click()
+  await vi.waitFor(() => expect(dialog()).toBeNull())
+  // The panel's button (the node is selected now), and E on the card.
+  button(host.querySelector('aside[aria-label="Node inspector"]')!, 'Edit code')!.click()
+  await vi.waitFor(() => expect(dialog()).not.toBeNull())
+  button(dialog()!, 'Cancel')!.click()
+  await vi.waitFor(() => expect(dialog()).toBeNull())
+  card(host, 'plug').dispatchEvent(new KeyboardEvent('keydown', { key: 'e', bubbles: true, cancelable: true }))
+  await vi.waitFor(() => expect(dialog()).not.toBeNull())
+  button(dialog()!, 'Cancel')!.click()
+  await vi.waitFor(() => expect(dialog()).toBeNull())
+  // A Setting node has no code.
+  expect(card(host, 'host').querySelector('.hs-card__code')).toBeNull()
+})
+
+it('applies a C# device\'s code as one undo step: the wire into a setting it dropped and the value typed into one now secret go, with both notices', async () => {
+  const { host } = mountDefinition(plugDefinition())
+  await vi.waitFor(() => expect(card(host, 'plug')).toBeTruthy())
+  const before = graphOf(host)
+  button(card(host, 'plug'), 'Edit code of Plug')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  const next = plugCode('[Setting("Token", Secret = true)]').replace('[Setting("Address")]\n    public string Address { get; set; } = "";\n\n    ', '')
+  editors[0].change(next)
+  await vi.waitFor(() => expect(settingNames()).toEqual(['Token']))
+  await vi.waitFor(() => expect(state()).toBe('No problems'))
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  apply().click()
+  await vi.waitFor(() => expect(dialog()).toBeNull())
+  const notice = () => host.querySelector('.hs-canvas-notice')?.textContent
+  expect(notice()).toBe('Removed 1 connection that no longer fits: Address. Cleared a value that no longer fits: Token.')
+  await vi.advanceTimersByTimeAsync(30_000)
+  expect(notice()).toBe('Removed 1 connection that no longer fits: Address. Cleared a value that no longer fits: Token.')
+  const after = graphOf(host)
+  const node = after.nodes.find(n => n.id === 'plug')!
+  expect(node.config.source).toBe(next)
+  expect(node.config.signature).toEqual({ title: 'Plug', description: 'A plug.', domain: null, settings: [setting('Token', 'string', { secret: true })] })
+  expect(node.config.arguments).toEqual({})
+  expect(wiresInto(after, 'plug')).toEqual([])
+  expect(node.config).toMatchObject({ key: 'plug', name: 'Plug' })
+  button(host, 'Undo')!.click()
+  expect(graphOf(host)).toEqual(before)
+})
+
+it('offers Apply for a C# entity only for a class it can be: a setting called device is refused, with the reason', async () => {
+  const graph = add(definitionGraph(), 'csharp_entity', 'thermo', { key: 'thermo', source: 'public class Thermometer : SharpSensor { }', signature: classSig([], 'sensor', 'Thermometer') }, { x: 400, y: 100 })
+  const { host, callWS } = mountDefinition(graph)
+  await vi.waitFor(() => expect(card(host, 'thermo')).toBeTruthy())
+  button(card(host, 'thermo'), 'Edit code of Thermometer')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  expect(kindLine()).toBe('C# entity code')
+  await vi.waitFor(() => expect(state()).toBe('No problems'))
+  expect(previews(callWS).at(-1).request.kind).toBe('csharp_entity')
+  // The check (the fixture's, which does not say it) passes; the node cannot have the setting.
+  const device = 'public class Thermometer : SharpSensor\n{\n    [Setting("Device")]\n    public string device { get; set; } = "";\n}'
+  editors[0].change(device)
+  await vi.waitFor(() => expect(state()).toBe('1 problem'))
+  expect(apply().disabled).toBe(true)
+  const reason = 'A setting cannot be called device: that is the pin the entity\'s device connects to'
+  const problems = () => [...dialog()!.querySelectorAll('[aria-label="Problems"] .hs-code-problem__message')].map(el => el.textContent)
+  expect(problems()).toEqual([reason])
+  // Said once when the server says it too.
+  const said = { sourceId: 'thermo', startLine: 3, startColumn: 5, endLine: 3, endColumn: 20, severity: 3, message: reason }
+  callWS.mockImplementation((message: any) => message.request?.operation === 'custom_preview'
+    ? Promise.resolve({ version: 1, ok: true, result: { valid: false, diagnostics: [said], signature: classSig([setting('device')], 'sensor', 'Thermometer') } })
+    : visualFixture({ catalog }).callWS(message))
+  editors[0].change(`${device}\n`)
+  await vi.waitFor(() => expect(dialog()!.querySelector('.hs-code-problem__where')?.textContent).toBe('Line 3, column 5'))
+  expect(problems()).toEqual([reason])
+  expect(state()).toBe('1 problem')
+  expect(apply().disabled).toBe(true)
+  // The help is about one class: its base, its settings and its life, and no Add for an entity.
+  button(dialog()!, 'How to write a C# entity')!.click()
+  const help = [...dialog()!.querySelectorAll('dialog')].find(d => d.open)!
+  for (const fact of ['one public class', 'SharpSwitch', '[Setting("Label")]', 'Secret = true', 'Setup()', 'Start()', 'Stop()', 'Stopping']) expect(help.textContent, fact).toContain(fact)
+  expect(help.textContent).not.toContain('Add(')
+  expect(help.textContent).not.toContain('[Node')
+})
+
+it('words the help of a C# device\'s code around SharpDevice and the entities it adds', async () => {
+  const node = plugDefinition().nodes.find(n => n.id === 'plug')!
+  const fixture = visualFixture({ catalog })
+  dispose = render(() => <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <HassCtx.Provider value={{ ...fixture, user: { is_admin: true } } as any}>
+      <CustomCodeEditor node={node} catalog={catalog} document="entity" onApply={() => {}} onClose={() => {}} />
+    </HassCtx.Provider></QueryClientProvider>, root())
+  await vi.waitFor(() => expect(dialog()?.open).toBe(true))
+  button(dialog()!, 'How to write a C# device')!.click()
+  const help = [...dialog()!.querySelectorAll('dialog')].find(d => d.open)!
+  expect(help.textContent).toContain('Writing a C# device')
+  for (const fact of ['SharpDevice', 'Add(', '[Setting("Label")]', 'Setup()', 'Start()', 'Stop()']) expect(help.textContent, fact).toContain(fact)
+  expect(help.textContent).not.toContain('[Node')
+})
+
+it('keeps a C# device\'s unapplied code in the draft by its kind, opens it again on Restore, and never in a node of another kind', async () => {
+  const first = mountDefinition(plugDefinition())
+  await vi.waitFor(() => expect(card(first.host, 'plug')).toBeTruthy())
+  button(card(first.host, 'plug'), 'Edit code of Plug')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  editors[0].change(`${plugCode()}\n// typed, not applied`)
+  dispose?.(); dispose = undefined
+  document.body.innerHTML = ''
+  const key = Object.keys(localStorage).find(k => k.startsWith('hass-sharp:draft:') && k.endsWith('plug'))!
+  const kept = JSON.parse(localStorage.getItem(key)!)
+  expect(kept.code).toEqual({ nodeId: 'plug', text: `${plugCode()}\n// typed, not applied`, kind: 'csharp_device' })
+  const restore = () => [...document.querySelectorAll<HTMLDialogElement>('dialog')].find(d => d.open && d.textContent?.includes('Restore unsaved changes'))
+  resetHost()
+  const second = mountDefinition(plugDefinition())
+  await vi.waitFor(() => expect(restore()).toBeTruthy())
+  button(restore()!, 'Restore')!.click()
+  await vi.waitFor(() => expect(editors).toHaveLength(1))
+  expect(kindLine()).toBe('C# device code')
+  expect(editors[0].model.getValue()).toBe(`${plugCode()}\n// typed, not applied`)
+  await vi.waitFor(() => expect(second.dirty()).toBe(true))
+  dispose?.(); dispose = undefined
+  document.body.innerHTML = ''
+  // The same draft as a Custom C# step's (no kind): the node of that id is a C# device, so the code is only offered to copy.
+  localStorage.setItem(key, JSON.stringify({ ...kept, code: { nodeId: 'plug', text: kept.code.text } }))
+  resetHost()
+  mountDefinition(plugDefinition())
+  await vi.waitFor(() => expect(restore()).toBeTruthy())
+  button(restore()!, 'Restore')!.click()
+  const left = () => [...document.querySelectorAll('dialog')].find(d => d.open && d.textContent?.includes('no longer exists'))
+  await vi.waitFor(() => expect(left()).toBeTruthy())
+  expect(left()!.querySelector('textarea')!.value).toBe(`${plugCode()}\n// typed, not applied`)
+  expect(dialog()).toBeNull()
+  expect(editors).toHaveLength(0)
+})
+
+it('checks a Custom C# step\'s code as a step, saying so', async () => {
+  const { callWS } = await open()
+  expect(previews(callWS)[0].request).toEqual({ operation: 'custom_preview', nodeId: 'code', source: template, kind: 'custom' })
 })
