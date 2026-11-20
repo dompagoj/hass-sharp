@@ -647,16 +647,21 @@ as a Device node's.
 
 `[Setting("Label")]` on a public property with a public setter makes it a setting:
 an input of the node, named by the label, whose pin id is the property's name. It may
-be a `string`, `bool`, `int`, `long`, `double` or an enum. `Description` is a line of
+be a `string`, `bool`, `int`, `long`, `double`, an enum, or an entity: `Entity` for
+any entity, or a domain's class such as `LightEntity` or `SensorEntity` for one of
+that domain's. `Description` is a line of
 help (the property's summary comment, when it has none); `Secret = true` makes it a
 secret; `Minimum` and `Maximum` bound an `int`, `long` or `double`. A C# entity's
-property cannot be named `device`, the id of its Device pin.
+property cannot be named `device`, the id of its Device pin. The code editor's
+**Settings** panel names an entity setting's type **Entity**, or **Entity (light)**
+for a domain's class.
 
 Each setting takes one of these:
 
 - **A value typed into the node**, in its field in the right panel: a text, a number
   (a whole one for an `int` or a `long`), true or false for a `bool`, one of the
-  members for an enum. A value outside the bounds is a problem on the node, and the
+  members for an enum, an entity picked from those of the setting's domain (any
+  entity for `Entity`). A value outside the bounds is a problem on the node, and the
   definition cannot be saved with it.
 - **A wire from a Setting step**, which gives one of the definition's
   [settings](#settings-and-secrets); no other step can feed it. Use this for what
@@ -664,10 +669,32 @@ Each setting takes one of these:
   **Settings**.
 - **Nothing**: the property keeps the value the class gives it.
 
+An entity setting takes no Setting step: pick its entity in the node. An entity id of
+another domain, sent through MCP, is a problem on the node ("Light is not a valid
+Light entity value"). The class gets a handle of the entity, which reads its state
+each time it is read (see [Follow another entity](#follow-another-entity)). An id
+Home Assistant does not have does not keep the definition from starting; reading the
+handle throws "Entity 'sensor.gone' is unavailable.". `LightEntity` and the other
+domains' classes are made from the entities Home Assistant has: a definition loaded
+before Home Assistant has given them fails to compile, and starts by itself once
+they arrive.
+
+A `string` or entity setting with no initializer and no `?` is required: the
+definition cannot be saved while its pin has neither a value nor a wire ("Source is
+required"). The host sets it before `Setup()`, so the compiler does not warn that it
+is not set; inside the constructor it is still null. Give a setting that may stay
+empty a `?` (`LightEntity? Light`) or an initializer (`= ""`); a default set in the
+constructor does not count. A setting does not take the `required` modifier. A
+required setting written with a backing field of its own still draws the compiler's
+warning, so write it as `{ get; set; }`. A required setting wired to a Setting step whose definition setting has no value can be
+saved, but the definition does not start, and says why: "Hall: Pinger: the setting
+Host has no value".
+
 A secret is never typed into the node: its field says "A secret is not typed here:
 connect a Setting". Add a secret setting to the definition, a Setting step for it,
-and connect the step to the node. The values are applied before `Setup()` runs, and
-a Setting step's value is read when the definition starts.
+and connect the step to the node. An entity setting cannot be secret. The values are
+applied before `Setup()` runs, and a Setting step's value is read when the definition
+starts.
 
 ### Keys and names
 
@@ -747,15 +774,64 @@ they had (see [restored state](#http-downloads-and-restored-state)) unless
   until the definition stops, or the handle it returns is disposed. A run that throws
   is logged as an error once for each new reason, and once when it works again, so a
   device that does not answer is not logged on every tick.
-- **`Track(entityId, change => …)`** runs each time an entity changes, with an
+- **`Track(entity, change => …)`** runs each time an entity changes, with an
   `EntityChange` of its new state (`To`) and its state before (`From`, null when it
-  has just appeared).
+  has just appeared). The entity is a handle, such as an entity setting, or an entity
+  id; a null handle throws `ArgumentNullException`.
 - **`State(entityId)`** reads an entity's state now; **`CallService(service, target,
   data, returnResponse)`** calls a service, also from `Stop()`; **`Log(message,
   level)`** writes to the Home Assistant log.
+- **`Services`** calls Home Assistant's services with typed methods, as a Custom C#
+  step's `context.Services` does: `await Services.Light.TurnOn(Light,
+  brightnessPct: 30)`, the target first, then the service's fields by name. It is
+  `CallService` with typed fields and works wherever `CallService` does; code that
+  calls a service Home Assistant no longer has fails to compile. Keep `CallService`
+  for a service known only when the code runs.
 
 `Every`, `Track`, `Http` and `Files` work from `Setup()` on (start timers and tracks in
 `Start()`); in the constructor they throw.
+
+### Follow another entity
+
+An entity setting gives the class an entity of Home Assistant, picked in the node.
+This C# entity is a sensor that reads twice what another sensor reads, and turns a
+light on while that is above a limit:
+
+<!-- compiled: Doubled -->
+```csharp
+/// <summary>Twice what another sensor reads; turns a light on while that is above a limit.</summary>
+public class Doubled : SharpSensor
+{
+    /// <summary>The sensor to follow.</summary>
+    [Setting("Source")]
+    public SensorEntity Source { get; set; }
+
+    /// <summary>The light to turn on while the reading is above the limit; none when left empty.</summary>
+    [Setting("Warning light")]
+    public LightEntity? Light { get; set; }
+
+    /// <summary>The reading above which the light is on.</summary>
+    [Setting("Limit")]
+    public double Limit { get; set; } = 100;
+
+    /// <summary>Follows the source from the moment the definition runs.</summary>
+    protected override Task Start()
+    {
+        Track(Source, async change =>
+        {
+            Value = Source.NumericState * 2;
+            if (Light != null && Source.NumericState > Limit) await Services.Light.TurnOn(Light);
+        });
+        return Task.CompletedTask;
+    }
+}
+```
+
+The node has three inputs. **Source** is required, so the definition is saved only
+once a sensor is picked; **Warning light** may stay empty; **Limit** is 100 unless a
+number is typed in. `Source.NumericState` reads the sensor's state when the callback
+runs, not when the definition started. `Services.Light.TurnOn(Light)` calls
+`light.turn_on` with the light as its target.
 
 ### Http and Files
 

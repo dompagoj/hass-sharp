@@ -43,6 +43,7 @@ static class ServiceCallTests
             FixtureCompiles();
             Naming();
             ClassServices();
+            TheGuidesClass();
             Targets();
             await Calling();
             await Cancelled();
@@ -214,6 +215,34 @@ static class ServiceCallTests
             """);
         Check(own.Valid && own.Diagnostics.All(d => d.Severity < 3), "a class with its own member named Services: " + Shown(own));
         Console.WriteLine("PASS service calls: a C# entity or device calls typed services through Services, a domain named like a member of it gets the next free name there, and a class's own Services hides it");
+    }
+
+    // The class the custom entities guide shows under "Follow another entity", read from the guide's block marked
+    // <!-- compiled: Doubled -->: it compiles as a C# entity with no diagnostic, warning included, and its signature has the
+    // required sensor Source, the optional light Light and the number Limit.
+    static void TheGuidesClass()
+    {
+        var lines = File.ReadAllLines("docs/custom-entities.md");
+        var marker = Array.IndexOf(lines, "<!-- compiled: Doubled -->");
+        Check(marker >= 0, "the guide marks no block <!-- compiled: Doubled -->");
+        var opening = Array.FindIndex(lines, marker + 1, l => l.StartsWith("```", StringComparison.Ordinal));
+        Check(opening == marker + 1 && lines[opening] == "```csharp", "the marker is not right before a csharp block: " + (opening >= 0 ? lines[opening] : "none"));
+        var closing = Array.IndexOf(lines, "```", opening + 1);
+        var source = string.Join("\n", lines[(opening + 1)..closing]);
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(Fixture("ha-entity-components.json")).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!));
+        Check(provider.UseEntitySchema([.. domains]).Accepted, "the entity classes were not installed");
+        provider.UseServiceSchema(Schema(Calls));
+        var node = new NodeLibraryCompiler(provider).Preview([], [new CustomNodeSource("doubled", source, "csharp_entity")]).Snapshot.Custom["doubled"];
+        var shown = string.Join(" | ", node.Diagnostics.Select(d => $"{d.Severity} {d.StartLine}:{d.StartColumn} {d.Message}"));
+        Check(node.Valid && node.Diagnostics.IsEmpty, "the guide's class compiles without a diagnostic: " + shown);
+        Check(node.Signature?["title"]?.GetValue<string>() == "Doubled" && node.Signature?["domain"]?.GetValue<string>() == "sensor", "the guide's class is the sensor Doubled: " + node.Signature?.ToJsonString());
+        static string Brief(JsonNode? setting) =>
+            $"{setting?["key"]}|{setting?["label"]}|{setting?["type"]}|{setting?["domain"]?.GetValue<string>() ?? "-"}|{setting?["required"]?.GetValue<bool>() ?? false}|{setting?["secret"]}";
+        string[] expected = ["Source|Source|entity|sensor|True|false", "Light|Warning light|entity|light|False|false", "Limit|Limit|number|-|False|false"];
+        var settings = node.Signature?["settings"]?.AsArray().Select(Brief).ToArray() ?? [];
+        Check(settings.SequenceEqual(expected), "the guide's class has a required Source of sensor, an optional Light of light and a number Limit: " + string.Join(", ", settings));
+        Console.WriteLine("PASS service calls: the class the custom entities guide shows compiles without a diagnostic, with a required sensor setting, an optional light setting and a number");
     }
 
     static void Targets()

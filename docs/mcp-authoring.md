@@ -448,7 +448,8 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   (declare it there too, or in a node library). The members a
   class has are in [custom entities](custom-entities.md#c-nodes).
 - **The signature.** `config.signature`, `{title, description, domain, settings:
-  [{key, label, description, type, secret, options?, minimum?, maximum?}]}`, is worked
+  [{key, label, description, type, secret, options?, minimum?, maximum?, domain?,
+  required?}]}`, is worked
   out from the code: `entities_preview` and `entities_save` do it (they pass
   `deriveSignatures: true`) and preview returns the `graph` with it, so leave it out.
   A signature out of date with the code is an error (`csharp.signature`); a value or
@@ -466,6 +467,16 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   setting takes only a wire from a Setting step: a value is refused
   (`setting.secretLiteral`), so add a secret setting to the definition and let the
   user enter it in the panel.
+- **Entity settings.** A property of type `Entity`, or of a domain's class such as
+  `LightEntity`, is a setting of `type: "entity"`, with `domain` for a domain's
+  class. Its value is an entity id, typed
+  `{"kind": "literal", "type": "entity_id:light", "value": "light.kitchen"}` (`entity_id`
+  for `Entity`); an id of another domain is refused on the pin. An entity setting
+  takes no Setting step, and cannot be secret.
+- **Required settings.** A string or entity setting with no initializer and no `?` is
+  required: the signature has `required: true`, and its pin without a value or a wire
+  is an error (`{Label} is required`). Give one that may stay empty a `?` or an
+  initializer; the C# `required` modifier is refused.
 - **Device.** A C# entity node has the `device` input of an Entity node, which a
   Device node's `entities` output is wired to; without it the entity stands alone. A
   C# device node has no `device` input and no entity is wired to it, its entities
@@ -483,8 +494,10 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
   definition's set-up time, 60 seconds; one that throws or takes longer keeps the
   definition from starting, with an `activationError` that names the node
   (`<definition>: <node name>: <reason>`, or `<definition>: <node name> could not be
-  created: <reason>`). When started has its own time. Each node's `Start()` runs
-  after the definition's own start, in node order (a device before its entities),
+  created: <reason>`). A required setting wired to a Setting step whose setting has no
+  value is saved, but the definition does not start:
+  `<definition>: <node name>: the setting <Label> has no value`. When started has its
+  own time. Each node's `Start()` runs after the definition's own start, in node order (a device before its entities),
   and `Stop()` when it stops or is replaced. Each save makes new instances, whose
   entities take back their last states.
 

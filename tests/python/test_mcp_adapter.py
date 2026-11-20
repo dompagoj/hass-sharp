@@ -1210,6 +1210,23 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                        'a C# device node has no device input and no entity is wired to it (its entities are the ones its code adds): its only inputs are its setting pins'):
             self.assertIn(phrase,definitions)
         self.assertNotIn('C# device node has no inputs',definitions)
+        # A setting may be an entity handle, given as a typed entity id and never by a Setting step; a string or entity
+        # setting with no initializer and no ? is required, and fails the start when the Setting wired to it has no value;
+        # the class follows a handle with Track and calls services with the typed methods of Services.
+        for phrase in ('a string, bool, int, long, double, enum or entity handle: Entity for any entity, or a domain\'s class such as LightEntity or SensorEntity',
+                       'Secret = true (never for an entity)','domain?, required?}]}',
+                       '{kind: literal, type: entity_id:light, value: light.kitchen}','entity_id:<domain> for a domain\'s class',
+                       'for a LightEntity with {Label} is not a valid Light entity value',
+                       'A string or entity setting with no initializer and no ? (public SensorEntity Source { get; set; }) is required',
+                       '({Label} is required)','never the required modifier',
+                       "An entity setting's pin takes no Setting step",
+                       'the setting <Label> has no value',
+                       'Track(entity, change => ...)',"Entity '<id>' is unavailable.",
+                       'Services.<Domain>.<Service>(...)','await Services.Light.TurnOn(Light, brightnessPct: 30)',
+                       'Http, Files, Track, State, CallService, Services and Log are members the class inherits from SharpComponent'):
+            self.assertIn(phrase,definitions)
+        for gone in ('a string, bool, int, long, double or enum','Http, Files, Track, State, CallService and Log'):
+            self.assertNotIn(gone,definitions)
         self.assertIn('in a C# entity node or a C# device node: see definitions',result['semantics']['csharp'])
         self.assertIn('kind csharp_entity',result['guidance']); self.assertIn('kind csharp_device',result['guidance'])
         self.assertEqual(result['guidance'],self.adapter.PROMPT)

@@ -219,6 +219,66 @@ class DocsExamplesTests(unittest.TestCase):
         self.assertEqual(sorted(called - known), [], "tools the doc names that llm.py does not have")
         self.assertEqual(sorted(known - written), [], "tools the doc leaves out")
 
+    def test_a_setting_can_be_an_entity_and_is_required_without_a_value(self):
+        # What a setting can be, as the assistant's rules and the three documents say it: an entity handle too (the old
+        # list of five types is gone), a string or entity setting with no initializer and no ? required, an entity pin
+        # fed by no Setting step, and a required setting whose Setting has no value failing the start.
+        definitions = llm_constants()["SEMANTICS"]["definitions"]
+        texts = {'SEMANTICS["definitions"]': definitions, **{doc.name: " ".join(doc.read_text(encoding="utf-8").split())
+                                                           for doc in (GUIDE, MCP, ROOT / "docs/backend/entity-definitions.md")}}
+        for name, text in texts.items():
+            with self.subTest(name):
+                self.assertIsNone(re.search(r"a `?string`?, `?bool`?, `?int`?, `?long`?, `?double`? or (an )?enum", text))
+                self.assertIn("LightEntity", text)
+        said = {
+            GUIDE.name: (
+                "It may be a `string`, `bool`, `int`, `long`, `double`, an enum, or an entity: `Entity` for any entity, or a domain's class such as `LightEntity` or `SensorEntity` for one of that domain's.",
+                "A `string` or entity setting with no initializer and no `?` is required:",
+                "An entity setting takes no Setting step:",
+                "the definition does not start, and says why: \"Hall: Pinger: the setting Host has no value\".",
+                "**`Track(entity, change => …)`**",
+                "**`Services`** calls Home Assistant's services with typed methods",
+            ),
+            MCP.name: (
+                "`{\"kind\": \"literal\", \"type\": \"entity_id:light\", \"value\": \"light.kitchen\"}`",
+                "A string or entity setting with no initializer and no `?` is required:",
+                "An entity setting takes no Setting step",
+                "`<definition>: <node name>: the setting <Label> has no value`",
+            ),
+            "entity-definitions.md": (
+                "type, secret, options?, minimum?, maximum?, domain?, required?}]}`",
+                "a setting's `type`, `secret`, `options`, `minimum`, `maximum`, `domain` or `required`",
+                "\"`{Definition}: {Name}: the setting {Label} has no value`\"",
+            ),
+        }
+        for name, sentences in said.items():
+            for sentence in sentences:
+                with self.subTest(name, said=sentence):
+                    self.assertIn(sentence, texts[name])
+        # The class the guide shows under Follow another entity is the one the runtime suite compiles (ServiceCallTests).
+        block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), "<!-- compiled: Doubled -->", "csharp")
+        self.assertIn("public class Doubled : SharpSensor", block)
+
+    def test_every_in_page_link_resolves_to_a_heading(self):
+        # A link to #part, in its own document or another one, names a heading there, as GitHub makes its anchor.
+        def anchors(path):
+            found = set()
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("#"):
+                    words = line.lstrip("#").strip().lower()
+                    found.add(re.sub(r"[^\w\- ]", "", words).replace(" ", "-"))
+            return found
+        for doc in DOCS:
+            for target in LINK.findall(doc.read_text(encoding="utf-8")):
+                if re.match(r"[a-z]+:", target) or "#" not in target:
+                    continue
+                file, part = target.split("#", 1)
+                path = (doc.parent / file).resolve() if file else doc
+                if path.suffix != ".md" or not path.exists():
+                    continue
+                with self.subTest(doc.name, target=target):
+                    self.assertIn(part, anchors(path), f"{doc.relative_to(ROOT)} links to {target}, a heading {path.name} does not have")
+
     def test_every_relative_link_resolves_to_a_file(self):
         for doc in DOCS:
             for target in LINK.findall(doc.read_text(encoding="utf-8")):

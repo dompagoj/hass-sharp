@@ -96,12 +96,19 @@ definition envelope"), `storage` (the file could not be read or written) and
   `{key, name, via?, source, signature?, arguments?}`. `source` is one public class
   deriving from an entity class (whose domain is the entity's) or from `SharpDevice`;
   `signature` is `{title, description, domain, settings:[{key, label, description,
-  type, secret, options?, minimum?, maximum?}]}`, required unless the request has
-  `deriveSignatures: true`, which writes it from the code; `arguments` holds a typed
-  value per setting pin, `{kind:"literal", type, value}`, keyed by the property's
+  type, secret, options?, minimum?, maximum?, domain?, required?}]}`, required
+  unless the request has `deriveSignatures: true`, which writes it from the code. A
+  setting's `type` is
+  `string`, `integer`, `number`, `boolean`, `enum` or `entity` (a property of type
+  `Entity`, or of a domain's class such as `LightEntity`, whose `domain` is then
+  written); `required: true` is written only for a string or entity property that is
+  not nullable and has no initializer. `arguments` holds a typed
+  value per setting pin, `{kind:"literal", type, value}` (an entity setting's type
+  `entity_id` or `entity_id:<domain>`, its value an entity id), keyed by the property's
   name, and a setting pin may instead take a data edge from a Setting step
-  (`sourcePort: "value"`), the only way to give a secret one. A C# entity's key is
-  among the entity keys, a C# device's among the device keys. A C# entity node has a
+  (`sourcePort: "value"`), the only way to give a secret one; an entity setting's pin
+  takes none. A required setting's pin with neither is "`{Label} is required`". A C#
+  entity's key is among the entity keys, a C# device's among the device keys. A C# entity node has a
   `device` input as an Entity node has; a C# device node has no `device` input (its
   only inputs are its setting pins, and no entity is wired to it), and `via` as a
   Device node's. Neither has outputs or execution ports.
@@ -218,8 +225,8 @@ else of the definition.
 A C# entity or C# device node's code is compiled as a class, its problems on the
 node's `source`. A stored `signature` that differs from the class's in its `domain`,
 the keys of its settings or their order, or a setting's `type`, `secret`, `options`,
-`minimum` or `maximum` is refused with `csharp.signature` on the node's `signature`:
-"The settings are out of date with the code: open Edit code and apply it"; one that
+`minimum`, `maximum`, `domain` or `required` is refused with `csharp.signature` on
+the node's `signature`: "The settings are out of date with the code: open Edit code and apply it"; one that
 differs in words only is refreshed. Then, for a node whose settings are current,
 each pin's value, typed or that of the Setting wired to it, is checked against its
 setting: a value the setting does not take is `setting.value` on the pin,
@@ -262,7 +269,10 @@ fails the start with "`{Definition}: {Name} could not be created: {reason}`" (a
 constructor that does not finish in time: "`its constructor did not finish within
 {n} s`"); a `[Setting]` setter or a `Setup()` that throws, or a `Setup()` that does
 not finish, with "`{Definition}: {Name}: {reason}`"; nothing of the definition is
-then registered.
+then registered. A required setting wired to a Setting whose saved value is null is
+accepted by save, and fails the start after its class is created and before its
+settings are applied or its `Setup()` runs, with
+"`{Definition}: {Name}: the setting {Label} has no value`".
 
 **set_enabled** turns a saved definition on or off without a new revision. Turned
 on, it is rebuilt against the libraries as saved now; off, it is unloaded and the
