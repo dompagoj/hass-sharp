@@ -274,7 +274,7 @@ static class EntityHostTests
         await Until(() => PushedAvailable("plug4:plug:relay", false) && PushedAvailable("plug4:plug:power", false), "every entity pushed unavailable");
         Check(host.Status == "failed" && host.Error == "start broke", $"status {host.Status}, error {host.Error}");
         Check(!PushedAvailable("plug4:plug:relay", true) && !PushedAvailable("plug4:plug:power", true), "nothing pushed available");
-        Check(Logs().Any(m => m.Contains("Plug four") && m.Contains("start broke")), "the failed start is logged with the definition name: " + string.Join(" | ", Logs()));
+        Check(Logs().Contains("Plug four: starting failed: start broke"), "the failed start is logged with the definition name: " + string.Join(" | ", Logs()));
         if (!manager.Entities.TryGet("plug4:plug:relay", out var found, out var relay)) throw new Exception("a failed definition stays in the directory");
         Check(found == host, "the directory answers the failed host");
         var refused = await Throws<InvalidOperationException>(() => host.Command(relay, "turn_on", default), "command to a failed definition");
@@ -430,7 +430,7 @@ static class EntityHostTests
     {
         Reset();
         var manager = Manager();
-        await Load(manager, Compiled("poller", "Poller", Entity("poller", "Poller"), () => new HostPoller()));
+        await Load(manager, Compiled("poller", "Poller", Entity("poller", "Poll sensor"), () => new HostPoller()));
         async Task Ticks(int more)
         {
             var from = HostPoller.Ticks;
@@ -461,7 +461,7 @@ static class EntityHostTests
     {
         Reset();
         var manager = Manager();
-        var host = await Load(manager, Compiled("ticker", "Ticker", Entity("ticker", "Ticker"), () => new HostTicker()));
+        var host = await Load(manager, Compiled("ticker", "Ticker", Entity("ticker", "Tick sensor"), () => new HostTicker()));
         await Until(() => HostTicker.Ticks >= 3, "the timer ticks again after throwing");
         Check(Logs().Contains("Ticker: the timer callback every 15 ms failed: tick broke"), "the timer failure is logged: " + string.Join(" | ", Logs()));
         Check(host.Status == "running", "the definition keeps running after a timer callback fails");
@@ -508,7 +508,7 @@ static class EntityHostTests
         await unloading.WaitAsync(TimeSpan.FromSeconds(5));
         string[] expected = ["device.Start", "relay.Start", "power.Start", "relay.Stop", "power.Stop", "device.Stop"];
         Check(Recorded().Where(c => c.EndsWith(".Start") || c.EndsWith(".Stop")).SequenceEqual(expected), "stop after start: " + string.Join(", ", Recorded()));
-        Check(Logs().Any(m => m.Contains("Plug nine") && m.Contains("stop broke")), "the failed Stop() is logged with the definition name: " + string.Join(" | ", Logs()));
+        Check(Logs().Contains("Plug nine: stopping failed: stop broke"), "the failed Stop() is logged with the definition name: " + string.Join(" | ", Logs()));
 
         // A Stop() that does not end holds unloading back only for the drain timeout.
         Reset();
@@ -520,7 +520,7 @@ static class EntityHostTests
         var clock = System.Diagnostics.Stopwatch.StartNew();
         await manager.UnloadScriptAsync("entity_plug9.cs").WaitAsync(TimeSpan.FromSeconds(5));
         Check(clock.Elapsed < TimeSpan.FromSeconds(2), $"a Stop() that never ends held unloading {clock.Elapsed.TotalSeconds:F1} s");
-        Check(Logs().Any(m => m.Contains("Plug nine") && m.Contains("did not finish")), "the slow Stop() is logged: " + string.Join(" | ", Logs()));
+        Check(Logs().Contains("Plug nine: Stop() did not finish within 0.2 s; unloading without waiting for it"), "the slow Stop() is logged: " + string.Join(" | ", Logs()));
         UserScript.RunDrainTimeout = TimeSpan.FromSeconds(10);
         Console.WriteLine("PASS entity host: stop waits for a running start, runs no Stop() for a host never started, is safe twice, and logs a Stop() that throws or does not end");
     }
@@ -564,7 +564,7 @@ static class EntityHostTests
         PyInterop.Log = broken;
         try
         {
-            var ticker = await Load(manager, Compiled("ticker2", "Ticker two", Entity("ticker", "Ticker"), () => new HostTicker()));
+            var ticker = await Load(manager, Compiled("ticker2", "Ticker two", Entity("ticker", "Tick sensor"), () => new HostTicker()));
             await Until(() => HostTicker.Ticks >= 3, "the timer ticks again although logging its failure throws");
             Check(ticker.Status == "running", "still running");
         }
@@ -689,7 +689,7 @@ static class EntityHostTests
             var manager = Manager();
             var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             HostWaiter.Gate = gate.Task;
-            var host = await Load(manager, Compiled("waiter", "Waiter", Entity("waiter", "Waiter"), () => new HostWaiter()));
+            var host = await Load(manager, Compiled("waiter", "Waiter", Entity("waiter", "Wait switch"), () => new HostWaiter()));
             await Until(() => PushedAvailable("waiter:waiter", true), "started");
             Task running = kind == "command"
                 ? host.Command((host.Entity("waiter:waiter") ?? throw new Exception("the host finds waiter:waiter")), "turn_on", default)
@@ -712,7 +712,7 @@ static class EntityHostTests
         {
             var manager = Manager();
             HostWaiter.Gate = new TaskCompletionSource().Task;
-            var host = await Load(manager, Compiled("waiter", "Waiter", Entity("waiter", "Waiter"), () => new HostWaiter()));
+            var host = await Load(manager, Compiled("waiter", "Waiter", Entity("waiter", "Wait switch"), () => new HostWaiter()));
             await Until(() => PushedAvailable("waiter:waiter", true), "started");
             _ = host.Command((host.Entity("waiter:waiter") ?? throw new Exception("the host finds waiter:waiter")), "turn_on", default);
             await Until(() => Recorded().Contains("command begins"), "the command began");
@@ -767,7 +767,7 @@ static class EntityHostTests
         Reset();
         var manager = Manager();
         HostSnapshots? device = null;
-        await Load(manager, Compiled("snap", "Snapshots", Device("snapshots", "Snapshots"), () => device = new HostSnapshots()));
+        await Load(manager, Compiled("snap", "Snapshots", Device("snapshots", "Snapshot board"), () => device = new HostSnapshots()));
         await Until(() => PushedAvailable("snap:snapshots:loop", true) && PushedAvailable("snap:snapshots:fine", true), "the entities after the failing one are published at start");
         Check(!Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "snap:snapshots:bad"), "the entity whose snapshot throws was published");
         const string failed = "Snapshots: publishing the state of entity 'bad' failed: no text";
@@ -784,7 +784,7 @@ static class EntityHostTests
         device.Bad.Available = false;
         device.Fine.IsOn = false;
         await Until(() => Snapshots().Any(s => s["uniqueId"]!.GetValue<string>() == "snap:snapshots:fine" && s["values"]!["is_on"]?.GetValue<bool>() == false), "the others publish on");
-        Check(Logs().Count(m => m.Contains("'bad' failed")) == 1, "the failing entity is logged again: " + string.Join(" | ", Logs()));
+        Check(Logs().Count(m => m == failed) == 1, "the failing entity is logged again: " + string.Join(" | ", Logs()));
         await manager.UnloadUserScriptsAsync();
 
         // A failure whose message throws is still reported, and the entities are published unavailable.
@@ -875,7 +875,7 @@ static class EntityHostTests
             HostKept.Narrow = false;
             var manager = Kept();
             HostKept? first = null;
-            await Load(manager, Compiled("kept", "Kept", Device("kept", "Kept"), () => first = new HostKept()));
+            await Load(manager, Compiled("kept", "Kept", Device("kept", "Memory board"), () => first = new HostKept()));
             await Until(() => PushedAvailable("kept:kept:dial", true), "started");
             Check(HostKept.SeenInSetup == null, "a first start has nothing to restore: " + HostKept.SeenInSetup);
             first!.Dial.Value = 12;
@@ -891,7 +891,7 @@ static class EntityHostTests
             HostKept.Narrow = true;
             manager = Kept();
             HostKept? second = null;
-            await Load(manager, Compiled("kept", "Kept", Device("kept", "Kept"), () => second = new HostKept()));
+            await Load(manager, Compiled("kept", "Kept", Device("kept", "Memory board"), () => second = new HostKept()));
             await Until(() => PushedAvailable("kept:kept:dial", true), "started again");
             Check(HostKept.SeenInSetup == 12, "Setup() sees the restored number: " + HostKept.SeenInSetup);
             JsonNode? First(string key) => Snapshots().First(s => s["uniqueId"]!.GetValue<string>() == "kept:kept:" + key)["values"];
@@ -931,7 +931,7 @@ static class EntityHostTests
             string Shown() => string.Join(" ", new[] { "relay", "level", "preset" }.Select(key => First(key)!.ToJsonString()));
             (HostFresh.Reading, HostFresh.Level) = (true, 30);
             var manager = Kept();
-            await Load(manager, Compiled("fresh", "Fresh", Device("fresh", "Fresh"), () => new HostFresh()));
+            await Load(manager, Compiled("fresh", "Fresh", Device("fresh", "Fresh board"), () => new HostFresh()));
             await Until(() => PushedAvailable("fresh:fresh:level", true), "started");
             Check(Shown() == """{"is_on":true} {"value":30} {"value":5}""", "the first run: " + Shown());
             await manager.UnloadUserScriptsAsync();
@@ -942,7 +942,7 @@ static class EntityHostTests
             Reset();
             (HostFresh.Reading, HostFresh.Level) = (false, 55);
             manager = Kept();
-            await Load(manager, Compiled("fresh", "Fresh", Device("fresh", "Fresh"), () => new HostFresh()));
+            await Load(manager, Compiled("fresh", "Fresh", Device("fresh", "Fresh board"), () => new HostFresh()));
             await Until(() => PushedAvailable("fresh:fresh:level", true), "started again");
             Check(Shown() == """{"is_on":false} {"value":55} {"value":5}""", "what the Setup()s set wins, and none restores nothing: " + Shown());
             await manager.UnloadUserScriptsAsync();

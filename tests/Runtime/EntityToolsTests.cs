@@ -358,7 +358,7 @@ static class EntityToolsTests
             await EntityTestHome.Until(() => silent.Open == 1 && failing.Ticks > 0, $"{what}: its request reaches the server and its timer ticks");
             connected.SetResult();
             await load;
-            Check(failure?.Message == "Failing: Tool: no plug answers at this host", $"{what}: " + failure);
+            Check(failure?.Message == "Failing: Meter: no plug answers at this host", $"{what}: " + failure);
             await EntityTestHome.Until(() => silent.Open == 0, $"{what}: the request it left in flight is cancelled ({silent.Open} open)");
             await Throws<ObjectDisposedException>(() => Task.FromResult(failing.Client), $"{what}: Http after it failed");
             var ticks = failing.Ticks;
@@ -371,8 +371,8 @@ static class EntityToolsTests
 
     // --- Through the host: the setup limit, and who owns the client. ---
 
-    // A definition whose one node is a C# device of key tool, named Tool, whose class is the test's own (EntityHostTests.Compiled).
-    static CompiledUserScript Compiled(string id, string name, Func<object> create) => EntityHostTests.Compiled(id, name, EntityHostTests.Device("tool", "Tool"), create);
+    // A definition whose one node is a C# device of key tool, named Meter, whose class is the test's own (EntityHostTests.Compiled).
+    static CompiledUserScript Compiled(string id, string name, Func<object> create) => EntityHostTests.Compiled(id, name, EntityHostTests.Device("tool", "Meter"), create);
 
     static UserScriptManager Manager(EntityTestHome home) => new() { Pump = new EntityStatePump(TimeSpan.FromMilliseconds(5)), FilesRoot = FilesRoot(home) };
 
@@ -406,7 +406,7 @@ static class EntityToolsTests
         manager = Manager(home);
         clock.Restart();
         (host, failure) = await Load(manager, Compiled("silent", "Silent", () => new ToolFetcher(server.Url("/silent.tflite"), silentSha)));
-        Check(host == null && failure is TimeoutException && failure.Message == "Silent: Tool: Setup() did not finish within 1 s", "a download that receives nothing fails the setup: " + failure);
+        Check(host == null && failure is TimeoutException && failure.Message == "Silent: Meter: Setup() did not finish within 1 s", "a download that receives nothing fails the setup: " + failure);
         Check(clock.Elapsed < TimeSpan.FromSeconds(5), $"the setup failed after {clock.Elapsed.TotalMilliseconds} ms");
         // The download the abandoned Setup() still waits on ends with the host.
         await EntityTestHome.Until(() => home.Logs(PyLogLevel.Info).Any(line => line.StartsWith("Silent: Downloading a file from 127.0.0.1 failed after 0 bytes", StringComparison.Ordinal)), "the abandoned download is cancelled");
