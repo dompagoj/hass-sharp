@@ -61,7 +61,13 @@ public static class VisualGraphContractTests
         // The article goes by the first sound; the editor's copy (words.article) is held to the same list.
         foreach (var (word, article) in new[] { ("input boolean", "an"), ("update", "an"), ("utility meter", "a"), ("unit", "a"), ("european", "a"), ("one", "a"), ("light", "a"), ("alarm control panel", "an"), ("humidifier", "a"), ("image", "an"), ("ozone", "an") })
             if (VisualGraphValidator.Words.Article(word) != article) throw new Exception($"Article of {word} must be {article}");
-        Console.WriteLine($"PASS visual graph contract: {fixtures.Count} shared contract fixtures");
+        // A Device node's configuration URL: the table the editor's validator is held to as well (visual-contract.test.ts),
+        // whose accepted URLs Home Assistant takes (test_entity_contract.py).
+        var urls = JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "configuration-urls.json")))!;
+        foreach (var (list, taken) in new[] { ("accepted", true), ("refused", false) })
+            foreach (var url in urls[list]!.AsArray().Select(u => u!.GetValue<string>()))
+                if (VisualGraphValidator.ConfigurationUrlTaken(url) != taken) throw new Exception($"Configuration URL {JsonValue.Create(url).ToJsonString()} must be {list}");
+        Console.WriteLine($"PASS visual graph contract: {fixtures.Count} shared contract fixtures, {urls["accepted"]!.AsArray().Count + urls["refused"]!.AsArray().Count} configuration URLs");
         return Task.CompletedTask;
     }
 

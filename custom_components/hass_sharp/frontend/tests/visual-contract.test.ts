@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
 import servicesFixture from '../../../../tests/fixtures/visual-services.json'
 import entityGraphOrder from '../../../../tests/fixtures/entity-graph-order.json'
+import configurationUrls from '../../../../tests/fixtures/configuration-urls.json'
 import * as contract from '../src/visual/contract'
 import type { Graph } from '../src/visual/contract'
 import { connectionIndex } from '../src/visual/connectionIndex'
@@ -70,6 +71,13 @@ describe('shared visual graph validation contract', () => {
 })
 // The shared fixture compares diagnostics sorted; the order of the later nodes a rule reports, and of an Entity node's
 // problems by pin, is pinned here and in the runtime's --entity-graph-order, from one graph.
+it('takes the configuration URLs of the shared table it accepts, and refuses those it refuses, as the server does', () => {
+  // tests/fixtures/configuration-urls.json, which VisualGraphContractTests holds the server's validator to; Home
+  // Assistant takes every accepted one (test_entity_contract.py).
+  for (const url of configurationUrls.accepted) expect(contract.configurationUrlTaken(url), JSON.stringify(url)).toBe(true)
+  for (const url of configurationUrls.refused) expect(contract.configurationUrlTaken(url), JSON.stringify(url)).toBe(false)
+})
+
 it('later nodes of a kind are reported in id order, of a key in graph order, and an Entity node\'s problems in its pins\' order', () => {
   const codes = ['node.singleton', 'definition.duplicateEntity', 'entity.partialState', 'command.unhandled', 'camera.no_frame']
   const got = contract.validateGraph(entityGraphOrder.graph as unknown as Graph).filter(d => codes.includes(d.code ?? ''))

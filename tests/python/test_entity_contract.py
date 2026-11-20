@@ -79,9 +79,12 @@ class EntityContractTest(unittest.TestCase):
 @unittest.skipIf(importlib.util.find_spec('homeassistant') is None,
                  'Home Assistant is not installed; run these inside the Home Assistant container')
 class ConfigurationUrlTests(unittest.TestCase):
-    """The validators refuse a Device node's configuration URL exactly when Home Assistant's device registry would."""
+    """The validators are never looser than Home Assistant's device registry: every configuration URL they accept,
+    in the shared fixture's Device nodes and in the table both validators are tested against
+    (tests/fixtures/configuration-urls.json), Home Assistant takes. The rule is narrower than Home Assistant's on
+    purpose, so a URL they refuse is not compared."""
 
-    def test_the_fixture_cases_refuse_what_home_assistant_refuses(self):
+    def test_every_url_the_validators_accept_home_assistant_takes(self):
         from homeassistant.helpers import device_registry
 
         # As _validate_device_info_fields checks a configuration_url given as text: its scheme one of
@@ -94,18 +97,15 @@ class ConfigurationUrlTests(unittest.TestCase):
             return parsed.scheme in device_registry.CONFIGURATION_URL_SCHEMES and bool(parsed.host)
 
         cases = json.loads((ROOT / 'tests/fixtures/visual-graph-validation.json').read_text())
-        checked = 0
-        for case in cases:
-            urls = [node['config']['configurationUrl'] for node in case['graph'].get('nodes', [])
+        accepted = [url for case in cases if case['valid'] for node in case['graph'].get('nodes', [])
                     if isinstance(node, dict) and node.get('kind') == 'device' and isinstance(node.get('config'), dict)
-                    and isinstance(node['config'].get('configurationUrl'), str)]
-            refused = 'device.configurationUrl' in case.get('codes', [])
-            # A case refuses one URL alone, or none of them.
-            for url in urls:
-                with self.subTest(case=case['name'], url=url):
-                    self.assertEqual(taken(url), not refused)
-                    checked += 1
-        self.assertGreaterEqual(checked, 8)
+                    and isinstance(url := node['config'].get('configurationUrl'), str)]
+        table = json.loads((ROOT / 'tests/fixtures/configuration-urls.json').read_text(encoding='utf-8'))
+        for url in [*accepted, *table['accepted']]:
+            with self.subTest(url=url):
+                self.assertTrue(taken(url))
+        self.assertGreaterEqual(len(accepted), 6)
+        self.assertGreaterEqual(len(table['accepted']), 15)
 
 
 if __name__ == '__main__':

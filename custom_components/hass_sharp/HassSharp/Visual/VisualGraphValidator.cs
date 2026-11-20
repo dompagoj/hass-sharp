@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using static HassSharp.VisualNodeCatalog;
@@ -480,6 +479,21 @@ public static class VisualGraphValidator
         internal static string NothingOn(string name, string command) => $"{name} does nothing on {command}: connect a step to {command}";
     }
 
+    /// <summary>
+    /// The configuration URLs a Device node may have: http, https or homeassistant in any case, then :// and an ASCII
+    /// host name or an IPv6 address in brackets, an optional port up to 65535, and then nothing or a path, query or
+    /// fragment with no white space, control character, backslash or character beyond U+FFFF. It is narrower than Home
+    /// Assistant's own check, which also takes a user before the host, a host that is not ASCII, an empty port or a
+    /// trailing line break, so that it stays small and its text means the same in .NET and JavaScript; every URL it
+    /// takes, Home Assistant takes.
+    /// </summary>
+    internal static readonly Regex ConfigurationUrlPattern = new(@"^(?:[Hh][Tt][Tt][Pp][Ss]?|[Hh][Oo][Mm][Ee][Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt])://(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?|\[[0-9A-Fa-f.:]*:[0-9A-Fa-f.:]*\])(?::(?<port>[0-9]{1,5}))?(?:[/?#][^\s\x00-\x1F\x7F-\x9F\uD800-\uDFFF\uFEFF\\]*)?(?![\s\S])", RegexOptions.CultureInvariant);
+    /// <summary>Whether a Device node may have <paramref name="url"/> as its configuration URL: <see cref="ConfigurationUrlPattern"/>, mirrored by
+    /// <c>configurationUrlTaken</c> in <c>contract.ts</c>.</summary>
+    internal static bool ConfigurationUrlTaken(string url) =>
+        ConfigurationUrlPattern.Match(url) is { Success: true } taken
+        && (taken.Groups["port"].Value is not { Length: > 0 } port || int.Parse(port, CultureInfo.InvariantCulture) <= 65535);
+
     sealed class Validation(VisualCatalogSnapshot snapshot)
     {
         JsonObject Root => snapshot.Root;
@@ -696,77 +710,6 @@ public static class VisualGraphValidator
         /// <see cref="VisualNodeCatalog.DeviceOf"/> derives it from the graph.
         /// </summary>
         bool OnDevice(JsonObject hub) => incoming.TryGetValue((Id(hub), "device"), out var wire) && Declares(Spec(nodes[Text(wire, "source")]), "device");
-        /// <summary>The schemes a Device node's configuration URL may have, lower-cased: what Home Assistant takes.</summary>
-        static readonly string[] ConfigurationUrlSchemes = ["http", "https", "homeassistant"];
-        /// <summary>
-        /// A port as Python's <c>int()</c> reads it: digits, single underscores between them, a sign, and around them ASCII
-        /// white space or Unicode's beyond ASCII. Its digits are ASCII only (Python's also takes other decimal digits).
-        /// </summary>
-        static readonly Regex ConfigurationUrlPort = new(@"^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*([+-]?)([0-9](?:_?[0-9])*)[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*\z", RegexOptions.CultureInvariant);
-        /// <summary>An IPvFuture host in brackets, as Home Assistant's URL parser (yarl) checks one.</summary>
-        static readonly Regex ConfigurationUrlFuture = new(@"^v[a-fA-F0-9]+\.[^\n]+\z", RegexOptions.CultureInvariant);
-        /// <summary>The code points Unicode marks Default_Ignorable_Code_Point, which yarl refuses in a host that is not ASCII.</summary>
-        static readonly Regex ConfigurationUrlIgnorable = new(@"[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8]|\uD82F[\uDCA0-\uDCA3]|\uD834[\uDD73-\uDD7A]|[\uDB40-\uDB43][\uDC00-\uDFFF]", RegexOptions.CultureInvariant);
-        /// <summary>A surrogate with no other half, which no host can encode.</summary>
-        static readonly Regex ConfigurationUrlLoneSurrogate = new(@"[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]", RegexOptions.CultureInvariant);
-        /// <summary>
-        /// Whether Home Assistant takes <paramref name="given"/> as a device's configuration URL: its device registry parses
-        /// it with yarl (<c>URL(text)</c>) and needs a scheme of <see cref="ConfigurationUrlSchemes"/> and a host. This reads
-        /// it as yarl does: control characters and spaces at its start are dropped, and tabs and line breaks anywhere; the
-        /// scheme is letters before the first <c>:</c>, in any case, and <c>//</c> follows it; the address runs to the first
-        /// <c>/</c>, <c>?</c> or <c>#</c> and has no backslash; what follows any <c>user@</c> is a host in brackets (one pair,
-        /// at its start, followed by nothing or a port, holding a <c>:</c> or an IPvFuture <c>v\u2026</c>) or a host up to a
-        /// <c>:</c>; a port is what Python's <c>int()</c> reads, 0 to 65535, or nothing; a host that is not ASCII has no
-        /// default-ignorable code point, and no character of the address becomes <c>/</c>, <c>?</c>, <c>#</c>, <c>@</c>,
-        /// <c>:</c> or <c>%</c> under NFKC. Mirrored by <c>configurationUrlTaken</c> in <c>contract.ts</c>; yarl's IDNA
-        /// encoding of a host that is not ASCII is not checked beyond that.
-        /// </summary>
-        static bool ConfigurationUrlTaken(string given)
-        {
-            if (ConfigurationUrlLoneSurrogate.IsMatch(given)) return false;
-            var url = given.TrimStart(WhatwgC0OrSpace).Replace("\t", "").Replace("\r", "").Replace("\n", "");
-            var colon = url.IndexOf(':');
-            if (colon <= 0 || !url[..colon].All(char.IsAsciiLetter) || !ConfigurationUrlSchemes.Contains(url[..colon].ToLowerInvariant())) return false;
-            var rest = url[(colon + 1)..];
-            if (!rest.StartsWith("//", StringComparison.Ordinal)) return false;
-            var end = rest.IndexOfAny(['/', '?', '#'], 2);
-            var netloc = end < 0 ? rest[2..] : rest[2..end];
-            if (netloc.Contains('\\')) return false;
-            bool left = netloc.Contains('['), right = netloc.Contains(']');
-            if (left != right) return false;
-            var hostinfo = netloc[(netloc.LastIndexOf('@') + 1)..];
-            string host, port;
-            if (left)
-            {
-                if (hostinfo.Length == 0 || hostinfo[0] != '[' || hostinfo.Count(c => c == '[') > 1 || hostinfo.Count(c => c == ']') > 1) return false;
-                var close = hostinfo.IndexOf(']');
-                host = close < 0 ? hostinfo[1..] : hostinfo[1..close];
-                var after = close < 0 ? "" : hostinfo[(close + 1)..];
-                if (after.Length > 0 && after[0] != ':') return false;
-                if (host.StartsWith('v') ? !ConfigurationUrlFuture.IsMatch(host) : !host.Contains(':')) return false;
-                port = after.Length > 0 ? after[1..] : "";
-            }
-            else
-            {
-                var at = hostinfo.IndexOf(':');
-                (host, port) = at < 0 ? (hostinfo, "") : (hostinfo[..at], hostinfo[(at + 1)..]);
-            }
-            if (!netloc.All(char.IsAscii))
-            {
-                var bare = netloc.Replace("@", "").Replace(":", "").Replace("#", "").Replace("?", "");
-                var normalized = bare.Normalize(NormalizationForm.FormKC);
-                if (normalized != bare && normalized.IndexOfAny(['/', '?', '#', '@', ':', '%']) >= 0) return false;
-            }
-            if (port.Length > 0)
-            {
-                if (ConfigurationUrlPort.Match(port) is not { Success: true } read) return false;
-                var digits = read.Groups[2].Value.Replace("_", "").TrimStart('0');
-                if (digits.Length > 5 || digits.Length > 0 && (read.Groups[1].Value == "-" || int.Parse(digits, CultureInfo.InvariantCulture) > 65535)) return false;
-            }
-            return host.Length > 0 && !ConfigurationUrlIgnorable.IsMatch(host);
-        }
-        /// <summary>What yarl drops from the start of a URL: the C0 control characters and space.</summary>
-        static readonly char[] WhatwgC0OrSpace = [.. Enumerable.Range(0, 0x21).Select(c => (char)c)];
         /// <summary>
         /// Whether a Device node's Part of, an object, is of its shape: <c>{deviceId}</c> (a Home Assistant device) or
         /// <c>{device}</c> (the key of another Device node), that one member, a text that is not blank once trimmed.

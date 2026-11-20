@@ -1229,63 +1229,19 @@ export type DiagnosticCode = typeof diagnosticCodes[number]
  * refused; one the graph already has is not a reason to refuse an unrelated connection (it may be the one that fixes it).
  */
 export const blockingDiagnostic = (d: { code?: string }) => d.code !== undefined && (d.code.startsWith('cycle.') || d.code.startsWith('scope.'))
-/** The schemes a Device node's configuration URL may have, lower-cased: what Home Assistant takes. */
-const configurationUrlSchemes = ['http', 'https', 'homeassistant']
 /**
- * A port as Python's `int()` reads it: digits, single underscores between them, a sign, and around them ASCII white space
- * or Unicode's beyond ASCII. Its digits are ASCII only. Mirrors `VisualGraphValidator` `ConfigurationUrlPort`.
+ * The configuration URLs a Device node may have: http, https or homeassistant in any case, then :// and an ASCII host
+ * name or an IPv6 address in brackets, an optional port up to 65535, and then nothing or a path, query or fragment with
+ * no white space, control character, backslash or character beyond U+FFFF. It is narrower than Home Assistant's own
+ * check, which also takes a user before the host, a host that is not ASCII, an empty port or a trailing line break, so
+ * that it stays small and its text means the same in .NET and JavaScript; every URL it takes, Home Assistant takes. Its
+ * text is `VisualGraphValidator` `ConfigurationUrlPattern`'s.
  */
-const configurationUrlPort = /^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*([+-]?)([0-9](?:_?[0-9])*)[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*$/
-/** An IPvFuture host in brackets, as Home Assistant's URL parser (yarl) checks one. */
-const configurationUrlFuture = /^v[a-fA-F0-9]+\.[^\n]+$/
-/** The code points Unicode marks Default_Ignorable_Code_Point, which yarl refuses in a host that is not ASCII. */
-const configurationUrlIgnorable = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8]|\uD82F[\uDCA0-\uDCA3]|\uD834[\uDD73-\uDD7A]|[\uDB40-\uDB43][\uDC00-\uDFFF]/
-/** A surrogate with no other half, which no host can encode. */
-const configurationUrlLoneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
-/**
- * Whether Home Assistant takes `given` as a device's configuration URL: its device registry parses it with yarl and
- * needs a scheme it takes and a host. Read as yarl reads it; see `VisualGraphValidator` `ConfigurationUrlTaken`, which
- * this mirrors step for step.
- */
-function configurationUrlTaken(given: string): boolean {
-  if (configurationUrlLoneSurrogate.test(given)) return false
-  const url = given.replace(/^[\x00-\x20]+/, '').replace(/[\t\r\n]/g, '')
-  const colon = url.indexOf(':')
-  if (colon <= 0 || !/^[A-Za-z]+$/.test(url.slice(0, colon)) || !configurationUrlSchemes.includes(url.slice(0, colon).toLowerCase())) return false
-  const rest = url.slice(colon + 1)
-  if (!rest.startsWith('//')) return false
-  const end = rest.slice(2).search(/[/?#]/)
-  const netloc = end < 0 ? rest.slice(2) : rest.slice(2, 2 + end)
-  if (netloc.includes('\\')) return false
-  const left = netloc.includes('['), right = netloc.includes(']')
-  if (left !== right) return false
-  const hostinfo = netloc.slice(netloc.lastIndexOf('@') + 1)
-  let host: string, port: string
-  if (left) {
-    if (!hostinfo.startsWith('[') || hostinfo.split('[').length > 2 || hostinfo.split(']').length > 2) return false
-    const close = hostinfo.indexOf(']')
-    host = close < 0 ? hostinfo.slice(1) : hostinfo.slice(1, close)
-    const after = close < 0 ? '' : hostinfo.slice(close + 1)
-    if (after.length > 0 && after[0] !== ':') return false
-    if (host.startsWith('v') ? !configurationUrlFuture.test(host) : !host.includes(':')) return false
-    port = after.slice(1)
-  } else {
-    const at = hostinfo.indexOf(':')
-    host = at < 0 ? hostinfo : hostinfo.slice(0, at)
-    port = at < 0 ? '' : hostinfo.slice(at + 1)
-  }
-  if (/[^\x00-\x7f]/.test(netloc)) {
-    const bare = netloc.replace(/[@:#?]/g, '')
-    const normalized = bare.normalize('NFKC')
-    if (normalized !== bare && /[/?#@:%]/.test(normalized)) return false
-  }
-  if (port.length > 0) {
-    const read = configurationUrlPort.exec(port)
-    if (read === null) return false
-    const digits = read[2].replace(/_/g, '').replace(/^0+/, '')
-    if (digits.length > 5 || (digits.length > 0 && (read[1] === '-' || Number(digits) > 65535))) return false
-  }
-  return host.length > 0 && !configurationUrlIgnorable.test(host)
+export const configurationUrlPattern = new RegExp(String.raw`^(?:[Hh][Tt][Tt][Pp][Ss]?|[Hh][Oo][Mm][Ee][Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt])://(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?|\[[0-9A-Fa-f.:]*:[0-9A-Fa-f.:]*\])(?::(?<port>[0-9]{1,5}))?(?:[/?#][^\s\x00-\x1F\x7F-\x9F\uD800-\uDFFF\uFEFF\\]*)?(?![\s\S])`)
+/** Whether a Device node may have `url` as its configuration URL: `configurationUrlPattern`, its port at most 65535. */
+export function configurationUrlTaken(url: string): boolean {
+  const groups = configurationUrlPattern.exec(url)?.groups
+  return groups !== undefined && (groups.port === undefined || Number(groups.port) <= 65535)
 }
 /**
  * Whether a Device node's Part of, an object, is of its shape: `{deviceId}` (a Home Assistant device) or `{device}` (the

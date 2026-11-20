@@ -40435,7 +40435,7 @@
     ]
   },
   {
-    "name": "a Device node's configuration URL with no address after homeassistant:// is refused",
+    "name": "a Device node's configuration URL with no host before its path is refused",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -40446,7 +40446,7 @@
           "config": {
             "key": "plug",
             "name": "Hall plug",
-            "configurationUrl": "homeassistant://"
+            "configurationUrl": "http:///path"
           }
         },
         {
@@ -40484,7 +40484,7 @@
     ]
   },
   {
-    "name": "a Device node's configuration URL with a port but no host is refused",
+    "name": "a Device node's configuration URL with a space in its host is refused",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -40495,56 +40495,7 @@
           "config": {
             "key": "plug",
             "name": "Hall plug",
-            "configurationUrl": "http://:8080/status"
-          }
-        },
-        {
-          "id": "motion",
-          "kind": "entity",
-          "config": {
-            "key": "motion",
-            "domain": "binary_sensor",
-            "name": "Motion"
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "plug.entities:motion.device",
-          "kind": "data",
-          "source": "plug",
-          "target": "motion",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        }
-      ],
-      "definition": {
-        "settings": []
-      }
-    },
-    "valid": false,
-    "nodeId": "plug",
-    "inputId": "configurationUrl",
-    "messages": [
-      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
-    ],
-    "codes": [
-      "device.configurationUrl"
-    ]
-  },
-  {
-    "name": "a Device node's configuration URL with a port Home Assistant cannot read is refused",
-    "graph": {
-      "version": 5,
-      "name": "Hall",
-      "nodes": [
-        {
-          "id": "plug",
-          "kind": "device",
-          "config": {
-            "key": "plug",
-            "name": "Hall plug",
-            "configurationUrl": "http://plug.local:99999/status"
+            "configurationUrl": "http://plug local/x"
           }
         },
         {
@@ -40593,7 +40544,7 @@
           "config": {
             "key": "plug",
             "name": "Hall plug",
-            "configurationUrl": "http://[zzz]/status"
+            "configurationUrl": "http://[zzz]"
           }
         },
         {
@@ -40631,7 +40582,7 @@
     ]
   },
   {
-    "name": "a Device node's configuration URL with no host before its path is refused",
+    "name": "a Device node's configuration URL that ends in a line break is refused",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -40642,7 +40593,7 @@
           "config": {
             "key": "plug",
             "name": "Hall plug",
-            "configurationUrl": "http:///status"
+            "configurationUrl": "http://plug.local:80\n"
           }
         },
         {
@@ -40680,7 +40631,7 @@
     ]
   },
   {
-    "name": "a Device node's configuration URL with text after its brackets is refused",
+    "name": "a Device node's configuration URL with a port above 65535 is refused",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -40691,7 +40642,7 @@
           "config": {
             "key": "plug",
             "name": "Hall plug",
-            "configurationUrl": "http://[::1]x/status"
+            "configurationUrl": "http://plug:70000"
           }
         },
         {
@@ -40729,7 +40680,7 @@
     ]
   },
   {
-    "name": "a Device node's configuration URL with a backslash in its address is refused",
+    "name": "a Device node's configuration URL with a user before its host is refused",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -40740,7 +40691,7 @@
           "config": {
             "key": "plug",
             "name": "Hall plug",
-            "configurationUrl": "http://plug\\local/status"
+            "configurationUrl": "http://user@plug.local"
           }
         },
         {
@@ -40778,56 +40729,7 @@
     ]
   },
   {
-    "name": "a Device node's configuration URL whose port is not a number is refused",
-    "graph": {
-      "version": 5,
-      "name": "Hall",
-      "nodes": [
-        {
-          "id": "plug",
-          "kind": "device",
-          "config": {
-            "key": "plug",
-            "name": "Hall plug",
-            "configurationUrl": "http://plug.local:8a/status"
-          }
-        },
-        {
-          "id": "motion",
-          "kind": "entity",
-          "config": {
-            "key": "motion",
-            "domain": "binary_sensor",
-            "name": "Motion"
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "plug.entities:motion.device",
-          "kind": "data",
-          "source": "plug",
-          "target": "motion",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        }
-      ],
-      "definition": {
-        "settings": []
-      }
-    },
-    "valid": false,
-    "nodeId": "plug",
-    "inputId": "configurationUrl",
-    "messages": [
-      "The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address"
-    ],
-    "codes": [
-      "device.configurationUrl"
-    ]
-  },
-  {
-    "name": "a Device node's configuration URL is read as Home Assistant reads it: a scheme in any case, an IPv6 address, a line break at its end, a space in its host",
+    "name": "a Device node's configuration URL with an address is valid: an IP address, a host in any case with a port, path, query and fragment, an IPv6 address, a Home Assistant page",
     "graph": {
       "version": 5,
       "name": "Hall",
@@ -40838,7 +40740,7 @@
           "config": {
             "key": "plug1",
             "name": "Plug 1",
-            "configurationUrl": "HTTP://plug.local"
+            "configurationUrl": "http://192.168.1.20"
           }
         },
         {
@@ -40847,7 +40749,7 @@
           "config": {
             "key": "plug2",
             "name": "Plug 2",
-            "configurationUrl": "Https://plug.local/status"
+            "configurationUrl": "HTTP://plug.local:8080/admin?x=1#top"
           }
         },
         {
@@ -40865,25 +40767,7 @@
           "config": {
             "key": "plug4",
             "name": "Plug 4",
-            "configurationUrl": "http://[::1]:8080/status"
-          }
-        },
-        {
-          "id": "plug5",
-          "kind": "device",
-          "config": {
-            "key": "plug5",
-            "name": "Plug 5",
-            "configurationUrl": "http://plug.local:80\n"
-          }
-        },
-        {
-          "id": "plug6",
-          "kind": "device",
-          "config": {
-            "key": "plug6",
-            "name": "Plug 6",
-            "configurationUrl": "http://plug local/status"
+            "configurationUrl": "homeassistant://config/integrations"
           }
         },
         {
@@ -40921,24 +40805,6 @@
             "domain": "binary_sensor",
             "name": "Relay 4"
           }
-        },
-        {
-          "id": "relay5",
-          "kind": "entity",
-          "config": {
-            "key": "relay5",
-            "domain": "binary_sensor",
-            "name": "Relay 5"
-          }
-        },
-        {
-          "id": "relay6",
-          "kind": "entity",
-          "config": {
-            "key": "relay6",
-            "domain": "binary_sensor",
-            "name": "Relay 6"
-          }
         }
       ],
       "edges": [
@@ -40971,90 +40837,6 @@
           "kind": "data",
           "source": "plug4",
           "target": "relay4",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        },
-        {
-          "id": "plug5.entities:relay5.device",
-          "kind": "data",
-          "source": "plug5",
-          "target": "relay5",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        },
-        {
-          "id": "plug6.entities:relay6.device",
-          "kind": "data",
-          "source": "plug6",
-          "target": "relay6",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        }
-      ],
-      "definition": {
-        "settings": []
-      }
-    },
-    "valid": true,
-    "noDiagnostics": true
-  },
-  {
-    "name": "a Device node's configuration URL with an address is valid, also a Home Assistant page",
-    "graph": {
-      "version": 5,
-      "name": "Hall",
-      "nodes": [
-        {
-          "id": "plug",
-          "kind": "device",
-          "config": {
-            "key": "plug",
-            "name": "Hall plug",
-            "configurationUrl": "http://10.0.0.5:8080/status"
-          }
-        },
-        {
-          "id": "hub",
-          "kind": "device",
-          "config": {
-            "key": "hub",
-            "name": "Hub",
-            "configurationUrl": "homeassistant://config/integrations"
-          }
-        },
-        {
-          "id": "motion",
-          "kind": "entity",
-          "config": {
-            "key": "motion",
-            "domain": "binary_sensor",
-            "name": "Motion"
-          }
-        },
-        {
-          "id": "door",
-          "kind": "entity",
-          "config": {
-            "key": "door",
-            "domain": "binary_sensor",
-            "name": "Door"
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "plug.entities:motion.device",
-          "kind": "data",
-          "source": "plug",
-          "target": "motion",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        },
-        {
-          "id": "hub.entities:door.device",
-          "kind": "data",
-          "source": "hub",
-          "target": "door",
           "sourcePort": "entities",
           "targetPort": "device"
         }

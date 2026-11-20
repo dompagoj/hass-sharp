@@ -75,8 +75,10 @@ definition envelope"), `storage` (the file could not be read or written) and
   `config` `{key, name, manufacturer?, model?, swVersion?, hwVersion?,
   configurationUrl?, suggestedArea?, via?}`. `key` follows the entity key rule and is
   unique among the devices (device and entity keys are apart); `name` is required;
-  `configurationUrl` is one Home Assistant takes: `http://`, `https://` or
-  `homeassistant://` followed by a host, with a port, if any, of at most 65535; `via`
+  `configurationUrl` is `http://`, `https://` or `homeassistant://` (in any case)
+  followed by an ASCII host name or a bracketed IPv6 address, an optional port of at
+  most 65535, and an optional path, query or fragment without white space, control
+  characters or backslashes (narrower than Home Assistant's own check); `via`
   is `{deviceId:"<Home Assistant device id>"}` or `{device:"<key of another Device
   node>"}`, and a key no Device node has or a circle is refused. An entity is on a
   device when a data edge goes from the Device node's `entities` output to the
