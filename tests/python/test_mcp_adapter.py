@@ -633,10 +633,14 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({d['id']:d['devices'] for d in result},{'hall':2,'motion':0,'plug':1,'lamp':1})
         self.assertFalse([d for d in result if 'device' in d])
         self.service.entities.assert_awaited_once_with({'operation':'list'},is_admin=True)
-        # A list of devices (as a read answer has a graph's) counts as many; none at all is 0.
+        # A list of devices (as a read answer has a graph's) counts as many; none at all is 0, and so is a true or false,
+        # which is no count although Python takes it for a number.
         self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(devices=[{'key':'a'},{'key':'b'}]),
-                                                                                      {**self.entity_document(id='bare'),'devices':None}]})
-        self.assertEqual([d['devices'] for d in (await self.call('entities_list',{})).data['result']],[2,0])
+                                                                                      {**self.entity_document(id='bare'),'devices':None},
+                                                                                      self.entity_document(id='flag',devices=True)]})
+        self.assertEqual([d['devices'] for d in (await self.call('entities_list',{})).data['result']],[2,0,0])
+        # Only a class definition that makes a device can be named as a class definition's Part of.
+        self.assertIn('{definition: <the id of another class definition that makes a device>}',self.adapter.SEMANTICS['definitions'])
         description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
         self.assertIn('devices (how many Home Assistant devices it makes: for a graph definition, its Device nodes',description)
         self.assertIn('1 when it gives device details or its class derives from SharpDevice, else 0',description)

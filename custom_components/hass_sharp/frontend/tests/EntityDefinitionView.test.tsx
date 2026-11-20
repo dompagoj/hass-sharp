@@ -348,8 +348,8 @@ const plugBody = (): DefinitionBody => ({
     { id: 'relay', kind: 'entity', config: { key: 'relay', domain: 'switch', name: 'Relay' }, position: { x: 60, y: 100 } },
     { id: 'power', kind: 'entity', config: { key: 'power', domain: 'sensor', name: 'Power', options: { unit: 'W' } }, position: { x: 60, y: 500 } }] } },
 })
-const openPlug = async (prepare?: (fixture: Fixture) => void, fixture?: Fixture, entities?: unknown) => {
-  const page = setup('/entities/plug', f => { if (!f.entities.documents.has('plug')) f.entities.seed('plug', plugBody()); prepare?.(f) }, fixture, entities)
+const openPlug = async (prepare?: (fixture: Fixture) => void, fixture?: Fixture) => {
+  const page = setup('/entities/plug', f => { if (!f.entities.documents.has('plug')) f.entities.seed('plug', plugBody()); prepare?.(f) }, fixture)
   await vi.waitFor(() => expect(page.root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
   return page
 }
@@ -445,7 +445,7 @@ it('deletes a saved definition after a confirmation that says its entities leave
   expect(dialog.textContent).toContain('Plug and its entities are removed from Home Assistant, with their devices. This cannot be undone.')
   button(dialog, 'Delete').click()
   await vi.waitFor(() => expect(history.get()).toBe('/entities'))
-  // The lists read again after it (Part of's among them).
+  // The lists read again after it.
   expect(fixture.entities.requests.filter(r => r.operation === 'delete')).toEqual([{ operation: 'delete', id: 'plug', expectedRevision: 1 }])
   expect(fixture.entities.documents.has('plug')).toBe(false)
   expect(root.querySelector('h1')!.textContent).toBe('Entities')

@@ -298,7 +298,7 @@ envelope; validation, conflicts and revisions work as above.
    is refused with `Cannot read entity definition <path>: <reason>`. Delete it with
    `expectedRevision` 0 (the user can also do so on the **Entities** page) and save
    it again; one listed with `deletable` false cannot be deleted so, and the user
-   removes its file from Home Assistant's `.storage/hass_sharp` folder by hand.
+   removes its file from Home Assistant's `.storage/hass_sharp/entities` folder by hand.
 7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
    one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
    command runs when the entity's service is called, an Entity node's state follows

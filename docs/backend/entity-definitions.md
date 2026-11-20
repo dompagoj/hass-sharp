@@ -104,8 +104,9 @@ definition envelope"), `storage` (the file could not be read or written) and
 - `device`, for a class definition: null for the class's own (a `SharpDevice`
   class always makes its device, a class of one entity then has none), or
   `{manufacturer?, model?, swVersion?, hwVersion?, configurationUrl?,
-  suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` (that
-  definition's device) or `{deviceId:"<Home Assistant device id>"}`. Each field
+  suggestedArea?, via?}`, where `via` is `{definition:"<id>"}` (the device of
+  another class definition that makes one; a graph definition is no device, so its
+  id names none) or `{deviceId:"<Home Assistant device id>"}`. Each field
   given overrides the class's own. `via` is not checked on save, and a cycle is not
   refused either; when the device is set up, a parent Home Assistant does not have
   is left out.

@@ -138,9 +138,9 @@ default**, the options of its type and its **Run history** (see
 [Run history](#run-history)). A required option left empty, such as a select's
 **Options**, says it is missing on its field, and **Save** waits for it.
 
-With no step selected, the panel on the right holds the definition's own form: its
-**Device** and its **Settings**, with any problem of the definition as a whole above
-them. On a phone, tap **Device and settings** at the bottom to open it. A problem of
+With no step selected, the panel on the right holds the definition's **Settings**,
+with any problem of the definition as a whole above them; its devices are its Device
+nodes (see [Devices](#devices)). On a phone, tap **Settings** at the bottom to open it. A problem of
 an entity is the Entity node's: choosing it in the **Problems** tab selects the node
 and puts the cursor in the field it is about.
 
@@ -661,12 +661,13 @@ of a class are not recorded: a class has no steps to trace.
 - While a save replaces a running definition, a command answers "The entity is not
   running".
 - Each card on the **Entities** page, and the editor's top bar, has an on/off
-  switch. A card says how many devices its definition makes: **Device** for one,
-  **2 devices** and so on for more, nothing for none.
+  switch. A definition that is on starts again whenever Home Assistant starts. A card
+  says how many devices its definition makes: **Device** for one, **2 devices** and so
+  on for more, nothing for none.
 - A definition built with steps is not a device itself: its devices are its Device
   nodes. One sent with a device, through MCP or the panel's API, is refused with
   "Devices are Device nodes in the graph now: leave device out, add a Device node and
-  connect its Entities pin to each entity's Device pin". A definition that is on starts again whenever Home Assistant starts.
+  connect its Entities pin to each entity's Device pin".
 - Turned off, the definition's entities stay in Home Assistant as unavailable. A
   definition saved off (a copy, or a new one saved with `enabled: false` through
   MCP) creates its entities the first time it is turned on.

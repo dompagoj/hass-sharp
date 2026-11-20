@@ -174,7 +174,8 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
             if (document is { Version: < Version, Logic.Kind: "graph" }) throw new JsonException(EarlierBuild);
             if (!Complete(document, id)) throw new JsonException("Invalid entity definition envelope");
             // A graph's devices are its Device nodes: a device of its own, which an earlier build of this phase stored, is
-            // not read, so that it still loads and regenerates as it was saved.
+            // not read: the document is answered, listed and sent back without it (EntityStoreTests
+            // AGraphDocumentsStoredDeviceIsNotRead).
             return document is { Logic.Kind: "graph", Device: not null } ? document with { Device = null } : document;
         }
     }

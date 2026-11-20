@@ -563,7 +563,7 @@ describe('devices in the right panel', () => {
     expect(partOf().selectedOptions[0].textContent).toBe('Another device of this definition')
     expect(local()!.querySelector('.hs-field-hint')).toBeNull()
 
-    // A Home Assistant device, as the definition's device form offers one: without the device of this definition's entities.
+    // A Home Assistant device, as a class definition's device form offers one: without the device of this definition's entities.
     pickLabel(partOf(), 'A Home Assistant device…')
     const ha = () => el.querySelector<HTMLElement>('.hs-inspector [data-field="viaDevice"]')
     await vi.waitFor(() => expect(ha()).not.toBeNull())
@@ -635,7 +635,7 @@ describe('devices in the right panel', () => {
       problem('key', 'definition.deviceKey', 'Give this device a key, such as plug'),
       problem('name', 'device.name', 'Name this device: Home Assistant shows it by this name'),
       problem('via', 'device.via', 'Part of must be nothing, a Home Assistant device or another device of this definition'),
-      problem('configurationUrl', 'device.configurationUrl', 'The configuration URL of Hall plug must start with http://, https:// or homeassistant://'),
+      problem('configurationUrl', 'device.configurationUrl', 'The configuration URL of Hall plug must start with http://, https:// or homeassistant://, followed by an address'),
       problem(undefined, 'device.empty', "Hall plug has no entities: connect its Entities pin to an entity's Device pin", 2),
     ]
     const { el } = mount(devices(), 'plug', nodeCatalog, { diagnostics })

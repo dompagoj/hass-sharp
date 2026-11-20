@@ -4,7 +4,8 @@ import { A, MemoryRouter, Route, createMemoryHistory } from '@solidjs/router'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { EntityDefinitionView } from '../src/views/EntityDefinitionView'
-import type { DefinitionBody } from '../src/entities/model'
+import type { DefinitionBody, DefinitionDevice } from '../src/entities/model'
+import { DeviceSection, deviceMemory } from '../src/entities/DeviceForm'
 import { visualFixture, type FixtureEntityType } from './visual-fixture'
 
 // An entity definition built from a class in a node library, on its own page, against the in-memory entity API: a
@@ -1094,17 +1095,25 @@ it("makes a class definition's device part of a Home Assistant device, and offer
   await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
   await vi.waitFor(() => expect(shown(view)).toEqual(['Nothing', 'Hub', 'Router', 'A Home Assistant device…']))
   // A Home Assistant device: the device picker, by name, without the plug's own device, each with its area. Until one
-  // is picked the device is still part of Hub, and the form says so.
+  // is picked the device is still part of Hub, and the form says so; the focus stays on Part of, and Tab goes on to the
+  // picker.
+  partOf(view).focus()
   choose(partOf(view), 'device')
   const picker = () => view.querySelector<HTMLInputElement>('section[aria-label="Device"] input[role="combobox"][aria-label="Home Assistant device"]')!
   await vi.waitFor(() => expect(picker()).not.toBeNull())
-  expect(view.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
+  expect(document.activeElement).toBe(partOf(view))
+  const focusable = [...view.querySelectorAll<HTMLElement>('section[aria-label="Device"] :is(input, select, textarea, button)')]
+  expect(focusable[focusable.indexOf(partOf(view)) + 1]).toBe(picker())
+  const hint = () => view.querySelector('section[aria-label="Device"] [data-field="viaDevice"] .hs-field-hint')
+  expect(hint()!.textContent).toBe('Still part of Hub until you pick a device.')
   picker().click()
   const options = () => [...view.querySelectorAll<HTMLElement>('section[aria-label="Device"] [role="option"]')]
   await vi.waitFor(() => expect(options().map(o => o.querySelector('span')!.textContent)).toEqual(['Attic router', 'Zigbee coordinator']))
   expect(options().map(o => o.querySelector('small')?.textContent ?? null)).toEqual(['Loft', null])
   options()[1].click()
   expect(partOf(view).value).toBe('device')
+  // Picked, it is no longer still part of Hub.
+  expect(hint()).toBeNull()
   save(root).click()
   await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toEqual({ model: 'S2', via: { deviceId: 'zigbee' } }))
   await vi.waitFor(() => expect(chip(root)).toBe('Saved'))
@@ -1132,6 +1141,63 @@ it('names a parent definition as it is called, until a Home Assistant device is 
   await vi.waitFor(() => expect(partOf(again).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
   choose(partOf(again), 'device')
   await vi.waitFor(() => expect(pending(again)).toBe('Still part of a definition that no longer exists until you pick a device.'))
+})
+
+it('shows a parent definition that no longer exists as such, which can be cleared, and is then no choice', async () => {
+  const partOf = (root: Element) => root.querySelector<HTMLSelectElement>('section[aria-label="Device"] [data-field="via"] select')!
+  const { root, fixture } = setup('/entities/plug', f => f.entities.seed('plug', { ...plug([{ key: 'Host', value: '10.0.0.1' }]), device: { manufacturer: 'Acme', via: { definition: 'gone' } } }))
+  const view = await ready(root)
+  await vi.waitFor(() => expect(partOf(view).selectedOptions[0]?.textContent).toBe('A definition that no longer exists'))
+  expect(partOf(view).value).toBe('definition:gone')
+  choose(partOf(view), '')
+  await vi.waitFor(() => expect([...partOf(view).options].map(o => o.textContent)).toEqual(['Nothing', 'A Home Assistant device…']))
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture).at(-1)!.definition.device).toEqual({ manufacturer: 'Acme' }))
+})
+
+it('turns a single entity\'s device back on as it was typed, and else as it was saved', async () => {
+  const { root, fixture } = setup('/entities/thermo', f => f.entities.seed('thermo', thermometer({ manufacturer: 'Acme', model: 'T1' })))
+  await ready(root)
+  await vi.waitFor(() => expect(deviceSwitch(root)?.checked).toBe(true))
+  // Nothing typed: off and on again, the saved device.
+  deviceSwitch(root).click()
+  await vi.waitFor(() => expect(root.querySelector('section[aria-label="Device"] [data-field="manufacturer"]')).toBeNull())
+  deviceSwitch(root).click()
+  await vi.waitFor(() => expect(control(root, 'Manufacturer').value).toBe('Acme'))
+  expect(control(root, 'Model').value).toBe('T1')
+  // Typed, then off and on again: as it was typed.
+  enter(control(root, 'Software version'), '1.2')
+  enter(control(root, 'Model'), '')
+  deviceSwitch(root).click()
+  await vi.waitFor(() => expect(root.querySelector('section[aria-label="Device"] [data-field="manufacturer"]')).toBeNull())
+  deviceSwitch(root).click()
+  await vi.waitFor(() => expect(control(root, 'Software version').value).toBe('1.2'))
+  expect(control(root, 'Model').value).toBe('')
+  save(root).click()
+  await vi.waitFor(() => expect(saves(fixture)).toHaveLength(1))
+  expect(saves(fixture)[0].definition.device).toEqual({ manufacturer: 'Acme', swVersion: '1.2' })
+})
+
+it('turns the device on as remembered for this definition, else as saved, else with no details', () => {
+  // DeviceSection on its own, as the class editor gives it a single entity's switch: what it turns on.
+  const turnedOn = (props: { memory: ReturnType<typeof deviceMemory>; savedId?: string; savedDevice?: DefinitionDevice | null }) => {
+    let given: DefinitionDevice | null | undefined
+    const host = document.createElement('div')
+    document.body.append(host)
+    const stop = render(() => <DeviceSection device={null} onChange={device => { given = device }} {...props} toggle={{ label: 'Group', hint: 'Grouped' }} />, host)
+    host.querySelector<HTMLInputElement>('input[role="switch"]')!.click()
+    stop(); host.remove()
+    return given
+  }
+  const saved: DefinitionDevice = { manufacturer: 'Acme', model: 'P2' }
+  const remembered = deviceMemory()
+  remembered.remember('thermo', { manufacturer: 'Typed' })
+  expect(turnedOn({ memory: remembered, savedId: 'thermo', savedDevice: saved })).toEqual({ manufacturer: 'Typed' })
+  // Remembered for another definition (a copy saved since): the saved device.
+  expect(turnedOn({ memory: remembered, savedId: 'thermo_copy', savedDevice: saved })).toEqual(saved)
+  // Nothing remembered (the page opened with the device off): the saved device, else one with no details.
+  expect(turnedOn({ memory: deviceMemory(), savedId: 'thermo', savedDevice: saved })).toEqual(saved)
+  expect(turnedOn({ memory: deviceMemory(), savedId: 'thermo', savedDevice: null })).toEqual({})
 })
 
 it('offers Part of to a single entity grouped as a device, and drops a device class whose only detail was its parent', async () => {

@@ -1229,22 +1229,63 @@ export type DiagnosticCode = typeof diagnosticCodes[number]
  * refused; one the graph already has is not a reason to refuse an unrelated connection (it may be the one that fixes it).
  */
 export const blockingDiagnostic = (d: { code?: string }) => d.code !== undefined && (d.code.startsWith('cycle.') || d.code.startsWith('scope.'))
-/** What a Device node's configuration URL may start with: what Home Assistant takes. */
-const configurationUrlSchemes = ['http://', 'https://', 'homeassistant://']
+/** The schemes a Device node's configuration URL may have, lower-cased: what Home Assistant takes. */
+const configurationUrlSchemes = ['http', 'https', 'homeassistant']
 /**
- * What follows the scheme of a configuration URL Home Assistant takes, as its URL parser reads it: an address up to the
- * first `/`, `?` or `#`, of what it is after any `user@`: a host, not empty (in brackets, or with no `:`, `@`, bracket or
- * backslash), and then a port of up to five digits, or none. Mirrors `VisualGraphValidator` `ConfigurationUrlAddress`.
+ * A port as Python's `int()` reads it: digits, single underscores between them, a sign, and around them ASCII white space
+ * or Unicode's beyond ASCII. Its digits are ASCII only. Mirrors `VisualGraphValidator` `ConfigurationUrlPort`.
  */
-const configurationUrlAddress = /^(?:[^/?#]*@)?(?:\[[^[\]/?#@]+\]|[^/?#@:[\]\\]+)(?::([0-9]{0,5}))?(?:[/?#]|$)/
+const configurationUrlPort = /^[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*([+-]?)([0-9](?:_?[0-9])*)[\t\n\v\f\r \u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]*$/
+/** An IPvFuture host in brackets, as Home Assistant's URL parser (yarl) checks one. */
+const configurationUrlFuture = /^v[a-fA-F0-9]+\.[^\n]+$/
+/** The code points Unicode marks Default_Ignorable_Code_Point, which yarl refuses in a host that is not ASCII. */
+const configurationUrlIgnorable = /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8]|\uD82F[\uDCA0-\uDCA3]|\uD834[\uDD73-\uDD7A]|[\uDB40-\uDB43][\uDC00-\uDFFF]/
+/** A surrogate with no other half, which no host can encode. */
+const configurationUrlLoneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 /**
- * Whether Home Assistant takes `url` as a device's configuration URL: a scheme it takes, then an address, its port, if
- * any, at most 65535. Mirrors `VisualGraphValidator` `ConfigurationUrlTaken`.
+ * Whether Home Assistant takes `given` as a device's configuration URL: its device registry parses it with yarl and
+ * needs a scheme it takes and a host. Read as yarl reads it; see `VisualGraphValidator` `ConfigurationUrlTaken`, which
+ * this mirrors step for step.
  */
-function configurationUrlTaken(url: string): boolean {
-  const scheme = configurationUrlSchemes.find(s => url.startsWith(s))
-  const address = scheme === undefined ? null : configurationUrlAddress.exec(url.slice(scheme.length))
-  return address !== null && (!address[1] || Number(address[1]) <= 65535)
+function configurationUrlTaken(given: string): boolean {
+  if (configurationUrlLoneSurrogate.test(given)) return false
+  const url = given.replace(/^[\x00-\x20]+/, '').replace(/[\t\r\n]/g, '')
+  const colon = url.indexOf(':')
+  if (colon <= 0 || !/^[A-Za-z]+$/.test(url.slice(0, colon)) || !configurationUrlSchemes.includes(url.slice(0, colon).toLowerCase())) return false
+  const rest = url.slice(colon + 1)
+  if (!rest.startsWith('//')) return false
+  const end = rest.slice(2).search(/[/?#]/)
+  const netloc = end < 0 ? rest.slice(2) : rest.slice(2, 2 + end)
+  if (netloc.includes('\\')) return false
+  const left = netloc.includes('['), right = netloc.includes(']')
+  if (left !== right) return false
+  const hostinfo = netloc.slice(netloc.lastIndexOf('@') + 1)
+  let host: string, port: string
+  if (left) {
+    if (!hostinfo.startsWith('[') || hostinfo.split('[').length > 2 || hostinfo.split(']').length > 2) return false
+    const close = hostinfo.indexOf(']')
+    host = close < 0 ? hostinfo.slice(1) : hostinfo.slice(1, close)
+    const after = close < 0 ? '' : hostinfo.slice(close + 1)
+    if (after.length > 0 && after[0] !== ':') return false
+    if (host.startsWith('v') ? !configurationUrlFuture.test(host) : !host.includes(':')) return false
+    port = after.slice(1)
+  } else {
+    const at = hostinfo.indexOf(':')
+    host = at < 0 ? hostinfo : hostinfo.slice(0, at)
+    port = at < 0 ? '' : hostinfo.slice(at + 1)
+  }
+  if (/[^\x00-\x7f]/.test(netloc)) {
+    const bare = netloc.replace(/[@:#?]/g, '')
+    const normalized = bare.normalize('NFKC')
+    if (normalized !== bare && /[/?#@:%]/.test(normalized)) return false
+  }
+  if (port.length > 0) {
+    const read = configurationUrlPort.exec(port)
+    if (read === null) return false
+    const digits = read[2].replace(/_/g, '').replace(/^0+/, '')
+    if (digits.length > 5 || (digits.length > 0 && (read[1] === '-' || Number(digits) > 65535))) return false
+  }
+  return host.length > 0 && !configurationUrlIgnorable.test(host)
 }
 /**
  * Whether a Device node's Part of, an object, is of its shape: `{deviceId}` (a Home Assistant device) or `{device}` (the
@@ -2061,10 +2102,10 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // its type needs: they can only be connected one at a time. A Device node left with no entities by the Device wire this
   // one replaces is only a warning about that device, as an unused value node is. Nothing else a Device node says (its key,
   // name, Part of, configuration URL) changes with a wire, so it is never new. An entity left with no device by that
-  // wire, and so in need of a name, is not the new wire's problem either: a wire the Device pin takes comes from a
-  // Device node, so the entity is left with none only by one refused for its type, which is refused for that alone (as
-  // the connection index says).
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && e.code !== 'entity.name' && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
+  // wire into its Device pin, and so in need of a name, is not the new wire's problem either: a wire the Device pin takes
+  // comes from a Device node, so the entity is left with none only by one refused for its type, which is refused for that
+  // alone (as the connection index says). Only that entity's name is passed over, and only for a wire into its Device pin.
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && !(e.code === 'entity.name' && e.nodeId === target && targetPort === 'device') && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)
