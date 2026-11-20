@@ -37,7 +37,7 @@
   - `device.via`: `Part of must be nothing, a Home Assistant device or another device of this definition`
   - `device.viaUnknown`: `{Name} is part of the device {key}, which is not a device of this definition: choose another, or none`
   - `device.viaCycle`: `{Name} ends up being part of itself: change what one of these devices is part of`
-  - `device.configurationUrl`: `The configuration URL of {Name} must start with http://, https:// or homeassistant://`
+  - `device.configurationUrl`: `The configuration URL of {Name} must start with http://, https:// or homeassistant://, followed by an address` (the last three words were added in Task 9's fix round, when the rule began to require a host)
   - `device.empty` (a warning): `{Name} has no entities: connect its Entities pin to an entity's Device pin`
   - `flow.declaration`: `{Name} is a device and is not part of the run order`
   - `entity.name` (existing words, kept): `Name this entity: it has no device, so Home Assistant shows it by its own name`
