@@ -12,7 +12,7 @@ public class DiagnosticsProvider
     readonly AdhocWorkspace _workspace;
     readonly ProjectId _baseProjectId;
 
-    readonly object _gate = new();
+    readonly Lock _gate = new();
     DocumentId? _servicesDocumentId, _entitiesDocumentId;
     GeneratedServiceCalls _serviceCalls;
 

@@ -139,11 +139,11 @@ public sealed record UnreadableDefinition(string Id, string Reason, bool Deletab
 /// </summary>
 public sealed class EntityDefinitionStore(string directory, DefinitionGenerator generator)
 {
-    static readonly ConcurrentDictionary<string, object> Gates = new();
+    static readonly ConcurrentDictionary<string, Lock> Gates = new();
     // The unreadable files List has logged, by full path, with the message logged: each is logged again only when its
     // message changes, not on every list (a retry lists them on each push of Home Assistant's services).
     static readonly ConcurrentDictionary<string, string> Skipped = new();
-    object Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
+    Lock Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
 
     // An entity's unique id is "<definition id>:<entity key>", so an id never holds a colon.
     internal string FilePath(string id)

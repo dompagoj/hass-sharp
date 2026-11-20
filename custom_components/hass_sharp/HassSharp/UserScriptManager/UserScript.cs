@@ -58,7 +58,7 @@ class UserScript
     internal string Generation { get; } = Guid.NewGuid().ToString("N");
     Task _preparation = Task.CompletedTask;
     Task? _cleanup;
-    readonly object _cleanupGate = new();
+    readonly Lock _cleanupGate = new();
     public string AutomationId { get; init; } = Guid.NewGuid().ToString("N");
     public string Revision => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CompiledScript.SourceCode)));
 

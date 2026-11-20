@@ -101,7 +101,7 @@ public sealed class VisualScope
     VisualScope? outer;
     VisualSnapshot? copies;
     // Parallel branches take copies from the scope they share at the same time.
-    readonly object gate=new();
+    readonly Lock gate=new();
     /// <summary>The most recent failure on this path, kept for the error path, Error details and <see cref="NodeContext.Error"/>.</summary>
     public Exception? LastError {get;set;}
     /// <summary>The name of the step that failed with <see cref="LastError"/>, as the canvas shows it.</summary>

@@ -70,7 +70,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     // the entities whose publish failed, the HTTP client and the downloads, and a graph's entities, their states, those
     // awaiting their first, the failing state flows and the frame flows. Never taken while a camera's own lock is wanted:
     // CameraFrames calls in here under its lock (Make), not the other way round.
-    readonly object gate = new();
+    readonly Lock gate = new();
     readonly List<Repeating> timers = [];
     readonly List<IDisposable> tracks = [];
     readonly HashSet<Task> running = [];
@@ -1077,7 +1077,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// </summary>
     sealed class SetupClock
     {
-        readonly object gate = new();
+        readonly Lock gate = new();
         readonly Stopwatch clock = Stopwatch.StartNew();
         TimeSpan stood, since;
         int receiving;
@@ -1138,7 +1138,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 /// </summary>
 internal sealed class FailureLog
 {
-    readonly object gate = new();
+    readonly Lock gate = new();
     string? reason;
 
     /// <summary>A failure for this reason: whether it is a new one, to be logged. It is the last reason from now on.</summary>

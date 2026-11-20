@@ -19,7 +19,7 @@ internal sealed class EntityStateStore(string path)
     /// <summary>How long a change waits before it is written, with every change made meanwhile; settable for tests.</summary>
     internal static TimeSpan FlushInterval { get; set; } = TimeSpan.FromSeconds(10);
 
-    readonly object gate = new();
+    readonly Lock gate = new();
     // One write at a time, so that an older state never replaces a newer one on disk.
     readonly SemaphoreSlim writing = new(1, 1);
     // Each id's values as JSON text and when they were remembered; null until the file is read.

@@ -11,7 +11,7 @@ namespace HassSharp;
 internal sealed class EntityStatePump(TimeSpan? debounce = null)
 {
     readonly TimeSpan delay = debounce ?? TimeSpan.FromMilliseconds(25);
-    readonly object gate = new();
+    readonly Lock gate = new();
     // One flush at a time, so batches reach Python in the order they were taken.
     readonly SemaphoreSlim sending = new(1, 1);
     // The JSON text pending per id, with the ids in first-posted order.

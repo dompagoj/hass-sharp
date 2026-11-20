@@ -31,8 +31,8 @@ public sealed record VisualDocument(int Version, string Id, long Revision, JsonO
 public sealed class VisualStore(string directory, VisualGenerator generator)
 {
     public static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-    static readonly ConcurrentDictionary<string, object> Gates = new();
-    object Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
+    static readonly ConcurrentDictionary<string, Lock> Gates = new();
+    Lock Gate => Gates.GetOrAdd(Path.GetFullPath(directory), _ => new());
     internal string FilePath(string id)
     {
         if (!Regex.IsMatch(id, @"^[a-z0-9][a-z0-9_-]{0,79}\z")) throw new ArgumentException("Invalid visual ID");

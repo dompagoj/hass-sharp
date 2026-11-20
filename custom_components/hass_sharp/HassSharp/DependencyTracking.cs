@@ -17,7 +17,7 @@ sealed class DelegateEntry(UserScript owner, Func<TriggerContext, Task> action)
 
 class DependencyTracking
 {
-    readonly object _gate = new();
+    readonly Lock _gate = new();
     readonly Dictionary<EntityId, List<DependencyEntry>> _dependencyTracking = new();
     // An entity is subscribed while either list has entries for it.
     readonly Dictionary<EntityId, List<DelegateEntry>> _delegates = new();

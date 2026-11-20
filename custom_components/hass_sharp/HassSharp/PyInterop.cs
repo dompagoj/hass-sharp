@@ -248,7 +248,7 @@ public static class PyInterop
 public sealed class HomeAssistantTriggerLease(string id) : IAsyncDisposable
 {
     Task? _cleanup;
-    readonly object _gate = new();
+    readonly Lock _gate = new();
     public ValueTask DisposeAsync()
     {
         lock (_gate) return new(_cleanup ??= RemoveAsync());

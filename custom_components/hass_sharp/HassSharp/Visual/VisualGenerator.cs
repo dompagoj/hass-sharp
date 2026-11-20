@@ -208,7 +208,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     }
     // Keyed by the accepted typed service calls (the object, swapped whole when they change) and a hash of the sources.
     static (GeneratedServiceCalls Services,string Key,VisualCatalogSnapshot Compiled)? LastCustom;
-    static readonly object CustomGate=new();
+    static readonly Lock CustomGate=new();
     /// <summary>
     /// Whether a stored signature has the pins the code gives: the same pure, input ids with their types, required,
     /// nullable and default, and output ids with their types. Titles, words and type entries are not compared.

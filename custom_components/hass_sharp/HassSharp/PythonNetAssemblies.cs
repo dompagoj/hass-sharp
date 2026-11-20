@@ -27,7 +27,7 @@ namespace HassSharp;
 /// </summary>
 static class PythonNetAssemblies
 {
-    static readonly object Gate = new();
+    static readonly Lock Gate = new();
     // Per handler field: the filter installed in it, or null after an attempt that failed (then it is not tried again).
     static readonly Dictionary<FieldInfo, AssemblyLoadEventHandler?> Installed = [];
     static bool _warned;

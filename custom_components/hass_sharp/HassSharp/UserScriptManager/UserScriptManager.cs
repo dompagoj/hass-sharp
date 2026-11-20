@@ -38,7 +38,7 @@ class UserScriptManager
 
     public static readonly AsyncLocal<TriggerContext?> CurrentTrigger = new();
 
-    internal object ActivationGate { get; } = new();
+    internal Lock ActivationGate { get; } = new();
     readonly SemaphoreSlim _updates = new(1, 1);
     readonly List<UserScript> _userScripts = new();
     readonly HashSet<UserScript> _preparing = new();

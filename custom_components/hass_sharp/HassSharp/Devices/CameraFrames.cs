@@ -70,7 +70,7 @@ internal sealed class CameraFrames
 
     sealed record Attempt(long Started, Making Making);
 
-    readonly object gate = new();
+    readonly Lock gate = new();
     Frame? current;
     // The last frame whose JPEG was made: the current one, or one before it.
     Frame? good;

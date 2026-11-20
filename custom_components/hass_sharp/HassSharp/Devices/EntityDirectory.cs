@@ -13,7 +13,7 @@ public sealed record LiveEntity(string UniqueId, string Key, string Domain, stri
 /// <summary>The started definitions by id, so a command from Home Assistant finds its entity by unique id.</summary>
 internal sealed class EntityDirectory
 {
-    readonly object gate = new();
+    readonly Lock gate = new();
     readonly Dictionary<string, DefinitionHost> hosts = new(StringComparer.Ordinal);
 
     /// <summary>The started definition and entity with this unique id, if there is one.</summary>

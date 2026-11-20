@@ -314,7 +314,7 @@ public partial class HassSharpManager
     }
 
     readonly ServiceCallSchema _serviceCallSchema;
-    readonly object _serviceCallsGate = new();
+    readonly Lock _serviceCallsGate = new();
 
     /// <summary>
     /// Regenerates <c>context.Services</c> from the live schema united with the one it was last generated from (persisted,
@@ -371,7 +371,7 @@ public partial class HassSharpManager
     }
 
     readonly ServiceCallSchema _entitySchema;
-    readonly object _entitiesGate = new();
+    readonly Lock _entitiesGate = new();
 
     /// <summary>
     /// Regenerates the entity classes from the live schema united with the one they were last generated from, as
@@ -394,7 +394,7 @@ public partial class HassSharpManager
         }
     }
 
-    readonly object _retryGate = new();
+    readonly Lock _retryGate = new();
     Task _retry = Task.CompletedTask;
 
     /// <summary>

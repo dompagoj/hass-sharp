@@ -35,6 +35,16 @@ To run them against the local container's Home Assistant, copy `tests/python` an
 run the suite from that directory with `HASS_SHARP_TEST_ROOT` set to it; remove the
 directory afterwards.
 
+## Locks in C# code
+
+A lock is a `System.Threading.Lock` field (`readonly Lock gate = new();`) taken with
+the `lock` statement. In new code, do not lock on an `object`, on `this`, or on a
+collection. Do not pass a `Lock` as an `object` or to `Monitor`: the compiler warns
+with CS9216, and `Monitor` would take a different lock. A lock that needs
+`Monitor.Wait` or `Pulse` would be the one exception, kept as an `object` with a
+comment saying why; there is none today. A `lock` cannot span an `await`; use a
+`SemaphoreSlim` there, as the code already does where it needs to.
+
 ## Run Home Assistant locally
 
 Run commands from the repository root. Use `docker-compose.yaml` here; the former

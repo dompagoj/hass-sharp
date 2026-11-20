@@ -62,7 +62,7 @@ public partial class HassSharpManager
         }
         return (documents, LibraryWorkspaceGeneration(documents, preview), preview);
     }
-    readonly object _savedLibrariesGate = new();
+    readonly Lock _savedLibrariesGate = new();
     (string Content, GeneratedServiceCalls Services, NodeLibraryPreview Preview)? _savedLibraries;
     // Only authoring validation of one graph sees the service schemas. Init and the library-save
     // rebuild use SavedLibraries' snapshot without them, so loading never depends on which
