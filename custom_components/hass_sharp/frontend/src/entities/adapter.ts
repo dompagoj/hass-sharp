@@ -2,6 +2,7 @@ import { createComponent } from 'solid-js'
 import type { HomeAssistant } from '../types'
 import type { EditorAdapter, EditorTexts } from '../visual/adapter'
 import type { VisualGraph } from '../visual/graph'
+import { definitionDeviceKeys } from '../visual/contract'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
 import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
@@ -111,12 +112,13 @@ export function entityAdapter(
     texts: entityTexts,
     runGroup: context => createComponent(DefinitionRunNow, { context }),
     overview: context => createComponent(DefinitionOverview, { context, memory }),
-    // An Entity node's key is fixed once saved; the line under it gives the entity id Home Assistant gave it.
+    // An Entity node's key is fixed once saved; the line under it gives the entity id Home Assistant gave it. So is a
+    // Device node's: the saved devices are the Device nodes of the graph as last read or saved.
     savedEntities: context => {
       const document = context.document
       if (!document) return undefined
       const entityIds = Object.fromEntries(liveEntitiesOf(document).flatMap(e => (e.entityId ? [[e.key, e.entityId] as const] : [])))
-      return { keys: (document.entities ?? []).map(e => e.key), entityIds }
+      return { keys: (document.entities ?? []).map(e => e.key), entityIds, deviceKeys: definitionDeviceKeys(document.graph, context.catalog) }
     },
     overviewIcon: icons.entity,
     // A problem about no step and no row of the form is listed at the form's top.

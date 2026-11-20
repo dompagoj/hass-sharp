@@ -73,6 +73,8 @@ export function NodeConfig(props: NodeConfigProps) {
   const descriptionId = createUniqueId(), nameErrorsId = `${descriptionId}-name-errors`
   const spec = createMemo(() => (Object.hasOwn(props.catalog.nodes, props.node.kind) ? props.catalog.nodes[props.node.kind] : undefined))
   const view = createMemo(() => buildNodeView(props.node, { graph: props.graph, catalog: props.catalog, diagnostics: props.diagnostics ?? [] }))
+  // The card's rows: an Entity node's Device pin, which carries no value, is its header's (`headerInput`) and is wired
+  // from its section's Device select, so it is not among them.
   const inputs = createMemo(() => new Map(view().rows.flatMap(row => (row.input ? [[row.input.port, row.input] as const] : []))))
   const ports = createMemo(() => [...inputs().keys()], undefined, { equals: sameList })
   const outputs = createMemo(() => view().rows.flatMap(row => (row.output?.kind === 'data' ? [row.output] : [])))
@@ -80,8 +82,9 @@ export function NodeConfig(props: NodeConfigProps) {
   const problems = createMemo(() => (props.diagnostics ?? []).filter(d => d.nodeId === props.node.id && d.severity >= 2))
   const errorsFor = (key: string) => problems().filter(d => d.severity === 3 && (d.inputId === key || d.portId === key)).map(d => d.message)
   const kind = () => props.node.kind
-  /** A node that declares an entity is named by it: its header edits the entity's name, not a label of the node. */
-  const declares = () => spec()?.declares === 'entity'
+  /** What the node declares (an entity, a device): it is named by it, so its header edits that name, not a label of the node. */
+  const declares = () => spec()?.declares
+  const nameLabel = () => (declares() === 'device' ? 'Device name' : declares() ? 'Entity name' : 'Node label')
   const kindLabel = () => spec()?.label ?? words.key(kind())
   /** A Custom C# node's pins, title and description, as its code gives them. */
   const signature = () => customSignature(props.node, props.catalog)
@@ -96,10 +99,10 @@ export function NodeConfig(props: NodeConfigProps) {
     else next[key] = value
     props.onChange(next, options)
   }
-  /** The header's text: an entity's name (left out when cleared, never null), else the node's label. */
+  /** The header's text: the declared entity's or device's name (left out when cleared, never null), else the node's label. */
   const retitle = (value: string) => {
     if (!declares()) return props.onGraphChange(updateNode(props.graph, props.node.id, { label: value || undefined }), { coalesce: `label:${props.node.id}` })
-    // An Entity node's own label is never shown: the name replaces it.
+    // An Entity or Device node's own label is never shown: the name replaces it.
     const { label: _label, ...node } = props.node
     const config = { ...node.config }
     if (value) config.name = value
@@ -107,7 +110,7 @@ export function NodeConfig(props: NodeConfigProps) {
     props.onGraphChange({ ...props.graph, nodes: props.graph.nodes.map(n => (n.id === node.id ? { ...node, config } : n)) }, { coalesce: `name:${props.node.id}` })
   }
   /**
-   * An entity's name left (or Enter pressed) is kept trimmed, in the same undo step as its typing: spaces are typed as
+   * A declared name left (or Enter pressed) is kept trimmed, in the same undo step as its typing: spaces are typed as
    * they come, and a name of only spaces is no name.
    */
   const commitTitle = () => {
@@ -256,7 +259,7 @@ export function NodeConfig(props: NodeConfigProps) {
       <header class="hs-insp-head" classList={{ 'hs-insp-head--trigger': kind() === 'trigger' }}>
         <span class="hs-insp-head__icon" title={view().identity.label}><Glyph paths={view().identity.icon} /></span>
         <div class="hs-insp-head__titles">
-          <input ref={title} class="hs-insp-title" aria-label={declares() ? 'Entity name' : 'Node label'}
+          <input ref={title} class="hs-insp-title" aria-label={nameLabel()}
             aria-describedby={describedBy(descriptionId, declares() && errorsFor('name').length > 0 && nameErrorsId)}
             data-input-id={declares() ? 'name' : undefined} aria-invalid={(declares() && errorsFor('name').length > 0) || undefined}
             value={declares() ? (typeof props.node.config.name === 'string' ? props.node.config.name : '') : props.node.label ?? ''}

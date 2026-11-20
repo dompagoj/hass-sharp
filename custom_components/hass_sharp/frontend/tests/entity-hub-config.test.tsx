@@ -240,7 +240,7 @@ it('a duplicated saved Entity node is a new entity: its own key, which can still
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={{ callWS: async () => ({ entities: [], areas: [], devices: [], floors: [], labels: [] }) } as never}>
         <Inspector graph={graph()} catalog={nodeCatalog} diagnostics={[]} commit={setGraph} docked onSelect={id => id && setSelected(id)}
-          selected={graph().nodes.find(n => n.id === selected())} selectedIds={[selected()]} savedEntities={{ keys: ['lamp'], entityIds: { lamp: 'light.lamp' } }} />
+          selected={graph().nodes.find(n => n.id === selected())} selectedIds={[selected()]} savedEntities={{ keys: ['lamp'], entityIds: { lamp: 'light.lamp' }, deviceKeys: [] }} />
       </HassCtx.Provider>
     </QueryClientProvider>
   ), root)
@@ -263,7 +263,7 @@ it('a duplicated saved Entity node is a new entity: its own key, which can still
 })
 
 it('a saved key cannot change, and an unsaved one renames the steps that use it', () => {
-  const saved = mount(add(lamp(), 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) }), 'l', { saved: { keys: ['lamp'], entityIds: {} } })
+  const saved = mount(add(lamp(), 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) }), 'l', { saved: { keys: ['lamp'], entityIds: {}, deviceKeys: [] } })
   const fixed = control(saved.root, 'Key')
   expect(fixed.readOnly).toBe(true)
   expect(fixed.value).toBe('lamp')
@@ -273,7 +273,7 @@ it('a saved key cannot change, and an unsaved one renames the steps that use it'
 
   let graph = add(lamp(), 'set_entity_state', 'set', { entity: 'lamp', is_on: lit('boolean', true) })
   graph = add(graph, 'entity', 'd', { key: 'desk', domain: 'switch', name: 'Desk' })
-  const { root, history, changed } = mount(graph, 'l', { saved: { keys: ['other'], entityIds: {} } })
+  const { root, history, changed } = mount(graph, 'l', { saved: { keys: ['other'], entityIds: {}, deviceKeys: [] } })
   const key = control(root, 'Key')
   expect(key.readOnly).toBe(false)
   expect(row(root, 'key')!.textContent).toContain('Steps that use the entity follow it. It cannot change once saved.')
@@ -296,8 +296,8 @@ it('the state values are inputs that can be set', () => {
   const { root, changed } = mount(lamp(), 'l')
   const inputs = root.querySelector('section[aria-label="Inputs"]')!
   expect(inputs).not.toBeNull()
-  // Its Device pin, then its state values.
-  expect([...inputs.querySelectorAll<HTMLElement>('[data-input-id]')].map(el => el.dataset.inputId)).toEqual(['device', 'is_on', 'brightness'])
+  // Its state values; its Device pin is wired from the section's Device select, never given a value here.
+  expect([...inputs.querySelectorAll<HTMLElement>('[data-input-id]')].map(el => el.dataset.inputId)).toEqual(['is_on', 'brightness'])
   expect(row(inputs, 'is_on')!.textContent).toContain('On')
   expect(row(inputs, 'brightness')!.textContent).toContain('Brightness')
   // Optional on the node: each starts not set, and Set value gives it its editor.
@@ -409,12 +409,12 @@ it('the entity name says its problem to a screen reader', () => {
 })
 
 it('the entity id line shows once Home Assistant has the entity', () => {
-  const none = mount(lamp(), 'l', { saved: { keys: ['lamp'], entityIds: {} } })
+  const none = mount(lamp(), 'l', { saved: { keys: ['lamp'], entityIds: {}, deviceKeys: [] } })
   expect(none.root.querySelector('button[aria-label^="Show "]')).toBeNull()
   dispose?.()
   document.body.innerHTML = ''
 
-  const { root } = mount(lamp(), 'l', { saved: { keys: ['lamp'], entityIds: { lamp: 'light.lamp' } } })
+  const { root } = mount(lamp(), 'l', { saved: { keys: ['lamp'], entityIds: { lamp: 'light.lamp' }, deviceKeys: [] } })
   const line = root.querySelector('code')!
   expect(line.textContent).toBe('light.lamp')
   const shown: unknown[] = []
@@ -435,7 +435,7 @@ it('the inspector hands the panel what Home Assistant has of the saved entities'
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={{ callWS: async () => ({}) } as never}>
         <Inspector graph={graph} catalog={nodeCatalog} diagnostics={[]} commit={() => {}} docked selected={graph.nodes[0]} selectedIds={['l']}
-          savedEntities={{ keys: ['lamp'], entityIds: { lamp: 'light.lamp' } }} />
+          savedEntities={{ keys: ['lamp'], entityIds: { lamp: 'light.lamp' }, deviceKeys: [] }} />
       </HassCtx.Provider>
     </QueryClientProvider>
   ), root)

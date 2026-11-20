@@ -389,6 +389,17 @@ export function NodeCard(props: NodeProps) {
         >
           <header class="hs-card__head">
             <Show when={current().execIn}>{pin => <Pin nodeId={id} pin={pin()} errors={pinErrors(pin(), 'in')} describedBy={errorsId} />}</Show>
+            {/* A root's structural input (an entity's Device pin), with the name of what is wired to it beside it. */}
+            <Show when={current().headerInput}>
+              {input => (
+                <>
+                  <Pin nodeId={id} pin={input().pin} errors={pinErrors(input().pin, input().port)} describedBy={errorsId} />
+                  <Show when={input().source}>
+                    {source => <span class="hs-source-chip hs-card__device" style={{ '--hs-pin-color': input().pin.color }} title={source()}>{source()}</span>}
+                  </Show>
+                </>
+              )}
+            </Show>
             <span class="hs-card__icon" title={current().identity.label}>
               <Icon paths={current().identity.icon} />
             </span>

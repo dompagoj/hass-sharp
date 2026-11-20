@@ -34,9 +34,10 @@ export interface EditorDocument {
 
 /**
  * What Home Assistant has of a saved document's entities: the keys of the saved entities (each part of its entity's
- * identity there, so it no longer changes) and the entity id it gave each one, by key.
+ * identity there, so it no longer changes), the entity id it gave each one, by key, and the keys of the saved devices
+ * (each part of its device's identity, so it no longer changes either).
  */
-export interface SavedEntities { keys: string[]; entityIds: Record<string, string> }
+export interface SavedEntities { keys: string[]; entityIds: Record<string, string>; deviceKeys: string[] }
 
 /** What a save answers. */
 export interface EditorSaveResult<D extends EditorDocument = EditorDocument> {

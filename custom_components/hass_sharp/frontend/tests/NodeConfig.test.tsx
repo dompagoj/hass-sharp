@@ -12,6 +12,7 @@ import { fieldOffered, filterFacts, targetEntities } from '../src/visual/Service
 import { HassCtx } from '../src/context'
 import services from '../../../../tests/fixtures/visual-services.json'
 import richCatalogFixture from '../../../../tests/fixtures/visual-rich-catalog.json'
+import { add, empty } from './visual-fixture'
 
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
@@ -551,6 +552,36 @@ it('names each C# type of an input that takes several, and the ? of a nullable o
   expect(either.querySelector('.hs-csharp-type')?.textContent).toBe('double or string or Entity')
   expect(either.textContent).toContain(', C# types double or string or Entity')
   expect(row(el, 'maybe')!.querySelector('.hs-csharp-type')?.textContent).toBe('int?')
+})
+
+it('the header input of a Device node edits its name', () => {
+  const graph = add(add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug' }), 'device', 'hub', { key: 'hub', name: 'Hub' })
+  const message = 'Name this device: Home Assistant shows it by this name'
+  const { el, node, history } = mount(graph, 'plug', { diagnostics: [{ nodeId: 'plug', inputId: 'name', code: 'device.name', message, severity: 3, startLine: null, startColumn: null }] })
+  const name = el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!
+  expect(name).not.toBeNull()
+  expect(el.querySelector('.hs-inspector input[aria-label="Node label"]')).toBeNull()
+  expect(el.querySelector('.hs-inspector input[aria-label="Entity name"]')).toBeNull()
+  expect(name.value).toBe('Hall plug')
+  expect(name.placeholder).toBe('Not set')
+  expect(name.dataset.inputId).toBe('name')
+  // Its problem is said to a screen reader and under it.
+  expect(name.getAttribute('aria-invalid')).toBe('true')
+  expect((name.getAttribute('aria-describedby') ?? '').split(' ').map(id => document.getElementById(id)?.textContent ?? '')).toContain(message)
+  // Typed as it comes, trimmed when left, in one undo step; a node of a declaring kind has no label of its own.
+  name.value = ' Kitchen plug '
+  name.dispatchEvent(new Event('input', { bubbles: true }))
+  expect(node().config.name).toBe(' Kitchen plug ')
+  name.dispatchEvent(new FocusEvent('blur'))
+  expect(node().config.name).toBe('Kitchen plug')
+  expect(node().label).toBeUndefined()
+  expect(node('hub').config.name).toBe('Hub')
+  history.undo()
+  expect(node().config.name).toBe('Hall plug')
+  // Only spaces is no name: left out.
+  type(name, '   ')
+  expect(node().config).not.toHaveProperty('name')
+  expect(node().config.key).toBe('plug')
 })
 
 it('edits the title, offers Duplicate, Copy node ID and Delete, and never shows the node id', async () => {

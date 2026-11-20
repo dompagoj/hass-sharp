@@ -8,8 +8,8 @@ import { EditorView } from '../src/views/VisualAutomationView'
 import type { EditorAdapter, EditorDocument } from '../src/visual/adapter'
 import type { VisualPreview } from '../src/visual/api'
 import { graphDocument } from '../src/visual/contract'
-import type { VisualGraph } from '../src/visual/graph'
-import { visualFixture } from './visual-fixture'
+import { updateNode, type VisualGraph } from '../src/visual/graph'
+import { add, empty, visualFixture } from './visual-fixture'
 import { automationAdapter } from '../src/visual/automationAdapter'
 import { entityAdapter } from '../src/entities/adapter'
 
@@ -406,13 +406,18 @@ it('the entity definition\'s adapter answers its saved entities\' keys and the e
   const adapter = entityAdapter({ callWS: async () => ({}) })
   const context = (document: unknown) => ({ document }) as unknown as Parameters<NonNullable<typeof adapter.savedEntities>>[0]
   expect(adapter.savedEntities!(context(undefined))).toBeUndefined()
-  const saved = { id: 'desk', entities: [{ key: 'lamp', domain: 'light' }, { key: 'fan', domain: 'switch' }], registeredEntities: [] }
+  // The saved devices are the Device nodes of the graph as it was read or saved (one with no key has none to keep).
+  let graph = add(add(empty(), 'device', 'plug', { key: 'plug', name: 'Plug' }), 'device', 'hub', { key: 'hub', name: 'Hub' })
+  graph = updateNode(add(graph, 'device', 'spare'), 'spare', { config: {} })
+  const saved = { id: 'desk', entities: [{ key: 'lamp', domain: 'light' }, { key: 'fan', domain: 'switch' }], registeredEntities: [], graph }
   // Running: its live entities; one Home Assistant has no id for yet is left out.
   expect(adapter.savedEntities!(context({ ...saved, liveEntities: [{ key: 'lamp', entityId: 'light.desk_lamp' }, { key: 'fan', entityId: null }] })))
-    .toEqual({ keys: ['lamp', 'fan'], entityIds: { lamp: 'light.desk_lamp' } })
+    .toEqual({ keys: ['lamp', 'fan'], entityIds: { lamp: 'light.desk_lamp' }, deviceKeys: ['plug', 'hub'] })
   // Off or failed: the entity registry's, by unique id.
   expect(adapter.savedEntities!(context({ ...saved, liveEntities: [], registeredEntities: [{ uniqueId: 'desk:fan', entityId: 'switch.desk_fan' }, { uniqueId: 'other:lamp', entityId: 'light.other' }] })))
-    .toEqual({ keys: ['lamp', 'fan'], entityIds: { fan: 'switch.desk_fan' } })
+    .toEqual({ keys: ['lamp', 'fan'], entityIds: { fan: 'switch.desk_fan' }, deviceKeys: ['plug', 'hub'] })
+  // No Device nodes: no saved devices.
+  expect(adapter.savedEntities!(context({ ...saved, graph: empty(), liveEntities: [] }))!.deviceKeys).toEqual([])
   // The automation editor has no entities.
   expect(automationAdapter({ callWS: async () => ({}) }).savedEntities).toBeUndefined()
 })

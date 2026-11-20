@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, type JSX } from 'solid-js'
-import { declaredDomain, declaredEntities, entityTypeLabel, words, type ConfigSpec } from '../visual/contract'
+import { connectData, declaredDevices, declaredDomain, declaredEntities, deviceNodeOf, disconnectData, entityNodeName, entityTypeLabel, words, type ConfigSpec } from '../visual/contract'
 import { keyProblem, keyRule, readNumber } from './definitionEdits'
 import { ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey } from './model'
@@ -23,10 +23,10 @@ const flows = [
 const At = (props: { id: string; children: JSX.Element }) => <div data-input-id={props.id}>{props.children}</div>
 
 /**
- * The right panel's section of an Entity node: its key (read only once saved), type, device class, icon, category,
- * whether it is enabled by default, each option of its type, which of its flows record their runs, and once Home
- * Assistant has the entity, its entity id. Its name is the inspector's header and its state values its inputs. A field
- * cleared is left out of the node's config, never stored as null.
+ * The right panel's section of an Entity node: its key (read only once saved), type, the device it is on (its Device
+ * pin, wired from here), device class, icon, category, whether it is enabled by default, each option of its type, which
+ * of its flows record their runs, and once Home Assistant has the entity, its entity id. Its name is the inspector's
+ * header and its state values its inputs. A field cleared is left out of the node's config, never stored as null.
  */
 export function EntityNodeSection(props: { ctx: StepPickerContext }) {
   const ctx = props.ctx
@@ -49,6 +49,25 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     ctx.onGraphChange(graph)
     const notice = refitNotice(removed)
     if (notice) ctx.onNotice?.(notice)
+  }
+  // The device it is on: the Device node wired to its Device pin. Each Device node is offered by its name (else its key,
+  // else Device) and chosen by its node, so two of one name are told apart by their place in the list.
+  const device = () => deviceNodeOf(ctx.graph(), ctx.node().id, ctx.catalog()) ?? ''
+  const deviceChoices = (): Choice[] => [
+    { value: '', label: 'None' },
+    ...declaredDevices(ctx.graph(), ctx.catalog()).map(d => {
+      const node = ctx.graph().nodes.find(n => n.id === d.nodeId)
+      return { value: d.nodeId, label: (node && entityNodeName(node, ctx.catalog())) || 'Device' }
+    }),
+  ]
+  // One change: a wire from another device is replaced, None removes it.
+  const wire = (nodeId: string) => {
+    try {
+      ctx.onGraphChange(nodeId ? connectData(ctx.graph(), nodeId, 'entities', ctx.node().id, 'device', ctx.catalog()) : disconnectData(ctx.graph(), ctx.node().id, 'device', ctx.catalog()))
+    } catch (error) {
+      // Refused: the wire would cause a problem, which the notice names; nothing changes.
+      ctx.onNotice?.(error instanceof Error ? error.message : String(error))
+    }
   }
   const types = () => Object.keys(ctx.catalog().entityDomains ?? {})
   const typeChoices = () => [
@@ -98,6 +117,10 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
       <At id="domain">
         <SelectField name="domain" label="Type" value={domain()} choices={typeChoices()} errors={ctx.errorsFor('domain')} onChange={retype}
           hint="Steps that use the entity follow its type." />
+      </At>
+      <At id="device">
+        <SelectField name="device" label="Device" value={device()} choices={deviceChoices()} errors={ctx.errorsFor('device')} onChange={wire}
+          hint="An entity on a device is listed on that device's page. None: it stands alone." />
       </At>
       <At id="deviceClass">
         <TextField name="deviceClass" label="Device class" text={text(config().deviceClass)} placeholder="None" errors={ctx.errorsFor('deviceClass')}

@@ -11,6 +11,8 @@ import { icons, nodeIdentity } from '../src/visual/icons'
 import { chooseEntity } from '../src/entities/NodePickers'
 import { refitNotice, retypeNode } from '../src/entities/refit'
 import { HassCtx } from '../src/context'
+import type { SavedEntities } from '../src/visual/adapter'
+import type { VisualDiagnostic } from '../src/visual/api'
 import { add, empty, lit } from './visual-fixture'
 
 // The steps of an entity definition name its entities (each an Entity node) and its settings by key; the inspector
@@ -49,10 +51,16 @@ const configOf = (graph: VisualGraph, id: string) => graph.nodes.find(n => n.id 
 const registryEntity = (entity_id: string, name: string, state_options: string[] | null = null) => ({
   entity_id, name, domain: entity_id.split('.')[0], area_id: null, device_id: null, device_class: null, supported_features: null, unit: null, icon: null, disabled: false, state_options,
 })
-const registry = { entities: [registryEntity('climate.living', 'Living room', ['off', 'heat', 'cool']), registryEntity('binary_sensor.motion', 'Motion'), registryEntity('camera.front_door', 'Front door')], areas: [], devices: [], floors: [], labels: [] }
+const registry = {
+  entities: [registryEntity('climate.living', 'Living room', ['off', 'heat', 'cool']), registryEntity('binary_sensor.motion', 'Motion'), registryEntity('camera.front_door', 'Front door'),
+    // The relay of the saved definition below, on the device Home Assistant made for it.
+    { ...registryEntity('switch.hall_relay', 'Relay'), device_id: 'own' }],
+  areas: [], floors: [], labels: [],
+  devices: [{ id: 'router', name: 'Router', area_id: null }, { id: 'own', name: 'Hall plug', area_id: null }],
+}
 
 /** The inspector of one node over a graph history, as the editor wires them. */
-function mount(graph: VisualGraph, id: string, catalog = nodeCatalog) {
+function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[] } = {}) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
@@ -64,8 +72,8 @@ function mount(graph: VisualGraph, id: string, catalog = nodeCatalog) {
   dispose = render(() => (
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={hass as any}>
-        <Inspector graph={history.graph()} catalog={catalog} diagnostics={[]} commit={history.commit} onNotice={text => notices.push(text)}
-          selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} />
+        <Inspector graph={history.graph()} catalog={catalog} diagnostics={options.diagnostics ?? []} commit={history.commit} onNotice={text => notices.push(text)}
+          selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} savedEntities={options.saved} />
       </HassCtx.Provider>
     </QueryClientProvider>
   ), el)
@@ -435,6 +443,204 @@ it('keeps the state as text for an entity whose states are not known', async () 
   expect(field(el, 'state').querySelector('select')).toBeNull()
 })
 
+describe('devices in the right panel', () => {
+  /**
+   * A relay, and four Device nodes in this order: Hall plug (key plug), Hub (key hub), a second Hall plug (key twin)
+   * and one with neither a name nor a key (spare).
+   */
+  const devices = () => {
+    let graph = entityGraph({ nodes: [{ key: 'relay', domain: 'switch', name: 'Relay' }] })
+    graph = add(graph, 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+    graph = add(graph, 'device', 'hub', { key: 'hub', name: 'Hub' })
+    graph = add(graph, 'device', 'twin', { key: 'twin', name: 'Hall plug' })
+    return updateNode(add(graph, 'device', 'spare'), 'spare', { config: {} })
+  }
+  const select = (el: Element, key: string) => field(el, key).querySelector<HTMLSelectElement>('select')!
+  const pick = (control: HTMLSelectElement, value: string) => {
+    control.value = value
+    control.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  const pickLabel = (control: HTMLSelectElement, label: string) => pick(control, [...control.options].find(o => o.textContent === label)!.value)
+  /** The control a field's label names, in the inspector. */
+  const control = <T extends HTMLElement = HTMLInputElement>(el: Element, label: string) => {
+    const found = [...el.querySelectorAll<HTMLLabelElement>('.hs-inspector label.hs-insp-field__label')].find(l => l.textContent === label)
+    expect(found, label).toBeDefined()
+    return el.querySelector<T>(`[id="${found!.htmlFor}"]`)!
+  }
+  const typeInto = (input: HTMLInputElement, value: string) => {
+    input.value = value
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new FocusEvent('blur'))
+  }
+  const wires = (graph: VisualGraph) => graph.edges.filter(e => e.kind === 'data' && e.target === 'relay' && e.targetPort === 'device')
+
+  it('the Device select of an Entity node wires and unwires it', async () => {
+    const { el, history } = mount(devices(), 'relay')
+    expect(field(el, 'device').querySelector('label')!.textContent).toBe('Device')
+    // Every Device node by its name, else its key, else Device: two of one name are both offered.
+    expect([...select(el, 'device').options].map(o => o.textContent)).toEqual(['None', 'Hall plug', 'Hub', 'Hall plug', 'Device'])
+    expect(select(el, 'device').value).toBe('')
+    expect(field(el, 'device').querySelector('.hs-field-hint')!.textContent).toBe("An entity on a device is listed on that device's page. None: it stands alone.")
+    // The Device pin is not among the generic inputs, so nothing offers to type a device in.
+    const inputs = el.querySelector('.hs-inspector section[aria-label="Inputs"]')!
+    expect([...inputs.querySelectorAll<HTMLElement>('[data-input-id]')].map(row => row.dataset.inputId)).toEqual(['is_on'])
+    expect(el.querySelectorAll('.hs-inspector [data-input-id="device"]')).toHaveLength(1)
+
+    pick(select(el, 'device'), 'plug')
+    expect(wires(history.graph())).toEqual([{ id: expect.any(String), kind: 'data', source: 'plug', sourcePort: 'entities', target: 'relay', targetPort: 'device' }])
+    await vi.waitFor(() => expect(select(el, 'device').value).toBe('plug'))
+    // The other Hall plug, chosen by its node: the wire is replaced, in one undo step.
+    pick(select(el, 'device'), 'twin')
+    expect(wires(history.graph()).map(e => e.source)).toEqual(['twin'])
+    history.undo()
+    expect(wires(history.graph()).map(e => e.source)).toEqual(['plug'])
+    await vi.waitFor(() => expect(select(el, 'device').value).toBe('plug'))
+    // None: the wire goes, in one undo step.
+    pickLabel(select(el, 'device'), 'None')
+    expect(wires(history.graph())).toEqual([])
+    await vi.waitFor(() => expect(select(el, 'device').value).toBe(''))
+    history.undo()
+    expect(wires(history.graph()).map(e => e.source)).toEqual(['plug'])
+    history.undo()
+    expect(wires(history.graph())).toEqual([])
+    // A device with no key can still be wired to.
+    pickLabel(select(el, 'device'), 'Device')
+    expect(wires(history.graph()).map(e => e.source)).toEqual(['spare'])
+  })
+
+  it('a Device node\'s fields edit its config', async () => {
+    const { el, node, history } = mount(devices(), 'plug')
+    const labels = [...el.querySelectorAll('.hs-inspector .hs-insp-main label.hs-insp-field__label')].map(label => label.textContent)
+    expect(labels).toEqual(['Key', 'Manufacturer', 'Model', 'Software version', 'Hardware version', 'Configuration URL', 'Suggested area', 'Part of'])
+    // Its name is the header's; no generic field repeats any of them.
+    expect(el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!.value).toBe('Hall plug')
+    for (const id of ['key', 'manufacturer', 'model', 'swVersion', 'hwVersion', 'configurationUrl', 'suggestedArea', 'via'])
+      expect(el.querySelectorAll(`.hs-inspector [data-input-id="${id}"]`), id).toHaveLength(1)
+    // The labels, placeholders and hints of the definition's device form.
+    expect(control(el, 'Model').placeholder).toBe('Not set')
+    expect(control(el, 'Configuration URL').type).toBe('url')
+    expect(field(el, 'configurationUrl').textContent).toContain("A page of the device's own, linked from its page in Home Assistant.")
+    expect(field(el, 'suggestedArea').textContent).toContain('The area Home Assistant puts the device in when it first adds it.')
+    expect(field(el, 'via').textContent).toContain('The device it is connected through, such as a hub.')
+
+    typeInto(control(el, 'Model'), 'P1')
+    expect(node().config.model).toBe('P1')
+    typeInto(control(el, 'Configuration URL'), ' http://10.0.0.7 ')
+    expect(node().config.configurationUrl).toBe('http://10.0.0.7')
+    // Cleared, a field is left out, never stored blank.
+    typeInto(control(el, 'Model'), '')
+    expect(node().config).not.toHaveProperty('model')
+    typeInto(control(el, 'Manufacturer'), '   ')
+    expect(node().config).not.toHaveProperty('manufacturer')
+    expect(Object.values(node().config)).not.toContain('')
+    expect(validateGraph(history.graph(), nodeCatalog).filter(d => d.nodeId === 'plug' && d.severity === 3)).toEqual([])
+  })
+
+  it('Part of another device of this definition', async () => {
+    // The saved relay is on the device Home Assistant made for this definition: it is not offered as a parent.
+    const saved = { keys: ['relay'], entityIds: { relay: 'switch.hall_relay' }, deviceKeys: [] }
+    const { el, node, history } = mount(devices(), 'plug', nodeCatalog, { saved })
+    const partOf = () => select(el, 'via')
+    expect([...partOf().options].map(o => o.textContent)).toEqual(['Nothing', 'Another device of this definition', 'A Home Assistant device…'])
+    expect(partOf().value).toBe('')
+    // Chosen, the other devices are listed; until one is picked the device is still part of nothing.
+    pickLabel(partOf(), 'Another device of this definition')
+    const local = () => el.querySelector<HTMLElement>('.hs-inspector [data-field="viaLocal"]')
+    await vi.waitFor(() => expect(local()).not.toBeNull())
+    expect(node().config).not.toHaveProperty('via')
+    expect(local()!.querySelector('.hs-field-hint')!.textContent).toBe('Part of nothing until you pick a device.')
+    const box = () => local()!.querySelector<HTMLInputElement>('input[role="combobox"]')!
+    expect(box().getAttribute('aria-label')).toBe('Device of this definition')
+    box().click()
+    await vi.waitFor(() => expect(local()!.querySelector('[role="listbox"]')).not.toBeNull())
+    // By name, with the key that tells two of one name apart; never the device itself, nor one with no key.
+    const options = [...local()!.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(texts(options)).toEqual(['Hall plug · twin', 'Hub · hub'])
+    options.find(o => o.firstElementChild?.textContent === 'Hub')!.click()
+    expect(node().config.via).toEqual({ device: 'hub' })
+    await vi.waitFor(() => expect(box().value).toBe('Hub'))
+    expect(partOf().selectedOptions[0].textContent).toBe('Another device of this definition')
+    expect(local()!.querySelector('.hs-field-hint')).toBeNull()
+
+    // A Home Assistant device, as the definition's device form offers one: without the device of this definition's entities.
+    pickLabel(partOf(), 'A Home Assistant device…')
+    const ha = () => el.querySelector<HTMLElement>('.hs-inspector [data-field="viaDevice"]')
+    await vi.waitFor(() => expect(ha()).not.toBeNull())
+    expect(local()).toBeNull()
+    expect(ha()!.querySelector('.hs-field-hint')!.textContent).toBe('Still part of Hub until you pick a device.')
+    expect(node().config.via).toEqual({ device: 'hub' })
+    ha()!.querySelector<HTMLInputElement>('input[role="combobox"]')!.click()
+    await vi.waitFor(() => expect(ha()!.querySelectorAll('[role="option"]').length).toBeGreaterThan(0))
+    const devicesOffered = [...ha()!.querySelectorAll<HTMLElement>('[role="option"]')]
+    expect(devicesOffered.map(o => o.firstElementChild?.textContent)).toEqual(['Router'])
+    devicesOffered[0].click()
+    expect(node().config.via).toEqual({ deviceId: 'router' })
+    // Back to another device of this definition: still part of the Home Assistant device until one is picked.
+    pickLabel(partOf(), 'Another device of this definition')
+    await vi.waitFor(() => expect(local()).not.toBeNull())
+    expect(local()!.querySelector('.hs-field-hint')!.textContent).toBe('Still part of Router until you pick a device.')
+    // Nothing: Part of is left out.
+    pickLabel(partOf(), 'Nothing')
+    expect(node().config).not.toHaveProperty('via')
+    history.undo()
+    expect(node().config.via).toEqual({ deviceId: 'router' })
+  })
+
+  it('a saved device\'s key is read-only', () => {
+    const { el } = mount(devices(), 'plug', nodeCatalog, { saved: { keys: [], entityIds: {}, deviceKeys: ['plug'] } })
+    const key = control(el, 'Key')
+    expect(key.readOnly).toBe(true)
+    expect(key.value).toBe('plug')
+    expect(field(el, 'key').textContent).toContain("The key is part of the device's identity in Home Assistant and cannot change.")
+    dispose?.()
+    document.body.innerHTML = ''
+
+    // Not saved yet: it can change, and a device that is part of it follows.
+    const graph = updateNode(devices(), 'twin', { config: { key: 'twin', name: 'Hall plug', via: { device: 'hub' } } })
+    const unsaved = mount(graph, 'hub', nodeCatalog, { saved: { keys: [], entityIds: {}, deviceKeys: ['plug'] } })
+    const editable = control(unsaved.el, 'Key')
+    expect(editable.readOnly).toBe(false)
+    expect(field(unsaved.el, 'key').textContent).toContain('Devices that are part of it follow it. It cannot change once saved.')
+    typeInto(editable, 'bridge')
+    expect(unsaved.node().config.key).toBe('bridge')
+    expect(configOf(unsaved.history.graph(), 'twin').via).toEqual({ device: 'bridge' })
+    // A key another device has, or one that is not a key: refused, and nothing changes.
+    const before = unsaved.history.graph()
+    typeInto(control(unsaved.el, 'Key'), 'plug')
+    expect(field(unsaved.el, 'key').textContent).toContain('Another one already has this key; give each a key of its own.')
+    typeInto(control(unsaved.el, 'Key'), 'Hall Plug')
+    expect(unsaved.history.graph()).toBe(before)
+  })
+
+  it('a Device node\'s problems go to their field', () => {
+    const problem = (inputId: string | undefined, code: string, message: string, severity = 3): VisualDiagnostic =>
+      ({ nodeId: 'plug', ...(inputId ? { inputId } : {}), code, message, severity, startLine: null, startColumn: null })
+    const diagnostics = [
+      problem('key', 'definition.deviceKey', 'Give this device a key, such as plug'),
+      problem('name', 'device.name', 'Name this device: Home Assistant shows it by this name'),
+      problem('via', 'device.via', 'Part of must be nothing, a Home Assistant device or another device of this definition'),
+      problem('configurationUrl', 'device.configurationUrl', 'The configuration URL of Hall plug must start with http://, https:// or homeassistant://'),
+      problem(undefined, 'device.empty', "Hall plug has no entities: connect its Entities pin to an entity's Device pin", 2),
+    ]
+    const { el } = mount(devices(), 'plug', nodeCatalog, { diagnostics })
+    const goTo = (message: string) => [...el.querySelectorAll<HTMLButtonElement>('.hs-insp-problems button')].find(b => b.textContent?.includes(message))
+    goTo('Give this device a key')!.click()
+    expect(document.activeElement).toBe(control(el, 'Key'))
+    goTo('Name this device')!.click()
+    expect(document.activeElement).toBe(el.querySelector('.hs-inspector input[aria-label="Device name"]'))
+    goTo('Part of must be')!.click()
+    expect(document.activeElement).toBe(select(el, 'via'))
+    goTo('The configuration URL')!.click()
+    expect(document.activeElement).toBe(control(el, 'Configuration URL'))
+    // Each is said under its field too.
+    expect(field(el, 'configurationUrl').textContent).toContain('must start with http://')
+    expect(field(el, 'via').textContent).toContain('Part of must be nothing')
+    // No field for a device with no entities: listed, with nothing to go to.
+    const empty = [...el.querySelectorAll('.hs-insp-problem')].find(item => item.textContent?.includes('has no entities'))!
+    expect(empty.querySelector('button.hs-insp-problem__body')).toBeNull()
+  })
+})
+
 describe('the Entity category', () => {
   it('has an icon and colour of its own', () => {
     for (const kind of ['entity', 'entity_setup', 'set_entity_state', 'set_entity_available', 'show_frame', 'setting'])
@@ -445,6 +651,16 @@ describe('the Entity category', () => {
     // A mid-tone hue mixed toward the text colour by --hs-hue-mix, which the dark scheme lowers, as each category's.
     expect(tokens).toMatch(/--hs-cat-code: [^;]+;\n\s*--hs-cat-entity: color-mix\(in oklab, #[0-9a-f]{6} var\(--hs-hue-mix\), var\(--hs-text, #202535\)\);/)
     expect(readFileSync('src/styles/flow.css', 'utf8')).toContain('.hs-app .hs-flow .hs-minimap-node--entity { fill: var(--hs-cat-entity); }')
+  })
+  it('gives the Device pin a hue of its own, not one a value pin or a category has', () => {
+    const tokens = readFileSync('src/styles/tokens.css', 'utf8')
+    const hex = (name: string) => tokens.match(new RegExp(`--hs-${name}: (?:color-mix\\(in oklab, )?(#[0-9a-f]{6})`))?.[1]
+    const others = [...tokens.matchAll(/--hs-((?:port|cat)-[a-z-]+): (?:color-mix\(in oklab, )?#[0-9a-f]{6}/g)].map(m => m[1]).filter(name => name !== 'port-device')
+    expect(others.length).toBeGreaterThan(10)
+    // Far from each: Data's teal was next to the first colour chosen.
+    const rgb = (value: string) => [1, 3, 5].map(i => parseInt(value.slice(i, i + 2), 16))
+    const device = rgb(hex('port-device')!)
+    for (const name of others) expect(Math.hypot(...rgb(hex(name)!).map((c, i) => c - device[i])), name).toBeGreaterThan(60)
   })
 })
 

@@ -57,8 +57,14 @@ it('the roots of an entity graph have no execution input pin, and an Entity node
   expect(view(graph, 'relay').footer).toBeUndefined()
   expect(view(graph, 'relay').rows.flatMap(r => (r.output?.kind === 'exec' ? [r.output.id] : []))).toEqual(['command:turn_on', 'command:turn_off'])
   expect(outputs(graph, 'relay')).toEqual(['Turn on', 'Turn off'])
-  // Its Device pin, then its state values.
-  expect(view(graph, 'relay').rows.flatMap(r => (r.input ? [r.input.port] : []))).toEqual(['device', 'is_on'])
+  // Its state values in the rows, level with its commands; its Device pin in the header.
+  expect(view(graph, 'relay').rows.flatMap(r => (r.input ? [r.input.port] : []))).toEqual(['is_on'])
+  expect(view(graph, 'relay').rows[0]).toMatchObject({ input: { port: 'is_on' }, output: { id: 'command:turn_on' } })
+  expect(view(graph, 'relay').headerInput?.pin.id).toBe('data:device')
+  expect(view(graph, 'door').headerInput?.pin.id).toBe('data:device')
+  // Only a root has one: When started has no Device pin, and a step keeps its execution input there.
+  expect(view(graph, 'setup').headerInput).toBeUndefined()
+  expect(view(graph, 'read').headerInput).toBeUndefined()
   // A binary sensor has its state and no command: no execution pin at all.
   expect(view(graph, 'door').next).toBeUndefined()
   expect(view(graph, 'door').rows.some(r => r.output)).toBe(false)
@@ -66,6 +72,19 @@ it('the roots of an entity graph have no execution input pin, and an Entity node
   expect(view(graph, 'read').execIn?.id).toBe('in')
   expect(view(graph, 'read').unreachable).toBe(false)
   expect(view(graph, 'log').unreachable).toBe(true)
+})
+
+it('a step added from the Device pin can only be a Device node, which is connected and never asked into the flow', () => {
+  const graph = roots()
+  const pin = { nodeId: 'relay', handle: 'data:device', type: 'target' as const }
+  // Nothing that gives a value can go into the Device pin: no Constant, no Convert, no step.
+  const offered = Object.keys(nodeCatalog.nodes).filter(kind => canAddFor(graph, kind, pin, nodeCatalog))
+  expect(offered).toEqual(['device'])
+  const added = addConnected(graph, 'device', { x: 0, y: 0 }, pin, nodeCatalog, 'plug')!
+  expect(added.graph.edges.filter(e => e.kind === 'data' && e.target === 'relay' && e.targetPort === 'device').map(e => e.source)).toEqual(['plug'])
+  // A Device node never runs: the notice does not ask for it to be connected into the flow.
+  expect(added.notice).toBe('Added Device and connected Device')
+  expect(added.error).toBeUndefined()
 })
 
 it('auto-connect never wires into an Entity node or another root of an entity graph', () => {

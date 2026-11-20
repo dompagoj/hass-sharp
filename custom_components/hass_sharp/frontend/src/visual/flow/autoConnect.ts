@@ -1,4 +1,4 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isPure, isRoot, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isDeclaration, isPure, isRoot, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
 import { dataPortOf, nodeTitle } from './flowModel'
@@ -125,7 +125,8 @@ function insertOn(graph: VisualGraph, edge: GraphEdge, id: string, catalog: Visu
  * Adds a `kind` step at `position` connected to the pin, as one graph change.
  *
  * An execution pin gets its wire (a value node is never offered there). A new value node gets only its value wire:
- * it is worked out wherever a step reads it, so it never joins the run order. For a data pin a new step must run on
+ * it is worked out wherever a step reads it, so it never joins the run order; nor does a declaration (a Device node),
+ * which never runs. For a data pin a new step must run on
  * the same path as the pin's step for the value wire to be valid, so it is put into the flow where that changes
  * nothing else:
  * - from a data output: into the free `next` (or `body`, for a value only a loop body sees) of the pin's step; or,
@@ -163,8 +164,9 @@ export function addConnected(graph: VisualGraph, kind: string, position: Point, 
       return undefined
     }
   }
-  // A value node is connected by its value wire only: it is worked out wherever a step reads it.
-  if (isPure(added, catalog)) {
+  // A value node is connected by its value wire only: it is worked out wherever a step reads it. So is a declaration (a
+  // Device node), which never runs.
+  if (isPure(added, catalog) || isDeclaration(kind, catalog)) {
     const valued = tryValue(placed)
     if (valued && !blocked(valued)) return { graph: valued, nodeId: id, notice: `Added ${kindName} and connected ${pinName}` }
     return blocked(placed) ? undefined : { graph: placed, nodeId: id, refused: { nodeId: wire[2], handle: `data:${wire[3]}` }, error: `Added ${kindName}. Connect ${pinName} to it.` }

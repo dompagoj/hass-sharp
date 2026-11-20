@@ -253,6 +253,8 @@ function kindText(ctx: Context): string | undefined {
       const type = entityTypeLabel(catalog, text(config.domain)), key = text(config.key)
       return [type, key].filter(Boolean).join(' · ') || undefined
     }
+    // A Device node: its key (its name is its title).
+    case 'device': { const key = text(config.key); return key ? `Device · ${key}` : undefined }
     // A setting by its label; never its value, which may be a secret.
     case 'setting': {
       const key = text(config.key)

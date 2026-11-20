@@ -36,7 +36,8 @@
  --hs-port-entity-state: color-mix(in oklab, #c08d12 var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-port-target: color-mix(in oklab, #6c9c1c var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-port-image: color-mix(in oklab, #b03fbf var(--hs-hue-mix), var(--hs-text, #202535));
- --hs-port-device: color-mix(in oklab, #1f9a8f var(--hs-hue-mix), var(--hs-text, #202535));
+ /* Brown: no other port or category colour is, so a device pin is not taken for a value (Data's teal, Object's orange). */
+ --hs-port-device: color-mix(in oklab, #8a6446 var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-cat-trigger: color-mix(in oklab, #d4532c var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-cat-hass: color-mix(in oklab, #2f86d6 var(--hs-hue-mix), var(--hs-text, #202535));
  --hs-cat-flow: color-mix(in oklab, #8a68dc var(--hs-hue-mix), var(--hs-text, #202535));

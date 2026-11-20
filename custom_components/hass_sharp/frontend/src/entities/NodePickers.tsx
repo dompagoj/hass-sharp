@@ -8,6 +8,8 @@ import { typeLabel } from '../visual/typeLabels'
 import { stateField } from '../visual/widgets'
 import { SearchSelect, type SearchOption } from '../visual/widgets/SearchSelect'
 import type { SavedEntities } from '../visual/adapter'
+import { DeviceNodeSection } from './DeviceNodeSection'
+import { deviceFields } from './DeviceForm'
 import { EntityNodeSection } from './EntityNodeSection'
 import { refit, refitNotice } from './refit'
 
@@ -64,7 +66,7 @@ export interface StepPickerContext {
   onChange(config: GraphNode['config']): void
   onGraphChange(graph: VisualGraph): void
   onNotice?(text: string): void
-  /** The saved document's entities as Home Assistant has them; undefined before the first save. */
+  /** The saved document's entities and devices as Home Assistant has them; undefined before the first save. */
   saved?: () => SavedEntities | undefined
 }
 
@@ -167,6 +169,8 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   setting: { keys: ['key'], Section: SettingSection },
   // An Entity node: its whole entity but its name (the header's) and its state values (its inputs).
   entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: EntityNodeSection },
+  // A Device node: its whole device but its name (the header's).
+  device: { keys: ['key', 'name', ...deviceFields.map(field => field.member), 'via'], Section: DeviceNodeSection },
 }
 
 /** Under a Set state's value, when its type has more than one: what leaving it empty does. */

@@ -191,7 +191,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
     const view = views().get(pin.nodeId)?.view
     if (!view) return
     const side = pin.type === 'source' ? 'out' : 'in'
-    const pins = [view.execIn, view.next, view.footer, ...view.rows.flatMap(row => [row.input?.pin, row.output])]
+    const pins = [view.execIn, view.headerInput?.pin, view.next, view.footer, ...view.rows.flatMap(row => [row.input?.pin, row.output])]
     return pins.find(p => p?.id === pin.handle && p.side === side)
   }
 
@@ -309,7 +309,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       if (id === from.nodeId) continue
       const view = entry.view
       const pins = from.type === 'source'
-        ? [...(view.execIn ? [view.execIn] : []), ...view.rows.flatMap(r => (r.input ? [r.input.pin] : []))]
+        ? [...(view.execIn ? [view.execIn] : []), ...(view.headerInput ? [view.headerInput.pin] : []), ...view.rows.flatMap(r => (r.input ? [r.input.pin] : []))]
         : [...(view.next ? [view.next] : []), ...view.rows.flatMap(r => (r.output ? [r.output] : [])), ...(view.footer ? [view.footer] : [])]
       for (const pin of pins) {
         if ((pin.kind === 'data') !== data) continue

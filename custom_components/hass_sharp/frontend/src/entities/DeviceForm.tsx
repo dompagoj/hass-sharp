@@ -3,13 +3,17 @@ import { QueryClientContext, useQuery } from '@tanstack/solid-query'
 import { HassCtx } from '../context'
 import { useLoadedRegistry } from '../registry'
 import type { VisualGraph } from '../visual/graph'
-import { SearchSelect } from '../visual/widgets/SearchSelect'
+import { SearchSelect, type SearchOption } from '../visual/widgets/SearchSelect'
 import { definitionsQueryKey, entityApi, entityTypesQueryKey } from './api'
 import { definitionOf, setDevice, withDetail, withVia } from './definitionEdits'
-import { SelectField, SwitchField, TextField } from './formFields'
-import type { DefinitionDevice, DefinitionSummary, EntityType } from './model'
+import { SelectField, SwitchField, TextField, type Choice } from './formFields'
+import type { DefinitionDevice, DefinitionSummary, DefinitionVia, EntityType } from './model'
 
-const fields: { member: keyof DefinitionDevice; label: string; hint?: string; type?: string }[] = [
+/**
+ * The details of a device Home Assistant's device page shows, by member, with their labels, hints and input types: one
+ * list for a definition's device (this form, the class page) and a Device node's right panel.
+ */
+export const deviceFields: { member: Exclude<keyof DefinitionDevice, 'via'>; label: string; hint?: string; type?: string }[] = [
   { member: 'manufacturer', label: 'Manufacturer' },
   { member: 'model', label: 'Model' },
   { member: 'swVersion', label: 'Software version' },
@@ -82,21 +86,103 @@ function parentSources() {
   }
 }
 
+/** What a device is part of: another definition's device, a Home Assistant device, or another Device node of its definition, by key. */
+export interface PartOfVia { definition?: string | null; deviceId?: string | null; device?: string | null }
+
 /**
- * Part of: the device this definition's device is connected through, such as a hub. Nothing; another entity
- * definition that is a device, by name (never this one); or a Home Assistant device, chosen with the device picker,
- * by name, without this definition's own device. A definition named that is gone, or no longer a device, is said so
- * and can be cleared. The server takes any of them and leaves out a parent Home Assistant does not have.
+ * The parents Part of offers between Nothing and "A Home Assistant device…". A definition's device form offers each
+ * other definition that is a device as a choice of its own; a Device node offers one choice, "Another device of this
+ * definition", whose devices are then picked from a list under it (`list`).
+ */
+export interface PartOfParents {
+  choices(): Choice[]
+  /** The choice `via` is, when it names one of these parents. */
+  chosen(via: PartOfVia | null): string | undefined
+  /** The parent `via` names, as a sentence says it: "Still part of {it} until you pick a device." */
+  named(via: PartOfVia): string
+  /** What choosing one writes; `list.choice` writes nothing until a device is picked from its list. */
+  choose?(choice: string): PartOfVia
+  list?: {
+    choice: string
+    /** The list's `data-field` and label. */
+    field: string
+    label: string
+    options(): SearchOption[]
+    /** The option `via` is, when it is one of the list's. */
+    value(via: PartOfVia | null): string | undefined
+    via(option: string): PartOfVia
+  }
+}
+
+/**
+ * Part of: the device a device is connected through, such as a hub. Nothing; one of `parents`; or a Home Assistant
+ * device, chosen with the device picker, by name, without the devices this definition's own entities are on
+ * (`ownEntityIds`). A choice with a list of its own does not change Part of until something is picked from that list,
+ * and says what the device is part of until then. One control for the definition's device and a Device node.
+ */
+export function PartOf(props: { via: PartOfVia | null; onChange(via: PartOfVia | null): void; ownEntityIds: readonly string[]; parents: PartOfParents; errors?: string[] }) {
+  const registry = useLoadedRegistry()
+  const via = () => props.via
+  const chosen = () => props.parents.chosen(via())
+  const deviceId = () => (chosen() !== undefined ? undefined : via()?.deviceId ?? undefined)
+  // A choice with a list of its own chosen, the list open before anything is picked from it: the choice is not made until it is.
+  const [picking, setPicking] = createSignal<string>()
+  createEffect(on(() => JSON.stringify(via()), () => setPicking(undefined), { defer: true }))
+  const choices = () => [{ value: '', label: 'Nothing' }, ...props.parents.choices(), { value: deviceChoice, label: 'A Home Assistant device…' }]
+  const value = () => picking() ?? (deviceId() !== undefined ? deviceChoice : chosen() ?? '')
+  const ownDevices = () => new Set((registry()?.entities ?? []).filter(e => props.ownEntityIds.includes(e.entity_id) && e.device_id).map(e => e.device_id))
+  // Each with its area, as a step's device picker shows it.
+  const devices = () => (registry()?.devices ?? []).filter(d => !ownDevices().has(d.id))
+    .map(d => ({ value: d.id, label: d.name ?? d.id, detail: d.area_id ? registry()?.area(d.area_id)?.name : undefined }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.value.localeCompare(b.value))
+  /** While nothing is picked from the list chosen, what the device is still part of (it is saved so until something is). */
+  const pending = () => {
+    if (picking() === undefined) return
+    const current = via()
+    const parent = !current ? undefined : chosen() !== undefined ? props.parents.named(current)
+      : deviceId() !== undefined ? registry()?.device(deviceId()!)?.name ?? deviceId() : undefined
+    return parent === undefined ? 'Part of nothing until you pick a device.' : `Still part of ${parent} until you pick a device.`
+  }
+  // The picker follows the choice in the tab order; the focus stays on Part of, which arrow keys move through.
+  const choose = (choice: string) => {
+    if (choice === deviceChoice || choice === props.parents.list?.choice) setPicking(choice)
+    else if (!choice) props.onChange(null)
+    else if (props.parents.choose) props.onChange(props.parents.choose(choice))
+  }
+  /** A list under Part of, with what the device is still part of while nothing is picked from it. */
+  const Picker = (picker: { field: string; label: string; options: SearchOption[]; value: string | undefined; onSelect(value: string): void }) => {
+    const id = createUniqueId(), pendingId = `${id}-pending`
+    return (
+      <div class="hs-insp-field hs-def-field" data-field={picker.field}>
+        <label class="hs-insp-field__label" for={id}>{picker.label}</label>
+        <SearchSelect id={id} label={picker.label} options={picker.options} value={picker.value} placeholder="Choose a device"
+          describedBy={pending() ? pendingId : undefined} onSelect={picker.onSelect} />
+        <Show when={pending()}>{text => <small id={pendingId} class="hs-field-hint">{text()}</small>}</Show>
+      </div>
+    )
+  }
+  return (
+    <>
+      <SelectField name="via" label="Part of" value={value()} choices={choices()} onChange={choose} errors={props.errors}
+        hint="The device it is connected through, such as a hub." />
+      <Show when={props.parents.list && value() === props.parents.list.choice ? props.parents.list : undefined}>
+        {list => <Picker field={list().field} label={list().label} options={list().options()} value={list().value(via())} onSelect={option => props.onChange(list().via(option))} />}
+      </Show>
+      <Show when={value() === deviceChoice}>
+        <Picker field="viaDevice" label="Home Assistant device" options={devices()} value={deviceId()} onSelect={id => props.onChange({ deviceId: id })} />
+      </Show>
+    </>
+  )
+}
+
+/**
+ * Part of a definition's device: another entity definition that is a device, by name (never this one), or a Home
+ * Assistant device. A definition named that is gone, or no longer a device, is said so and can be cleared. The server
+ * takes any of them and leaves out a parent Home Assistant does not have.
  */
 function DeviceParent(props: { device: DefinitionDevice | null; onChange(device: DefinitionDevice): void; ownId?: string; ownEntityIds: readonly string[] }) {
   const sources = parentSources()
-  const registry = useLoadedRegistry()
-  const via = () => props.device?.via ?? null
-  const named = () => via()?.definition ?? undefined
-  const deviceId = () => (named() ? undefined : via()?.deviceId ?? undefined)
-  // "A Home Assistant device…" chosen, the picker open before a device is: the choice is not made until one is picked.
-  const [picking, setPicking] = createSignal(false)
-  createEffect(on(() => JSON.stringify(via()), () => setPicking(false), { defer: true }))
+  const named = (via: PartOfVia | null) => via?.definition ?? undefined
   const isDevice = (d: DefinitionSummary) =>
     d.device != null || (d.logic.kind === 'class' && sources.types()?.find(t => t.id === d.logic.type)?.kind === 'device')
   const parents = () => (sources.definitions() ?? []).filter(d => d.id !== props.ownId && isDevice(d)).sort(byName)
@@ -109,46 +195,21 @@ function DeviceParent(props: { device: DefinitionDevice | null; onChange(device:
     if (id === props.ownId) return inSentence ? 'this entity definition' : 'This entity definition'
     return `${found.name} (not a device)`
   }
-  const choices = () => {
-    const id = named()
-    const listed = parents().map(d => ({ value: definitionChoice(d.id), label: d.name }))
-    if (id !== undefined && !parents().some(d => d.id === id)) listed.push({ value: definitionChoice(id), label: unlisted(id) })
-    return [{ value: '', label: 'Nothing' }, ...listed, { value: deviceChoice, label: 'A Home Assistant device…' }]
-  }
-  const value = () => (picking() || deviceId() !== undefined ? deviceChoice : named() !== undefined ? definitionChoice(named()!) : '')
-  const ownDevices = () => new Set((registry()?.entities ?? []).filter(e => props.ownEntityIds.includes(e.entity_id) && e.device_id).map(e => e.device_id))
-  // Each with its area, as a step's device picker shows it.
-  const devices = () => (registry()?.devices ?? []).filter(d => !ownDevices().has(d.id))
-    .map(d => ({ value: d.id, label: d.name ?? d.id, detail: d.area_id ? registry()?.area(d.area_id)?.name : undefined }))
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }) || a.value.localeCompare(b.value))
-  const pickerId = createUniqueId(), pendingId = `${pickerId}-pending`
-  /** While no device is picked yet, what the device is still part of (it is saved so until one is). */
-  const pending = () => {
-    if (!picking() || deviceId() !== undefined) return
-    const id = named()
-    if (id === undefined) return 'Part of nothing until you pick a device.'
+  const definitions: PartOfParents = {
+    choices: () => {
+      const id = named(props.device?.via ?? null)
+      const listed = parents().map(d => ({ value: definitionChoice(d.id), label: d.name }))
+      if (id !== undefined && !parents().some(d => d.id === id)) listed.push({ value: definitionChoice(id), label: unlisted(id) })
+      return listed
+    },
+    chosen: via => { const id = named(via); return id !== undefined ? definitionChoice(id) : undefined },
     // A parent offered by its name, as it is called; one not offered as the sentence says it.
-    const parent = parents().find(d => d.id === id)
-    return `Still part of ${parent ? parent.name : unlisted(id, true)} until you pick a device.`
-  }
-  // The picker follows the choice in the tab order; the focus stays on Part of, which arrow keys move through.
-  const choose = (choice: string) => {
-    if (choice === deviceChoice) setPicking(true)
-    else props.onChange(withVia(props.device, choice ? { definition: choice.slice(definitionChoice('').length) } : null))
+    named: via => { const id = named(via)!; return parents().find(d => d.id === id)?.name ?? unlisted(id, true) },
+    choose: choice => ({ definition: choice.slice(definitionChoice('').length) }),
   }
   return (
-    <>
-      <SelectField name="via" label="Part of" value={value()} choices={choices()} onChange={choose}
-        hint="The device it is connected through, such as a hub." />
-      <Show when={value() === deviceChoice}>
-        <div class="hs-insp-field hs-def-field" data-field="viaDevice">
-          <label class="hs-insp-field__label" for={pickerId}>Home Assistant device</label>
-          <SearchSelect id={pickerId} label="Home Assistant device" options={devices()} value={deviceId()} placeholder="Choose a device"
-            describedBy={pending() ? pendingId : undefined} onSelect={id => props.onChange(withVia(props.device, { deviceId: id }))} />
-          <Show when={pending()}>{text => <small id={pendingId} class="hs-field-hint">{text()}</small>}</Show>
-        </div>
-      </Show>
-    </>
+    <PartOf via={props.device?.via ?? null} ownEntityIds={props.ownEntityIds} parents={definitions}
+      onChange={via => props.onChange(withVia(props.device, via as DefinitionVia | null))} />
   )
 }
 
@@ -187,7 +248,7 @@ export function DeviceSection(props: {
       </Show>
       <Show when={props.fixed || !!device()}>
         <div class="hs-def-device">
-          <For each={fields}>
+          <For each={deviceFields}>
             {field => (
               <TextField name={field.member} label={field.label} hint={field.hint} type={field.type} placeholder={props.fixed?.placeholder ?? 'Not set'}
                 text={detail(field.member)} commit={value => props.onChange(withDetail(device(), field.member, value.trim()))} />

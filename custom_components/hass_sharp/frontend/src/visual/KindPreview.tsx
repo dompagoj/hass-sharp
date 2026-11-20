@@ -29,7 +29,7 @@ export function KindPreview(props: KindPreviewProps) {
     const next = createNodeAt(props.graph, props.kind, { x: 0, y: 0 }, undefined, props.catalog)
     return next === props.graph ? undefined : buildNodeView(next.nodes.at(-1)!, { graph: next, catalog: props.catalog, diagnostics: [] })
   })
-  const inputs = () => view()?.rows.flatMap(row => (row.input ? [row.input.pin] : [])) ?? []
+  const inputs = () => { const current = view(); return current ? [...(current.headerInput ? [current.headerInput.pin] : []), ...current.rows.flatMap(row => (row.input ? [row.input.pin] : []))] : [] }
   const outputs = () => {
     const current = view()
     if (!current) return []

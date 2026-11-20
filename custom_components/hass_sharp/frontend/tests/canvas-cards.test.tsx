@@ -1,4 +1,4 @@
-import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
@@ -1267,4 +1267,97 @@ it('a step that names an entity follows a rename and a retype of its Entity node
   setGraph(updateNode(graph(), 'l', { config: { ...hub().config, domain: 'light' } }))
   await vi.waitFor(() => expect(inputs().some(name => name.startsWith('Input Brightness'))).toBe(true))
   expect(summary()).toBe('Set state ▸ Desk lamp')
+})
+
+it('a Setting step follows a relabelled setting on the card', async () => {
+  const el = host()
+  const settings = (label: string) => ({ settings: [{ key: 'host', label, type: 'string', value: '10.0.0.7' }] })
+  const start = add({ ...empty(), definition: settings('Address') as never }, 'setting', 's', { key: 'host' })
+  const [graph, setGraph] = createSignal(start)
+  dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+  const summary = () => el.querySelector('[data-id="s"] .hs-card__summary')?.textContent
+  expect(summary()).toBe('Setting ▸ Address')
+  // The label is edited in the definition's Settings form: the step itself does not change.
+  setGraph({ ...graph(), definition: settings('Host address') as never })
+  await vi.waitFor(() => expect(summary()).toBe('Setting ▸ Host address'))
+})
+
+describe('the Device pin and the Device card', () => {
+  /** A switch hub, and a Device node Hall plug (key plug) not wired to it yet. */
+  const hubAndPlug = () => add(add(empty(), 'entity', 'hub', { key: 'hub', domain: 'switch', name: 'Hub' }), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
+  const wired = () => contract.connectData(hubAndPlug(), 'plug', 'entities', 'hub', 'device')
+
+  it('an Entity card has its Device pin in the header', () => {
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={hubAndPlug()} onSelect={() => {}} onChange={() => {}} />), el)
+    const card = el.querySelector('[data-id="hub"] .hs-card')!
+    const pin = card.querySelector<HTMLElement>('.hs-card__head [data-handleid="data:device"].target')!
+    expect(pin).not.toBeNull()
+    expect(pin.classList).toContain('hs-pin--data')
+    expect(pin.getAttribute('aria-label')).toBe('Device, not connected')
+    expect(pin.style.getPropertyValue('--hs-pin-color')).toBe('var(--hs-port-device)')
+    // None among the rows, and nothing on the card offers to type a device in.
+    expect(card.querySelector('.hs-card__body [data-handleid="data:device"]')).toBeNull()
+    expect(card.querySelector('[data-input-id="device"]')).toBeNull()
+    expect(button(card, 'Set Device')).toBeUndefined()
+    // The state row is still level with the first command pin, and the second command has a row of its own.
+    const on = card.querySelector('[data-input-id="is_on"]')!.closest('.hs-card__row')!
+    expect(on.querySelector('[data-output-id="command:turn_on"]')).not.toBeNull()
+    expect(card.querySelector('[data-output-id="command:turn_off"]')!.closest('.hs-card__row')!.querySelector('[data-input-id]')).toBeNull()
+    // Not wired: no device named in the header.
+    expect(card.querySelector('.hs-card__device')).toBeNull()
+  })
+
+  it('an Entity card on a device names it', async () => {
+    const el = host()
+    const [graph, setGraph] = createSignal(wired())
+    // A bare adapter, so no registry read rebuilds every card while the rename is checked.
+    dispose = render(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />, el)
+    const head = () => el.querySelector('[data-id="hub"] .hs-card__head')!
+    const device = () => head().querySelector<HTMLElement>('.hs-card__device')
+    expect(device()?.textContent).toBe('Hall plug')
+    // A long name is cut short on the card (flow.css) and said in full in its title.
+    expect(device()?.title).toBe('Hall plug')
+    expect(head().querySelector('[data-handleid="data:device"]')!.getAttribute('aria-label')).toBe('Device, connected to Hall plug')
+    expect(head().querySelector('[data-handleid="data:device"]')!.classList).toContain('hs-pin--connected')
+    // Renamed in its own node, the device is named so on the entity's card at once.
+    const plug = () => graph().nodes.find(n => n.id === 'plug')!
+    setGraph(updateNode(graph(), 'plug', { config: { ...plug().config, name: 'Kitchen plug with a very long name indeed' } }))
+    await vi.waitFor(() => expect(device()?.textContent).toBe('Kitchen plug with a very long name indeed'))
+    expect(device()?.title).toBe('Kitchen plug with a very long name indeed')
+    // Unwired, the name goes.
+    setGraph(contract.disconnectData(graph(), 'hub', 'device'))
+    await vi.waitFor(() => expect(device()).toBeNull())
+  })
+
+  it('a Device card has an Entities pin and no step pins', () => {
+    const el = host()
+    // A Log step outside the flow, which is drawn muted: the Device node, which never runs, is not.
+    const graph = add(wired(), 'log', 'stray', { value: lit('string', 'Hi') })
+    dispose = render(() => providers(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />), el)
+    const card = el.querySelector('[data-id="plug"] .hs-card')!
+    expect(card.querySelector('[data-handleid="in"]')).toBeNull()
+    expect(card.querySelector('[data-handleid="next"]')).toBeNull()
+    expect(card.querySelector('[data-handleid="error"]')).toBeNull()
+    expect(card.querySelectorAll('.target')).toHaveLength(0)
+    expect([...card.querySelectorAll('.source')].map(pin => pin.getAttribute('data-handleid'))).toEqual(['data:entities'])
+    expect(card.querySelector('[data-output-id="entities"] .hs-pin-label')!.textContent).toBe('Entities')
+    expect(card.querySelector('.hs-card__title')!.textContent).toBe('Hall plug')
+    expect(card.querySelector('.hs-card__summary')!.textContent).toBe('Device · plug')
+    expect(card.classList).not.toContain('hs-card--unreachable')
+    expect(el.querySelector('[data-id="stray"] .hs-card')!.classList).toContain('hs-card--unreachable')
+  })
+
+  it('a Device card follows its name and key', async () => {
+    const el = host()
+    const [graph, setGraph] = createSignal(wired())
+    dispose = render(() => providers(() => <FlowAdapter graph={graph()} onSelect={() => {}} onChange={setGraph} />), el)
+    const card = () => el.querySelector('[data-id="plug"] .hs-card')!
+    setGraph(updateNode(graph(), 'plug', { config: { key: 'socket' } }))
+    // No name: named by its key.
+    await vi.waitFor(() => expect(card().querySelector('.hs-card__title')!.textContent).toBe('socket'))
+    expect(card().querySelector('.hs-card__summary')!.textContent).toBe('Device · socket')
+    setGraph(updateNode(graph(), 'plug', { config: {} }))
+    await vi.waitFor(() => expect(card().querySelector('.hs-card__title')!.textContent).toBe('Device'))
+  })
 })

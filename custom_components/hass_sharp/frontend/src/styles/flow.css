@@ -54,6 +54,8 @@
 .hs-app .hs-card__title { overflow: hidden; font-size: 13px; font-weight: 650; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-card__summary { overflow: hidden; color: var(--hs-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-card__summary:empty { display: none; }
+/* The device an entity is on, beside its header pin: cut short so a long name never widens the card. */
+.hs-app .hs-card__device { flex: 0 1 auto; min-width: 0; max-width: 96px; }
 /* Triggers start the automation: a solid header sets them apart from the steps they run. */
 .hs-app .hs-card--trigger .hs-card__head { background: var(--hs-cat); color: var(--hs-surface); }
 .hs-app .hs-card--trigger .hs-card__icon { background: color-mix(in oklab, var(--hs-surface) 22%, transparent); }

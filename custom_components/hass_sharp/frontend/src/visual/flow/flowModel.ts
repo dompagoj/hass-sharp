@@ -4,6 +4,7 @@ import {
   dataOutputs,
   definitionCatalog,
   definitionEntity,
+  definitionSettings,
   entityNodeName,
   executionLabel,
   executionPorts,
@@ -12,6 +13,7 @@ import {
   isPure,
   isRoot,
   scopePorts,
+  structural,
   type GraphEdge,
   type GraphNode,
   type InputSpec,
@@ -96,6 +98,11 @@ export interface NodeView {
   summary: string
   identity: NodeIdentity
   execIn?: PinView
+  /**
+   * A root's structural input (an Entity node's Device pin), drawn in the header's left slot, which a root's missing
+   * execution input leaves free; it is not among `rows`. Its `source` is the name of what is wired to it.
+   */
+  headerInput?: InputView
   /** The default execution output, drawn at the right of the header. */
   next?: PinView
   rows: RowView[]
@@ -295,6 +302,15 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
       },
     }
   })
+  // A root's structural input takes the header's left slot: it says what the node belongs to (an entity's device), so
+  // the state rows below stay level with the command pins. Its name and source chip name only what is wired to it.
+  const structuralInput = isRoot(node, catalog) ? inputs.find(input => structural(input.spec)) : undefined
+  const headerSource = structuralInput?.sourceNode ? nodeTitle(graph.nodes.find(n => n.id === structuralInput.sourceNode), catalog, structuralInput.sourceNode) : undefined
+  const headerInput: InputView | undefined = structuralInput && {
+    ...structuralInput, source: headerSource,
+    pin: { ...structuralInput.pin, name: `${structuralInput.pin.label}, ${headerSource ? `connected to ${headerSource}` : 'not connected'}` },
+  }
+  const rowInputs = inputs.filter(input => input !== structuralInput)
   // Data outputs.
   const outputSpecs = Object.entries(dataOutputs(node, catalog))
   const outputs: PinView[] = outputSpecs.map(([port, output]) => {
@@ -319,9 +335,9 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     ...namedExec.flatMap(port => [execPin(port), ...outputs.filter((_, i) => under(i, port))]),
     ...outputs.filter((_, i) => !namedExec.some(port => under(i, port))),
   ]
-  const rows: RowView[] = Array.from({ length: Math.max(inputs.length, right.length) }, (_, i) => ({
-    id: `${inputs[i]?.port ?? ''}|${right[i]?.id ?? ''}`,
-    ...(inputs[i] ? { input: inputs[i] } : {}),
+  const rows: RowView[] = Array.from({ length: Math.max(rowInputs.length, right.length) }, (_, i) => ({
+    id: `${rowInputs[i]?.port ?? ''}|${right[i]?.id ?? ''}`,
+    ...(rowInputs[i] ? { input: rowInputs[i] } : {}),
     ...(right[i] ? { output: right[i] } : {}),
   }))
   const summary = nodeSummary(node, catalog, ctx.names, graph)
@@ -331,7 +347,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const problemText = errors || warnings ? `. ${[errors && `${errors} error${errors === 1 ? '' : 's'}`, warnings && `${warnings} warning${warnings === 1 ? '' : 's'}`].filter(Boolean).join(', ')}: ${problems.map(p => p.message).join('; ')}` : ''
   return {
     id: node.id, kind: node.kind, known, title, kindLabel: spec?.label ?? node.kind, summary, identity,
-    execIn, next: headerNext ? execPin('next') : undefined, rows,
+    execIn, ...(headerInput ? { headerInput } : {}), next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
     problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure,
     // A value node says so: it has no place in the run order, which a sighted reader sees from its missing pins.
@@ -352,7 +368,8 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
     port, input.types, input.label ?? null, !!input.required, input.description ?? null, inputValue(node, port, catalog) ?? null,
   ])
   const outputs = Object.entries(dataOutputs(node, catalog)).map(([port, output]) => [port, output.type, output.label ?? null])
-  // Wires with what the card shows of their far end: the source title and output label (source chips, summary).
+  // Wires with what the card shows of their far end: the source title and output label (source chips, the device an
+  // Entity card's header names, summary).
   const wires = graph.edges
     .filter(e => e.source === node.id || e.target === node.id)
     .map(e => {
@@ -368,11 +385,14 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
   // A Set state, Set available or Show frame shows the name of the Entity node it names, which is that node's config.
   const named = definitionEntityKinds.includes(node.kind) && typeof node.config.entity === 'string'
     ? definitionEntity(definitionCatalog(catalog, graph), node.config.entity)?.name ?? null : undefined
+  // A Setting shows the label of the setting it reads, which the definition's Settings form edits.
+  const setting = node.kind === 'setting' && typeof node.config.key === 'string'
+    ? definitionSettings(definitionCatalog(catalog, graph)).find(s => s.key === node.config.key)?.label ?? null : undefined
   const diagnostics = ctx.diagnostics.filter(d => d.nodeId === node.id).map(d => [d.severity, d.message, d.inputId ?? '', d.portId ?? ''])
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
   return JSON.stringify([
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
-    rejected ?? null, stateContext ?? null, named ?? null,
+    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null,
   ])
 }
 
