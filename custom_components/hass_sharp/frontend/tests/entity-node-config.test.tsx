@@ -127,7 +127,7 @@ describe('the entity picker', () => {
 
   it('says to add an Entity node when the definition has none', async () => {
     const { el } = mount(step(entityGraph({ nodes: [] }), 'set_entity_state', 'state', {}), 'state')
-    expect(field(el, 'entity').textContent).toContain("None of this definition's steps is an Entity node. Add an Entity node from the step library first.")
+    expect(field(el, 'entity').textContent).toContain('Add an Entity node from the step library first.')
     expect(box(el, 'entity').disabled).toBe(true)
   })
 

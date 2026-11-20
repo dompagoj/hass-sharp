@@ -52,10 +52,14 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         var kind = body.Logic?.Kind;
         if (kind is not ("class" or "graph")) Error("definition.logic", "Logic is a graph or a class");
         // For a class an empty array is the same as none: a client may always send the field. A graph's entities are its
-        // Entity nodes: a request that lists them at all, even as an empty list, is told so.
+        // Entity nodes: a request that lists them at all, even as an empty list, is told so, with nothing else of it
+        // checked (its name aside), since what else is wrong is likely the list form's.
         if (kind == "class" && body.Entities is { Count: > 0 }) Error("definition.entitiesNotAllowed", "A class definition's entities come from its code");
         if (kind == "graph" && body.Entities != null)
+        {
             Error("definition.entitiesNotAllowed", "Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each", "entities");
+            return new(false, errors, "", null);
+        }
         if (kind == "graph") DefinitionDocument.Check(body, snapshot.Root, Error);
 
         EntityTypeDescriptor? type = null;

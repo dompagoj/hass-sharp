@@ -198,6 +198,8 @@ export type FixtureEntityType = EntityType & { entities?: { key: string; domain:
  */
 function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generation: () => string) {
   const documents = new Map<string, EntityDocument>()
+  /** The definition files that cannot be read, by id, with why (`Read`'s message): listed apart, deleted at revision 0. */
+  const unreadable = new Map<string, string>()
   const registry = new Map<string, RegisteredEntity[]>()
   const published = new Map<string, RegisteredEntity[]>()
   const runs = new Map<string, FixtureRuns>()
@@ -233,7 +235,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   /**
    * The document's problems, as `DefinitionGenerator.Preview` and `DefinitionDocument.Check` word them: a request that
    * lists entities (a graph's at all, a class's when it lists one), a graph with no Entity node, and each Entity node's
-   * options, whose problems are on it, about `option:<option>`.
+   * options, whose problems are on it, about `option:<option>`. A graph request that lists entities gets that refusal
+   * alone (beside its name's): nothing else of it is checked.
    */
   const documentProblems = (body: DefinitionBody) => {
     const problems: VisualDiagnostic[] = []
@@ -242,7 +245,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     const listed = Object.hasOwn(body, 'entities') ? (body as { entities?: unknown }).entities ?? [] : undefined
     if (body.logic?.kind === 'class' && Array.isArray(listed) && listed.length) problems.push(problem('definition.entitiesNotAllowed', "A class definition's entities come from its code"))
     if (body.logic?.kind !== 'graph') return problems
-    if (listed !== undefined) problems.push(problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities'))
+    if (listed !== undefined) return [...problems, problem('definition.entitiesNotAllowed', 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', 'entities')]
     const nodes = declaredEntities(body.logic.graph)
     if (!nodes.length) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
     for (const { nodeId, entity } of nodes) {
@@ -446,8 +449,11 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     return definition as unknown as DefinitionBody
   }
   const checkId = (id: string) => { if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(id)) refuse('Invalid definition ID') }
-  /** The definition's stored document, or `not_found`. */
-  const found = (id: string) => documents.get(id) ?? (() => { throw new Refused(fail('not_found', 'Entity definition not found')) })()
+  /** The definition's stored document, or `not_found`; a file that cannot be read (`unreadable`) answers why, as `Read` throws it. */
+  const found = (id: string) => {
+    if (unreadable.has(id)) refuse(unreadable.get(id)!)
+    return documents.get(id) ?? (() => { throw new Refused(fail('not_found', 'Entity definition not found')) })()
+  }
   const save = (request: any) => {
     // Python previews a graph (an object, as `definition_graph` reads it) before .NET reads the save's other fields.
     const logic = object(request.definition) ? request.definition.logic : undefined
@@ -459,6 +465,8 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
     checkId(id)
     // As EntityDefinitionStore.Save: /entities/new is the new-definition page, so no definition is saved as new.
     if (id === 'new') refuse('Invalid definition ID: new is reserved')
+    // As EntityDefinitionStore.Save, which reads the file it replaces: one that cannot be read is refused with why.
+    if (unreadable.has(id)) refuse(unreadable.get(id)!)
     const existing = documents.get(id)
     if ((existing?.revision ?? 0) !== expected) return fail('conflict', 'Revision conflict; reload the current document')
     if (existing && enabled !== undefined) refuse('enabled can only be given when saving a new definition; use set_enabled to turn a saved one on or off')
@@ -473,9 +481,10 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       case 'list': {
         const view = optionalText(request, 'view')
         if (view !== undefined && view !== 'home') refuse('Unknown list view; the entity definitions list has the view home')
-        return ok(sorted().map(document => view === 'home'
+        // Beside the result, as EntityApi answers it: each file that cannot be read, with why.
+        return { ...ok(sorted().map(document => view === 'home'
           ? { ...summary(document), recentRuns: [], runsToday: 0, failedLastDay: 0, lastRunUtc: null, ...structuredClone(runs.get(document.id) ?? {}) }
-          : summary(document)))
+          : summary(document))), unreadable: [...unreadable].sort(([a], [b]) => (a < b ? -1 : 1)).map(([id, reason]) => ({ id, reason })) }
       }
       case 'preview': return ok(preview(definitionOf(request)))
       case 'save': return save(request)
@@ -505,6 +514,14 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
       case 'delete': {
         const id = text(request, 'id'), expected = revision(request)
         checkId(id)
+        // A file that cannot be read is deleted at revision 0 only, with its entities.
+        if (unreadable.has(id)) {
+          if (expected !== 0) return fail('conflict', 'Revision conflict; reload the current document')
+          unreadable.delete(id)
+          registry.delete(id)
+          published.delete(id)
+          return ok({ deleted: true })
+        }
         if (found(id).revision !== expected) return fail('conflict', 'Revision conflict; reload the current document')
         documents.delete(id)
         registry.delete(id)
@@ -527,7 +544,7 @@ function entitiesFixture(options: { entityTypes?: FixtureEntityType[] }, generat
   const seed = (id: string, body: DefinitionBody, fields: Partial<EntityDocument> = {}) => {
     return keep({ ...stored(id, body, 1, fields.enabled ?? true), ...structuredClone(fields) })
   }
-  return { documents, registry, published, runs, types, requests, controls, seed, callWS }
+  return { documents, unreadable, registry, published, runs, types, requests, controls, seed, callWS }
 }
 
 export function visualFixture(

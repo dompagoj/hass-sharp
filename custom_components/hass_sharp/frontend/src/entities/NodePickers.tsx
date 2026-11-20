@@ -141,7 +141,7 @@ function EntityPicker(props: { ctx: StepPickerContext }) {
     ...choices().map(e => option(e)),
   ])
   const hint = () => camera() && !choices().length ? 'Add a camera to this definition first.'
-    : !definitionEntities(ctx.catalog()).length ? "None of this definition's steps is an Entity node. Add an Entity node from the step library first."
+    : !definitionEntities(ctx.catalog()).length ? 'Add an Entity node from the step library first.'
     : !choices().length ? "None of this definition's entities takes commands. Give one a type that does, such as a switch, on its Entity node." : configHint(ctx, 'entity')
   return (
     <PickerField name="entity" label={configLabel(ctx, 'entity', 'Entity')} options={options()} value={current()} placeholder={camera() ? 'Choose a camera' : 'Choose an entity'}

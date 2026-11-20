@@ -70,9 +70,11 @@ definition envelope"), `storage` (the file could not be read or written) and
   document lists them under `entities`, for reading only; a class's entities are in
   `registeredEntities`.
 - `entities` is not part of a request. A graph definition that has the key at all,
-  even an empty list or null, is refused before anything else is checked, with
+  even an empty list or null, is refused with that one problem,
   `definition.entitiesNotAllowed` on input `entities`: "Entities are Entity nodes in
-  the graph now: leave entities out and add one Entity node for each". A class
+  the graph now: leave entities out and add one Entity node for each". Its name is
+  checked first, so a name's problem is answered beside it; its graph, settings and
+  Entity nodes are not checked. A class
   definition may send an empty list; one that lists an entity is refused with "A
   class definition's entities come from its code".
 - `device`: null for none, or, for a class, null for the class's own (a
@@ -94,10 +96,22 @@ with `version`, `id`, `revision`, `source`, `sourceMap`,
 A save writes the document as `version: 2`, with the entities its Entity nodes
 declare under `entities`. A version 1 document whose logic is a class loads as it
 is. A version 1 graph document, from an earlier development build, does not load:
-`list` leaves it out and logs `Skipping entity definition <path>: saved by an
-earlier development build; delete it and build it again` once, `read` of its id
-answers `invalid_request` with that sentence, and `delete` with
-`expectedRevision` 0 removes the file.
+`list` leaves it out of `result` and logs `Skipping entity definition <path>: saved
+by an earlier development build; delete it and build it again` once, `read` of its
+id answers `invalid_request` with that sentence, and `delete` with
+`expectedRevision` 0 removes the file and its entities.
+
+Every `list` answer, with or without `view`, names each definition file it cannot
+read beside its `result`: `{version: 1, ok: true, result: [...], unreadable: [{id,
+reason}]}`, sorted by id, empty when every file reads. `reason` is "saved by an
+earlier development build; delete it and build it again" for a version 1 graph
+document, and otherwise what reading the file met (such as "Invalid entity
+definition envelope"). Such a definition can only be deleted, with
+`expectedRevision` 0. Until it is, the entities it made stay in Home Assistant as
+unavailable (startup keeps its id, so they are not pruned), and a node library save,
+which checks every definition, is refused with `Cannot read entity definition
+<path>: <reason>`. The **Entities** page lists it apart, with its id, its reason and
+**Delete**.
 
 Ids match `^[a-z0-9][a-z0-9_-]{0,79}$`; `new` is refused ("Invalid definition ID:
 new is reserved"). An entity's unique id is `<definition id>:<key>`, so changing a

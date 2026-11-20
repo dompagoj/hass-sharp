@@ -160,7 +160,7 @@ SPECS = {
 # sends for its operation (the name without entities_).
 ENTITY_SPECS = {
     "entities_types": ({}, "List the C# classes in the node library that an entity definition can use (logic.kind class), each with its type id and settings. Each type has id (the logic.type to send), title, description, kind (device or entity), domain and settings [{key, label, description, type, secret, options, minimum, maximum}]: a definition of that class sends a value for each as {key, value}. A class is written in a node library source (library_save), as a class deriving from SharpDevice (a device with its entities) or from one typed entity such as SharpSensor or SharpSwitch; get_capabilities with document \"entity\" has a complete example."),
-    "entities_list": ({}, "Summarise every saved entity definition, without its graph: id, name, revision, enabled (its on/off switch), status (running; setup, still starting; failed; or off), activationError (why it is not running, or null), logic (\"graph\", or the class's type id), device (whether it makes a Home Assistant device: it gives device details, or its class derives from SharpDevice; for a class no node library offers any more, whether it gives device details), entities [{key, domain, name, entityId}] (entityId is the id Home Assistant gave the entity, or null while it has none) and triggers [{triggerId, label, type, config, manual, runnable}], its Trigger steps, which entities_run takes. Read one with entities_read before editing it. For automations use list."),
+    "entities_list": ({}, "Summarise every saved entity definition, without its graph: id, name, revision, enabled (its on/off switch), status (running; setup, still starting; failed; or off), activationError (why it is not running, or null), logic (\"graph\", or the class's type id), device (whether it makes a Home Assistant device: it gives device details, or its class derives from SharpDevice; for a class no node library offers any more, whether it gives device details), entities [{key, domain, name, entityId}] (entityId is the id Home Assistant gave the entity, or null while it has none) and triggers [{triggerId, label, type, config, manual, runnable}], its Trigger steps, which entities_run takes; beside the result, unreadable [{id, reason}] names each definition file that cannot be read (such as one an earlier development build saved), which only entities_delete with expectedRevision 0 can remove. Read one with entities_read before editing it. For automations use list."),
     "entities_read": (ID_FIELD, "Read one saved entity definition: its name, device, settings and logic (the graph, or the class's type id), entities (for a graph, the entities its Entity nodes declare, for reading only; a class's entities come from its code and are in registeredEntities), revision (pass it as expectedRevision when saving), generated source, status and activationError, automationId (the key of its run history), registeredEntities (its entities as Home Assistant has registered them, with their entity ids) and triggers. Read before every edit, and send back only name, device, settings and logic as the definition. A secret setting's value is never returned (value null, and hasValue says whether one is stored). For an automation use read."),
     "entities_preview": ({p.Required("definition"): DEFINITION}, "Validate and compile a complete entity definition without saving or creating anything in Home Assistant. definition is {name, device?, settings?, logic} with logic {kind: \"graph\", graph} (a graph of the steps get_capabilities lists for document \"entity\", with an Entity node for each entity) or {kind: \"class\", type} (a type id from entities_types). Each Custom C# step's pins (config.signature) are first worked out from its code. Returns valid, diagnostics (nodeId, inputId, message; severity 3 is an error, 2 a warning) and, for a graph, graph: the graph with those pins (no settings come back); entities_read has a saved definition's source. Fix every error here before entities_save. For an automation graph use preview."),
     "entities_save": ({**REV_FIELDS, p.Required("definition"): DEFINITION, p.Optional("enabled"): bool}, "Save an entity definition and create or update its entities in Home Assistant. definition is what entities_preview takes, with each Custom C# step's pins worked out from its code as preview does; enabled is only for a new definition (false saves it off, and it creates its entities the first time it is turned on). A new id uses expectedRevision 0 (new is not an id). An existing one uses the revision from entities_read; a conflict means it changed meanwhile, so read again rather than retrying. Errors block the save; a saved definition that is on starts its steps, which can control devices. An entity's key is permanent: changing it makes a new entity. Send a secret setting back unchanged to keep its value, with a new value to replace it, or with value null and no hasValue to clear it. Ask the user first. Returns saved, document (as entities_read gives it, without source and sourceMap), active, activationError and diagnostics (the save's warnings, when it has any). For an automation use save."),
@@ -365,6 +365,9 @@ def wrong_document(operation, args):
 # (a graph's are its Entity nodes), what no graph holds.
 DEFINITION_PARTS = ("settings", "device", "logic")
 GRAPH_MISPLACED = ("definition", "entities", *DEFINITION_PARTS)
+# What makes a document a definition: its own parts, or a list of entities at its top (the form an earlier build took,
+# and what an entities_read answer adds), which no automation has.
+DEFINITION_MARKERS = (*DEFINITION_PARTS, "entities")
 
 
 def inner_graphs(document):
@@ -386,7 +389,7 @@ def document_kind(document):
         return "other"
     if "definition" in document:
         return "trace"
-    if any(key in document for key in DEFINITION_PARTS):
+    if any(key in document for key in DEFINITION_MARKERS):
         return "definition"
     if any(key in graph for _, graph in inner_graphs(document) for key in GRAPH_MISPLACED):
         return "loose"
@@ -455,7 +458,8 @@ def definition_hints(definition, operation):
                          + ("id and expectedRevision (the revision read) are arguments of their own"
                             + (", and so is enabled: false saves a new definition off, and entities_set_enabled turns a saved one on or off"
                                if "enabled" in stored else "")
-                            if operation.endswith("save") else "entities_preview takes only the definition"))
+                            if operation.endswith("save") else "entities_preview takes only the definition")
+                         + ("; a graph definition's entities are its Entity nodes, one node of kind entity for each" if "entities" in stored else ""))
     sentences += graph_hints(definition)
     if isinstance(logic, dict) and logic.get("kind") not in ("graph", "class"):
         sentences.append('logic.kind is "graph" (with graph, a graph of the steps get_capabilities lists for document "entity") '

@@ -1,6 +1,5 @@
-import { createSignal, For, Match, Show, Switch, type JSX } from 'solid-js'
+import { For, Match, Show, Switch, type JSX } from 'solid-js'
 import { declaredDomain, declaredEntities, entityTypeLabel, words, type ConfigSpec } from '../visual/contract'
-import { rowLocated } from '../visual/InputRow'
 import { keyProblem, keyRule, readNumber } from './definitionEdits'
 import { ReadOnlyField, SelectField, SwitchField, TextField, type Choice } from './formFields'
 import { renameEntityKey } from './model'
@@ -10,9 +9,9 @@ import { refitNotice, retypeNode } from './refit'
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
 /** Under a key Home Assistant has. */
-export const savedKeyHint = "The key is part of the entity's identity in Home Assistant and cannot change."
+const savedKeyHint = "The key is part of the entity's identity in Home Assistant and cannot change."
 /** An entity's category: none, or where its device's page lists it apart. */
-export const categories: Choice[] = [{ value: '', label: 'None' }, { value: 'config', label: 'Config' }, { value: 'diagnostic', label: 'Diagnostic' }]
+const categories: Choice[] = [{ value: '', label: 'None' }, { value: 'config', label: 'Config' }, { value: 'diagnostic', label: 'Diagnostic' }]
 /** The flows of an entity whose runs can be recorded, by `config.history` member: its switch, and whether it is on by default. */
 const flows = [
   { flow: 'state', label: 'Record state updates', on: false },
@@ -64,13 +63,6 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
     else next[option] = value
     set('options', next)
   }
-  // A required option left empty says so on its field once the field has been left, or a problem chosen in a list led
-  // to it (the class page's rule): not in red the moment the type is chosen. Save waits for it all the same, and the
-  // Problems tab counts it.
-  const [left, setLeft] = createSignal<ReadonlySet<string>>(new Set())
-  const leave = (option: string) => { if (!left().has(option)) setLeft(new Set([...left(), option])) }
-  const missing = (option: string) => { const value = options()[option]; return row()?.options?.[option]?.required === true && (value === undefined || value === null) }
-  const optionErrors = (option: string) => (!missing(option) || left().has(option) ? ctx.errorsFor(`option:${option}`) : [])
   // Only the flows its type has: state values, commands, frames.
   const recordable = () => {
     const type = row()
@@ -126,10 +118,10 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
       {/* By key: a field stays (and keeps focus) while another option changes. */}
       <For each={optionKeys()}>
         {option => (
-          <div data-input-id={`option:${option}`} onFocusOut={() => leave(option)} ref={el => el.addEventListener(rowLocated, () => leave(option))}>
-            <OptionField option={option} rule={row()?.options?.[option] ?? { type: 'string' }} value={options()[option]} errors={optionErrors(option)}
+          <At id={`option:${option}`}>
+            <OptionField option={option} rule={row()?.options?.[option] ?? { type: 'string' }} value={options()[option]} errors={ctx.errorsFor(`option:${option}`)}
               onChange={value => setOption(option, value)} />
-          </div>
+          </At>
         )}
       </For>
       <Show when={recordable().length}>
@@ -159,7 +151,7 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
  * number is read as the class page's number fields read theirs: a text that is not one is kept as typed (the form
  * then says so on the field, and Save waits). Empty, an option is left out (the type's default); so is a switch off.
  */
-export function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; errors: string[]; onChange(value: unknown): void }) {
+function OptionField(props: { option: string; rule: ConfigSpec; value: unknown; errors: string[]; onChange(value: unknown): void }) {
   const name = () => `option:${props.option}`
   const label = () => text(props.rule.label) || words.key(props.option)
   const required = () => props.rule.required === true

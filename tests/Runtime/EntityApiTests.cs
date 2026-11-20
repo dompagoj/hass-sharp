@@ -115,9 +115,23 @@ static class EntityApiTests
         Check(home.Logs().Count(l => l == $"Skipping entity definition {Path.GetFullPath(path)}: {earlier}") == 1, "it is logged once with the sentence: " + string.Join(" / ", home.Logs().Where(l => l.Contains("door.json", StringComparison.Ordinal))));
         var read = await Entity(new { operation = "read", id = "door" });
         Check(read.ToJsonString() == JsonSerializer.Serialize(new { version = 1, ok = false, error = new { code = "invalid_request", detail = earlier } }), "its read answers the sentence: " + read.ToJsonString());
+        // The list names it apart from the readable ones, with why; so it does any other file it cannot read, in Read's words.
+        var broken = Path.Combine(home.Root, ".storage", "hass_sharp", "entities", "broken.json");
+        File.WriteAllText(broken, """{"version":2}""");
+        var answer = await Entity(new { operation = "list" });
+        Check(answer["result"] is JsonArray && !answer["result"]!.AsArray().Any(d => d!["id"]!.GetValue<string>() is "door" or "broken"), "the readable ones are the result: " + answer.ToJsonString());
+        Check(JsonNode.DeepEquals(answer["unreadable"], JsonNode.Parse($$"""[{"id":"broken","reason":"Invalid entity definition envelope"},{"id":"door","reason":"{{earlier}}"}]""")),
+            "the list names each unreadable file with its reason: " + answer["unreadable"]?.ToJsonString());
+        var homeView = await Entity(new { operation = "list", view = "home", todayUtc = "2026-11-20T00:00:00Z" });
+        Check(homeView["unreadable"]!.AsArray().Count == 2, "the entities page's list names them too: " + homeView["unreadable"]?.ToJsonString());
+        var removals = home.Removals().Length;
         var deleted = await Entity(new { operation = "delete", id = "door", expectedRevision = 0 });
         Check(deleted["ok"]!.GetValue<bool>() && !File.Exists(path), "delete at revision 0 removes it: " + deleted.ToJsonString());
-        Console.WriteLine("PASS entity api: a listed entities key is refused in words, and a version 1 graph document is skipped, answered with why, and deleted at revision 0");
+        Check(home.Removals().Length == removals + 1 && home.Removals()[^1] == "door", "and its entities from Home Assistant: " + string.Join(", ", home.Removals()));
+        await Entity(new { operation = "delete", id = "broken", expectedRevision = 0 });
+        var after = await Entity(new { operation = "list" });
+        Check(after["unreadable"] is JsonArray { Count: 0 }, "with both deleted, the list names none: " + after.ToJsonString());
+        Console.WriteLine("PASS entity api: a listed entities key is refused in words, and a version 1 graph document is skipped, listed apart with why, answered with why, and deleted at revision 0 with its entities");
     }
 
     static JsonObject N(string id, string kind, object? config = null) => VisualExecutionTests.N(id, kind, config);

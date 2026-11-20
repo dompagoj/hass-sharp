@@ -7,7 +7,7 @@ import { Dialog } from '../components/Dialog'
 import { startOfToday } from '../automations/model'
 import { focusSoon } from '../visual/soon'
 import { createNotice } from '../visual/TopBar'
-import { definitionsQueryKey, EntityApiError, entityApi, entityError, entityTypesQueryKey } from '../entities/api'
+import { definitionsQueryKey, EntityApiError, entityApi, entityError, entityTypesQueryKey, type UnreadableDefinition } from '../entities/api'
 import { DefinitionCard, definitionPollInterval, definitionsSummary, noteStarting, watchedEntityIds } from '../entities/DefinitionCard'
 import { DeleteDefinitionDialog } from '../entities/DeleteDefinition'
 import { liveState } from '../entities/liveState'
@@ -26,7 +26,8 @@ const byName = (a: HomeDefinition, b: HomeDefinition) => a.name.localeCompare(b.
  * The Entities section: a card for each entity definition, with its status, its entities and their live states, its
  * switch and its menu; "New entity definition" names a draft and opens it in the editor, built with nodes or from a
  * class. The list is read as the automations page reads its own: again while a run is going or a definition starts,
- * and after a switch or a delete.
+ * and after a switch or a delete. A definition file the backend cannot read is listed apart, by its id and why, with
+ * Delete (at revision 0) its only action.
  */
 export const EntitiesListView = (_props: RouteSectionProps) => {
   const hass = useContext(HassCtx)!
@@ -39,9 +40,18 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
 
   // ---- The list: one request for every card. Read again (see definitionPollInterval) only while the page is visible.
   const startingSince = new Map<string, number>()
+  // The files the list's last answer could not read, kept beside the cards (the query keeps the cards alone), and in
+  // the cache under a key of their own, so that a page opened again over the cached cards has them too.
+  const unreadableKey = [...definitionsQueryKey, 'unreadable']
+  const [unreadable, setUnreadable] = createSignal(queryClient.getQueryData<UnreadableDefinition[]>(unreadableKey) ?? [])
   const home = useQuery(() => ({
     queryKey: [...definitionsQueryKey],
-    queryFn: () => api.home(startOfToday()),
+    queryFn: async () => {
+      const answer = await api.homePage(startOfToday())
+      queryClient.setQueryData(unreadableKey, answer.unreadable)
+      setUnreadable(answer.unreadable)
+      return answer.definitions
+    },
     staleTime: 0,
     refetchInterval: query => {
       const items = query.state.data ?? [], now = Date.now()
@@ -82,7 +92,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   // ---- Focus: after a delete it goes to the next card, else the previous one, else "New entity definition".
   const focusAfter = (id: string) => {
     const list = ids(), at = list.indexOf(id)
-    const next = list[at + 1] ?? list[at - 1]
+    const next = at < 0 ? undefined : list[at + 1] ?? list[at - 1]
     const card = (cardId: string) => [...page.querySelectorAll<HTMLElement>('[data-definition]')].find(found => found.dataset.definition === cardId)
     return () => focusSoon(() => (next ? card(next)?.querySelector<HTMLElement>('.hs-home-card__link') : page.querySelector<HTMLElement>('.hs-home-new')), page)
   }
@@ -128,10 +138,10 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   // ---- Delete, with the editor's confirmation. A refusal stays in it and the list is read again, so a retry deletes
   // the revision the list has then; a conflict (changed since the list was read) says so and offers Reload the list.
   // One already deleted elsewhere is gone, as asked: the dialog closes once the list is read again.
-  const [deleteItem, setDeleteItem] = createSignal<HomeDefinition>()
+  const [deleteItem, setDeleteItem] = createSignal<{ id: string; name: string; revision: number }>()
   const [deleteError, setDeleteError] = createSignal<{ text: string; conflict: boolean }>()
   const [deleting, setDeleting] = createSignal(false)
-  const askDelete = (item: HomeDefinition) => { setDeleteError(undefined); setDeleteItem(item) }
+  const askDelete = (item: { id: string; name: string; revision: number }) => { setDeleteError(undefined); setDeleteItem(item) }
   const closeDelete = () => { if (!deleting()) { setDeleteItem(undefined); setDeleteError(undefined) } }
   const confirmDelete = async () => {
     const item = deleteItem()
@@ -199,7 +209,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
           <Button onClick={() => void home.refetch()}>Try again</Button>
         </div>
       </Show>
-      <Show when={home.isSuccess && !items().length}>
+      <Show when={home.isSuccess && !items().length && !unreadable().length}>
         <div class="hs-home-empty" role="status">
           <h2>No entity definitions yet</h2>
           <p>An entity definition creates new entities and devices in Home Assistant. Build what they do with nodes, or use a C# class from your node library.</p>
@@ -230,6 +240,27 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
             )}
           </For>
         </ul>
+      </Show>
+
+      <Show when={home.isSuccess && unreadable().length}>
+        <section class="hs-ent-unreadable" aria-labelledby="entities-unreadable-title">
+          <h2 id="entities-unreadable-title">Cannot be read</h2>
+          <ul class="hs-ent-unreadable__list" aria-label="Entity definitions that cannot be read">
+            <For each={unreadable()}>
+              {item => (
+                <li class="hs-ent-unreadable__row" data-unreadable={item.id}>
+                  <span class="hs-ent-unreadable__text">
+                    <code class="hs-ent-unreadable__id">{item.id}</code>
+                    <span class="hs-ent-unreadable__reason">{item.reason}</span>
+                  </span>
+                  <Show when={admin()}>
+                    <Button variant="danger" disabled={deleting()} aria-label={`Delete ${item.id}`} onClick={() => askDelete({ id: item.id, name: item.id, revision: 0 })}>Delete</Button>
+                  </Show>
+                </li>
+              )}
+            </For>
+          </ul>
+        </section>
       </Show>
 
       <Dialog open={newOpen()} title="New entity definition" width="small" onClose={closeNew} footer={<>

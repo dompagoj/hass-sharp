@@ -102,6 +102,12 @@ public sealed class DefinitionValidationException(DefinitionPreview preview) : E
 }
 
 /// <summary>
+/// A definition file that cannot be read, as a list names it: its id and why (for one an earlier development build saved,
+/// <see cref="EntityDefinitionStore.EarlierBuild"/>). It is deleted at revision 0.
+/// </summary>
+public sealed record UnreadableDefinition(string Id, string Reason);
+
+/// <summary>
 /// The entity definitions, one <c>&lt;id&gt;.json</c> file each in a directory. Every change checks the revision the
 /// caller last read and writes a whole file in place of the old one.
 /// </summary>
@@ -149,9 +155,10 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
 
     /// <summary>
     /// Every readable definition, by id. An unreadable file is logged with its message, once until that message changes,
-    /// and skipped; when <paramref name="strict"/> it throws instead, an exception of the same kind naming the file.
+    /// and skipped (and added to <paramref name="unreadable"/>, with that message, when one is given); when
+    /// <paramref name="strict"/> it throws instead, an exception of the same kind naming the file.
     /// </summary>
-    public EntityDefinitionDocument[] List(bool strict = false)
+    public EntityDefinitionDocument[] List(bool strict = false, ICollection<UnreadableDefinition>? unreadable = null)
     {
         lock (Gate)
         {
@@ -174,6 +181,7 @@ public sealed class EntityDefinitionStore(string directory, DefinitionGenerator 
                         ArgumentException => new ArgumentException(message, ex),
                         _ => new JsonException(message, ex),
                     };
+                    unreadable?.Add(new(id, ex.Message));
                     if (Skipped.TryGetValue(path, out var logged) && logged == ex.Message) continue;
                     Skipped[path] = ex.Message;
                     Logger.Error($"Skipping entity definition {path}: {ex.Message}");

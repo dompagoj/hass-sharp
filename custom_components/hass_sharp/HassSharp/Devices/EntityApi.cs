@@ -370,7 +370,7 @@ public partial class HassSharpManager
     /// what that removed is answered as warnings, and a preview answers the graph with those pins as <c>graph</c>.
     /// </summary>
     /// <param name="requestJson">The request: <c>operation</c> and that operation's fields.</param>
-    /// <returns><c>{version, ok: true, result}</c>, or <c>{version, ok: false, error: {code, detail}}</c>.</returns>
+    /// <returns><c>{version, ok: true, result}</c> (for a list, also <c>unreadable: [{id, reason}]</c>), or <c>{version, ok: false, error: {code, detail}}</c>.</returns>
     public async Task<string> EntityRequest(string requestJson)
     {
         await _visualGate.WaitAsync();
@@ -381,6 +381,8 @@ public partial class HassSharpManager
             // Before any field an operation reads: an unknown one is answered as such, not as a field it lacks.
             if (operation is not ("types" or "list" or "read" or "preview" or "save" or "set_enabled" or "delete" or "run")) throw new ArgumentException("Unknown entity operation");
             object result;
+            // A list's definition files that cannot be read, answered beside its result.
+            List<UnreadableDefinition>? unreadable = null;
             // One read of the typed service calls for the whole request, as VisualRequest does.
             var services = _diagnosticsProvider.ServiceCalls();
             var libraries = SavedLibraries(services);
@@ -403,13 +405,15 @@ public partial class HassSharpManager
                     : PreviewJson(preview);
             }
             // Listing omits the generated source and its map; "read" returns them. The entities page's list (view "home")
-            // adds how each definition has been running, as the automations page's does.
+            // adds how each definition has been running, as the automations page's does. Beside the result, unreadable
+            // names each definition file that cannot be read, with why, so that it can be deleted (at revision 0).
             else if (operation == "list")
             {
                 var view = ApiRequest.OptionalString(request, "view");
                 if (view is not (null or "home")) throw new ArgumentException("Unknown list view; the entity definitions list has the view home");
                 var today = view == "home" ? StartOfToday(ApiRequest.OptionalString(request, "todayUtc")) : (DateTime?)null;
-                var listed = store.List().Select(document =>
+                unreadable = [];
+                var listed = store.List(unreadable: unreadable).Select(document =>
                 {
                     var json = EntityJson(document, snapshot);
                     json.Remove("source"); json.Remove("sourceMap");
@@ -486,7 +490,8 @@ public partial class HassSharpManager
                     else throw new ArgumentException("Unknown entity operation");
                 }
             }
-            return JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json);
+            return unreadable == null ? JsonSerializer.Serialize(new { version = 1, ok = true, result }, VisualStore.Json)
+                : JsonSerializer.Serialize(new { version = 1, ok = true, result, unreadable }, VisualStore.Json);
         }
         catch (IOException ex) when (ex is not FileNotFoundException) { return Error("storage", ex.Message); }
         catch (UnauthorizedAccessException ex) { return Error("storage", ex.Message); }

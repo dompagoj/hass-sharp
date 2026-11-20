@@ -38061,6 +38061,155 @@
     ]
   },
   {
+    "name": "an Entity node's category is config or diagnostic",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "entityCategory": "system"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {}
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "entityCategory",
+    "messages": [
+      "Category must be one of Config or Diagnostic"
+    ]
+  },
+  {
+    "name": "an Entity node's enabled by default is true or false",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "enabledByDefault": "yes"
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {}
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "enabledByDefault",
+    "messages": [
+      "Enabled by default must be true or false"
+    ]
+  },
+  {
+    "name": "an Entity node's name is text",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": 5
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {}
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "name",
+    "messages": [
+      "Name must be text"
+    ]
+  },
+  {
+    "name": "an Entity node's icon is text",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "icon": 5
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {}
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "icon",
+    "messages": [
+      "Icon must be text"
+    ]
+  },
+  {
+    "name": "an Entity node's device class is text",
+    "graph": {
+      "version": 5,
+      "name": "Door",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door",
+            "deviceClass": 5
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": [],
+        "device": {}
+      }
+    },
+    "valid": false,
+    "nodeId": "door",
+    "inputId": "deviceClass",
+    "messages": [
+      "Device class must be text"
+    ]
+  },
+  {
     "name": "an entity without a device needs a name",
     "graph": {
       "version": 5,

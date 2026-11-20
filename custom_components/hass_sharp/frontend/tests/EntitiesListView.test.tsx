@@ -126,7 +126,7 @@ const menu = (root: Element, name: string, item: string) => {
   choice!.click()
 }
 const type = (input: HTMLInputElement, value: string) => { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })) }
-const loaded = (root: Element) => vi.waitFor(() => expect(root.querySelector('.hs-home-grid[aria-label="Entity definitions"], .hs-home-empty')).not.toBeNull())
+const loaded = (root: Element) => vi.waitFor(() => expect(root.querySelector('.hs-home-grid[aria-label="Entity definitions"], .hs-home-empty, [aria-label="Entity definitions that cannot be read"]')).not.toBeNull())
 const requests = (fixture: Fixture, operation: string) => fixture.entities.requests.filter(r => r.operation === operation)
 
 it('shows each definition: its name, how it works, its device, its status, its entities and, built with nodes, its runs', async () => {
@@ -470,6 +470,38 @@ it('keeps Reload the list out of reach until the list read after a conflict answ
   await vi.waitFor(() => expect(alert()?.textContent).toBe('Could not delete it: The registry is busy'))
   expect(root.querySelector('dialog[open]')).not.toBeNull()
   expect(card(root, 'porch')).not.toBeNull()
+})
+
+const earlier = 'saved by an earlier development build; delete it and build it again'
+
+it('lists a definition file that cannot be read with why, and deletes it at revision 0 after the confirmation', async () => {
+  const { root, fixture } = setup({ prepare: f => { f.entities.unreadable.set('hall', earlier); f.entities.registry.set('hall', [registered('hall:motion', 'binary_sensor.hall', 'Hall')]) } })
+  await loaded(root)
+  // Not "none yet": the page shows it, by its id and why, with Delete; it cannot be opened or turned on.
+  expect(root.querySelector('.hs-home-empty')).toBeNull()
+  const list = root.querySelector<HTMLElement>('[aria-label="Entity definitions that cannot be read"]')!
+  const row = list.querySelector<HTMLElement>('[data-unreadable="hall"]')!
+  expect(row.querySelector('.hs-ent-unreadable__id')?.textContent).toBe('hall')
+  expect(row.querySelector('.hs-ent-unreadable__reason')?.textContent).toBe(earlier)
+  expect(row.querySelector('a, [role="switch"], input')).toBeNull()
+  button(row, 'Delete hall').click()
+  const dialog = await vi.waitFor(() => { const found = root.querySelector('dialog[open]'); expect(found).not.toBeNull(); return found! })
+  expect(dialog.textContent).toContain('hall and its entities are removed from Home Assistant')
+  button(dialog, 'Delete').click()
+  await vi.waitFor(() => expect(root.querySelector('dialog[open]')).toBeNull())
+  expect(requests(fixture, 'delete')).toEqual([{ operation: 'delete', id: 'hall', expectedRevision: 0 }])
+  expect(fixture.entities.unreadable.has('hall')).toBe(false)
+  // The row goes, and with nothing left the page says there is none yet.
+  await vi.waitFor(() => expect(root.querySelector('[data-unreadable]')).toBeNull())
+  expect(root.querySelector('.hs-home-empty h2')?.textContent).toBe('No entity definitions yet')
+})
+
+it('lists a file that cannot be read beside the cards of the readable definitions', async () => {
+  const { root } = setup({ prepare: f => { three(f); f.entities.unreadable.set('broken', 'Invalid entity definition envelope') } })
+  await loaded(root)
+  await vi.waitFor(() => expect(cards(root)).toHaveLength(3))
+  expect(root.querySelector('[data-unreadable="broken"] .hs-ent-unreadable__reason')?.textContent).toBe('Invalid entity definition envelope')
+  expect(cards(root)).not.toContain('broken')
 })
 
 it('opens a definition from its menu', async () => {

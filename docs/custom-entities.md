@@ -20,11 +20,14 @@ Definitions live in the panel's **Entities** section, beside Automations and Nod
 library. An assistant can build them too; see [Through MCP](#through-mcp).
 Definitions are stored in `.storage/hass_sharp/entities/`, one file each, as
 document version 2. A definition built with steps by an earlier development build
-(document version 1) does not load and is not on the **Entities** page: the log
-says `Skipping entity definition …: saved by an earlier development build; delete it
-and build it again`. Remove that file (or delete the definition through MCP or the
-API with expected revision 0) and build it again. A class definition of version 1
-loads as it is. The programming interface is in
+(document version 1) does not load. The **Entities** page lists it apart from the
+cards, under **Cannot be read**, by its id with "saved by an earlier development
+build; delete it and build it again" and a **Delete** button; it cannot be opened
+or turned on. A file that cannot be read for another reason is listed there the same
+way, with what was wrong. Until you delete it, the entities it made stay in Home
+Assistant as unavailable, and saving a node library is refused with `Cannot read
+entity definition …` and the same reason. Delete it on the **Entities** page, then
+build it again. A class definition of version 1 loads as it is. The programming interface is in
 [the entity definitions API](backend/entity-definitions.md).
 
 ## Build a derived sensor in the panel
@@ -132,8 +135,8 @@ Select an Entity node to edit it in the panel on the right: its name at the top
 Home Assistant device class, such as `motion` or `power`), an **Icon** (such as
 `mdi:motion-sensor`), a **Category** (None, Config or Diagnostic), **Enabled by
 default**, the options of its type and its **Run history** (see
-[Run history](#run-history)). A required option, such as a select's **Options**,
-says it is missing once you leave its field; **Save** waits for it all the same.
+[Run history](#run-history)). A required option left empty, such as a select's
+**Options**, says it is missing on its field, and **Save** waits for it.
 
 With no step selected, the panel on the right holds the definition's own form: its
 **Device** and its **Settings**, with any problem of the definition as a whole above

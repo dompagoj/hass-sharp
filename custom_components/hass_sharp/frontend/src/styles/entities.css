@@ -87,6 +87,14 @@
 .hs-app .hs-ent-starts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: 100%; margin-top: 8px; }
 .hs-app .hs-ent-start { align-content: start; min-height: 44px; padding: 14px 16px; border: 1px solid var(--hs-line); border-radius: 12px; background: var(--hs-surface); color: var(--hs-text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--hs-motion) ease-out; }
 .hs-app .hs-ent-start:hover { border-color: color-mix(in srgb, var(--hs-accent) 45%, var(--hs-line)); }
+/* A definition file that cannot be read: its id and why, and Delete. */
+.hs-app .hs-ent-unreadable { display: grid; gap: 8px; margin-top: 24px; }
+.hs-app .hs-ent-unreadable h2 { margin: 0; font-size: 15px; }
+.hs-app .hs-ent-unreadable__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-ent-unreadable__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; min-width: 0; padding: 10px 14px; border: 1px solid color-mix(in oklab, var(--hs-danger) 45%, var(--hs-line)); border-radius: 12px; background: var(--hs-surface); }
+.hs-app .hs-ent-unreadable__text { display: grid; gap: 2px; min-width: 0; }
+.hs-app .hs-ent-unreadable__id { overflow-wrap: anywhere; font-weight: 650; }
+.hs-app .hs-ent-unreadable__reason { color: var(--hs-muted); font-size: 13px; overflow-wrap: anywhere; }
 
 @media (max-width: 700px) {
   /* One column: an entity's state goes under its name; the two ways to start stack. */

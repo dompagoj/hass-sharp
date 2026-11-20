@@ -112,6 +112,16 @@ it('the section has the entity\'s fields and its type\'s options, and no generic
   expect(control(root, 'Enabled by default').checked).toBe(true)
 })
 
+it('an optional choice of a sensor\'s options offers None first, then its values in words', () => {
+  const { root, changed } = mount(add(empty(), 'entity', 's', { key: 'power', domain: 'sensor', name: 'Power' }), 's')
+  const stateClass = control<HTMLSelectElement>(root, 'State class')
+  expect([...stateClass.options].map(o => o.textContent)).toEqual(['None', 'Measurement', 'Total', 'Total increasing'])
+  expect(stateClass.value).toBe('')
+  stateClass.value = 'total_increasing'
+  stateClass.dispatchEvent(new Event('change', { bubbles: true }))
+  expect(changed().config.options).toEqual({ stateClass: 'total_increasing' })
+})
+
 it('the fields write the node\'s config, and clearing one leaves its key out rather than null', () => {
   const { root, changed, history } = mount(lamp({ icon: 'mdi:lamp', deviceClass: 'light', entityCategory: 'config' }), 'l')
   expect(control(root, 'Icon').value).toBe('mdi:lamp')

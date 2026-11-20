@@ -243,7 +243,9 @@ envelope; validation, conflicts and revisions work as above.
    runnable}]}`. `status` is `running`, `setup` (starting), `failed` or `off`;
    `logic` is `"graph"` or the class's type id; `device` whether it makes a device:
    it gives device details, or its class derives from `SharpDevice` (for a class no
-   node library offers any more, whether it gives device details).
+   node library offers any more, whether it gives device details). Beside the
+   result, `unreadable: [{id, reason}]` names each definition file that cannot be
+   read, which only `entities_delete` with `expectedRevision` 0 removes (see step 6).
    `entities_read({id})` returns one complete document, with its `revision`,
    `source`, `automationId` and `registeredEntities`, and, for a graph,
    `entities`, the entities its Entity nodes declare, for reading only (a class's
@@ -276,9 +278,14 @@ envelope; validation, conflicts and revisions work as above.
    entities the first time it is turned on) and returns `enabled`, `active` and
    `activationError`. `entities_delete({id, expectedRevision})` deletes it and
    removes its entities and device. A graph definition stored by an earlier
-   development build (document `version` 1) is left out of `entities_list`, and
-   `entities_read` of it answers "saved by an earlier development build; delete it
-   and build it again": delete it with `expectedRevision` 0 and save it again.
+   development build (document `version` 1) is left out of `entities_list`'s
+   result and named in its `unreadable` with the reason "saved by an earlier
+   development build; delete it and build it again", which `entities_read` of it
+   answers too; another file that cannot be read is named there with what was
+   wrong. Until it is deleted, its entities stay as unavailable and `library_save`
+   is refused with `Cannot read entity definition <path>: <reason>`. Delete it with
+   `expectedRevision` 0 (the user can also do so on the **Entities** page) and save
+   it again.
 7. `entities_run({id, triggerId})` runs one Trigger step of a running definition,
    one whose `runnable` is true, and returns `runId`. Nothing else runs by hand: a
    command runs when the entity's service is called, an Entity node's state follows

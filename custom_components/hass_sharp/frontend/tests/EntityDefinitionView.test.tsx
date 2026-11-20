@@ -1201,16 +1201,15 @@ it('blocks Save while a required option is empty or a number option is not a num
   expect([...options().querySelectorAll('.hs-field-hint')].map(h => h.textContent)).toEqual(['Ctrl+Enter to apply', 'One per line: every option it offers. Required.'])
   expect(control(inspector(root), 'option:options').getAttribute('aria-required')).toBe('true')
   const required = 'Mode needs options: a select cannot work without it'
-  // Not in red the moment the type is chosen: Save waits, the Problems tab has it, and the field says it once left.
+  // Said on the field at once, and Save waits for it.
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(true))
-  await new Promise(resolve => setTimeout(resolve, 20))
-  expect(options().textContent).not.toContain(required)
-  expect(control(inspector(root), 'option:options').hasAttribute('aria-invalid')).toBe(false)
+  await vi.waitFor(() => expect(options().textContent).toContain(required))
+  expect(control(inspector(root), 'option:options').getAttribute('aria-invalid')).toBe('true')
   expect(entityConfig(root, 'mode').options ?? {}).not.toHaveProperty('options')
   button(root, 'Save').click()
   await new Promise(resolve => setTimeout(resolve, 20))
   expect(saves(fixture)).toEqual([])
-  // Chosen in the Problems tab with nothing selected, it selects its Entity node, shows on its field and focuses it.
+  // Chosen in the Problems tab with nothing selected, it selects its Entity node and focuses its field.
   deselect(root)
   ;[...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')].find(b => b.textContent?.startsWith('Problems'))!.click()
   await vi.waitFor(() => expect([...root.querySelectorAll('.hs-problem__message')].map(b => b.textContent)).toContain(required))
@@ -1245,31 +1244,17 @@ it('blocks Save while a required option is empty or a number option is not a num
     { key: 'mode', domain: 'select', name: 'Mode', options: { options: ['Eco', 'Comfort'] } }, { key: 'level', domain: 'number', options: { min: 5.5 } }])
 })
 
-it('says a required option is missing on its field once the field is left without one', async () => {
-  const { root } = setup('/entities/new?name=Mode')
-  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
-  await starter(root)
-  choose(control(inspector(root), 'domain'), 'select')
-  const options = () => fieldOf(inspector(root), 'option:options')
-  await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(true))
-  await new Promise(resolve => setTimeout(resolve, 20))
-  expect(options().querySelector('.hs-error')).toBeNull()
-  control(inspector(root), 'option:options').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-  await vi.waitFor(() => expect(options().querySelector('.hs-error')?.textContent).toBe('Mode needs options: a select cannot work without it'))
-  expect(control(inspector(root), 'option:options').getAttribute('aria-invalid')).toBe('true')
-})
-
-it('says a required option is missing on its field when the step\'s own list of problems leads to it', async () => {
+it('says a required option is missing on its field at once, as a step\'s inputs do', async () => {
   const { root } = setup('/entities/new?name=Mode')
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))
   await starter(root)
   choose(control(inspector(root), 'domain'), 'select')
   const required = 'Mode needs options: a select cannot work without it'
-  const go = () => [...inspector(root).querySelectorAll<HTMLButtonElement>('.hs-insp-problems button')].find(b => b.textContent === required)
-  await vi.waitFor(() => expect(go()).toBeDefined())
-  expect(fieldOf(inspector(root), 'option:options').querySelector('.hs-error')).toBeNull()
-  go()!.click()
+  // On the field, with nothing left yet, and in the step's own list of problems, which leads to the field.
   await vi.waitFor(() => expect(fieldOf(inspector(root), 'option:options').querySelector('.hs-error')?.textContent).toBe(required))
+  expect(control(inspector(root), 'option:options').getAttribute('aria-invalid')).toBe('true')
+  const go = [...inspector(root).querySelectorAll<HTMLButtonElement>('.hs-insp-problems button')].find(b => b.textContent === required)!
+  go.click()
   expect(document.activeElement).toBe(control(inspector(root), 'option:options'))
 })
 

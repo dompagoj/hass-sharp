@@ -37,19 +37,6 @@ export function focusRow(root: ParentNode | undefined, port: string) {
   return true
 }
 
-/** The event a row gets, before its control is focused, when a problem chosen in a list leads to it (`locateRow`). */
-export const rowLocated = 'hs-row-located'
-
-/**
- * Focuses the row of `port` as a problem chosen in the Problems tab or the inspector's list leads to it: the row is
- * told first (`rowLocated`), so a field that holds back a problem until it is left (a required option) shows it.
- */
-export function locateRow(root: ParentNode | undefined, port: string) {
-  const row = root && [...root.querySelectorAll<HTMLElement>('[data-input-id]')].find(el => el.dataset.inputId === port)
-  row?.dispatchEvent(new CustomEvent(rowLocated, { bubbles: true }))
-  return focusRow(root, port)
-}
-
 /**
  * Call before removing `row` (one of its siblings matching `rows`); call the result after the removal. Focus then
  * goes to the next row, else the previous one, else `fallback`, so it never falls to the page.

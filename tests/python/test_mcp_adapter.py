@@ -605,6 +605,19 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         for absent in ('xxxxx','http://plug','settings','nodes','source','registeredEntities'):
             self.assertNotIn(absent,text)
 
+    async def test_entities_list_names_the_definitions_that_cannot_be_read(self):
+        # A file the server cannot read (one an earlier build saved, or any other) is named apart, with why, so that a model
+        # can say so and delete it at revision 0; the readable ones are summarised as ever.
+        earlier='saved by an earlier development build; delete it and build it again'
+        unreadable=[{'id':'hall','reason':earlier},{'id':'broken','reason':'Invalid entity definition envelope'}]
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document(id='motion',device=None)],'unreadable':unreadable})
+        listed=(await self.call('entities_list',{})).data
+        self.assertEqual(listed['unreadable'],unreadable)
+        self.assertEqual([d['id'] for d in listed['result']],['motion'])
+        description=next(t for t in self.instance.tools if t.name=='hass_sharp__entities_list').description
+        self.assertIn('unreadable [{id, reason}]',description)
+        self.assertIn('entities_delete with expectedRevision 0',description)
+
     async def test_entities_list_says_whether_a_definition_makes_a_device(self):
         # As the panel's device form has it: the document gives device details, or its class is a SharpDevice.
         device_class={'kind':'class','type':'library:example_plug:NodeLib.SmartPlug','graph':None}
@@ -756,8 +769,10 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(result.error)
                     self.assertEqual(result.data['error']['detail']['diagnostics'][0]['message'],listed)
                     self.assertEqual(self.service.entities.await_args.args[0]['definition'],definition)
-        # entities is no part of a definition: no description of one lists it, and a document is not taken for a definition by it.
+        # entities is no part of a definition: no description of one lists it. A document with it at its top is still taken
+        # for a definition (the form an earlier build took), and told its entities are Entity nodes.
         self.assertNotIn('entities',self.adapter.DEFINITION_PARTS)
+        self.assertIn('entities',self.adapter.DEFINITION_MARKERS)
         self.assertIn('entities',self.adapter.GRAPH_MISPLACED)
         self.assertIn('entities',self.adapter.STORED_DOCUMENT_KEYS)
         for name in ('entities_preview','entities_save'):
@@ -801,6 +816,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             # A list of entities is no part of a definition: beside one's own parts, it is a key an entities_read answer adds.
             ('entities_save',save({'name':'Porch','settings':[],'entities':entities,'nodes':[],'edges':[]}),
              ['the nodes and edges go inside logic.graph','Send as definition only name, device, settings and logic: remove entities, which an entities_read answer adds'],['for an automation']),
+            # The form an earlier build took, a list of entities beside the nodes: a definition still, whose entities are Entity nodes.
+            ('entities_save',save({'name':'Porch','entities':entities,'nodes':[],'edges':[]}),
+             ['the nodes and edges go inside logic.graph','remove entities, which an entities_read answer adds',"a graph definition's entities are its Entity nodes, one node of kind entity for each"],['for an automation']),
+            ('entities_save',save({'version':5,'name':'Porch','entities':entities,'nodes':[],'edges':[]}),
+             ['the nodes and edges go inside logic.graph',"a graph definition's entities are its Entity nodes"],['for an automation','remove version']),
             ('entities_save',{'id':'x','expectedRevision':0,'graph':self.DEFINITION},['send it as definition, not graph'],['for an automation']),
             # A definition and a separate graph argument: the graph goes inside the definition's logic.
             ('entities_save',{'id':'x','expectedRevision':0,'definition':{**self.DEFINITION,'logic':{'kind':'graph'}},'graph':self.GRAPH},
@@ -859,6 +879,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             # 8. The mirror: a definition, or a graph carrying a definition's parts, sent to an automation's tool.
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'logic':{'kind':'graph'}}},[to_entities],[]),
             ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'settings':[]}},[to_entities],[]),
+            ('save',{'id':'x','expectedRevision':0,'graph':{**automation,'entities':[]}},[to_entities,"a graph definition's entities are its Entity nodes"],[]),
             ('save',{'id':'x','expectedRevision':0,'definition':self.DEFINITION},[to_entities],[]),
             ('preview',{'graph':self.DEFINITION},['preview takes an automation graph: {version, name, nodes, edges}; for an entity definition use entities_preview'],[]),
             ('save',{'id':'x','expectedRevision':0,'graph':{'name':'Porch','settings':[],'graph':composed}},
@@ -941,12 +962,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             graphs=[g for g in (logic.get('graph') if isinstance(logic,dict) else None,d.get('graph')) if isinstance(g,dict)]
             inner=any(k in g for g in graphs for k in marks)
             flat='nodes' in d or 'edges' in d
-            # A list of entities at the top is no part of a definition (DEFINITION_PARTS), but in a graph it is misplaced.
-            marked=inner or any(k in d for k in marks if k!='entities')
+            marked=inner or any(k in d for k in marks)
             return types.SimpleNamespace(
                 marked=marked, flat=flat, trace_top='definition' in d, traced='definition' in d or any('definition' in g for g in graphs),
                 automation_like=not marked and (flat or isinstance(d.get('graph'),dict) and 'name' not in d),
-                definition_like='definition' not in d and any(k in d for k in ('settings','device','logic')),
+                definition_like='definition' not in d and any(k in d for k in ('entities','settings','device','logic')),
                 stored=[k for k in self.adapter.STORED_DOCUMENT_KEYS if k in d and not (k=='version' and flat)],
                 movable=[k for k in ('settings','device') if any(k in g for g in graphs) and d.get(k) in (None,[])],
                 loose_graph=('graph' in d or flat) and not (isinstance(logic,dict) and logic.get('graph') is not None),
@@ -971,7 +991,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
             rules=[
                 # 1. "use save" only for a pure automation, sent alone to an entities tool, naming the twin.
                 not use_automation or entity and sent!='both' and f is not None and not f.marked and f'for an automation use {twin}.' in hint,
-                # 2. "use entities_save" only for what has logic, settings or a device at its top, never a trace graph.
+                # 2. "use entities_save" only for what has logic, entities, settings or a device at its top, never a trace graph.
                 not use_entities or not entity and f is not None and f.definition_like and f'for an entity definition use {twin},' in hint,
                 # 3. The tool named does not name this one back for the same document (sent as that tool's argument).
                 (not use_automation or 'for an entity definition use' not in (texts[twin,'graph'] or ''))
@@ -1007,7 +1027,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
                 and not (use_automation and any(o in hint for o in others)) and secret not in text,
                 # 13. Entities written into a graph are removed, and each said to be an Entity node instead; never moved.
                 all(('add an Entity node for each entity instead' in s)==bool(re.search(r'remove its (\w+ and )*entities',s)) for s in sentences)
-                and 'entities' not in moved]
+                and 'entities' not in moved,
+                # 14. A list of entities at the top of a definition: removed, and said to be Entity nodes.
+                ("a graph definition's entities are its Entity nodes" in hint)==bool(analysed and 'entities' in f.stored)]
             return [number for number,kept in enumerate(rules,1) if not kept]
         failures,per_rule,checked=[],{},0
         for document in documents():

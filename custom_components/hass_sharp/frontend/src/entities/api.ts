@@ -21,7 +21,14 @@ export interface EntityEnabledResult {
   activationError: string | null
 }
 
-type Envelope<T> = { version: 1; ok: true; result: T } | { version: 1; ok: false; error: { code: string; detail: unknown } }
+/**
+ * A definition file the backend cannot read, as a list names it beside its result: its id and why (for one an earlier
+ * development build saved, "saved by an earlier development build; delete it and build it again"). It can only be
+ * deleted, at revision 0.
+ */
+export interface UnreadableDefinition { id: string; reason: string }
+
+type Envelope<T> = { version: 1; ok: true; result: T; unreadable?: UnreadableDefinition[] } | { version: 1; ok: false; error: { code: string; detail: unknown } }
 
 /**
  * A refused entity request: the backend's `{code, detail}` (`validation`, `conflict`, `not_found`, `invalid_request`,
@@ -68,7 +75,8 @@ const homeAssistantError = (error: unknown) => {
 
 /** The entity definitions' websocket API (`hass_sharp/entities`). */
 export function entityApi(hass: Pick<HomeAssistant, 'callWS'>) {
-  const request = async <T>(operation: string, fields = {}): Promise<T> => {
+  const request = async <T>(operation: string, fields = {}): Promise<T> => (await answered<T>(operation, fields)).result
+  const answered = async <T>(operation: string, fields = {}) => {
     let response: Envelope<T>
     try {
       response = await hass.callWS<Envelope<T>>({ type: 'hass_sharp/entities', request: { operation, ...fields } })
@@ -76,7 +84,7 @@ export function entityApi(hass: Pick<HomeAssistant, 'callWS'>) {
       throw homeAssistantError(error) ?? error
     }
     if (!response.ok) throw new EntityApiError(response.error.code, response.error.detail)
-    return response.result
+    return response
   }
   return {
     /** The classes the node libraries declare, by id. */
@@ -84,6 +92,11 @@ export function entityApi(hass: Pick<HomeAssistant, 'callWS'>) {
     list: () => request<DefinitionSummary[]>('list'),
     /** The entities page's list; `todayUtc` is the start of the viewer's day, for `runsToday`. */
     home: (todayUtc: string) => request<HomeDefinition[]>('list', { view: 'home', todayUtc }),
+    /** The entities page's list as `home` gives it, and the definition files that cannot be read. */
+    homePage: async (todayUtc: string) => {
+      const answer = await answered<HomeDefinition[]>('list', { view: 'home', todayUtc })
+      return { definitions: answer.result, unreadable: answer.unreadable ?? [] }
+    },
     read: (id: string) => request<EntityDocument>('read', { id }),
     preview: (body: DefinitionBody) => request<EntityPreview>('preview', { definition: body }),
     /** `expectedRevision` 0 for a new definition; `enabled` only for a new one (saved off, it does not run). */

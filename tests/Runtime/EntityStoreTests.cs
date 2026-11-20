@@ -116,6 +116,7 @@ static class EntityStoreTests
             (nameof(GraphDocumentChecks), () => GraphDocumentChecks(snapshot)),
             (nameof(OptionProblemsNameTheirOption), () => OptionProblemsNameTheirOption(snapshot)),
             (nameof(ANodesOptionProblemIsOnItsNode), () => ANodesOptionProblemIsOnItsNode(snapshot)),
+            (nameof(AnEntityNodesFieldsAreOfTheirType), () => AnEntityNodesFieldsAreOfTheirType(snapshot)),
             (nameof(ADeviceMarksTheGraph), ADeviceMarksTheGraph),
             (nameof(ValidDocumentsAreValidDefinitions), () => ValidDocumentsAreValidDefinitions(snapshot)),
             (nameof(RemovingAnEntityStillNamedByANodeIsRefused), () => RemovingAnEntityStillNamedByANodeIsRefused(snapshot)),
@@ -137,6 +138,27 @@ static class EntityStoreTests
     }
 
     static string TempDirectory(string what) => Path.Combine(Path.GetTempPath(), $"entity-store-{what}-" + Guid.NewGuid());
+
+    /// <summary>
+    /// An Entity node's own fields are checked as its kind declares them, by the graph's config check: a category outside
+    /// its choices, an <c>enabledByDefault</c> that is not true or false, and a name, icon or device class that is not text
+    /// are each refused on its field.
+    /// </summary>
+    static void AnEntityNodesFieldsAreOfTheirType(VisualCatalogSnapshot snapshot)
+    {
+        foreach (var (field, value, message) in new (string, JsonNode, string)[] {
+            ("entityCategory", "system", "Category must be one of Config or Diagnostic"),
+            ("enabledByDefault", "yes", "Enabled by default must be true or false"),
+            ("name", 5, "Name must be text"), ("icon", 5, "Icon must be text"), ("deviceClass", 5, "Device class must be text") })
+        {
+            var preview = new DefinitionGenerator().Preview(GraphBody(Graph("Door", [Hub("door", "door", "binary_sensor", new JsonObject { [field] = value.DeepClone() })]), null), snapshot);
+            Check(!preview.Valid && preview.Diagnostics.Any(d => d is { Severity: 3, NodeId: "door" } && d.InputId == field && d.Message == message),
+                $"{field} {value.ToJsonString()} is refused on its field: " + Codes(preview));
+        }
+        Check(new DefinitionGenerator().Preview(GraphBody(Graph("Door", [Hub("door", "door", "binary_sensor", new JsonObject {
+            ["name"] = "Door", ["icon"] = "mdi:door", ["deviceClass"] = "door", ["entityCategory"] = "diagnostic", ["enabledByDefault"] = false })]), null), snapshot).Valid,
+            "the same fields of their types are valid");
+    }
 
     internal const string ListedEntities = "Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each";
     internal const string EarlierBuild = "saved by an earlier development build; delete it and build it again";
@@ -164,6 +186,11 @@ static class EntityStoreTests
                 Check(store.Read("motion") == null, $"{what}: nothing is written");
             }
             Check(new DefinitionGenerator().Preview(GraphBody(MotionGraph(), null), snapshot).Valid, "the same definition without the key is valid");
+            // The refusal alone: a listed graph with no Entity node and a repeated setting is not checked further.
+            var bare = new DefinitionGenerator().Preview(GraphBody(Graph("Empty", []), [], [Typed("host", "string"), Typed("host", "string")]), snapshot);
+            Check(bare.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.entitiesNotAllowed"]), "a listed graph gets the refusal alone: " + Codes(bare));
+            var unnamed = new DefinitionGenerator().Preview(GraphBody(Graph("Empty", []), []) with { Name = "" }, snapshot);
+            Check(unnamed.Diagnostics.Select(d => d.Code).SequenceEqual(["definition.name", "definition.entitiesNotAllowed"]), "beside its name's problem: " + Codes(unnamed));
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }

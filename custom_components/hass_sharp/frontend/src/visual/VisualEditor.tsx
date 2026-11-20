@@ -12,7 +12,7 @@ import { useRegistry } from '../registry'
 import type { RunHistoryResponse } from '../types'
 import { FlowAdapter, type FlowControls } from './flow/FlowAdapter'
 import { Inspector, type InspectorLastRun } from './Inspector'
-import { locateRow } from './InputRow'
+import { focusRow } from './InputRow'
 import { NodeLibraryPanel } from './NodeLibraryPanel'
 import { BottomDrawer, CodePanel, ProblemsPanel } from './BottomDrawer'
 import { createFullscreen, createFullscreenPage, FullscreenButton } from './fullscreen'
@@ -310,7 +310,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     const port = diagnostic.inputId ?? diagnostic.portId
     if (port) {
       openPanel(false)
-      soon(() => locateRow(inspector() ?? undefined, port), editor)
+      soon(() => focusRow(inspector() ?? undefined, port), editor)
     } else focusCard(nodeId)
   }
   const focusCard = (id: string) => soon(() => { const target = card(id); target?.focus(); return !!target }, editor)

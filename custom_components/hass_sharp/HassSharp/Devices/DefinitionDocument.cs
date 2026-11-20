@@ -6,9 +6,11 @@ using System.Text.RegularExpressions;
 namespace HassSharp;
 
 /// <summary>
-/// One problem of a definition: its code, its message, the key of the setting it is about (for an Entity node's option,
-/// <c>option:&lt;option&gt;</c>) and, as <see cref="DefinitionDocument"/>'s option check words it, the key of that option
-/// (null when it is about no one option); and the Entity node it is on, if any.
+/// One problem of a definition. <c>code</c> and <c>message</c> say what it is. <c>input</c> is what it is about: a
+/// setting's key, <c>option:&lt;option&gt;</c> for an option of an Entity node, or null for the definition as a whole.
+/// <c>port</c> is used only inside the option check, which passes the entity's key as <c>input</c> and the option as
+/// <c>port</c>; <see cref="DefinitionDocument.Check"/> turns that into <c>input</c> and leaves <c>port</c> null.
+/// <c>node</c> is the Entity node the problem is on, if any.
 /// </summary>
 internal delegate void DefinitionProblem(string code, string message, string? input, string? port = null, string? node = null);
 

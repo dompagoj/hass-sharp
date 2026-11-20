@@ -268,8 +268,12 @@ describe('the in-memory entities backend', () => {
     expect(await codes({ ...body(), name: 'x'.repeat(121) })).toEqual(['definition.name'])
     // No Entity node.
     expect(await codes({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } } })).toEqual(['definition.entitiesRequired'])
-    // A graph request that lists entities, even none, is told to use Entity nodes, before anything else is checked.
+    // A graph request that lists entities, even none, is told to use Entity nodes, and only that, its name's problem
+    // aside: its graph is not checked, so a graph with no Entity node is not said to need one.
     const listed = (entities: unknown) => ({ ...body(), entities } as unknown as DefinitionBody)
+    const bare = { ...listed([]), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } } } as DefinitionBody
+    expect(await codes(bare)).toEqual(['definition.entitiesNotAllowed'])
+    expect(await codes({ ...bare, name: '' })).toEqual(['definition.name', 'definition.entitiesNotAllowed'])
     expect(await codes(listed([{ key: 'Door', domain: 'binary_sensor' }]))).toEqual(['definition.entitiesNotAllowed'])
     expect(await codes(listed(null))).toEqual(['definition.entitiesNotAllowed'])
     expect((await api.preview(listed([]))).diagnostics).toEqual([{ nodeId: null, message: 'Entities are Entity nodes in the graph now: leave entities out and add one Entity node for each', severity: 3, startLine: null, startColumn: null, inputId: 'entities', portId: null, code: 'definition.entitiesNotAllowed' }])
