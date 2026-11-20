@@ -238,8 +238,7 @@ static class EntityStartupTests
             Check(!shown.Any(l => l.Contains(".cs", StringComparison.Ordinal) || l.Contains(home.Root, StringComparison.Ordinal) || l.Contains(".storage", StringComparison.Ordinal) || l.Contains("   at ", StringComparison.Ordinal)),
                 $"{when}: a path or a stack above Debug: " + string.Join(" | ", shown));
         }
-        static bool Worded(string? reason) => reason != null && reason.StartsWith("plug: ", StringComparison.Ordinal) && reason.Contains("Use the new plug", StringComparison.Ordinal)
-            && !reason.Contains(".cs", StringComparison.Ordinal) && !reason.Contains(".storage", StringComparison.Ordinal) && !reason.Contains('/');
+        static bool Worded(string? reason) => reason == "plug: 'OldPlug.OldPlug()' is obsolete: 'Use the new plug'";
         var first = new HassSharpManager(home.Root);
         try
         {
@@ -274,32 +273,36 @@ static class EntityStartupTests
 
     /// <summary>
     /// A definition's code that the compile refuses when it loads (a <see cref="CompilationErrorException"/>, which the
-    /// preview before it did not meet) reads as the startup line always worded it: each compiler error's message and code
-    /// (and its node library when the source map gives its line to one), never the generated file's path; of many, the
-    /// first 3, each cut at 200 characters, and how many more. It warns once in those words, and nothing at error. No graph
+    /// preview before it did not meet) reads as the startup line always worded it: each compiler error's message and code,
+    /// and its node library when the source map gives its line to one, never the generated file's path; of many, the first
+    /// 3, each cut at 200 characters, and how many more. It warns once in those words, and nothing at error. No graph
     /// reaches this at load (a load previews the graph again, compiling it whole, see <see cref="ManyCompilerErrorsAreCapped"/>),
-    /// so the load errors are worked out here from the compiler's own errors of code that creates the libraries' classes.
+    /// so the load errors are worked out here from the compiler's own errors: of code that creates the libraries' classes,
+    /// on a line of a node, and of a library's own code.
     /// </summary>
     static async Task ACompilerErrorAtLoadIsWordedAndCapped()
     {
         await using var home = new EntityTestHome("entity-startup-compiler-errors");
         var api = new HassSharpManager(home.Root);
+        try
+        {
         const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
         var record = typeof(HassSharpManager).GetMethod("RecordDefinitionLoadError", flags)!;
         var warn = typeof(HassSharpManager).GetMethod("WarnCannotStart", flags)!;
         var loadErrors = (System.Collections.Concurrent.ConcurrentDictionary<string, string>)typeof(HassSharpManager).GetField("_loadErrors", flags)!.GetValue(api)!;
-        // The load error of a graph definition whose source is the library and then a line of its node's that creates the
-        // library's class; and the one warning two loads of it log.
-        string LoadError(string id, string name, string library, string type)
+        // The load error of a graph definition whose source is the library and then a line of its node's (code that, when
+        // given, creates the library's class); and the one warning two loads of it log.
+        string LoadError(string id, string name, string library, string? type)
         {
-            var source = library + "\npublic static class Make { public static object Create() => new " + type + "(); }";
+            var source = library + "\npublic static class Make { public static object? Create() => " + (type == null ? "null" : $"new {type}()") + "; }";
             var lines = library.Split('\n').Length;
             CompilationErrorException? thrown = null;
             try { new CodeCompiler(Diagnostics).CompileSingleFile(Storage(home, "entities", $"entity_{id}.cs"), source); }
             catch (CompilationErrorException error) { thrown = error; }
             Check(thrown != null && thrown.Errors.All(e => e.Contains(".storage", StringComparison.Ordinal)), $"{id}: the compile does not fail with errors at the file's path");
-            var document = new EntityDefinitionDocument(1, id, 1, name, null, [], null, null, new DefinitionLogic("graph", null, null), source,
-                [new VisualSourceMap("$library:" + id, 1, lines), new VisualSourceMap("plug", lines + 1, lines + 1)]);
+            var document = new EntityDefinitionDocument(Version: 1, Id: id, Revision: 1, Name: name, Device: null, Settings: [], Entities: null, Devices: null,
+                Logic: new DefinitionLogic(Kind: "graph", Type: null, Graph: null), Source: source,
+                SourceMap: [new VisualSourceMap("$library:" + id, 1, lines), new VisualSourceMap("plug", lines + 1, lines + 1)]);
             record.Invoke(api, [document, thrown]);
             var reason = loadErrors.Single(e => e.Key.EndsWith($"entity_{id}.cs", StringComparison.Ordinal)).Value;
             var mark = home.Logs(PyLogLevel.Warn).Length;
@@ -310,12 +313,17 @@ static class EntityStartupTests
             return reason;
         }
 
-        var old = LoadError("old", "Old plug", Obsolete, "OldPlug");
-        Check(old == "'OldPlug.OldPlug()' is obsolete: 'Use the new plug' (CS0619)", "one compiler error, worded: " + old);
-        CheckCapped(LoadError("needy", "Needy plug", Needy, "NeedyPlug"), [.. Members.Take(3).Select(m => $"Required member 'NeedyPlug.{m}")], 9, "12 compiler errors");
-        var errors = home.Logs(PyLogLevel.Error);
-        Check(errors.Length == 0, "logged at error: " + string.Join(" | ", errors));
-        Console.WriteLine("PASS entity startup: a compiler error at load reads as the compiler's message and code without the file's path, the first 3 of many each cut at 200 characters and how many more, and warns once");
+            var old = LoadError("old", "Old plug", Obsolete, "OldPlug");
+            Check(old == "'OldPlug.OldPlug()' is obsolete: 'Use the new plug' (CS0619)", "one compiler error on a node's line, worded: " + old);
+            // An error in a library's own code names the library.
+            var typo = LoadError("typo", "Typo plug", "public class TypoPlug : SharpDevice { public TypoPlug() { Ad(new SharpSwitch(\"relay\")); } }", null);
+            Check(typo == "The name 'Ad' does not exist in the current context (CS0103, node library typo)", "one compiler error in a library, worded: " + typo);
+            CheckCapped(LoadError("needy", "Needy plug", Needy, "NeedyPlug"), [.. Members.Take(3).Select(m => $"Required member 'NeedyPlug.{m}")], 9, "12 compiler errors");
+            var errors = home.Logs(PyLogLevel.Error);
+            Check(errors.Length == 0, "logged at error: " + string.Join(" | ", errors));
+        }
+        finally { await api.UnloadAsync(); }
+        Console.WriteLine("PASS entity startup: a compiler error at load reads as the compiler's message and code, and its library when it is in one, without the file's path; the first 3 of many each cut at 200 characters and how many more; and it warns once");
     }
 
     // Definitions that cannot start: one whose Setup() throws a sentence of its own over a .NET failure, one whose Setup()

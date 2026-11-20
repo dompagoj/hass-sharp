@@ -1307,8 +1307,9 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A library save answers each definition it rebuilt without the value of a secret setting, the document marking it
-    /// secret: one an Entity node reads, and one a C# device's secret pin is given. Their other settings' values are there.
+    /// A library save answers each definition it rebuilt without the value of a setting its document marks secret: one an
+    /// Entity node reads, and one wired to a C# device's pin (the document's flag masks it, not the pin's). Their other
+    /// settings' values are there.
     /// </summary>
     static async Task ALibrarySaveAnswersNoSecretSettingValues()
     {
@@ -1447,9 +1448,11 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// Save, read and list answer a secret setting without its value, marked secret and saying whether it has one: each
-    /// the document marks, one an Entity node reads and one a C# device's secret pin is given. The other settings keep
-    /// their values, and the stored files keep the secrets.
+    /// Save, read and list answer a secret setting without its value, marked secret and saying whether it has one: a
+    /// graph's each that the document marks secret (one an Entity node reads, one wired to a C# device's pin: the
+    /// document's flag masks it, not the pin's); a class definition's that its class marks secret, and every setting of
+    /// one whose class the libraries no longer declare. The other settings keep their values, and the stored files keep
+    /// the secrets.
     /// </summary>
     static async Task SecretSettingsAreMaskedInEveryAnswer()
     {
@@ -1478,6 +1481,40 @@ static class EntityGraphTests
         Check(!rig.Home.Logs().Any(l => l.Contains("hunter2", StringComparison.Ordinal)) && !rig.Home.Syncs("plug").Concat(rig.Home.Syncs("level")).Any(s => s.Contains("hunter2", StringComparison.Ordinal)),
             "a log or a sync has a secret");
 
+        // The class kind, while it is there: a class definition's setting is secret as its class declares it.
+        var classicSaved = await rig.Ok(new { operation = "save", id = "classic", expectedRevision = 0, definition = new
+        {
+            name = "Classic plug", settings = new object[] { new { key = "Host", value = "10.0.0.7" }, new { key = "Password", value = "class-hunter2" } },
+            logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" },
+        } });
+        var classicSettings = new[] { """{"key":"Host","value":"10.0.0.7"}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}""" };
+        var classicRead = await rig.Read("classic");
+        var classicListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "classic")!;
+        Check(Shaped(classicSaved["document"]!, classicSettings) && Shaped(classicRead, classicSettings) && Shaped(classicListed, classicSettings)
+            && !(classicSaved.ToJsonString() + classicRead.ToJsonString() + classicListed.ToJsonString()).Contains("hunter2", StringComparison.Ordinal),
+            "the class's save, read and list answers: " + classicRead["settings"]!.ToJsonString());
+        Check(File.ReadAllText(StoredFile(rig, "classic")).Contains("class-hunter2", StringComparison.Ordinal), "the stored class definition keeps its secret");
+
+        // A class definition whose class the libraries no longer declare: which of its settings are secret is not known, so each is masked.
+        var gone = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "classic")))!.AsObject();
+        gone["id"] = "gone"; gone["logic"]!["type"] = "library:secret:NodeLib.GonePlug"; gone["enabled"] = false;
+        File.WriteAllText(StoredFile(rig, "gone"), gone.ToJsonString());
+        var goneRead = await rig.Read("gone");
+        var goneListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "gone")!;
+        var goneSettings = new[] { """{"key":"Host","value":null,"secret":true,"hasValue":true}""", """{"key":"Password","value":null,"secret":true,"hasValue":true}""" };
+        Check(Shaped(goneRead, goneSettings) && Shaped(goneListed, goneSettings), "a class not declared masks every setting: " + goneRead["settings"]!.ToJsonString() + " / " + goneListed["settings"]!.ToJsonString());
+
+        // A stored setting the class does not declare (renamed while the libraries had errors, or a file edited) may be
+        // secret for all that is known: it is masked, the class's other settings as before.
+        var stray = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "classic")))!.AsObject();
+        stray["settings"]!.AsArray().Add(new JsonObject { ["key"] = "Pin", ["value"] = "stray-hunter2" });
+        File.WriteAllText(StoredFile(rig, "classic"), stray.ToJsonString());
+        var strayRead = await rig.Read("classic");
+        var strayListed = (await rig.Request(new { operation = "list" }))["result"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "classic")!;
+        string[] straySettings = [.. classicSettings, """{"key":"Pin","value":null,"secret":true,"hasValue":true}"""];
+        Check(Shaped(strayRead, straySettings) && Shaped(strayListed, straySettings) && !(strayRead.ToJsonString() + strayListed.ToJsonString()).Contains("hunter2", StringComparison.Ordinal),
+            "a setting the class does not declare is masked: " + strayRead["settings"]!.ToJsonString() + " / " + strayListed["settings"]!.ToJsonString());
+
         // Two stored settings of a graph with one key (a file edited by hand), one of them secret: the key is secret, so
         // both are masked.
         var twin = JsonNode.Parse(File.ReadAllText(StoredFile(rig, "level")))!.AsObject();
@@ -1495,8 +1532,9 @@ static class EntityGraphTests
     /// A definition read and saved back as answered keeps its secrets: a masked setting sent back with <c>hasValue</c> and
     /// no value keeps the stored value, as <c>keep</c> does. A value given with <c>hasValue</c> replaces it; <c>hasValue</c>
     /// false with no value clears it. A kept secret stays secret, whatever the entry says. While the libraries do not
-    /// compile, the document still says which setting is secret, and such a save is refused and writes nothing; once they
-    /// compile again, the answer read before saves back with every value kept.
+    /// compile, a graph's document still says which setting is secret, and a class definition falls back to masking
+    /// every setting; a save of either answer then is refused and writes nothing; once they compile again, the answer
+    /// read before saves back with every value kept.
     /// </summary>
     static async Task AnAnswerSavedBackKeepsItsSecrets()
     {
@@ -1504,8 +1542,15 @@ static class EntityGraphTests
         Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
         await rig.Save("plug", SecretPlugDefinition(Host("10.0.0.7"), Password("class-hunter2")));
         await rig.Save("level", Level(Offset(4), Token("graph-hunter2")));
+        // The class kind, while it is there: a class definition of the same class.
+        await rig.Ok(new { operation = "save", id = "classic", expectedRevision = 0, definition = new
+        {
+            name = "Classic plug", settings = new object[] { new { key = "Host", value = "10.0.0.9" }, new { key = "Password", value = "classic-hunter2" } },
+            logic = new { kind = "class", type = "library:secret:NodeLib.SecretPlug" },
+        } });
+        const string classicStored = """[{"key":"Host","value":"10.0.0.9"},{"key":"Password","value":"classic-hunter2"}]""";
         // The definition members of an answer that a save takes, as the answer has them (its entities are for reading only):
-        // its device of null too.
+        // a class's device, and a graph's device of null.
         static JsonObject Back(JsonObject answer) => new()
         {
             ["name"] = answer["name"]!.DeepClone(), ["device"] = answer["device"]?.DeepClone(), ["settings"] = answer["settings"]!.DeepClone(),
@@ -1551,19 +1596,30 @@ static class EntityGraphTests
         File.WriteAllText(libraryFile, broken.ToJsonString());
         var masked = await rig.Read("plug");
         Check(masked["settings"]!.ToJsonString() == $"[{HostAnswered},{PasswordAnswered}]",
-            "with the libraries not compiling the secret setting is masked, the other is not: " + masked["settings"]!.ToJsonString());
+            "with the libraries not compiling the graph's secret setting is masked, the other is not: " + masked["settings"]!.ToJsonString());
+        // A class definition's every setting is masked then, Host too.
+        var classicMasked = await rig.Read("classic");
+        Check(classicMasked["settings"]!.ToJsonString() == """[{"key":"Host","value":null,"secret":true,"hasValue":true},{"key":"Password","value":null,"secret":true,"hasValue":true}]""",
+            "with the libraries not compiling every setting of the class definition is masked: " + classicMasked["settings"]!.ToJsonString());
         var home = (await rig.Request(new { operation = "list", view = "home" }))["result"]!.ToJsonString();
-        Check(!home.Contains("hunter2", StringComparison.Ordinal), "the home list has a secret: " + home);
+        Check(!home.Contains("hunter2", StringComparison.Ordinal) && !home.Contains("10.0.0.9", StringComparison.Ordinal), "the home list has a masked value: " + home);
         // Saved back then, it is refused (the libraries have errors) and nothing is written.
         var refused = await SaveBack(masked);
         Check(refused["error"]?["code"]?.GetValue<string>() == "validation"
             && refused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.library")
             && Settings("plug") == plugStored && (await rig.Read("plug"))["revision"]!.GetValue<long>() == 2, "a save while the libraries do not compile: " + refused.ToJsonString());
+        var classicRefused = await SaveBack(classicMasked);
+        Check(classicRefused["error"]?["code"]?.GetValue<string>() == "validation"
+            && classicRefused["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]!.GetValue<string>() == "definition.library")
+            && Settings("classic") == classicStored && (await rig.Read("classic"))["revision"]!.GetValue<long>() == 1, "a class save while the libraries do not compile: " + classicRefused.ToJsonString());
         // Once they compile again, the answer read while they did not saves back with every value kept.
         File.WriteAllText(libraryFile, compiling);
         var restored = await SaveBack(masked);
         Check(restored["ok"]!.GetValue<bool>() && Settings("plug") == plugStored && Answered(restored["result"]!["document"]!, "host")["value"]!.GetValue<string>() == "10.0.0.7",
             "the masked answer saves back with its values kept: " + Settings("plug") + " / " + restored.ToJsonString());
+        var classicRestored = await SaveBack(classicMasked);
+        Check(classicRestored["ok"]!.GetValue<bool>() && Settings("classic") == classicStored && Answered(classicRestored["result"]!["document"]!, "Host")["value"]!.GetValue<string>() == "10.0.0.9",
+            "the class's masked answer saves back with every value kept, Host's too: " + Settings("classic") + " / " + classicRestored.ToJsonString());
     }
 
     /// <summary>
@@ -1610,7 +1666,7 @@ static class EntityGraphTests
             && !bad.ToJsonString().Contains("hunter2", StringComparison.Ordinal), "keep with a value: " + bad.ToJsonString());
         Check((await rig.Read("level"))["revision"]!.GetValue<long>() == 6 && StoredSetting(rig, "level", "token")["value"]!.GetValue<string>() == "again", "a refused save wrote");
 
-        // A C# device's secret pin's setting is kept the same way; a setting that is not secret is kept as well.
+        // A setting the document marks secret, wired to a C# device's pin, is kept the same way; one that is not secret is kept as well.
         Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
         await rig.Save("plug", SecretPlugDefinition(Host("10.0.0.7"), Password("class-hunter2")));
         var plug = await rig.Save("plug", SecretPlugDefinition(Kept("host", secret: false), Kept("password")), 1);
@@ -1639,7 +1695,7 @@ static class EntityGraphTests
 
         Check((await rig.Library("secret", 0, SecretLibrary))["ok"]!.GetValue<bool>(), "the library saves");
         var plugKept = await rig.Ok(new { operation = "preview", definition = SecretPlugDefinition(Kept("password")) });
-        Check(plugKept["valid"]!.GetValue<bool>(), "a kept secret given to a C# device's secret pin previews: " + plugKept.ToJsonString());
+        Check(plugKept["valid"]!.GetValue<bool>(), "a kept secret setting wired to a C# device's pin previews: " + plugKept.ToJsonString());
         var misspelt = SecretPlugDefinition(Kept("password"));
         misspelt["settings"]![0]!["key"] = "pasword";
         var plugUnknown = await rig.Ok(new { operation = "preview", definition = misspelt });
