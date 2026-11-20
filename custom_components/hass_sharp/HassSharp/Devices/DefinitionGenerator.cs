@@ -92,7 +92,8 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     /// <summary>
     /// Whether a value is one the setting takes. JSON null leaves the property's default, so it fits every setting. A whole
     /// number is one a long holds, written without a fraction; it and a number are within the setting's range when it has
-    /// one (its [Setting]'s, or an int's). An enum takes the text of one of its options.
+    /// one (its [Setting]'s, or an int's). An enum takes the text of one of its options. An entity takes a text that is an
+    /// entity id (<c>light.kitchen</c>), and one of its domain (starting <c>light.</c>) when it has one.
     /// </summary>
     internal static bool Fits(EntitySettingDescriptor setting, JsonNode? value)
     {
@@ -103,15 +104,18 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
             "integer" => kind == JsonValueKind.Number && long.TryParse(value.ToJsonString(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var whole) && Within(setting, whole),
             "number" => DefinitionDocument.Fits("number", value) && Within(setting, double.Parse(value.ToJsonString(), NumberStyles.Float, CultureInfo.InvariantCulture)),
             "enum" => kind == JsonValueKind.String && setting.Options.Contains(value.GetValue<string>(), StringComparer.Ordinal),
+            "entity" => kind == JsonValueKind.String && value.GetValue<string>() is var id && EntityId.IsMatch(id) && (setting.Domain == null || id.StartsWith(setting.Domain + ".", StringComparison.Ordinal)),
             // Text, and true or false, fit as a graph setting's do.
             var type => DefinitionDocument.Fits(type, value),
         };
     }
+    /// <summary>The shape of an entity id, as an entity handle checks it (<see cref="Entities.Entity"/>): <c>\z</c>, not <c>$</c>, so no final line break.</summary>
+    static readonly System.Text.RegularExpressions.Regex EntityId = new("^[a-z0-9_]+\\.[a-z0-9_]+\\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The setting a C# entity's or C# device's signature lists (well formed: <see cref="VisualNodeCatalog.WellFormedClassSignature"/>),
     /// as the compiler describes a <c>[Setting]</c> of the node's class, so that its values are checked and phrased alike: its options when
-    /// it lists them, and its range when it has one.
+    /// it lists them, its range when it has one, an entity's domain when it has one, and whether it is required.
     /// </summary>
     internal static EntitySettingDescriptor Described(JsonObject setting)
     {
@@ -120,7 +124,11 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         return new(VisualNodeCatalog.Text(setting, "key"), VisualNodeCatalog.Text(setting, "label"), description == "" ? null : description, VisualNodeCatalog.Text(setting, "type"),
             setting["secret"] is JsonValue secret && secret.TryGetValue<bool>(out var hidden) && hidden,
             [.. (setting["options"] as JsonArray ?? []).Select(o => o is JsonValue v && v.TryGetValue<string>(out var option) ? option : "")])
-        { Minimum = Bound(setting["minimum"]), Maximum = Bound(setting["maximum"]) };
+        {
+            Minimum = Bound(setting["minimum"]), Maximum = Bound(setting["maximum"]),
+            Domain = setting["domain"] is JsonValue d && d.TryGetValue<string>(out var domain) ? domain : null,
+            Required = setting["required"] is JsonValue r && r.TryGetValue<bool>(out var required) && required,
+        };
     }
 
     /// <summary>Whether a number is within the setting's range: no smaller than its minimum and no larger than its maximum, each when it has one.</summary>
@@ -130,7 +138,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     /// What a setting takes, in words after "takes": its kind and, for a number, its range, such as <c>a whole number from 1
     /// to 3600</c> or <c>a number of at least 0.5</c>; an int's range declared on one side only, such as <c>a whole number of
     /// at least 1</c> (the other side is the int's own, which goes without saying), and an int's own range none: <c>a whole
-    /// number</c>.
+    /// number</c>. An entity's is <c>an entity id</c>, and <c>an entity id that starts with light.</c> with a domain.
     /// </summary>
     internal static string Phrase(EntitySettingDescriptor setting)
     {
@@ -139,6 +147,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         {
             "integer" => "a whole number",
             "enum" => "one of " + string.Join(", ", setting.Options),
+            "entity" => setting.Domain is { } domain ? $"an entity id that starts with {domain}." : "an entity id",
             var type => DefinitionDocument.Phrase(type),
         };
         if (setting.Type is not ("integer" or "number")) return what;

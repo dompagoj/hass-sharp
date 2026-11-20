@@ -135,6 +135,7 @@ static class EntityGraphGeneratorTests
             (nameof(ComponentsResolveTheirSettings), () => { ComponentsResolveTheirSettings(); return Task.CompletedTask; }),
             (nameof(ASecretIsNotInTheSource), () => { ASecretIsNotInTheSource(); return Task.CompletedTask; }),
             (nameof(DerivingDropsWhatTheCodeNoLongerHas), () => { DerivingDropsWhatTheCodeNoLongerHas(); return Task.CompletedTask; }),
+            (nameof(DerivingKeepsAValueThatNoLongerFits), () => { DerivingKeepsAValueThatNoLongerFits(); return Task.CompletedTask; }),
             (nameof(PreviewRunsNoConstructor), PreviewRunsNoConstructor) })
             try { await test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
@@ -145,16 +146,17 @@ static class EntityGraphGeneratorTests
     // ---- C# entity and C# device nodes ----
 
     /// <summary>The signature the compiler gives the code of a node of the kind, alone with the built-in catalog.</summary>
-    static JsonObject Compiled(string kind, string source)
+    /// <param name="provider">What the code compiles with; <see cref="NodeLibraryFixture.EntityProvider"/> for entity classes such as <c>LightEntity</c>.</param>
+    static JsonObject Compiled(string kind, string source, DiagnosticsProvider? provider = null)
     {
-        var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
+        var descriptor = new NodeLibraryCompiler(provider ?? Diagnostics).Preview([], [new CustomNodeSource("c", source, kind)]).Snapshot.Custom["c"];
         Check(descriptor.Valid, $"the {kind} code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
         return descriptor.Signature!;
     }
     /// <summary>A C# entity or C# device node of the code, with the signature its code gives and these values (typed literals) under arguments.</summary>
-    static JsonObject CSharp(string kind, string id, string key, string source, JsonObject? arguments = null, string? name = null)
+    static JsonObject CSharp(string kind, string id, string key, string source, JsonObject? arguments = null, string? name = null, DiagnosticsProvider? provider = null)
     {
-        var more = new JsonObject { ["source"] = source, ["signature"] = Compiled(kind, source), ["arguments"] = arguments ?? new JsonObject() };
+        var more = new JsonObject { ["source"] = source, ["signature"] = Compiled(kind, source, provider), ["arguments"] = arguments ?? new JsonObject() };
         return kind == "csharp_entity" ? EntityNodeTests.CSharpEntity(id, key, more) : EntityNodeTests.CSharpDevice(id, key, name ?? key, more);
     }
     /// <summary>A graph definition named Hall of the nodes and wires (no definition in the graph: the generator composes it), with these settings.</summary>
@@ -329,6 +331,30 @@ static class EntityGraphGeneratorTests
         var wrong = Previewed(Body([CSharp("csharp_device", "fan", "fan", FanSource, new JsonObject { ["Count"] = Lit("string", "three") })], []));
         Check(!wrong.Valid && wrong.Diagnostics.Count(d => d.InputId == "Count" && d.Severity == 3) == 1 && !wrong.Diagnostics.Any(d => d.Code == "setting.value"),
             "a text in an integer is one problem, not a value problem too: " + Shown(wrong.Diagnostics));
+
+        // An entity setting takes an entity id, one of its domain when it has one. A value no rule of the validator sees on
+        // the pin (from a Setting naming none of the graph's settings: that Setting node is told so, not the pin) is checked
+        // against the setting all the same.
+        var entities = NodeLibraryFixture.EntityProvider;
+        const string meter = "public class Meter : SharpDevice\n{\n    [Setting] public SensorEntity Source { get; set; }\n    [Setting] public Entity? Any { get; set; }\n}";
+        JsonObject Meter(JsonObject? arguments = null) => new()
+        {
+            ["version"] = 5, ["name"] = "Hall", ["definition"] = new JsonObject { ["settings"] = new JsonArray() },
+            ["nodes"] = new JsonArray(CSharp("csharp_device", "meter", "meter", meter, arguments, provider: entities), N("source", "setting", new { key = "source" }), N("any", "setting", new { key = "any" })),
+            ["edges"] = new JsonArray(D("source", "meter", "Source"), D("any", "meter", "Any")),
+        };
+        string Given(JsonNode? source, JsonNode? any) =>
+            Shown(new VisualGenerator(entities).Preview(Meter(), BuiltIn, [new("source", source), new("any", any)]).Diagnostics.Where(d => d.Code == "setting.value"));
+        const string both = "setting.value@meter:Source:3 Source takes an entity id that starts with sensor. | setting.value@meter:Any:3 Any takes an entity id";
+        Check(Given(5, 5) == both, "a number in an entity setting, of a domain and of none: " + Given(5, 5));
+        Check(Given("light.kitchen", "not an id") == both, "an entity of another domain, and a text that is no entity id: " + Given("light.kitchen", "not an id"));
+        Check(Given("sensor.outside", "light.kitchen") == "", "an entity of its domain, and any entity where any is taken, fit: " + Given("sensor.outside", "light.kitchen"));
+        // A pin that already has the validator's wrong-domain error is not checked again.
+        var typed = Meter(new JsonObject { ["Source"] = Lit("entity_id:sensor", "light.kitchen") });
+        typed["edges"] = new JsonArray(D("any", "meter", "Any"));
+        var told = new VisualGenerator(entities).Preview(typed, BuiltIn, [new("any", "light.kitchen")]);
+        Check(Shown(told.Diagnostics.Where(d => d.InputId == "Source")) == "@meter:Source:3 Source is not a valid Sensor entity value",
+            "an entity of another domain typed in is the validator's problem alone, with no setting.value beside it: " + Shown(told.Diagnostics));
     }
 
     const string SidedSource = """
@@ -482,6 +508,38 @@ static class EntityGraphGeneratorTests
         broken["nodes"]![1]!["config"]!["source"] = source.Replace("string Address", "Missing Address", StringComparison.Ordinal);
         var kept = new VisualGenerator(Diagnostics).DeriveSignatures(broken, BuiltIn, out var none);
         Check(none.Count == 0 && JsonNode.DeepEquals(kept["nodes"]![1], broken["nodes"]![1]) && kept["edges"]!.AsArray().Count == 2, "code that does not compile keeps its signature, values and wires");
+    }
+
+    /// <summary>
+    /// Deriving writes a setting's new type and whether it is required, and removes nothing a setting the code still has
+    /// holds: a text left in a setting that became an entity stays, and the derived graph is refused with the validator's
+    /// sentence on that pin; a setting that became required and has no value is refused as a required pin is.
+    /// </summary>
+    static void DerivingKeepsAValueThatNoLongerFits()
+    {
+        var entities = NodeLibraryFixture.EntityProvider;
+        const string text = "public class Plug : SharpDevice\n{\n    [Setting] public string Host { get; set; } = \"\";\n}";
+        DefinitionPreview Derived(string source, JsonObject arguments, out JsonObject node, out List<VisualDiagnostic> removed)
+        {
+            var plug = CSharp("csharp_device", "plug", "plug", text, arguments);
+            plug["config"]!["source"] = source;
+            var derived = new VisualGenerator(entities).DeriveSignatures(DefinitionGraph.Compose(Body([plug], [])), BuiltIn, out removed);
+            node = derived["nodes"]!.AsArray().OfType<JsonObject>().Single(n => n["id"]!.GetValue<string>() == "plug");
+            return new DefinitionGenerator(entities).Preview(new("Hall", null, [], null, new("graph", DefinitionGraph.Decompose(derived))), BuiltIn);
+        }
+        // string Host became LightEntity Host: the text typed into it is kept, and refused on its pin.
+        var retyped = Derived(text.Replace("string Host { get; set; } = \"\";", "LightEntity Host { get; set; }", StringComparison.Ordinal),
+            new JsonObject { ["Host"] = Lit("string", "192.168.1.50") }, out var node, out var removed);
+        Check(removed.Count == 0 && JsonNode.DeepEquals(node["config"]!["arguments"], new JsonObject { ["Host"] = Lit("string", "192.168.1.50") }),
+            "deriving keeps the text of a setting the code still has: " + node["config"]!["arguments"]!.ToJsonString() + " " + Shown(removed));
+        Check(node["config"]!["signature"]!["settings"]![0]!.ToJsonString() == """{"key":"Host","label":"Host","description":"","type":"entity","secret":false,"domain":"light","required":true}""",
+            "the derived signature's setting is the code's: " + node["config"]!["signature"]!.ToJsonString());
+        Check(!retyped.Valid && Shown(retyped.Diagnostics) == "@plug:Host:3 Host accepts Light entity, not Text",
+            "the text in an entity setting is refused on its pin, with the validator's sentence: " + Shown(retyped.Diagnostics));
+        // Host = "" became Host with no initializer: required, and with no value refused as a required pin is.
+        var required = Derived(text.Replace(" = \"\";", "", StringComparison.Ordinal), new JsonObject(), out node, out removed);
+        Check(removed.Count == 0 && node["config"]!["signature"]!["settings"]![0]!["required"]?.GetValue<bool>() == true, "the derived setting is required: " + node["config"]!["signature"]!.ToJsonString());
+        Check(!required.Valid && Shown(required.Diagnostics) == "@plug:Host:3 Host is required", "a setting that became required and has no value is refused: " + Shown(required.Diagnostics));
     }
 
     /// <summary>A class whose constructor and static constructor throw previews valid, and neither ran: preview only compiles.</summary>

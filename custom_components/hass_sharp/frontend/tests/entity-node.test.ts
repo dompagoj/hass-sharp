@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, stateInputs, structural, validateGraph, withGraphTypes, words } from '../src/visual/contract'
+import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, settingPinType, stateInputs, structural, validateGraph, withGraphTypes, words, type ClassSetting } from '../src/visual/contract'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
 import { addConnected } from '../src/visual/flow/autoConnect'
@@ -297,6 +297,21 @@ it('a C# entity and a C# device are declarations, and no rule takes either for a
   expect(Object.getPrototypeOf(protoPorts)).toBeNull()
   expect(Object.getOwnPropertyDescriptor(protoPorts, '__proto__')?.value).toEqual({ types: ['string'], required: false, label: 'Proto', description: '', setting: { type: 'string', secret: false } })
   expect([protoPorts.device, protoPorts.Level]).toEqual([nodeCatalog.nodes.entity.inputs.device, { types: ['number'], required: false, label: 'Level', description: '', setting: { type: 'number', secret: false } }])
+  // An entity setting's pin is an entity id, of its domain when it has one; a required setting's pin is required, and
+  // the pin's setting carries the domain and that it is required.
+  const entities = { ...thermo, config: { ...thermo.config, signature: { title: 'T', description: '', domain: 'sensor', settings: [
+    { key: 'Light', label: 'Light', description: '', type: 'entity', secret: false, domain: 'light', required: true },
+    { key: 'Any', label: 'Any', description: '', type: 'entity', secret: false },
+    { key: 'Host', label: 'Host', description: '', type: 'string', secret: false, required: true }] } } }
+  expect(Object.entries(dataInputs(entities)).slice(1).map(([key, input]) => `${key}:${input.types.join('|')}:${input.required}`)).toEqual(['Light:entity_id:light:true', 'Any:entity_id:false', 'Host:string:true'])
+  expect([dataInputs(entities).Light.setting, dataInputs(entities).Any.setting, dataInputs(entities).Host.setting]).toEqual([
+    { type: 'entity', secret: false, domain: 'light', required: true }, { type: 'entity', secret: false }, { type: 'string', secret: false, required: true }])
+  const one = (setting: Record<string, unknown>) => ({ title: 'T', description: '', domain: null, settings: [{ key: 'A', label: 'A', description: '', secret: false, ...setting }] })
+  expect([settingPinType(one({ type: 'enum' }).settings[0] as ClassSetting), settingPinType(one({ type: 'entity', domain: 'sensor' }).settings[0] as ClassSetting), settingPinType(one({ type: 'date' }).settings[0] as ClassSetting)])
+    .toEqual(['string', 'entity_id:sensor', undefined])
+  expect([one({ type: 'entity', domain: 'light', required: true }), one({ type: 'entity' }), one({ type: 'string', required: false })].every(wellFormedClassSignature)).toBe(true)
+  for (const signature of [one({ type: 'string', domain: 'light' }), one({ type: 'entity', domain: 'Light Bulb' }), one({ type: 'entity', domain: '' }), one({ type: 'entity', domain: 5 }), one({ type: 'string', required: 'yes' })])
+    expect(wellFormedClassSignature(signature), JSON.stringify(signature)).toBe(false)
   // Named by its class's title (a C# entity) or its name (a C# device).
   expect([words.stepName(thermo), words.stepName(plug), entityNodeName(thermo), entityNodeName(plug)]).toEqual(['Thermometer', 'Plug', 'Thermometer', 'Plug'])
   expect(words.stepName({ ...thermo, config: { ...thermo.config, signature: { ...thermo.config.signature as object, title: ' ' } } })).toBe('thermometer')

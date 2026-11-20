@@ -1,4 +1,4 @@
-import { classSignature, dataOutputs, isAssignable, isClassNode, isPure, nodeCatalog, resolveTypeSpec, settingPinTypes, validLiteral, wellFormedClassSignature, wellFormedSignature, withGraphTypes, type ClassSetting, type ClassSignature, type CustomSignature, type ExecutionEdge, type VisualCatalogSnapshot } from './contract'
+import { classSignature, dataOutputs, isAssignable, isClassNode, isPure, nodeCatalog, resolveTypeSpec, settingPinType, validLiteral, wellFormedClassSignature, wellFormedSignature, withGraphTypes, type ClassSetting, type ClassSignature, type CustomSignature, type ExecutionEdge, type VisualCatalogSnapshot } from './contract'
 import { connectNodes, edgePort, nodeInputs, removeEdge, updateNode, type VisualGraph } from './graph'
 import { nodeTitle } from './flow/flowModel'
 
@@ -108,7 +108,7 @@ export function applyCustomCode(graph: VisualGraph, nodeId: string, source: stri
  */
 function valueFits(setting: ClassSetting, value: Record<string, unknown>): boolean {
   if (setting.secret) return false
-  const type = settingPinTypes[setting.type], v = value.value
+  const type = settingPinType(setting), v = value.value
   if (typeof value.type === 'string' && value.type !== type) return false
   if (type === 'string') return typeof v === 'string' && (setting.type !== 'enum' || !Array.isArray(setting.options) || setting.options.includes(v))
   if (type === 'number') return typeof v === 'number' && Number.isFinite(v) && (setting.type !== 'integer' || Number.isInteger(v))
@@ -154,7 +154,7 @@ export function applyClassCode(graph: VisualGraph, nodeId: string, source: strin
     const setting = settings.get(edge.targetPort)
     const sourceNode = graph.nodes.find(n => n.id === edge.source)
     const type = sourceNode ? dataOutputs(sourceNode, types)[edge.sourcePort]?.type : undefined
-    if (setting && type !== undefined && isAssignable(type, settingPinTypes[setting.type], types)) continue
+    if (setting && type !== undefined && isAssignable(type, settingPinType(setting)!, types)) continue
     next = removeEdge(next, edge.id, types)
     removed.push(label(edge.targetPort))
   }

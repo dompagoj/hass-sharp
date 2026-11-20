@@ -5,7 +5,7 @@ import { Dialog, openModal, trapTab } from '../components/Dialog'
 import { createLoader, LoadFailed } from '../components/LazyLoad'
 import { Menu, type MenuItem } from '../components/Menu'
 import type { CustomCodeHandle } from '../components/Editor/CustomCode'
-import { classSignature, customSignature, isClassNode, settingPinTypes, wellFormedClassSignature, wellFormedSignature, type ClassSetting, type ClassSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, isClassNode, settingPinType, wellFormedClassSignature, wellFormedSignature, type ClassSetting, type ClassSignature, type CustomSignature, type GraphDocument, type GraphNode, type InputSpec, type VisualCatalogSnapshot } from './contract'
 import { exampleSource } from './customCode'
 import { nodeTitle } from './flow/flowModel'
 import { Glyph } from './Glyph'
@@ -319,7 +319,7 @@ function Pins(props: { signature?: CustomSignature; catalog: VisualCatalogSnapsh
 /** A setting's type in words, for the settings panel. */
 const settingTypeWords = (setting: ClassSetting) =>
   setting.type === 'enum' ? (setting.options?.length ? `One of ${setting.options.join(', ')}` : 'A choice')
-    : ({ string: 'Text', integer: 'Whole number', number: 'Number', boolean: 'True or false' } as const)[setting.type]
+    : ({ string: 'Text', integer: 'Whole number', number: 'Number', boolean: 'True or false' } as Partial<Record<ClassSetting['type'], string>>)[setting.type]
 
 /** The settings a class's code gives, as the node's inputs will be: each [Setting] property's label, type and whether it is secret. */
 function Settings(props: { signature?: ClassSignature; catalog: VisualCatalogSnapshot; outdated: boolean }) {
@@ -337,7 +337,7 @@ function Settings(props: { signature?: ClassSignature; catalog: VisualCatalogSna
                   {setting => (
                     <li class="hs-code-pin" data-pin-id={setting.key}>
                       <span class="hs-code-pin__name">{setting.label || setting.key}</span>
-                      <span class="hs-code-pin__types">{chip(settingPinTypes[setting.type])}</span>
+                      <span class="hs-code-pin__types">{chip(settingPinType(setting)!)}</span>
                       <span class="hs-code-pin__meta">{settingTypeWords(setting)}{setting.secret ? ' · Secret' : ''}</span>
                     </li>
                   )}

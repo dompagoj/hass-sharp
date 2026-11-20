@@ -62,14 +62,27 @@ public static class VisualNodeCatalog
     internal static bool IsClassNode(JsonNode? spec) => Text(spec, "dynamicInputs") == "settings";
     /// <summary>Whether a node of the kind holds C# code: a Custom C# step or a class node. Mirrored by <c>hasCode</c> in <c>contract.ts</c>.</summary>
     internal static bool HasCode(JsonNode? spec) => Text(spec, "dynamicInputs") is "custom" or "settings";
-    /// <summary>The types a class's setting can have, as its signature names them, and the pin type of each.</summary>
-    static readonly Dictionary<string, string> SettingPinTypes = new(StringComparer.Ordinal) { ["string"] = "string", ["enum"] = "string", ["integer"] = "number", ["number"] = "number", ["boolean"] = "boolean" };
+    /// <summary>
+    /// The pin type of a class's setting, from its signature's <c>type</c> (and an entity's <c>domain</c>): text for a string
+    /// or an enum, a number for an integer or a number, true or false for a boolean, an entity id for an entity, and an
+    /// entity id of the domain (<c>entity_id:light</c>) for an entity of one; null for a type it does not know. The one
+    /// place a setting's type becomes a pin type. Mirrored by <c>settingPinType</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static string? SettingPinType(JsonObject setting) => setting["type"] is JsonValue t && t.TryGetValue<string>(out var type) ? type switch
+    {
+        "string" or "enum" => "string",
+        "integer" or "number" => "number",
+        "boolean" => "boolean",
+        "entity" => setting["domain"] is JsonValue d && d.TryGetValue<string>(out var domain) ? "entity_id:" + domain : "entity_id",
+        _ => null,
+    } : null;
     /// <summary>
     /// A class node's signature (<c>config.signature</c>) has a text <c>title</c> and <c>description</c>, a <c>domain</c>
     /// that is a text or null, and <c>settings</c>, a list. Each setting has an identifier for its <c>key</c>, no key twice,
-    /// a text <c>label</c> and <c>description</c>, a <c>type</c> of string, integer, number, boolean or enum, a true/false
-    /// <c>secret</c>, and may have <c>options</c>, a list of text, and a number <c>minimum</c> and <c>maximum</c>. Mirrored
-    /// by <c>wellFormedClassSignature</c> in <c>contract.ts</c>.
+    /// a text <c>label</c> and <c>description</c>, a <c>type</c> of string, integer, number, boolean, enum or entity, a
+    /// true/false <c>secret</c>, and may have <c>options</c>, a list of text, a number <c>minimum</c> and <c>maximum</c>,
+    /// a true/false <c>required</c> and, an entity only, a <c>domain</c> that is a domain's word (lower-case letters,
+    /// digits and underscores). Mirrored by <c>wellFormedClassSignature</c> in <c>contract.ts</c>.
     /// </summary>
     internal static bool WellFormedClassSignature(JsonNode? signature)
     {
@@ -82,10 +95,12 @@ public static class VisualNodeCatalog
         foreach (var raw in settings)
             if (raw is not JsonObject setting || setting["key"] is not JsonValue k || !k.TryGetValue<string>(out var key) || !VisualTypes.Matches(key, "^[A-Za-z_][A-Za-z0-9_]*$") || !keys.Add(key)
                 || !Is<string>(setting["label"]) || !Is<string>(setting["description"]) || !Is<bool>(setting["secret"])
-                || setting["type"] is not JsonValue t || !t.TryGetValue<string>(out var type) || !SettingPinTypes.ContainsKey(type)
+                || SettingPinType(setting) == null
                 || setting.TryGetPropertyValue("options", out var options) && (options is not JsonArray list || !list.All(Is<string>))
                 || setting.TryGetPropertyValue("minimum", out var minimum) && !Number(minimum)
-                || setting.TryGetPropertyValue("maximum", out var maximum) && !Number(maximum))
+                || setting.TryGetPropertyValue("maximum", out var maximum) && !Number(maximum)
+                || setting.TryGetPropertyValue("required", out var required) && !Is<bool>(required)
+                || setting.TryGetPropertyValue("domain", out var entityDomain) && (Text(setting, "type") != "entity" || entityDomain is not JsonValue d || !d.TryGetValue<string>(out var word) || !VisualTypes.Matches(word, "^[a-z0-9_]+$")))
                 return false;
         return true;
     }
@@ -98,18 +113,18 @@ public static class VisualNodeCatalog
         IsClassNode(spec) && node["config"] is JsonObject config && config["signature"] is JsonObject signature && WellFormedClassSignature(signature)
             && !signature["settings"]!.AsArray().Any(s => (spec?["inputs"] as JsonObject)?.ContainsKey(Text(s, "key")) == true) ? signature : null;
     /// <summary>
-    /// The pin of a class's setting: optional, of the setting's pin type (text for a string or an enum, a number for an
-    /// integer or a number, true or false for a boolean), labelled and described as the setting is, with the setting's
-    /// type, secret flag, options and range under <c>setting</c>. Mirrored by <c>settingInput</c> in <c>contract.ts</c>.
+    /// The pin of a class's setting: of the setting's pin type (<see cref="SettingPinType"/>), required when the signature
+    /// says so (else optional), labelled and described as the setting is, with the setting's type, secret flag, options,
+    /// range, entity domain and whether it is required under <c>setting</c>. Mirrored by <c>settingInput</c> in
+    /// <c>contract.ts</c>.
     /// </summary>
     static JsonObject SettingInput(JsonObject setting)
     {
-        var type = Text(setting, "type");
-        var about = new JsonObject { ["type"] = type, ["secret"] = setting["secret"]!.DeepClone() };
-        foreach (var member in new[] { "options", "minimum", "maximum" }) if (setting.TryGetPropertyValue(member, out var value)) about[member] = value?.DeepClone();
+        var about = new JsonObject { ["type"] = Text(setting, "type"), ["secret"] = setting["secret"]!.DeepClone() };
+        foreach (var member in new[] { "options", "minimum", "maximum", "domain", "required" }) if (setting.TryGetPropertyValue(member, out var value)) about[member] = value?.DeepClone();
         return new JsonObject
         {
-            ["types"] = new JsonArray(JsonValue.Create(SettingPinTypes[type])), ["required"] = false,
+            ["types"] = new JsonArray(JsonValue.Create(SettingPinType(setting))), ["required"] = setting["required"] is JsonValue r && r.TryGetValue<bool>(out var required) && required,
             ["label"] = Text(setting, "label"), ["description"] = Text(setting, "description"), ["setting"] = about,
         };
     }
