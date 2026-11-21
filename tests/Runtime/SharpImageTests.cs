@@ -35,6 +35,7 @@ static class SharpImageTests
         Text();
         ControlCharacters();
         CopyLeavesTheOriginal();
+        Fitted();
         Limits();
         Truncated();
         Corrupted();
@@ -224,6 +225,29 @@ static class SharpImageTests
         var snapshot = new VisualSnapshot().Copy(original);
         Check(snapshot is SharpImage { Drawings: 1 } shot && !ReferenceEquals(shot, original), "a wire's snapshot of an image is its copy");
         Console.WriteLine("PASS sharp image: Copy() and a wire's snapshot copy the drawings, and drawing on the copy leaves the original's JPEG unchanged");
+    }
+
+    static void Fitted()
+    {
+        // A picture with a blue left half and a yellow right half, 640 × 480.
+        var jpeg = SharpImage.Blank(640, 480, SharpColor.Blue).DrawRect(320, 0, 320, 480, SharpColor.Yellow, 50).DrawRect(370, 50, 220, 380, SharpColor.Yellow, 50).DrawRect(420, 100, 120, 280, SharpColor.Yellow, 50).ToJpeg();
+        var picture = SharpImage.Load(jpeg);
+        foreach (var (maxWidth, maxHeight, width, height) in new[] { (320, 0, 320, 240), (0, 100, 133, 100), (100, 100, 100, 75), (500, 300, 400, 300), (16, 16, 16, 12), (601, 0, 601, 451) })
+        {
+            var fitted = picture.Fitted(maxWidth, maxHeight);
+            var pixels = Decode(fitted.ToJpeg());
+            Check((fitted.Width, fitted.Height, pixels.Width, pixels.Height) == (width, height, width, height), $"{maxWidth} × {maxHeight}: {fitted.Width} × {fitted.Height}, not {width} × {height}");
+            Check(pixels.Near(width / 8, height / 2, SharpColor.Blue) && pixels.Near(width * 7 / 8, height / 2, SharpColor.Yellow), $"{maxWidth} × {maxHeight}: the picture is kept, its halves in their colours");
+        }
+        Check(ReferenceEquals(picture.Fitted(640, 480), picture) && ReferenceEquals(picture.Fitted(8192, 0), picture) && ReferenceEquals(picture.Fitted(0, 0), picture), "a picture that fits already is itself, never made larger");
+        var drawn = SharpImage.Load(jpeg).DrawRect(0, 0, 10, 10);
+        Check(ReferenceEquals(drawn.Fitted(100, 100), drawn), "a picture with drawings is left to them");
+        Check(SharpImage.FitSize(1920, 1080, 640, 0) == (640, 360) && SharpImage.FitSize(1920, 1080, 0, 480) == (853, 480) && SharpImage.FitSize(1080, 1920, 640, 640) == (360, 640) && SharpImage.FitSize(600, 436, 1280, 720) == (600, 436), "the sizes a picture fits in");
+        Check(TurboJpeg.ScaledAtLeast(640, 480, 100, 75) == (160, 120) && TurboJpeg.ScaledAtLeast(640, 480, 601, 1) == (640, 480), "the decoder scales by eighths to no less than the size");
+        Check(HassCameras.Size(0, 0) == null && HassCameras.Size(16, 0) == (16, 0) && HassCameras.Size(0, 8192) == (0, 8192), "a side of 0 has no limit, and neither limited is the camera's own size");
+        Check(Throws<ArgumentException>(() => HassCameras.Size(15, 0), "a width of 15").Message.StartsWith("A picture's largest width is 16 to 8192 pixels, or 0 for any width, not 15", StringComparison.Ordinal)
+            && Throws<ArgumentException>(() => HassCameras.Size(0, 8193), "a height of 8193").Message.StartsWith("A picture's largest height is 16 to 8192 pixels, or 0 for any height, not 8193", StringComparison.Ordinal), "a side outside 16 to 8192 is refused");
+        Console.WriteLine("PASS sharp image: a JPEG is made to fit a width, a height or both, its aspect ratio kept and never larger, decoded by eighths and averaged down; one that fits or has drawings is itself");
     }
 
     static void Limits()

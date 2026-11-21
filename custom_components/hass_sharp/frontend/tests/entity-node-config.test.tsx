@@ -148,57 +148,17 @@ describe('the entity pickers and a C# entity', () => {
   const withCSharp = () => add(add(entityGraph(), 'csharp_entity', 'thermo', { key: 'thermo', source: 'public class Thermometer : SharpSensor { }', signature: signature('Thermometer', 'sensor'), arguments: {} }),
     'csharp_entity', 'cam', { key: 'cam', source: 'public class Cam : SharpCamera { }', signature: signature('Cam', 'camera'), arguments: {} })
 
-  it('offers no C# entity to Set state, Set available or Show frame: no step names one', async () => {
+  it('offers no C# entity to Set state or Set available: no step names one', async () => {
     for (const kind of ['set_entity_state', 'set_entity_available']) {
       const { el } = mount(step(withCSharp(), kind, 'step', {}), 'step')
       expect(texts(await open(el, 'entity')), kind).toEqual(['Relay · Switch', 'Power · Sensor', 'Online · Binary sensor'])
       dispose?.(); dispose = undefined; document.body.innerHTML = ''
     }
-    const { el } = mount(step(withCSharp(), 'show_frame', 'frame', {}), 'frame')
-    expect(field(el, 'entity').querySelector('.hs-field-hint')?.textContent).toBe('Add a camera to this definition first.')
   })
 
   it('shows a step that names a C# entity as naming an entity the definition does not have', () => {
     const { el } = mount(step(withCSharp(), 'set_entity_state', 'set', { entity: 'thermo' }), 'set')
     expect(box(el, 'entity').value).toBe('Missing entity: thermo')
-  })
-})
-
-describe('the camera picker of Show frame', () => {
-  const cameras = () => entityGraph({ nodes: [...plug, { key: 'front', domain: 'camera', name: 'Front door' }, { key: 'yard', domain: 'camera' }] })
-
-  it('offers only the definition\'s cameras, by name, and stores the chosen key', async () => {
-    const { el, node } = mount(step(cameras(), 'show_frame', 'cam', {}), 'cam')
-    expect(field(el, 'entity').querySelector('label')?.textContent).toBe('Camera')
-    expect(texts(await open(el, 'entity'))).toEqual(['Front door · Camera', 'yard · Camera'])
-    await choose(el, 'entity', 'yard')
-    expect(node().config.entity).toBe('yard')
-    // Only one picker for the camera: the generic text field of its config is not drawn too.
-    expect(el.querySelectorAll('.hs-inspector [data-input-id="entity"]')).toHaveLength(1)
-  })
-
-  it('says to add a camera first when the definition has none, and is disabled', async () => {
-    for (const graph of [entityGraph(), entityGraph({ nodes: [] })]) {
-      const { el } = mount(step(graph, 'show_frame', 'cam', {}), 'cam')
-      expect(field(el, 'entity').querySelector('.hs-field-hint')?.textContent).toBe('Add a camera to this definition first.')
-      expect(box(el, 'entity').disabled).toBe(true)
-      dispose?.(); dispose = undefined; document.body.innerHTML = ''
-    }
-  })
-
-  it('shows an entity that is not a camera as chosen, marked so', async () => {
-    const { el } = mount(step(cameras(), 'show_frame', 'cam', { entity: 'relay' }), 'cam')
-    expect(box(el, 'entity').value).toBe('Relay')
-    expect(texts(await open(el, 'entity'))).toEqual(['Relay · Switch · not a camera', 'Front door · Camera', 'yard · Camera'])
-  })
-
-  it('names the definition\'s only camera in a new step, and none when it has several or none', () => {
-    const added = (graph: VisualGraph) => addGraphNode(graph, 'show_frame', 'new', nodeCatalog).nodes.at(-1)!.config
-    const one = entityGraph({ nodes: [...plug, { key: 'front', domain: 'camera', name: 'Front door' }] })
-    expect(added(one).entity).toBe('front')
-    expect(added(cameras()).entity).toBeUndefined()
-    // A definition whose only entity is not a camera: none named.
-    expect(added(entityGraph({ nodes: [{ key: 'power', domain: 'sensor', name: 'Power' }] })).entity).toBeUndefined()
   })
 })
 
@@ -227,13 +187,68 @@ describe('retyping an Entity node to or from Camera', () => {
   })
 })
 
-describe('Take a picture', () => {
+describe('an Entity of one of Home Assistant\'s entities', () => {
+  it('offers every one of Home Assistant\'s entities, of any domain, and stores the chosen id', async () => {
+    const { el, node } = mount(step(createGraph('Watch'), 'ha_entity', 'door', { entity: '' }), 'door')
+    expect(field(el, 'entity').querySelector('label')?.textContent).toBe('Entity')
+    field(el, 'entity').querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
+    const options = () => [...document.querySelectorAll<HTMLElement>('dialog[open] [role="option"]')]
+    await vi.waitFor(() => expect(options().length).toBe(registry.entities.length))
+    for (const id of ['climate.living', 'binary_sensor.motion', 'camera.front_door', 'switch.hall_relay'])
+      expect(options().some(o => o.textContent?.includes(id)), id).toBe(true)
+    options().find(o => o.textContent?.includes('camera.front_door'))!.click()
+    await vi.waitFor(() => expect(node().config.entity).toBe('camera.front_door'))
+    // One field for it: the generic text field of its config is not drawn too.
+    expect(el.querySelectorAll('.hs-inspector [data-input-id="entity"]')).toHaveLength(1)
+  })
+})
+
+describe('Camera frame', () => {
   it('offers only Home Assistant\'s cameras for its camera', async () => {
-    const { el } = mount(step(entityGraph(), 'camera_snapshot', 'snap', {}), 'snap')
+    const { el } = mount(step(entityGraph(), 'camera_frame', 'snap', {}), 'snap')
     field(el, 'entity').querySelector<HTMLButtonElement>('.hs-picker-field')!.click()
     const options = () => [...document.querySelectorAll<HTMLElement>('dialog[open] [role="option"]')]
     await vi.waitFor(() => expect(options().length).toBeGreaterThan(0))
     expect(options().map(o => o.textContent)).toEqual([expect.stringContaining('camera.front_door')])
+  })
+
+  it('takes a width and a height at most, each a whole number or left empty for the camera\'s own size', async () => {
+    const { el, node } = mount(step(entityGraph(), 'camera_frame', 'snap', {}), 'snap')
+    const input = (key: string) => field(el, key).querySelector<HTMLInputElement>('input')!
+    const type = (key: string, text: string) => {
+      input(key).value = text
+      input(key).dispatchEvent(new Event('input', { bubbles: true }))
+      input(key).dispatchEvent(new FocusEvent('blur'))
+    }
+    expect(field(el, 'maxWidth').querySelector('label')!.textContent).toBe('Width at most')
+    expect(field(el, 'maxHeight').querySelector('label')!.textContent).toBe('Height at most')
+    expect([input('maxWidth').value, input('maxHeight').value]).toEqual(['', ''])
+    expect(field(el, 'maxWidth').textContent).toContain('from 16 to 8192 pixels; empty for any width')
+    type('maxWidth', '640')
+    await vi.waitFor(() => expect(node().config.maxWidth).toBe(640))
+    expect(node().config).not.toHaveProperty('maxHeight')
+    type('maxWidth', '320.5')
+    await vi.waitFor(() => expect(field(el, 'maxWidth').querySelector('.hs-error')?.textContent).toBe('Enter a whole number.'))
+    expect(node().config.maxWidth).toBe(640)
+    type('maxWidth', '')
+    await vi.waitFor(() => expect(node().config).not.toHaveProperty('maxWidth'))
+  })
+})
+
+describe('Video frame', () => {
+  it('takes its source as text, loops by default, and takes a width and a height at most', async () => {
+    // As the editor adds it, with its defaults.
+    const { el, node } = mount(addGraphNode(entityGraph(), 'video_frame', 'clip', nodeCatalog), 'clip')
+    expect(node().config.loop).toBe(true)
+    expect(field(el, 'source').querySelector('label')!.textContent).toBe('Source')
+    expect(field(el, 'source').textContent).toContain('allowlist_external_dirs or media_dirs')
+    expect(field(el, 'loop').querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true)
+    expect(field(el, 'maxWidth').querySelector('label')!.textContent).toBe('Width at most')
+    const source = field(el, 'source').querySelector<HTMLInputElement>('input, textarea')!
+    source.value = '/media/clip.mp4'
+    source.dispatchEvent(new Event('input', { bubbles: true }))
+    source.dispatchEvent(new FocusEvent('blur'))
+    await vi.waitFor(() => expect(node().config.source).toBe('/media/clip.mp4'))
   })
 })
 
@@ -952,7 +967,7 @@ describe('devices in the right panel', () => {
 
 describe('the Entity category', () => {
   it('has an icon and colour of its own', () => {
-    for (const kind of ['entity', 'entity_setup', 'set_entity_state', 'set_entity_available', 'show_frame', 'setting'])
+    for (const kind of ['entity', 'entity_setup', 'set_entity_state', 'set_entity_available', 'camera_frame', 'video_frame', 'setting'])
       expect(nodeIdentity(kind, nodeCatalog), kind).toEqual({ key: 'entity', label: 'Entity', color: 'var(--hs-cat-entity)', icon: icons.entity })
   })
   it('defines the colour beside the other categories, for both colour schemes, and draws it on the minimap', () => {

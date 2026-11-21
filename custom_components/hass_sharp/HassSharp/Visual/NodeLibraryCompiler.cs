@@ -155,8 +155,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         // An entity handle on a pin is the entity id it wraps (see EntityPins).
         var entityPin = EntityPins(frameworkAssembly);
         string? EntityPin(ITypeSymbol type) => entityPin(type);
+        // A built-in type left out of the type lists (the picture a camera takes, SharpImage) is a pin of its catalog id
+        // (image), as the catalog's own nodes have it, so that a node's picture goes into a camera's Image and Draw rectangle.
+        var unlistedPins = new Dictionary<ITypeSymbol, string>(SymbolEqualityComparer.Default);
+        string? UnlistedPin(ITypeSymbol type) => unlistedPins.TryGetValue(type.WithNullableAnnotation(NullableAnnotation.NotAnnotated), out var id) ? id : null;
         // The catalog id of a pin of this type.
-        string PinType(ITypeSymbol type) => EntityPin(type) ?? TypeIdentity(type);
+        string PinType(ITypeSymbol type) => EntityPin(type) ?? UnlistedPin(type) ?? TypeIdentity(type);
         // Whether an entity handle is inside the type (an array's element, a type argument, a tuple's element); the type is no deeper than a pin may be.
         bool EntityInside(ITypeSymbol type) => Inner(type).Any(inner => EntityPin(inner) != null || EntityInside(inner));
         // What is wrong with an entity handle in the type of a value going out (a result, a returned tuple element, a flow's
@@ -204,7 +208,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         {
             cancellationToken.ThrowIfCancellationRequested();
             // An entity handle's pin is an entity id type, which the catalog has: the class is never a type of its own.
-            if (EntityPin(type) != null) return;
+            if (EntityPin(type) != null || UnlistedPin(type) != null) return;
             var id = TypeIdentity(type);
             if (known?.ContainsKey(id) == true || !into.TryAdd(id, type)) return;
             if (type is IArrayTypeSymbol array) Register(into, array.ElementType, known);
@@ -241,7 +245,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         {
             var metadataName = VisualNodeCatalog.Text(descriptor, "clrType");
             if (compilation.GetTypeByMetadataName(metadataName) is not { } symbol) continue;
-            if (VisualCatalogSnapshot.Unlisted.Contains(id)) unlistedBuiltIn.Add((id, symbol));
+            if (VisualCatalogSnapshot.Unlisted.Contains(id)) { unlistedBuiltIn.Add((id, symbol)); unlistedPins[symbol] = id; }
             else { Register(typeSymbols, symbol); typeSymbols[id] = symbol; }
         }
         // The types of the static catalog, which every generation has and the editor knows before the server's catalog

@@ -372,7 +372,7 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(camera, self.bridge._live['plug1:view'])
         self.assertEqual(5, camera.frame_interval)
         await self.sync(definition(description('view', 'camera', 'View', options={})))
-        self.assertEqual(1, camera.frame_interval)
+        self.assertEqual(1 / 30, camera.frame_interval)
 
     async def snapshot(self, definition_id, entity_id):
         """The one answer of a picture request, asked as .NET asks: from its own thread."""
@@ -395,6 +395,15 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         camera.content_type = 'image/png'
         self.assertEqual(('error', 'camera.plug_one_view gives image/png pictures; only JPEG pictures can be used'),
                          await self.snapshot('other', 'camera.plug_one_view'))
+
+    async def test_camera_source_of_a_real_camera_says_why_there_is_none(self):
+        await self.camera()
+        # A HassSharp camera streams nothing: its live feed is pictures taken one by one.
+        self.assertEqual(('error', 'it has no stream source'),
+                         await self.answer(self.bridge.begin_camera_source, 'camera.plug_one_view'))
+        self.assertEqual(('error', 'Camera not found'), await self.answer(self.bridge.begin_camera_source, 'camera.missing'))
+        # .NET is never asked for a frame for it.
+        self.assertEqual([], self.manager.pictures)
 
     async def test_switch_turn_on_reaches_the_manager(self):
         await self.sync(plug())

@@ -9,7 +9,7 @@ import { connectionIndex } from '../src/visual/connectionIndex'
 import { constantTypes } from '../src/visual/constant'
 import { readFileSync } from 'node:fs'
 import { distinctTypeLabels, labelDepth, typeColor, typeLabel } from '../src/visual/typeLabels'
-import { add, empty } from './visual-fixture'
+import { add, empty, lit } from './visual-fixture'
 
 interface ValidationCase {
   name: string; graph: unknown; valid: boolean; nodeId?: string; inputId?: string; portId?: string; contains?: string
@@ -247,36 +247,84 @@ describe('the image type', () => {
     const tokens = readFileSync('src/styles/tokens.css', 'utf8')
     expect(tokens).toMatch(/--hs-port-target: [^;]+;\n\s*--hs-port-image: color-mix\(in oklab, #[0-9a-f]{6} var\(--hs-hue-mix\), var\(--hs-text, #202535\)\);/)
   })
-  it('is taken and drawn on only in an entity definition, by steps that draw on a copy', () => {
-    const { camera_snapshot: take, image_draw_rect: rect, image_draw_text: text } = contract.nodeCatalog.nodes
+  it('is taken as a value only in an entity definition, and drawn on by value steps that draw on a copy', () => {
+    const { camera_frame: take, image_draw_rect: rect, image_draw_text: text } = contract.nodeCatalog.nodes
     for (const spec of [take, rect, text]) expect(spec.documents).toEqual(['entity'])
-    expect(take).toMatchObject({ label: 'Take a picture', category: 'Entity', execution: ['next', 'error'] })
+    // Camera frame is a value: it runs each time a step or a camera's Image reads it, and has no place in the run order.
+    expect(take).toMatchObject({ label: 'Camera frame', category: 'Entity', pure: true })
+    expect(take.execution).toBeUndefined()
     expect(take.inputs.entity.types).toEqual(['entity_id:camera'])
-    expect(take.outputs.image.type).toBe('image')
+    expect(take.outputs.image).toMatchObject({ type: 'image', label: 'Frame' })
+    expect(take.keywords).toEqual(expect.arrayContaining(['take a picture', 'snapshot']))
     for (const spec of [rect, text]) expect(spec).toMatchObject({ pure: true, inputs: { image: { types: ['image'], required: true } }, outputs: { image: { type: 'image' } } })
     expect(rect.config).toMatchObject({ color: { default: 'Red' }, thickness: { min: 1, max: 50, default: 2 } })
     expect(text.config).toMatchObject({ color: { default: 'White' }, size: { min: 8, max: 200, default: 16 }, background: { default: true } })
     for (const spec of [rect, text]) expect(spec.config.color.enum).toEqual(['Red', 'Green', 'Blue', 'Yellow', 'Orange', 'White', 'Black'])
   })
-  it('is shown as a camera\'s frame by Show frame, in the flow a camera\'s Entity node starts when a frame is needed, only in an entity definition', () => {
-    const { show_frame: show } = contract.nodeCatalog.nodes
-    expect(show).toMatchObject({ category: 'Entity', documents: ['entity'], config: { entity: { type: 'string', required: true } } })
-    expect(show).toMatchObject({ label: 'Show frame', execution: ['next'], inputs: { image: { types: ['image'], required: true } } })
-    expect(show.outputs).toEqual({})
-    expect(show.root).toBeUndefined()
-    expect(show.pure).toBeUndefined()
-    expect(show.description).toBe('Make this picture the camera\'s current picture.')
-    // A camera's Entity node has one execution pin, the flow Home Assistant starts when it needs a new picture, and
-    // records no frame's run unless its run history says so.
+  it('is what a camera shows through its Entity node\'s Image input, which is no state value and has no step order pin', () => {
+    expect(contract.nodeCatalog.nodes).not.toHaveProperty('show_frame')
+    // A camera's Entity node has no execution pin: its Image says what it shows, made each time a frame is needed, and
+    // it records no frame's run unless its run history says so.
     let camera = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
     const node = camera.nodes[0]
-    expect(contract.executionPorts(node)).toEqual(['frame'])
-    expect(contract.executionLabel(node, 'frame')).toBe('When a frame is needed')
+    expect(contract.executionPorts(node)).toEqual([])
+    expect(contract.dataInputs(node).image).toMatchObject({ types: ['image'], required: false, label: 'Image', picture: true })
+    expect(Object.keys(contract.pictureInputs(node))).toEqual(['image'])
+    expect(contract.stateInputs(node)).not.toHaveProperty('image')
     expect(node.config.history).toEqual({})
     expect(node.config).not.toHaveProperty('trackHistory')
-    camera = add(camera, 'show_frame', 'show')
-    expect(camera.nodes.at(-1)!.config.entity).toBe('annotated')
-    expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.entity', 'camera.no_frame']))
+    // An unwired Image is a warning on it, which a Camera frame wired in (through Draw rectangle) settles.
+    const warned = (graph: Graph) => contract.validateGraph(graph).filter(d => d.code === 'camera.no_frame').map(d => `${d.inputId} ${d.portId} ${d.severity}: ${d.message}`)
+    expect(warned(camera)).toEqual(['image image 2: Annotated never shows a frame: Image is not connected'])
+    camera = add(add(add(camera, 'ha_entity', 'source', { entity: 'camera.front_door' }), 'camera_frame', 'take'), 'image_draw_rect', 'box', { x: lit('number', 10), y: lit('number', 10), width: lit('number', 100), height: lit('number', 50) })
+    camera = contract.connectData(camera, 'source', 'entity', 'take', 'entity')
+    camera = contract.connectData(camera, 'take', 'image', 'box', 'image')
+    camera = contract.connectData(camera, 'box', 'image', 'annotated', 'image')
+    expect(warned(camera)).toEqual([])
+    expect(contract.validateGraph(camera).filter(d => d.severity >= 3)).toEqual([])
+    expect(contract.diagnosticCodes).toEqual(expect.arrayContaining(['camera.no_frame', 'scope.frameSource', 'entity.id']))
+    expect(contract.diagnosticCodes).not.toContain('camera.entity')
+  })
+})
+describe('the Video frame node', () => {
+  it('is a value of an entity definition, a frame of a video by its address or file, looped by default', () => {
+    const spec = contract.nodeCatalog.nodes.video_frame
+    expect(spec).toMatchObject({ label: 'Video frame', category: 'Entity', pure: true, documents: ['entity'], outputs: { image: { type: 'image', label: 'Frame' } } })
+    expect(spec.execution).toBeUndefined()
+    expect(spec.config).toMatchObject({ source: { type: 'string', required: true }, loop: { type: 'boolean', default: true }, maxWidth: { min: 16, max: 8192 }, maxHeight: { min: 16, max: 8192 } })
+    expect(contract.diagnosticCodes).toContain('video.source')
+  })
+  it('takes an http, https, rtsp, rtsps or rtmp address with a host, or a file\'s absolute path, and refuses any other input of ffmpeg', () => {
+    const problems = (source: string) => contract.validateGraph(add(empty(), 'video_frame', 'clip', { source }))
+      .filter(d => d.code === 'video.source').map(d => `${d.inputId}: ${d.message}`)
+    for (const taken of ['rtsp://admin:pw@door.local:8554/live', 'RTSPS://door/live', 'http://10.0.0.5:8080/video.mjpg', 'https://example.com/a.mp4?token=x', 'rtmp://live.local/app/key', '/media/front door.mp4', '/config/www/../media/clip.mp4'])
+      expect(problems(taken), taken).toEqual([])
+    const refused = "source: Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4"
+    for (const other of ['concat:/media/a.mp4|/media/b.mp4', 'pipe:0', 'file:/media/a.mp4', 'data:video/mp4;base64,AAAA', 'subfile,,0,10,:/etc/passwd', 'testsrc', 'clip.mp4', 'ftp://host/x', 'http:///x', 'http://door/a b', ' /media/a.mp4', '/media/a\nb.mp4', 'rtmps://live/app'])
+      expect(problems(other), other).toEqual([refused])
+    expect(problems('   ')).toEqual(['source: Source is required'])
+  })
+})
+describe('the Home Assistant entity node', () => {
+  it('works in any graph and gives its entity\'s id, typed by its domain', () => {
+    const spec = contract.nodeCatalog.nodes.ha_entity
+    expect(spec).toMatchObject({ label: 'Home Assistant entity', category: 'Hass', pure: true, config: { entity: { type: 'string', required: true, default: '' } } })
+    expect(spec.documents).toBeUndefined()
+    const graph = add(add(empty(), 'ha_entity', 'door', { entity: 'camera.front_door' }), 'ha_entity', 'nothing', { entity: 'not an id' })
+    const types = contract.withGraphTypes(contract.nodeCatalog, graph)
+    expect(contract.dataOutputs(graph.nodes[0], types).entity.type).toBe('entity_id:camera')
+    expect(contract.dataOutputs(graph.nodes[1], types).entity.type).toBe('')
+    // The catalog it was merged from keeps none of it.
+    expect(contract.nodeCatalog.resolvedOutputs).toBeUndefined()
+  })
+  it('reads the domain of an entity id, and of nothing else', () => {
+    expect(contract.entityIdDomain('camera.front_door')).toBe('camera')
+    expect(contract.entityIdDomain('sensor.living_room_2')).toBe('sensor')
+    for (const text of ['', 'camera', 'camera.', '.door', 'Camera.door', 'camera.front door', 'camera.a.b', 5, undefined]) expect(contract.entityIdDomain(text), String(text)).toBeNull()
+  })
+  it('is followed by an Entity node\'s state, as a Constant of an entity id is', () => {
+    const graph = add(empty(), 'ha_entity', 'door', { entity: 'light.kitchen' })
+    expect(contract.followedSource(graph.nodes[0])).toBe(true)
   })
 })
 it('names an Entity node whose command pin runs nothing by its entity\'s name, else its key, on that pin', () => {

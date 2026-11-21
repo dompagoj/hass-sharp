@@ -20,11 +20,12 @@ import {
   type Operand,
   type VisualCatalogSnapshot,
 } from '../contract'
+import { cameraFrameMode, frameSourceKinds, type CameraFrameMode } from '../cameraFrameMode'
 import { connectionIndex, graphTypes } from '../connectionIndex'
 import { entityStateContext } from '../entityStateContext'
 import { inputType, nodeInputs, outputPort, portLabel, type VisualGraph } from '../graph'
 import { nodeIdentity, type NodeIdentity } from '../icons'
-import { nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
+import { homeEntityTitle, nodeSummary, serviceFieldLabel, type SummaryNames } from '../nodeSummary'
 import { domainWords, typeColor, typeIsList, typeLabel } from '../typeLabels'
 import { comparedEnumInput, targetIds, widgetFor, type NameResolver, type StateEntity } from '../widgets'
 import type { VisualDiagnostic } from '../api'
@@ -126,6 +127,8 @@ export interface NodeView {
    * is not told them (a run's).
    */
   entities?: DeviceEntity[]
+  /** A Camera frame's or a Video frame's mode, as its wiring decides it (`cameraFrameMode`): shown as a badge on its card. */
+  frameMode?: CameraFrameMode
   /** Accessible name of the whole card. */
   label: string
 }
@@ -195,11 +198,12 @@ export function literalTargetEntities(node: GraphNode): string[] {
 }
 /**
  * A node's name on its card: the entity a node of a declaring kind declares (`entityNodeName`: its name, else its key,
- * else the kind's label; never a label of the node's own), else its own label, else (a Custom C# node) its method's
+ * else the kind's label; never a label of the node's own), else its own label, else (an Entity of one of Home
+ * Assistant's entities) the name `names` gives its entity, else that entity's id, else (a Custom C# node) its method's
  * title, else its kind's label.
  */
-export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '') =>
-  node ? (entityNodeName(node, catalog) || text(node.label) || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
+export const nodeTitle = (node: GraphNode | undefined, catalog: VisualCatalogSnapshot, fallback = '', names?: SummaryNames) =>
+  node ? (entityNodeName(node, catalog) || text(node.label) || (node.kind === 'ha_entity' ? homeEntityTitle(node, names) : '') || text(customSignature(node, catalog)?.title) || (Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind].label : node.kind)) : fallback
 const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
 
 /** Nodes whose `next` means "after the structure" are drawn with a named Done row instead of a header pin. */
@@ -255,7 +259,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const known = Object.hasOwn(catalog.nodes, node.kind)
   const spec = known ? catalog.nodes[node.kind] : undefined
   const identity = nodeIdentity(node.kind, catalog)
-  const title = nodeTitle(node, catalog)
+  const title = nodeTitle(node, catalog, '', ctx.names)
   const incoming = graph.edges.filter(e => e.target === node.id)
   const outgoing = graph.edges.filter(e => e.source === node.id)
   const problems: Problem[] = ctx.diagnostics
@@ -303,7 +307,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     const typeText = typeId ? typeLabel(typeId, catalog) : typeName(input.types, catalog) || 'Any value'
     const field = node.kind === 'service' && port.startsWith('field:') ? port.slice(6) : undefined
     const label = field !== undefined ? serviceFieldLabel(text(node.config.service), field, catalog.services) : (input.label ?? port)
-    const source = wire?.kind === 'data' ? `${nodeTitle(sourceNode, catalog, wire.source)} · ${sourceOutput?.label ?? wire.sourcePort}` : undefined
+    const source = wire?.kind === 'data' ? `${nodeTitle(sourceNode, catalog, wire.source, ctx.names)} · ${sourceOutput?.label ?? wire.sourcePort}` : undefined
     const operand = inputValue(node, port, catalog) as Operand | undefined
     const unset = !record(operand) || operand.kind === 'unset'
     // An input that takes a value only always shows its editor (a Constant whose Type is not set yet still has one),
@@ -324,7 +328,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   // entity's device, a C# entity's), so the rows below stay level with the command pins. Its name and source chip name
   // only what is wired to it.
   const structuralInput = isRoot(node, catalog) || declaration ? inputs.find(input => structural(input.spec)) : undefined
-  const headerSource = structuralInput?.sourceNode ? nodeTitle(graph.nodes.find(n => n.id === structuralInput.sourceNode), catalog, structuralInput.sourceNode) : undefined
+  const headerSource = structuralInput?.sourceNode ? nodeTitle(graph.nodes.find(n => n.id === structuralInput.sourceNode), catalog, structuralInput.sourceNode, ctx.names) : undefined
   const headerInput: InputView | undefined = structuralInput && {
     ...structuralInput, source: headerSource,
     pin: { ...structuralInput.pin, name: `${structuralInput.pin.label}, ${headerSource ? `connected to ${headerSource}` : 'not connected'}` },
@@ -364,14 +368,16 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const warnings = problems.filter(p => p.severity === 2).length
   const targetEntityIds = literalTargetEntities(node)
   const entities = ownEntities(node, ctx)
+  const frameMode = frameSourceKinds.includes(node.kind) ? cameraFrameMode(graph, node.id, catalog) : undefined
   const problemText = errors || warnings ? `. ${[errors && `${errors} error${errors === 1 ? '' : 's'}`, warnings && `${warnings} warning${warnings === 1 ? '' : 's'}`].filter(Boolean).join(', ')}: ${problems.map(p => p.message).join('; ')}` : ''
   return {
     id: node.id, kind: node.kind, known, title, kindLabel: spec?.label ?? node.kind, summary, identity,
     execIn, ...(headerInput ? { headerInput } : {}), next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
     problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure, declaration, ...(entities ? { entities } : {}),
+    ...(frameMode ? { frameMode } : {}),
     // A value node says so: it has no place in the run order, which a sighted reader sees from its missing pins.
-    label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary].filter(Boolean).join('. ')}${problemText}`,
+    label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary, frameMode?.label].filter(Boolean).join('. ')}${problemText}`,
   }
 }
 
@@ -397,12 +403,12 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
       const from = e.target === node.id ? graph.nodes.find(n => n.id === e.source) : undefined
       // The output's type too: a union input shows the type of the value wired into it.
       const output = from ? dataOutputs(from, catalog)[e.sourcePort] : undefined
-      return ['d', e.source, e.sourcePort, e.target, e.targetPort, from ? nodeTitle(from, catalog) : '', output?.label ?? null, output?.type ?? null]
+      return ['d', e.source, e.sourcePort, e.target, e.targetPort, from ? nodeTitle(from, catalog, '', ctx.names) : '', output?.label ?? null, output?.type ?? null]
     })
   // Unset ports resolve to undefined, which JSON would drop: keep them as null.
   const resolved = Object.entries(index.analysis.resolved.get(node.id) ?? {}).map(([port, type]) => [port, type ?? null])
   const stateContext = node.kind === 'condition' ? entityStateContext(graph, node, 'entity', catalog) : undefined
-  // A Set state, Set available or Show frame shows the name of the Entity node it names, which is that node's config.
+  // A Set state or Set available shows the name of the Entity node it names, which is that node's config.
   const named = definitionEntityKinds.includes(node.kind) && typeof node.config.entity === 'string'
     ? definitionEntity(definitionCatalog(catalog, graph), node.config.entity)?.name ?? null : undefined
   // A Setting shows the label of the setting it reads, which the definition's Settings form edits.
@@ -412,9 +418,11 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
   // A C# device lists the entities Home Assistant has of it, which change without the graph.
   const entities = ownEntities(node, ctx)
+  // A Camera frame's mode follows the wires past its own, to the camera whose Image it reaches.
+  const frameMode = frameSourceKinds.includes(node.kind) ? cameraFrameMode(graph, node.id, catalog).label : undefined
   return JSON.stringify([
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
-    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null, entities ?? null,
+    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null, entities ?? null, frameMode ?? null,
   ])
 }
 

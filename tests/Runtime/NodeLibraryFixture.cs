@@ -182,14 +182,14 @@ public static class NodeLibraryFixture
         CustomCase("custom: a library string array into a custom enumerable of object", Node("RequiredElements", "array"), "result", Custom("take", Method("void", "IEnumerable<object> value", "Logger.Info(string.Join(\",\", value))")), "value", true);
         CustomCase("custom: a custom list into a library enumerable", Custom("make", Method("List<string>", "", "[\"a\"]")), "result", Node("RequiredEnumerable", "consumer"), "items", true);
         CustomCase("custom: a library record does not go into a custom string pin", Node("Describe", "describe"), "result", Custom("take", Method("void", "string value", "Logger.Info(value)")), "value", false);
-        // A picture (an entity definition's Take a picture) goes into no pin of another type, not even object: both
+        // A picture (an entity definition's Camera frame) goes into no pin of another type, not even object: both
         // validators decide the type by its catalog entry alone.
         var picture = new JsonObject
         {
             ["version"] = 5, ["name"] = "Shared rich catalog",
-            ["nodes"] = new JsonArray(VisualGraphContract.CreateNode("entity_setup", "setup", snapshot), VisualGraphContract.CreateNode("camera_snapshot", "snap", snapshot), Custom("take", Method("void", "object value", "Logger.Info(value.ToString()!)")),
+            ["nodes"] = new JsonArray(VisualGraphContract.CreateNode("entity_setup", "setup", snapshot), VisualGraphContract.CreateNode("camera_frame", "snap", snapshot), Custom("take", Method("void", "object value", "Logger.Info(value.ToString()!)")),
                 new JsonObject { ["id"] = "porch", ["kind"] = "entity", ["config"] = new JsonObject { ["key"] = "porch", ["domain"] = "sensor", ["name"] = "Porch" } }),
-            ["edges"] = new JsonArray(new JsonObject { ["id"] = "flow0", ["source"] = "setup", ["target"] = "snap" }, new JsonObject { ["id"] = "flow1", ["source"] = "snap", ["target"] = "take" }),
+            ["edges"] = new JsonArray(new JsonObject { ["id"] = "flow0", ["source"] = "setup", ["target"] = "take" }),
             ["definition"] = new JsonObject { ["settings"] = new JsonArray() },
         };
         picture["nodes"]![1]!["config"]!["entity"] = JsonNode.Parse("""{"kind":"literal","type":"entity_id:camera","value":"camera.porch"}""");

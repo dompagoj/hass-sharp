@@ -20,7 +20,7 @@ internal sealed record DefinitionRoots(string? Setup, IReadOnlyDictionary<string
 
 /// <summary>One flow an Entity node starts, as the generator gives it a method and the run history names its runs.</summary>
 /// <param name="NodeId">The Entity node's id.</param>
-/// <param name="Port">The pin the flow starts at: <c>command:&lt;command&gt;</c> or <c>frame</c>; <c>state</c> for its state, which has no pin.</param>
+/// <param name="Port">The pin the flow starts at: <c>command:&lt;command&gt;</c>; <c>state</c> for its state and <c>frame</c> for its frames, which have no pin.</param>
 /// <param name="Method">The flow's method (<see cref="VisualNodeCatalog.FlowMethod"/> of the node and <paramref name="Port"/>).</param>
 /// <param name="Kind"><c>state</c>, <c>command</c> or <c>frame</c>.</param>
 /// <param name="Key">The key of the node's entity.</param>
@@ -59,6 +59,11 @@ internal sealed record DefinitionComponent(string NodeId, string Kind, string Ke
 /// </summary>
 internal static class DefinitionGraph
 {
+    /// <summary>The port of a camera's frame flow, which has no pin: its trace's <c>rootPort</c>.</summary>
+    internal const string FrameFlow = "frame";
+    /// <summary>What a frame flow's runs are named after the entity: <c>{Name}: When a frame is needed</c>.</summary>
+    internal const string FrameLabel = "When a frame is needed";
+
     /// <summary>
     /// A copy of the definition's graph with <c>definition</c> = <c>{settings}</c>: each setting's key and type only. A
     /// setting's value, label and secret flag never reach the graph (nor the source it embeds in): a value may be secret,
@@ -217,8 +222,9 @@ internal static class DefinitionGraph
     /// is supplied (a value wire into it, or a value under <c>config.arguments</c> that is not unset; its Device pin is
     /// none), recorded when
     /// <c>config.history.state</c> is true; each command whose pin has a step order wire out of it, in its type's order,
-    /// recorded unless <c>config.history.commands</c> is false; its frame, when that pin has one, recorded when
-    /// <c>config.history.frame</c> is true. None for a node of an unknown type, and for one that is no Entity node (<see cref="VisualNodeCatalog.IsHub"/>).
+    /// recorded unless <c>config.history.commands</c> is false; its frame, when a value wire goes into a picture it shows (a
+    /// camera's Image, <see cref="VisualNodeCatalog.PictureInputs"/>), recorded when <c>config.history.frame</c> is true. None
+    /// for a node of an unknown type, and for one that is no Entity node (<see cref="VisualNodeCatalog.IsHub"/>).
     /// </summary>
     internal static IReadOnlyList<HubFlow> HubFlows(JsonObject node, JsonObject graph, VisualCatalogSnapshot snapshot)
     {
@@ -237,15 +243,16 @@ internal static class DefinitionGraph
             new(id, port, VisualNodeCatalog.FlowMethod(node, port), kind, key, command, $"{name}: {what}", track);
         var wired = edges.Where(e => VisualNodeCatalog.Text(e, "kind") == "data" && VisualNodeCatalog.Text(e, "target") == id).Select(e => VisualNodeCatalog.Text(e, "targetPort")).ToHashSet(StringComparer.Ordinal);
         var arguments = config?["arguments"] as JsonObject;
-        // Its Device pin is no state value (VisualNodeCatalog.StateInputs): a wire into it gives the node no state flow.
+        // Its Device pin and a picture it shows are no state values (VisualNodeCatalog.StateInputs): a wire into one gives the node no state flow.
         if (VisualNodeCatalog.StateInputs(node, snapshot).Any(input => wired.Contains(input.Key) || arguments?[input.Key] is JsonObject value && VisualNodeCatalog.Text(value, "kind") != "unset"))
             flows.Add(Flow("state", "state", null, "State", Recorded("state", false)));
         var started = edges.Where(e => VisualNodeCatalog.Text(e, "kind") != "data" && VisualNodeCatalog.Text(e, "source") == id).Select(e => VisualNodeCatalog.Text(e, "port", "next")).ToHashSet(StringComparer.Ordinal);
         foreach (var port in VisualNodeCatalog.ExecutionPorts(node, snapshot).Where(started.Contains))
             if (port.StartsWith("command:", StringComparison.Ordinal) && port["command:".Length..] is var command)
                 flows.Add(Flow(port, "command", command, VisualNodeCatalog.Text(row?["commands"]?[command], "label", command), Recorded("commands", true)));
-            else if (port == "frame")
-                flows.Add(Flow(port, "frame", null, VisualNodeCatalog.Text(row?["frame"], "label", "When a frame is needed"), Recorded("frame", false)));
+        // A camera makes its frame from what is wired into its Image: nothing wired, nothing to make.
+        if (VisualNodeCatalog.PictureInputs(node, snapshot).Any(input => wired.Contains(input.Key)))
+            flows.Add(Flow(FrameFlow, "frame", null, FrameLabel, Recorded("frame", false)));
         return flows;
     }
 }

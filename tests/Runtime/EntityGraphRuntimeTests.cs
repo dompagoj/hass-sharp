@@ -43,12 +43,12 @@ static class EntityGraphRuntimeTests
         public SharpFiles Files => Downloads ?? throw new InvalidOperationException("This definition downloads nothing");
         /// <summary>The definition's id, which a picture is taken under.</summary>
         public string DefinitionId { get; init; } = "fake";
-        /// <summary>Each frame shown, as the picture was handed over.</summary>
+        /// <summary>Each frame shown: a copy of the picture handed over, as a camera keeps one (<see cref="SharpCamera.Show"/>).</summary>
         public readonly List<SharpImage> Frames = [];
         public void ShowFrame(string entityKey, SharpImage image)
         {
             Calls.Add($"frame {entityKey} {image.Drawings} drawing(s)");
-            Frames.Add(image);
+            Frames.Add(image.Copy());
         }
     }
     /// <summary>The trace documents a run writes; the last one is its final trace.</summary>
@@ -196,17 +196,17 @@ static class EntityGraphRuntimeTests
                 (nameof(HttpRequestReadsAnEmptyOrCompressedAnswer), HttpRequestReadsAnEmptyOrCompressedAnswer),
                 (nameof(NothingKeepsACookie), NothingKeepsACookie),
                 (nameof(DrawingStepsDrawOnACopyOfThePicture), DrawingStepsDrawOnACopyOfThePicture),
-                (nameof(TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun), TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun),
+                (nameof(ACameraFrameThatFailsFailsWhatReadsItAndIsCancelledWithItsRun), ACameraFrameThatFailsFailsWhatReadsItAndIsCancelledWithItsRun),
                 (nameof(ADrawingStepRoundsAPositionThatIsNotWhole), ADrawingStepRoundsAPositionThatIsNotWhole),
                 (nameof(APictureInAnObjectIsItsShortText), APictureInAnObjectIsItsShortText),
                 (nameof(APictureIsTracedAndLoggedAsAShortText), APictureIsTracedAndLoggedAsAShortText),
-                (nameof(ShowFrameHandsThePictureToTheDefinition), ShowFrameHandsThePictureToTheDefinition),
+                (nameof(AFrameHandsTheImageToTheDefinition), AFrameHandsTheImageToTheDefinition),
                 (nameof(AnEntityNodeWorksOutItsState), AnEntityNodeWorksOutItsState),
                 (nameof(ASetValueOnTheNodeIsItsState), ASetValueOnTheNodeIsItsState),
                 (nameof(AFailingValueMakesTheEntityUnavailable), AFailingValueMakesTheEntityUnavailable),
                 (nameof(ACommandRunsTheStepsOnItsPin), ACommandRunsTheStepsOnItsPin),
                 (nameof(ACommandsValueIsReadOnItsFlow), ACommandsValueIsReadOnItsFlow),
-                (nameof(AFrameRunsTheStepsOnItsPin), AFrameRunsTheStepsOnItsPin),
+                (nameof(AFrameWorksOutItsImage), AFrameWorksOutItsImage),
                 (nameof(TheRootsOfANodeAreItsWiredFlows), () => { TheRootsOfANodeAreItsWiredFlows(); return Task.CompletedTask; }),
                 (nameof(AGraphOfANodeWithoutFlowsCompiles), AGraphOfANodeWithoutFlowsCompiles),
                 (nameof(HistoryFollowsTheNodesSwitches), () => { HistoryFollowsTheNodesSwitches(); return Task.CompletedTask; }) })
@@ -220,8 +220,8 @@ static class EntityGraphRuntimeTests
         if (failures.Count > 0) throw new Exception($"Entity graph runtime: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS entity graph runtime: an Entity node's state sets state and availability, Set state, Set available and Setting reach the definition, Has state and Current state read Home Assistant, entity nodes need a definition");
         Console.WriteLine("PASS entity graph runtime: HTTP request gets text, posts and reads JSON, fails on an error status, a timeout, a large or misshapen answer by messages naming only the host, is cancelled with its run, hides a secret's inputs and a hidden response; Compare does not quote a secret");
-        Console.WriteLine("PASS entity graph runtime: Take a picture asks Home Assistant under its definition's id, fails to its error wire and is cancelled with its run; Draw rectangle and Draw text draw on a copy and round a position that is not whole, a picture is traced and logged as a short text, never its bytes, and goes into an object as that text; a camera's frame flow runs the steps after its pin and Show frame hands its picture to the definition");
-        Console.WriteLine("PASS entity graph runtime: an Entity node works out its state from its wired and set values, or marks its entity unavailable, runs the steps on each wired command and its frame pin with the command's values, and its wired flows are its roots");
+        Console.WriteLine("PASS entity graph runtime: Camera frame asks Home Assistant under its definition's id, fails the step that reads it and is cancelled with its run; Draw rectangle and Draw text draw on a copy and round a position that is not whole, a picture is traced and logged as a short text, never its bytes, and goes into an object as that text; a camera's frame works out its Image and hands that picture to the definition");
+        Console.WriteLine("PASS entity graph runtime: an Entity node works out its state from its wired and set values, or marks its entity unavailable, runs the steps on each wired command with the command's values, works out a camera's Image for its frame, and its wired flows are its roots");
         Console.WriteLine("PASS entity graph runtime: HTTP request names a host it cannot connect to, gives no body for a HEAD, follows redirects itself without handing its headers to another host, refuses a header before sending, and reads an empty or compressed answer; Download file hides a secret's address and checksum");
     }
 
@@ -520,9 +520,10 @@ static class EntityGraphRuntimeTests
 
     /// <summary>
     /// Every entity node needs the definition of the run in progress; without one it fails, saying so. An Entity node's
-    /// state, command and frame flows and When started fail as the run starts. A Setting, Set state and Set available are each reached on
-    /// their own: under a trigger of an entity definition's graph, after a step that runs first, as a run the runner has
-    /// not given a definition would reach them.
+    /// state, command and frame flows and When started fail as the run starts. A Setting, Set state, Set available and
+    /// Camera frame are each reached on their own: under a trigger of an entity definition's graph, after a step that runs
+    /// first, as a run the runner has not given a definition would reach them; a value, a Setting or a Camera frame, fails
+    /// named with the step reading it.
     /// </summary>
     static async Task EntityNodesFailWithoutADefinition()
     {
@@ -537,10 +538,10 @@ static class EntityGraphRuntimeTests
              Manual("t1"), Setting("k", "name"), N("show", "log", new { value = Unset }),
              Manual("t2"), Said("before_set", "before set"), SetState("set", "relay", new JsonObject { ["is_on"] = Lit("boolean", true) }),
              Manual("t3"), Said("before_up", "before available"), N("up", "set_entity_available", new JsonObject { ["entity"] = "relay", ["available"] = Lit("boolean", true) }),
-             Manual("t4"), Said("before_picture", "before picture"), Snapshot("picture", "camera.porch"),
-             Hub("lens", "lens", "camera"), Said("framed", "framed")],
+             Manual("t4"), Said("before_picture", "before picture"), Snapshot("picture", "camera.porch"), N("shown", "log", new { value = Unset }),
+             Hub("lens", "lens", "camera"), Snapshot("framed", "camera.porch")],
             [Flow("relay", "command:turn_on", "on_set"), E("setup", "setup_up"), E("t1", "show"), D("k", "show", "value"), E("t2", "before_set"), E("before_set", "set"), E("t3", "before_up"), E("before_up", "up"),
-             E("t4", "before_picture"), E("before_picture", "picture"), Flow("lens", "frame", "framed")],
+             E("t4", "before_picture"), E("before_picture", "shown"), D("picture", "shown", "value", "image"), D("framed", "lens", "image", "image")],
             ("name", "string"));
         using var compiled = await Compiled.Of(graph, "entity nodes of every kind");
         foreach (var (root, port) in new[] { ("s", "state"), ("relay", "command:turn_on"), ("setup", null), ("lens", "frame") })
@@ -550,12 +551,12 @@ static class EntityGraphRuntimeTests
         }
         var setting = await Fails(() => compiled.Run("t1", null), "a Setting without a definition");
         Check(setting is InvalidOperationException && setting.Message == "Setting (used by Log): " + Message, "the Setting fails itself, named with the step reading it: " + setting.Message);
-        foreach (var (root, said, step) in new[] { ("t2", "before set", "Set state"), ("t3", "before available", "Set available"), ("t4", "before picture", "Take a picture") })
+        foreach (var (root, said, step, failed) in new[] { ("t2", "before set", "Set state", Message), ("t3", "before available", "Set available", Message), ("t4", "before picture", "Camera frame", "Camera frame (used by Log): " + Message) })
         {
             while (messages.TryDequeue(out _)) { }
             var error = await Fails(() => compiled.Run(root, null), $"{step} without a definition");
             Check(messages.Contains(said), $"the step before {step} ran: " + string.Join(" | ", messages));
-            Check(error is InvalidOperationException && error.Message == Message, $"{step} fails itself, saying it needs a definition: {error.GetType().Name}: {error.Message}");
+            Check(error is InvalidOperationException && error.Message == failed, $"{step} fails itself, saying it needs a definition: {error.GetType().Name}: {error.Message}");
         }
     }
 
@@ -1224,7 +1225,7 @@ static class EntityGraphRuntimeTests
         PyInterop.BeginCameraSnapshot = (definition, camera, ok, fail) => { lock (asked) asked.Add(definition + " " + camera); answer(ok, fail); };
         return asked;
     }
-    static JsonObject Snapshot(string id, string camera) => N(id, "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", camera) });
+    static JsonObject Snapshot(string id, string camera) => N(id, "camera_frame", new JsonObject { ["entity"] = Lit("entity_id:camera", camera) });
     static JsonObject Rect(string id, object? x = null) => N(id, "image_draw_rect", new JsonObject
     {
         ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", x ?? 2), ["y"] = Lit("number", 2), ["width"] = Lit("number", 20), ["height"] = Lit("number", 10),
@@ -1243,7 +1244,7 @@ static class EntityGraphRuntimeTests
     }
 
     /// <summary>
-    /// Take a picture asks Home Assistant for the camera's picture under its definition's id; Draw rectangle and Draw text
+    /// Camera frame asks Home Assistant for the camera's picture under its definition's id; Draw rectangle and Draw text
     /// each draw on a copy of the picture wired to them, so the picture itself and every other step's copy stay as they
     /// were: two steps drawing on one picture give two images of one drawing each. Drawing reads and encodes nothing; the
     /// picture with its drawings is a JPEG of its own.
@@ -1256,10 +1257,10 @@ static class EntityGraphRuntimeTests
         {
             ["version"] = 5, ["name"] = "Porch",
             ["nodes"] = new JsonArray(N("t", "trigger", new { type = "manual" }), Snapshot("snap", "camera.porch"), Rect("rect"), Label("label"), Rect("other"), N("keep", "keep")),
-            ["edges"] = new JsonArray(E("t", "snap"), E("snap", "keep"), D("snap", "rect", "image", "image"), D("rect", "label", "image", "image"), D("snap", "other", "image", "image"),
+            ["edges"] = new JsonArray(E("t", "keep"), D("snap", "rect", "image", "image"), D("rect", "label", "image", "image"), D("snap", "other", "image", "image"),
                 D("snap", "keep", "source", "image"), D("rect", "keep", "rect", "image"), D("label", "keep", "label", "image"), D("other", "keep", "other", "image")),
         };
-        // The step "keep" stands for one that takes a picture (Task 6's Show frame): it keeps what is wired to it.
+        // The step "keep" stands for one that takes a picture, as a camera's Image does: it keeps what is wired to it.
         var kept = new Dictionary<string, SharpImage>(StringComparer.Ordinal);
         var types = new Dictionary<string, Type> { ["boolean"] = typeof(bool), ["number"] = typeof(double), ["string"] = typeof(string), ["image"] = typeof(SharpImage) };
         var runtime = new VisualRuntime(graph.ToJsonString(), VisualNodeCatalog.Root.ToJsonString(), types, TriggerPayload.Manual(), default, (id, scope, run) =>
@@ -1286,21 +1287,24 @@ static class EntityGraphRuntimeTests
     }
 
     /// <summary>
-    /// A camera Home Assistant gives no picture of fails Take a picture with Home Assistant's message, which its On error
-    /// wire takes; a camera that does not answer is waited for until the run is cancelled, which ends it at once.
+    /// A camera Home Assistant gives no picture of fails Camera frame with Home Assistant's message, which fails the step
+    /// reading it, named with that step; a camera that does not answer is waited for until the run is cancelled, which
+    /// ends it at once.
     /// </summary>
-    static async Task TakeAPictureFailsToItsErrorWireAndIsCancelledWithItsRun()
+    static async Task ACameraFrameThatFailsFailsWhatReadsItAndIsCancelledWithItsRun()
     {
         var asked = Cameras((_, fail) => fail("Camera is off"));
-        using var off = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), N("why", "last_error"), SetState("said", "reading")],
-            [E("snap", "said", "error"), D("why", "said", "value", "message")]), "a picture of a camera that is off");
+        JsonObject Read() => Started([Snapshot("snap", "camera.porch"), N("say", "log", new { value = Unset }), SetState("set", "reading", new JsonObject { ["value"] = Lit("string", "taken") })],
+            [D("snap", "say", "value", "image")]);
+        using var off = await Compiled.Of(Read(), "a picture of a camera that is off");
         var definition = new FakeDefinition { DefinitionId = "porch" };
-        await off.Run("setup", definition);
-        Same(definition.Calls, ["state reading value=string:Camera is off"], "the On error wire is taken with Home Assistant's message");
+        var failed = await Fails(() => off.Run("setup", definition), "a picture of a camera that is off");
+        Check(failed.Message == "Camera frame (used by Log): Camera is off", "the step reading it fails with Home Assistant's message: " + failed.Message);
+        Same(definition.Calls, [], "nothing after it runs");
         Same(asked, ["porch camera.porch"], "the picture is asked for under the definition's id");
 
         asked = Cameras((_, _) => { });
-        using var silent = await Compiled.Of(Started([Snapshot("snap", "camera.porch"), SetState("set", "reading", new JsonObject { ["value"] = Lit("string", "taken") })], []), "a picture of a camera that does not answer");
+        using var silent = await Compiled.Of(Read(), "a picture of a camera that does not answer");
         using var cancel = new CancellationTokenSource();
         definition = new FakeDefinition();
         var run = silent.Run("setup", definition, cancel.Token);
@@ -1346,13 +1350,12 @@ static class EntityGraphRuntimeTests
     {
         var picture = Picture();
         Cameras((ok, _) => ok(picture));
-        JsonObject Show(string id) => N(id, "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) });
         foreach (var (typed, x) in new[] { (10.5, 11), (-0.5, -1), (10.4, 10), (2.0, 2) })
         {
-            using var compiled = await Compiled.Of(Entity([N("setup", "entity_setup"), Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect", typed), Show("show")],
-                [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")]), $"a rectangle at {typed}");
+            using var compiled = await Compiled.Of(Entity([Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect", typed)],
+                [D("snap", "rect", "image", "image"), D("rect", "lens", "image", "image")]), $"a rectangle at {typed}");
             var definition = new FakeDefinition();
-            await compiled.Run("setup", definition);
+            await compiled.Run("lens", "frame", definition);
             var drawn = Drawn(definition.Frames.Single()).Single();
             Check(drawn.StartsWith($"Rectangle {{ X = {x}, Y = 2, Width = 20, Height = 10,", StringComparison.Ordinal), $"a rectangle typed at {typed} is drawn at {x}: " + drawn);
         }
@@ -1365,14 +1368,14 @@ static class EntityGraphRuntimeTests
         });
         var wired = Rect("rect");
         wired["config"]!["width"] = JsonSerializer.SerializeToNode(Unset);
-        using var through = await Compiled.Of(Entity([N("setup", "entity_setup"), Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), value, wired, Show("show")],
-            [E("setup", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("value", "rect", "width", "result"), D("rect", "show", "image", "image")]), "a rectangle of a wired width");
+        using var through = await Compiled.Of(Entity([Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), value, wired],
+            [D("snap", "rect", "image", "image"), D("value", "rect", "width", "result"), D("rect", "lens", "image", "image")]), "a rectangle of a wired width");
         var field = through.Assembly.GetTypes().Select(t => t.GetField("Value")).Single(f => f != null)!;
         foreach (var (given, width) in new[] { (10.5, 11), (-0.5, -1), (10.4, 10) })
         {
             field.SetValue(null, given);
             var definition = new FakeDefinition();
-            await through.Run("setup", definition);
+            await through.Run("lens", "frame", definition);
             var drawn = Drawn(definition.Frames.Single()).Single();
             Check(drawn.Contains($", Width = {width}, ", StringComparison.Ordinal), $"a width wired as {given} is drawn as {width}: " + drawn);
         }
@@ -1380,8 +1383,8 @@ static class EntityGraphRuntimeTests
         {
             field.SetValue(null, given);
             var definition = new FakeDefinition();
-            var error = await Fails(() => through.Run("setup", definition), $"a width wired as {shown}");
-            Check(error.Message == $"Draw rectangle (used by Show frame): Width must be a number of pixels from -1000000000 to 1000000000, not {shown}", $"a width wired as {shown}: " + error.Message);
+            var error = await Fails(() => through.Run("lens", "frame", definition), $"a width wired as {shown}");
+            Check(error.Message == $"Draw rectangle (used by lens): Width must be a number of pixels from -1000000000 to 1000000000, not {shown}", $"a width wired as {shown}: " + error.Message);
             Same(definition.Calls, [], $"a width of {shown} shows nothing");
         }
     }
@@ -1418,19 +1421,18 @@ static class EntityGraphRuntimeTests
     }
 
     /// <summary>
-    /// A camera's frame flow runs the steps after its pin, as a When started flow does, and Show frame hands the picture wired
-    /// to it to its definition for the camera it names; a run already cancelled shows nothing.
+    /// A camera's frame flow works out the picture wired into its Image and hands it to its definition for that camera; a
+    /// run already cancelled shows nothing.
     /// </summary>
-    static async Task ShowFrameHandsThePictureToTheDefinition()
+    static async Task AFrameHandsTheImageToTheDefinition()
     {
         var picture = Picture();
         var asked = Cameras((ok, _) => ok(picture));
-        using var compiled = await Compiled.Of(Entity(
-            [Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect"), N("show", "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) })],
-            [Flow("lens", "frame", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")]), "a frame flow");
+        using var compiled = await Compiled.Of(Entity([Hub("lens", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect")],
+            [D("snap", "rect", "image", "image"), D("rect", "lens", "image", "image")]), "a frame flow");
         var definition = new FakeDefinition { DefinitionId = "lens" };
         await compiled.Run("lens", "frame", definition);
-        Same(definition.Calls, ["frame lens 1 drawing(s)"], "Show frame hands the picture with its rectangle to the definition");
+        Same(definition.Calls, ["frame lens 1 drawing(s)"], "the frame hands the picture with its rectangle to the definition");
         Same(asked, ["lens camera.porch"], "the picture is taken under the definition's id");
         var shown = definition.Frames.Single().ToJpeg();
         Check(shown is [0xFF, 0xD8, ..] && !shown.AsSpan().SequenceEqual(picture), "the frame shown is the picture drawn on");
@@ -1526,31 +1528,121 @@ static class EntityGraphRuntimeTests
         Same(definition.Calls, [], "nothing is set");
     }
 
-    /// <summary>A camera node's frame pin runs the steps connected to it, which show a frame.</summary>
-    static async Task AFrameRunsTheStepsOnItsPin()
+    /// <summary>
+    /// A camera node's frame works out each value its Image reads, once, in order, and shows the picture: an Entity's
+    /// camera goes into Camera frame, and the trace has each value, then the node with the picture it was given.
+    /// </summary>
+    static async Task AFrameWorksOutItsImage()
     {
         var picture = Picture();
         var asked = Cameras((ok, _) => ok(picture));
         using var compiled = await Compiled.Of(Nodes(
-            [Hub("cam", "lens", "camera"), Snapshot("snap", "camera.porch"), Rect("rect"), N("show", "show_frame", new JsonObject { ["entity"] = "lens", ["image"] = JsonSerializer.SerializeToNode(Unset) })],
-            Flow("cam", "frame", "snap"), E("snap", "show"), D("snap", "rect", "image", "image"), D("rect", "show", "image", "image")), "a camera node's frame flow");
+            [Hub("cam", "lens", "camera"), N("porch", "ha_entity", new { entity = "camera.porch" }), N("snap", "camera_frame", new JsonObject { ["entity"] = JsonSerializer.SerializeToNode(Unset) }), Rect("rect"), Label("label")],
+            D("porch", "snap", "entity", "entity"), D("snap", "rect", "image", "image"), D("rect", "label", "image", "image"), D("label", "cam", "image", "image")), "a camera node's frame flow");
         var definition = new FakeDefinition { DefinitionId = "lens" };
-        await compiled.Run("cam", "frame", definition);
-        Same(definition.Calls, ["frame lens 1 drawing(s)"], "Show frame hands the picture with its rectangle to the definition");
-        Same(asked, ["lens camera.porch"], "the picture is taken under the definition's id");
+        var sink = new TraceSink();
+        await compiled.Run("cam", "frame", definition, sink: sink);
+        Same(definition.Calls, ["frame lens 2 drawing(s)"], "the frame hands the picture with its rectangle and text to the definition");
+        Same(asked, ["lens camera.porch"], "the picture of the Entity's camera is taken once, under the definition's id");
+        Same([.. sink.Final["events"]!.AsArray().Select(e => e!["node"]!.GetValue<string>())], ["porch", "snap", "rect", "label", "cam"], "each value, then the node");
+        Check(sink.Event("porch")["outputs"]?["entity"]?["v"]?.GetValue<string>() == "camera.porch", "the Entity gives its camera: " + sink.Event("porch").ToJsonString());
+        Check(sink.Event("cam")["inputs"]?["image"]?["v"]?.GetValue<string>() == $"Image · {Kilobytes(picture)} · 2 drawings", "the node is traced with its picture: " + sink.Event("cam").ToJsonString());
     }
 
     /// <summary>
-    /// A node's roots are its wired flows: its state when a value is supplied, each command whose pin is wired, its frame
-    /// when wired; each named for the run history. A node with nothing supplied or wired has none.
+    /// A camera's frame flow of live frames (<paramref name="camera"/> has a live feed, which the caller's fake ffmpeg
+    /// gives): when the run ends it gives back the frame of each picture it made — Camera frame's, read by Draw rectangle
+    /// and by the Log after it, and the copy each drawing step made — so the feed's buffer is used again; the frame the
+    /// camera shows is its own copy, which stays whole. A trace words a live frame by its size, not its raw bytes.
+    /// <paramref name="frameOf"/> is the frame an image holds.
+    /// </summary>
+    internal static async Task LiveFramesAreGivenBack(string camera, Func<SharpImage, PixelFrame?> frameOf)
+    {
+        using var compiled = await Compiled.Of(Nodes([Hub("cam", "lens", "camera"), Snapshot("snap", camera), Rect("rect"), Label("label")],
+            D("snap", "rect", "image", "image"), D("rect", "label", "image", "image"), D("label", "cam", "image", "image")), "a camera of live frames");
+        var definition = new FakeDefinition { DefinitionId = "lens" };
+        var sink = new TraceSink();
+        // As DefinitionHost.Make runs a frame flow: the camera's frame is being made, so Camera frame is live.
+        HassCameras.MakingFrame.Value = "lens:lens";
+        try { await compiled.Run("cam", "frame", definition, sink: sink); }
+        finally { HassCameras.MakingFrame.Value = null; }
+        var shown = definition.Frames.Single();
+        var frame = frameOf(shown) ?? throw new Exception("the camera shows a live frame");
+        // The feed's own reference while the frame is its newest, and the camera's copy; the run's three (Camera frame's
+        // picture and the two drawings' copies) are given back.
+        Check(frame.References is 1 or 2, $"the run gives back the frame of each picture it made: {frame.References} references left");
+        var jpeg = shown.ToJpeg();
+        TurboJpeg.Header(jpeg, out var width, out var height);
+        Check(shown.Drawings == 2 && (width, height) == (shown.Width, shown.Height), "the frame the camera shows is whole, with its drawings");
+        var traced = sink.Event("snap")["outputs"]!["image"]!["v"]!.GetValue<string>();
+        Check(traced == $"Image · {shown.Width}×{shown.Height} live frame · 0 drawings" && sink.Event("cam")["inputs"]!["image"]!["v"]!.GetValue<string>() == $"Image · {shown.Width}×{shown.Height} live frame · 2 drawings",
+            "a trace words a live frame by its size: " + traced);
+        // Once the camera shows another frame, and the feed has a newer one, nobody holds it: its buffer goes back to the pool.
+        shown.Release();
+        await EntityTestHome.Until(() => frame.References == 0, "the feed's newer frame replaces it");
+        Console.WriteLine("PASS entity graph runtime: a camera's frame flow of live frames gives back each picture it made when it ends; the frame the camera shows stays whole; a trace words a live frame by its size");
+    }
+
+    /// <summary>
+    /// A Video frame of <paramref name="clip"/> (a file the caller's fake ffmpeg reads, in a folder allowed), through Draw
+    /// rectangle into a camera's Image: the camera's frame is a live frame of the video, its drawing on it, and the run
+    /// gives back the frames it made. Called by <c>VideoTests</c>, which sets up the fake ffmpeg.
+    /// </summary>
+    internal static async Task AVideoFrameShowsInACamera(string clip)
+    {
+        using var compiled = await Compiled.Of(Nodes([Hub("cam", "lens", "camera"), N("clip", "video_frame", new JsonObject { ["source"] = clip, ["loop"] = true, ["maxWidth"] = 32 }), Rect("rect")],
+            D("clip", "rect", "image", "image"), D("rect", "cam", "image", "image")), "a camera of a video's frames");
+        var definition = new FakeDefinition { DefinitionId = "lens" };
+        var sink = new TraceSink();
+        HassCameras.MakingFrame.Value = "lens:video";
+        try { await compiled.Run("cam", "frame", definition, sink: sink); }
+        finally { HassCameras.MakingFrame.Value = null; }
+        var shown = definition.Frames.Single();
+        Check(shown.IsFrame && (shown.Width, shown.Height, shown.Drawings) == (32, 24, 1), $"the camera shows a live frame of the video, fitted, with its rectangle: {shown.Width}x{shown.Height}, {shown.Drawings} drawing(s)");
+        Check(sink.Event("clip")["outputs"]!["image"]!["v"]!.GetValue<string>() == "Image · 32×24 live frame · 0 drawings", "the trace words the video's frame by its size: " + sink.Event("clip").ToJsonString());
+        shown.Dispose();
+        // A source refused fails what reads it, in its words.
+        using var refused = await Compiled.Of(Nodes([Hub("cam", "lens", "camera"), N("clip", "video_frame", new JsonObject { ["source"] = "/nowhere/clip.mp4" })], D("clip", "cam", "image", "image")), "a camera of a missing video");
+        var error = await Fails(() => refused.Run("cam", "frame", new FakeDefinition { DefinitionId = "lens" }), "a Video frame of a missing file");
+        Check(error.Message.Contains("does not exist", StringComparison.Ordinal), "the frame fails with the refusal: " + error.Message);
+        Console.WriteLine("PASS entity graph runtime: a Video frame through Draw rectangle shows a live frame of the video in a camera; a source refused fails the frame in its words");
+    }
+
+    /// <summary>
+    /// The pull form: a Custom C# node whose code makes a picture of pixels (<see cref="SharpImage.FromRgb"/>), wired into a
+    /// camera's Image, is the camera's frame, each pixel where the code put it.
+    /// </summary>
+    internal static async Task ACustomNodesPixelsShowInACamera()
+    {
+        var pixels = N("pixels", "custom", new JsonObject
+        {
+            ["source"] = "public static class CustomNode\n{\n    [Node(\"Pixels\", Pure = true)]\n    public static SharpImage Run()\n    {\n        var rgb = new byte[16 * 8 * 3];\n        for (var i = 0; i < rgb.Length; i += 3) rgb[i] = 250;\n        return SharpImage.FromRgb(16, 8, rgb);\n    }\n}",
+            ["arguments"] = new JsonObject(),
+        });
+        using var compiled = await Compiled.Of(Nodes([Hub("cam", "lens", "camera"), pixels, Rect("rect")], D("pixels", "rect", "image", "result"), D("rect", "cam", "image", "image")), "a camera of a Custom C# node's pixels");
+        var definition = new FakeDefinition { DefinitionId = "lens" };
+        await compiled.Run("cam", "frame", definition);
+        Same(definition.Calls, ["frame lens 1 drawing(s)"], "the frame hands the code's picture, drawn on, to the definition");
+        var shown = definition.Frames.Single();
+        var rgb = shown.ToPixels();
+        Check(shown.IsFrame && (shown.Width, shown.Height) == (16, 8) && rgb[(4 * 16 + 8) * 3] == 250 && rgb[(4 * 16 + 8) * 3 + 1] == 0, "the camera shows the code's pixels, red where the rectangle is not");
+        var jpeg = shown.ToJpeg();
+        TurboJpeg.Header(jpeg, out var width, out var height);
+        Check((width, height) == (16, 8), "and encodes them");
+        Console.WriteLine("PASS entity graph runtime: a Custom C# node's picture of RGB pixels, wired into a camera's Image, is the camera's frame");
+    }
+
+    /// <summary>
+    /// A node's roots are its wired flows: its state when a value is supplied, each command whose pin is wired, a camera's
+    /// frame when its Image is wired; each named for the run history. A node with nothing supplied or wired has none.
     /// </summary>
     static void TheRootsOfANodeAreItsWiredFlows()
     {
         var door = Hub("door", "door", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", true) }, new JsonObject { ["name"] = "" });
         var relay = Hub("relay", "relay", "switch", more: new JsonObject { ["name"] = "Relay" });
         var cam = Hub("cam", "lens", "camera");
-        var graph = Nodes([door, relay, cam, Said("x")],
-            Flow("relay", "command:turn_on", "x"), Flow("relay", "command:turn_off", "x"), Flow("cam", "frame", "x"));
+        var graph = Nodes([door, relay, cam, Said("x"), Snapshot("snap", "camera.porch")],
+            Flow("relay", "command:turn_on", "x"), Flow("relay", "command:turn_off", "x"), D("snap", "cam", "image", "image"));
         var roots = DefinitionGraph.Roots(graph, VisualCatalogSnapshot.BuiltIn);
         Same(roots.States, [VisualNodeCatalog.FlowMethod(door, "state")], "the door's state is a state flow");
         Check(roots.StateEntities[VisualNodeCatalog.FlowMethod(door, "state")] == "door", "of the door");
@@ -1567,6 +1659,10 @@ static class EntityGraphRuntimeTests
             "the flows, in order, named by the entity's name, else its key");
         var unnamed = Hub("n", "", "binary_sensor", new JsonObject { ["is_on"] = Lit("boolean", false) }, new JsonObject { ["name"] = "" });
         Check(DefinitionGraph.HubFlows(unnamed, Nodes([unnamed]), VisualCatalogSnapshot.BuiltIn).Single().Label == "Entity: State", "an entity with neither name nor key is named Entity");
+        var blind = Hub("cam", "lens", "camera");
+        var unwired = Nodes([blind, Snapshot("snap", "camera.porch")]);
+        Check(DefinitionGraph.HubFlows(blind, unwired, VisualCatalogSnapshot.BuiltIn).Count == 0 && !DefinitionGraph.Roots(unwired, VisualCatalogSnapshot.BuiltIn).Frames.ContainsKey("lens"),
+            "a camera whose Image is not wired has no frame flow");
 
         var half = Hub("relay", "relay", "switch");
         var halfRoots = DefinitionGraph.Roots(Nodes([half, Said("x")], Flow("relay", "command:turn_on", "x")), VisualCatalogSnapshot.BuiltIn);
@@ -1603,7 +1699,7 @@ static class EntityGraphRuntimeTests
             if (history != null) more["history"] = history;
             var light = Hub("lamp", "lamp", "light", new JsonObject { ["is_on"] = Lit("boolean", true) }, more);
             var cam = Hub("cam", "lens", "camera", more: history == null ? null : new JsonObject { ["history"] = history.DeepClone() });
-            var graph = Nodes([light, cam, Said("x")], Flow("lamp", "command:turn_on", "x"), Flow("cam", "frame", "x"));
+            var graph = Nodes([light, cam, Said("x"), Snapshot("snap", "camera.porch")], Flow("lamp", "command:turn_on", "x"), D("snap", "cam", "image", "image"));
             return [.. DefinitionGraph.HubFlows(light, graph, VisualCatalogSnapshot.BuiltIn), .. DefinitionGraph.HubFlows(cam, graph, VisualCatalogSnapshot.BuiltIn)];
         }
         Same([.. Flows(null).Select(f => f.Kind + "=" + f.TrackHistory)], ["state=False", "command=True", "frame=False"], "by default only commands are recorded");

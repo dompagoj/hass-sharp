@@ -10793,6 +10793,40 @@
           "state of"
         ]
       },
+      "ha_entity": {
+        "label": "Home Assistant entity",
+        "category": "Hass",
+        "description": "One of Home Assistant\u0027s entities, such as a camera, to connect to the steps and values that use it.",
+        "pure": true,
+        "minGraphVersion": 5,
+        "config": {
+          "entity": {
+            "type": "string",
+            "required": true,
+            "default": "",
+            "label": "Entity",
+            "description": "The entity, by its id, such as camera.front_door."
+          }
+        },
+        "inputs": {},
+        "outputs": {
+          "entity": {
+            "type": "",
+            "label": "Entity",
+            "description": "The entity\u0027s id, an entity of its own domain: a camera\u0027s goes into Camera frame."
+          }
+        },
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "entity",
+          "entity id",
+          "source",
+          "camera",
+          "pick entity"
+        ]
+      },
       "http_request": {
         "label": "HTTP request",
         "category": "Data",
@@ -10968,15 +11002,31 @@
           "checksum"
         ]
       },
-      "camera_snapshot": {
-        "label": "Take a picture",
+      "camera_frame": {
+        "label": "Camera frame",
         "category": "Entity",
-        "description": "Take the current picture of a Home Assistant camera.",
+        "description": "A frame of a Home Assistant camera: live raw frames while it makes a camera\u0027s frames, otherwise a still picture.",
+        "pure": true,
         "documents": [
           "entity"
         ],
         "minGraphVersion": 5,
-        "config": {},
+        "config": {
+          "maxWidth": {
+            "type": "integer",
+            "min": 16,
+            "max": 8192,
+            "label": "Width at most",
+            "description": "The widest the frame may be, from 16 to 8192 pixels; empty for any width. Alone, it keeps the frame\u0027s aspect ratio; a frame is never made larger than the camera\u0027s own."
+          },
+          "maxHeight": {
+            "type": "integer",
+            "min": 16,
+            "max": 8192,
+            "label": "Height at most",
+            "description": "The highest the frame may be, from 16 to 8192 pixels; empty for any height. With Width at most, the frame fits in both, its aspect ratio kept."
+          }
+        },
         "inputs": {
           "entity": {
             "types": [
@@ -10984,29 +11034,88 @@
             ],
             "required": true,
             "label": "Camera",
-            "description": "The camera to take the picture of, such as camera.front_door."
+            "description": "The camera to take the frame of, such as camera.front_door: choose it here, or connect a Home Assistant entity."
           }
         },
         "outputs": {
           "image": {
             "type": "image",
-            "label": "Image",
-            "description": "The picture, as the camera took it."
+            "label": "Frame",
+            "description": "The frame, as the camera gave it. A camera that cannot give one fails what reads it."
           }
         },
-        "execution": [
-          "next",
-          "error"
-        ],
         "runtimeVersions": [
           5
         ],
         "keywords": [
           "camera",
           "snapshot",
+          "picture",
+          "take a picture",
           "photo",
           "image",
           "frame"
+        ]
+      },
+      "video_frame": {
+        "label": "Video frame",
+        "category": "Entity",
+        "description": "A frame of a video, from a stream\u0027s address or a file: live raw frames while it makes a camera\u0027s frames, otherwise the newest frame.",
+        "pure": true,
+        "documents": [
+          "entity"
+        ],
+        "minGraphVersion": 5,
+        "config": {
+          "source": {
+            "type": "string",
+            "required": true,
+            "default": "",
+            "label": "Source",
+            "description": "The video: an http://, https://, rtsp://, rtsps:// or rtmp:// address, or a file\u0027s absolute path such as /media/clip.mp4, in a folder Home Assistant allows (allowlist_external_dirs or media_dirs)."
+          },
+          "loop": {
+            "type": "boolean",
+            "default": true,
+            "label": "Loop",
+            "description": "Whether a file starts again from its beginning when it ends; off, its last frame stays. A stream\u0027s address plays as it comes."
+          },
+          "maxWidth": {
+            "type": "integer",
+            "min": 16,
+            "max": 8192,
+            "label": "Width at most",
+            "description": "The widest the frame may be, from 16 to 8192 pixels; empty for any width. Alone, it keeps the frame\u0027s aspect ratio; a frame is never made larger than the video\u0027s own."
+          },
+          "maxHeight": {
+            "type": "integer",
+            "min": 16,
+            "max": 8192,
+            "label": "Height at most",
+            "description": "The highest the frame may be, from 16 to 8192 pixels; empty for any height. With Width at most, the frame fits in both, its aspect ratio kept."
+          }
+        },
+        "inputs": {},
+        "outputs": {
+          "image": {
+            "type": "image",
+            "label": "Frame",
+            "description": "The frame, as the video gave it. A video that cannot be read fails what reads it."
+          }
+        },
+        "runtimeVersions": [
+          5
+        ],
+        "keywords": [
+          "video",
+          "stream",
+          "file",
+          "rtsp",
+          "url",
+          "mp4",
+          "frame",
+          "image",
+          "loop"
         ]
       },
       "image_draw_rect": {
@@ -11193,47 +11302,6 @@
           "write",
           "annotate",
           "picture"
-        ]
-      },
-      "show_frame": {
-        "label": "Show frame",
-        "category": "Entity",
-        "description": "Make this picture the camera\u0027s current picture.",
-        "documents": [
-          "entity"
-        ],
-        "minGraphVersion": 5,
-        "config": {
-          "entity": {
-            "type": "string",
-            "required": true,
-            "description": "The camera of this definition that shows the picture, by its key.",
-            "label": "Camera"
-          }
-        },
-        "inputs": {
-          "image": {
-            "types": [
-              "image"
-            ],
-            "required": true,
-            "label": "Image",
-            "description": "The picture to show until another is shown, such as one taken and drawn on."
-          }
-        },
-        "outputs": {},
-        "execution": [
-          "next"
-        ],
-        "runtimeVersions": [
-          5
-        ],
-        "keywords": [
-          "camera",
-          "frame",
-          "picture",
-          "display",
-          "publish"
         ]
       },
       "library:shared:global%3A%3ANodeLib.Samples.Describe": {
@@ -12221,17 +12289,23 @@
         "label": "Camera",
         "state": {},
         "commands": {},
-        "frame": {
-          "label": "When a frame is needed"
+        "picture": {
+          "image": {
+            "types": [
+              "image"
+            ],
+            "label": "Image",
+            "description": "The picture this camera shows, made each time a frame is needed."
+          }
         },
         "options": {
           "frame_interval": {
             "type": "number",
             "label": "Seconds between frames",
-            "description": "How often Home Assistant asks for a new picture while someone is watching; 1 when left empty.",
-            "min": 0.5,
+            "description": "Seconds between frames at the most; empty for as fast as the source.",
+            "min": 0.03333333333333333,
             "max": 60,
-            "default": 1
+            "default": 0.03333333333333333
           }
         }
       }
@@ -16460,7 +16534,7 @@
           },
           {
             "id": "snap",
-            "kind": "camera_snapshot",
+            "kind": "camera_frame",
             "config": {
               "entity": {
                 "kind": "literal",
@@ -16468,7 +16542,7 @@
                 "value": "camera.porch"
               }
             },
-            "label": "Take a picture"
+            "label": "Camera frame"
           },
           {
             "id": "take",
@@ -16749,15 +16823,10 @@
           {
             "id": "flow0",
             "source": "setup",
-            "target": "snap"
-          },
-          {
-            "id": "flow1",
-            "source": "snap",
             "target": "take"
           },
           {
-            "id": "wire2",
+            "id": "wire1",
             "kind": "data",
             "source": "snap",
             "sourcePort": "image",

@@ -153,7 +153,7 @@ internal static class DefinitionDocument
     /// when <paramref name="number"/> is outside them; null when it is within (or the rule gives no range).
     /// </summary>
     static string? Range(JsonObject rule, double number) =>
-        Number(rule["min"]) is { } min && Number(rule["max"]) is { } max && (number < min || number > max) ? $"a number from {Shown(min)} to {Shown(max)}" : null;
+        Number(rule["min"]) is { } min && Number(rule["max"]) is { } max && (number < min || number > max) ? $"a number from {CommandData.Bound(min, lowest: true)} to {CommandData.Bound(max, lowest: false)}" : null;
 
     static bool Required(JsonObject rule) => rule["required"] is JsonValue flag && flag.GetValueKind() == JsonValueKind.True;
     // Read through its JSON text, as Fits reads it: an entity class's default option (SharpDomains.DefaultOptions) may

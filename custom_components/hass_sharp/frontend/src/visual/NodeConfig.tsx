@@ -190,23 +190,31 @@ export function NodeConfig(props: NodeConfigProps) {
     const optionLabel = (option: string) => (types() ? constantLabels()?.get(option) ?? typeLabel(option, props.catalog) : field.name === 'operator' ? operators[option] ?? option : listed(option) ?? words.key(option))
     const number = () => field.rule.type === 'integer' || field.rule.type === 'number'
     const stateContext = createMemo(() => kind() === 'condition' && field.name === 'state' ? entityStateContext(props.graph, props.node, 'entity', props.catalog) : undefined)
+    const homeEntity = () => kind() === 'ha_entity' && field.name === 'entity'
     return (
       <div class="hs-insp-field" data-input-id={field.name} aria-invalid={errors().length > 0 || undefined}>
         <label class="hs-insp-field__label" for={id}>{label()}</label>
         <Show when={field.rule.enum || field.rule.enumSource} fallback={
           <Show when={field.rule.type === 'boolean'} fallback={
             <Show when={kind() === 'condition' && field.name === 'state'} fallback={
-              <DraftField id={id} label={label()} text={value() === undefined ? '' : String(value())} placeholder="Not set" describedBy={hint()}
-                inputmode={number() ? 'decimal' : undefined} invalid={errors().length > 0}
-                commit={text => {
-                  if (!number()) { set(field.name, text === '' && !field.rule.required ? undefined : text); return }
-                  if (text.trim() === '') { set(field.name, undefined); return }
-                  const parsed = parseNumber(text, decimal()) ?? Number.NaN
-                  const message = field.rule.type === 'integer' ? 'Enter a whole number.' : 'Enter a number.'
-                  if (!Number.isFinite(parsed)) return numberMessage(text, decimal(), message)
-                  if (field.rule.type === 'integer' && !Number.isInteger(parsed)) return message
-                  set(field.name, parsed)
-                }} />
+              <Show when={!homeEntity()} fallback={
+                // An Entity's entity: any of Home Assistant's, chosen from them all or typed in as an id.
+                <WidgetControl widget={{ kind: 'entity', multiple: false }} value={typeof value() === 'string' && value() !== '' ? (value() as string) : undefined} id={id} label={label()}
+                  describedBy={hint()} invalid={errors().length > 0} disabled={false} compact={false} required={!!field.rule.required}
+                  commit={v => set(field.name, typeof v === 'string' ? v : '')} />
+              }>
+                <DraftField id={id} label={label()} text={value() === undefined ? '' : String(value())} placeholder="Not set" describedBy={hint()}
+                  inputmode={number() ? 'decimal' : undefined} invalid={errors().length > 0}
+                  commit={text => {
+                    if (!number()) { set(field.name, text === '' && !field.rule.required ? undefined : text); return }
+                    if (text.trim() === '') { set(field.name, undefined); return }
+                    const parsed = parseNumber(text, decimal()) ?? Number.NaN
+                    const message = field.rule.type === 'integer' ? 'Enter a whole number.' : 'Enter a number.'
+                    if (!Number.isFinite(parsed)) return numberMessage(text, decimal(), message)
+                    if (field.rule.type === 'integer' && !Number.isInteger(parsed)) return message
+                    set(field.name, parsed)
+                  }} />
+              </Show>
             }>
               <WidgetControl widget={{ ...stateField, fallbackStateOptions: stateContext()?.fallbackStateOptions }} value={typeof value() === 'string' ? (value() as string) : undefined} id={id} label={label()}
                 describedBy={hint()} invalid={errors().length > 0} disabled={false} compact={false} required={!!field.rule.required}
@@ -310,7 +318,7 @@ export function NodeConfig(props: NodeConfigProps) {
         <ul class="hs-insp-problems" aria-label="Problems">
           <For each={problems()}>
             {problem => {
-              // A problem on an execution pin (a command or a frame request of an Entity node) has no field to go to.
+              // A problem on an execution pin (a command of an Entity node) has no field to go to.
               const port = problem.inputId ?? (problem.portId && !executionPorts(props.node, types()).includes(problem.portId) ? problem.portId : undefined)
               const body = () => <><Glyph paths={problem.severity === 3 ? icons.problem : icons.warning} /><span>{problem.message}</span></>
               return (

@@ -111,12 +111,27 @@ export const optionLabel = (option: string, rule: ConfigSpec | undefined) =>
 const hasName = (entity: { name?: unknown }) => typeof entity.name === 'string' && entity.name.replace(blankEnds, '') !== ''
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
 /**
+ * An end of a range in a message, as `CommandData.Bound` writes it: the number as it is, unless it is a long fraction, of
+ * more than six significant digits, such as 1/30. That is shown to three decimals (two significant digits for a number
+ * below 0.01), rounded into the range, the lowest end up and the highest down, so that each number from one shown end to
+ * the other is taken: 1/30 as a lowest end is 0.034.
+ */
+export function bound(value: number, lowest: boolean): string {
+  const shown = String(value)
+  // The significant digits of the shortest text that reads back as the number, not counting an exponent's.
+  const significant = shown.split(/e/i)[0].replace(/\D/g, '').replace(/^0+/, '').length
+  if (!Number.isFinite(value) || value === 0 || significant <= 6) return shown
+  const scale = Math.pow(10, Math.min(Math.max(1 - Math.floor(Math.log10(Math.abs(value))), 3), 15))
+  return String((lowest ? Math.ceil(value * scale) : Math.floor(value * scale)) / scale)
+}
+
+/**
  * The range a number option's rule gives (its `min` and `max`, such as a camera's seconds between frames), in the words
  * of `DefinitionDocument.Range`, when `value` is outside it; undefined when it is within, or the rule gives no range.
  */
 function outsideRange(rule: ConfigSpec, value: number): string | undefined {
   const { min, max } = rule
-  return typeof min === 'number' && typeof max === 'number' && (value < min || value > max) ? `a number from ${min} to ${max}` : undefined
+  return typeof min === 'number' && typeof max === 'number' && (value < min || value > max) ? `a number from ${bound(min, true)} to ${bound(max, false)}` : undefined
 }
 
 /**

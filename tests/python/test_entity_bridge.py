@@ -378,8 +378,28 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
                          [d for d in registry.devices.values() if d.config_entry_id == entry_id]),
             'dotnet_tasks': NS(async_run_dotnet_task=run_dotnet_task),
             'HomeAssistantError': HomeAssistantError, 'DOMAIN': DOMAIN, 'logger': self.logger})
+        # Home Assistant's cameras by entity id for a live feed: the stream source each names (or raises), and the
+        # ffmpeg the ffmpeg integration runs (None: not set up).
+        self.sources, self.ffmpeg = {}, '/usr/bin/ffmpeg'
+
+        def get_camera(hass, entity_id):
+            assert hass is self.hass
+            found = self.sources.get(entity_id, HomeAssistantError('Camera not found'))
+            if isinstance(found, HomeAssistantError):
+                raise found
+
+            async def stream_source():
+                if isinstance(found, BaseException):
+                    raise found
+                if isinstance(found, asyncio.Event):  # A camera that does not answer until the event is set.
+                    await found.wait()
+                    return 'rtsp://camera/late'
+                return found
+            return NS(stream_source=stream_source)
         # The bridge imports Home Assistant's camera component when it first needs it.
-        env['_camera'] = lambda: NS(async_get_image=get_image)
+        env['_camera'] = lambda: NS(async_get_image=get_image, get_camera_from_entity_id=get_camera)
+        env['_ffmpeg_binary'] = lambda hass: self.ffmpeg
+        self.env = env
         system = patch.dict(sys.modules, {'System': SYSTEM})
         system.start()
         self.addCleanup(system.stop)
@@ -1301,8 +1321,9 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(definition(description('view', 'camera', 'View', options={'frame_interval': 5})))
         self.assertIs(self.live('plug1:view'), view)
         self.assertEqual(view._attr_frame_interval, 5)
+        # Left out, as fast as frames come: at most 30 a second.
         await self.sync(definition(description('view', 'camera', 'View', options={})))
-        self.assertEqual(view._attr_frame_interval, 1)
+        self.assertEqual(view._attr_frame_interval, 1 / 30)
         self.assertEqual(await view.async_camera_image(), JPEG)
         self.assertEqual(self.dotnet_calls[-1], (self.manager.CameraImage, ('plug1:view',)))
 
@@ -1399,6 +1420,148 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
         answers.clear()
         self.bridge.begin_camera_snapshot('front', 'camera.porch', answers.append, answers.append)
         self.assertEqual(answers, ['Home Assistant is stopping, so no picture was taken'])
+
+
+    async def test_snapshot_of_a_size_has_home_assistant_scale_it(self):
+        self.cameras['camera.porch'] = NS(content_type='image/jpeg', content=JPEG)
+        answers, first = [], self.loop.create_future()
+
+        def answer(kind):
+            def call(*args):
+                answers.append((kind, *args))
+                self.loop.call_soon_threadsafe(lambda: first.done() or first.set_result(None))
+            return call
+        thread = threading.Thread(target=self.bridge.begin_camera_snapshot_scaled,
+                                  args=('front', 'camera.porch', 320, 240, answer('success'), answer('error')))
+        thread.start()
+        thread.join()
+        await asyncio.wait_for(asyncio.shield(first), 2)
+        await self.settle()
+        self.assertEqual(answers, [('success', DotNetBytes(JPEG))])
+        self.assertEqual([c[:2] for c in self.camera_calls], [('camera.porch', {'timeout': 10, 'width': 320, 'height': 240})])
+        # Without a size, Home Assistant is given none.
+        await self.snapshot('front', 'camera.porch')
+        self.assertEqual(self.camera_calls[-1][1], {'timeout': 10})
+
+    async def source(self, entity_id):
+        """Every answer a stream source request gives, asked as .NET asks: from its own thread."""
+        answers, first = [], self.loop.create_future()
+
+        def answer(kind):
+            def call(*args):
+                answers.append((kind, *args, threading.get_ident()))
+                self.loop.call_soon_threadsafe(lambda: first.done() or first.set_result(None))
+            return call
+        thread = threading.Thread(target=self.bridge.begin_camera_source,
+                                  args=(entity_id, answer('success'), answer('error')))
+        thread.start()
+        thread.join()
+        await asyncio.wait_for(asyncio.shield(first), 2)
+        await self.settle()
+        self.assertEqual({a[-1] for a in answers}, {threading.get_ident()}, 'answered off the loop')
+        return [a[:-1] for a in answers]
+
+    async def test_camera_source_answers_the_stream_source_and_ffmpeg_once(self):
+        self.sources['camera.door'] = 'rtsp://user:secret@door:8554/live'
+        self.assertEqual(await self.source('camera.door'),
+                         [('success', 'rtsp://user:secret@door:8554/live', '/usr/bin/ffmpeg')])
+        # The address may hold a password: nothing of it is logged.
+        for level in (self.logger.debug, self.logger.info, self.logger.warning, self.logger.error, self.logger.exception):
+            self.assertNotIn('secret', repr(level.call_args_list))
+        self.assertEqual(self.camera_calls, [])  # No picture is taken for it.
+
+    async def test_camera_source_says_why_there_is_none(self):
+        self.sources['camera.still'] = None
+        self.assertEqual(await self.source('camera.still'), [('error', 'it has no stream source')])
+        self.sources['camera.still'] = ''
+        self.assertEqual(await self.source('camera.still'), [('error', 'it has no stream source')])
+        self.assertEqual(await self.source('camera.missing'), [('error', 'Camera not found')])
+        self.sources['camera.off'] = HomeAssistantError('Camera is off')
+        self.assertEqual(await self.source('camera.off'), [('error', 'Camera is off')])
+        self.sources['camera.broken'] = RuntimeError('the camera broke')
+        self.assertEqual(await self.source('camera.broken'), [('error', 'the camera broke')])
+        self.sources['camera.door'] = 'rtsp://door/live'
+        self.ffmpeg = None
+        self.assertEqual(await self.source('camera.door'),
+                         [('error', "Home Assistant's ffmpeg integration is not set up")])
+        self.logger.error.assert_not_called()
+        self.logger.exception.assert_not_called()
+
+    async def test_camera_source_cancelled_or_closed_answers_once(self):
+        self.sources['camera.door'] = asyncio.Event()
+        answers = []
+        self.bridge.begin_camera_source('camera.door', lambda *a: answers.append(('success', *a)),
+                                        lambda m: answers.append(('error', m)))
+        await self.settle()
+        self.assertEqual(answers, [])
+        self.background[-1].cancel()
+        await self.settle()
+        self.assertEqual(answers, [('error', 'Home Assistant is stopping, so no picture was taken')])
+        self.bridge.close()
+        self.assertEqual(await self.source('camera.door'), [('error', 'HassSharp is stopping, so no picture was taken')])
+        loop = asyncio.new_event_loop()
+        loop.close()
+        self.bridge.hass = NS(loop=loop)
+        answers.clear()
+        self.bridge.begin_camera_source('camera.door', answers.append, answers.append)
+        self.assertEqual(answers, ['Home Assistant is stopping, so no picture was taken'])
+
+    async def video_source(self):
+        """Every answer a video source request gives, asked as .NET asks: from its own thread."""
+        answers, first = [], self.loop.create_future()
+
+        def answer(kind):
+            def call(*args):
+                answers.append((kind, *args, threading.get_ident()))
+                self.loop.call_soon_threadsafe(lambda: first.done() or first.set_result(None))
+            return call
+        thread = threading.Thread(target=self.bridge.begin_video_source, args=(answer('success'), answer('error')))
+        thread.start()
+        thread.join()
+        await asyncio.wait_for(asyncio.shield(first), 2)
+        await self.settle()
+        self.assertEqual({a[-1] for a in answers}, {threading.get_ident()}, 'answered off the loop')
+        return [a[:-1] for a in answers]
+
+    async def test_video_source_answers_ffmpeg_and_the_folders_home_assistant_allows(self):
+        self.hass.config = NS(allowlist_external_dirs={'/config/www', '/media', '/share/clips'},
+                              media_dirs={'local': '/media', 'nas': '/mnt/nas'})
+        answer, = await self.video_source()
+        self.assertEqual(answer[:2], ('success', '/usr/bin/ffmpeg'))
+        # Each folder once, the media folders among them, sorted; .NET resolves each before it checks a file.
+        self.assertEqual(json.loads(answer[2]), ['/config/www', '/media', '/mnt/nas', '/share/clips'])
+        self.hass.config = NS(allowlist_external_dirs=set(), media_dirs={})
+        self.assertEqual(await self.video_source(), [('success', '/usr/bin/ffmpeg', '[]')])
+
+    async def test_video_source_says_why_there_is_none(self):
+        self.hass.config = NS(allowlist_external_dirs={'/media'}, media_dirs={})
+        self.ffmpeg = None
+        self.assertEqual(await self.video_source(), [('error', "Home Assistant's ffmpeg integration is not set up")])
+        self.ffmpeg = '/usr/bin/ffmpeg'
+        self.bridge.close()
+        self.assertEqual(await self.video_source(), [('error', 'HassSharp is stopping, so no picture was taken')])
+        loop = asyncio.new_event_loop()
+        loop.close()
+        self.bridge.hass = NS(loop=loop)
+        answers = []
+        self.bridge.begin_video_source(answers.append, answers.append)
+        self.assertEqual(answers, ['Home Assistant is stopping, so no picture was taken'])
+        self.logger.error.assert_not_called()
+        self.logger.exception.assert_not_called()
+
+    def test_ffmpeg_binary_is_the_ffmpeg_integrations_once_it_is_set_up(self):
+        binary = load('entity_bridge', {'HomeAssistantError': HomeAssistantError, 'DOMAIN': DOMAIN,
+                                        'logger': Mock()})['_ffmpeg_binary']
+        manager = NS(binary='/usr/local/bin/ffmpeg')
+        ffmpeg = NS(get_ffmpeg_manager=lambda hass: manager)
+        with patch.dict(sys.modules, {'homeassistant.components.ffmpeg': ffmpeg}):
+            # Not imported before the integration has loaded it.
+            self.assertIsNone(binary(NS(config=NS(components={'camera'}))))
+            self.assertEqual(binary(NS(config=NS(components={'camera', 'ffmpeg'}))), '/usr/local/bin/ffmpeg')
+            manager.binary = ''
+            self.assertIsNone(binary(NS(config=NS(components={'ffmpeg'}))))
+            ffmpeg.get_ffmpeg_manager = Mock(side_effect=ValueError('ffmpeg component not initialized'))
+            self.assertIsNone(binary(NS(config=NS(components={'ffmpeg'}))))
 
 
 class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):
@@ -1515,8 +1678,8 @@ class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):
         self.frame = None
         self.assertIsNone(await camera.async_camera_image())
         self.assertEqual((self.frames, self.commands), (['plug1:main'] * 3, []))
-        # Synced again, a live camera takes the new interval; 1 s when the option is left empty.
-        for options, interval in (({'frame_interval': 0.5}, 0.5), ({'frame_interval': None}, 1), ({}, 1)):
+        # Synced again, a live camera takes the new interval; 1/30 s, as fast as frames come, when the option is left empty.
+        for options, interval in (({'frame_interval': 0.5}, 0.5), ({'frame_interval': None}, 1 / 30), ({}, 1 / 30)):
             camera.apply(description('main', 'camera', 'Main', options=options), None, 'Def')
             self.assertEqual(camera._attr_frame_interval, interval, options)
 

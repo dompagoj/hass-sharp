@@ -215,7 +215,7 @@ class EntryLifecycleTests(unittest.IsolatedAsyncioTestCase):
                  frontend=types.SimpleNamespace(async_register_built_in_panel=panel,async_remove_panel=unpanel,DATA_PANELS='frontend_panels'),
                  llm=types.SimpleNamespace(EntryState=state_factory,register=register),AuthoringService=lambda h,m:None,
                  services=services,entities=entities,memory_report=types.SimpleNamespace(enabled=lambda:False),
-                 PLATFORMS=PLATFORMS,EntityBridge=lambda h,e,m:types.SimpleNamespace(begin_sync=Mock(),begin_remove=Mock(),begin_prune=Mock(),push=Mock(),begin_camera_snapshot=Mock(),close=Mock(),async_wait_closed=AsyncMock()))
+                 PLATFORMS=PLATFORMS,EntityBridge=lambda h,e,m:types.SimpleNamespace(begin_sync=Mock(),begin_remove=Mock(),begin_prune=Mock(),push=Mock(),begin_camera_snapshot=Mock(),begin_camera_snapshot_scaled=Mock(),begin_camera_source=Mock(),begin_video_source=Mock(),close=Mock(),async_wait_closed=AsyncMock()))
         exec(compile(tree,'<entry>','exec'),env)
         entry=types.SimpleNamespace(entry_id='test',disabled_by=None)
         self.assertTrue(await env['async_setup_entry'](hass,entry))
@@ -332,7 +332,8 @@ class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
 
         def make_bridge(hass, entry, manager):
             bridge = types.SimpleNamespace(begin_sync=Mock(), begin_remove=Mock(), begin_prune=Mock(), push=Mock(),
-                                           begin_camera_snapshot=Mock(),
+                                           begin_camera_snapshot=Mock(), begin_camera_snapshot_scaled=Mock(),
+                                           begin_camera_source=Mock(), begin_video_source=Mock(),
                                            close=Mock(side_effect=lambda: order.append('close bridge')),
                                            async_wait_closed=AsyncMock(side_effect=lambda: order.append('wait closed')),
                                            made_with=(hass, entry, manager))
@@ -401,7 +402,7 @@ class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_entity_delegates_are_assigned_before_init(self):
         delegates = ('BeginSyncEntities', 'BeginRemoveEntities', 'BeginPruneEntities', 'PushEntityStates',
-                     'BeginCameraSnapshot')
+                     'BeginCameraSnapshot', 'BeginCameraSnapshotScaled', 'BeginCameraSource', 'BeginVideoSource')
         at_init = {}
         self.init.side_effect = lambda: at_init.update({name: getattr(self.pyinterop, name, None) for name in delegates})
         self.assertTrue(await self.env['async_setup_entry'](self.hass, self.entry))
@@ -409,13 +410,20 @@ class EntityBridgeWiringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bridge.made_with, (self.hass, self.entry, self.manager))
         self.assertEqual(at_init, {'BeginSyncEntities': bridge.begin_sync, 'BeginRemoveEntities': bridge.begin_remove,
                                    'BeginPruneEntities': bridge.begin_prune, 'PushEntityStates': bridge.push,
-                                   'BeginCameraSnapshot': bridge.begin_camera_snapshot})
+                                   'BeginCameraSnapshot': bridge.begin_camera_snapshot,
+                                   'BeginCameraSnapshotScaled': bridge.begin_camera_snapshot_scaled,
+                                   'BeginCameraSource': bridge.begin_camera_source,
+                                   'BeginVideoSource': bridge.begin_video_source})
         # With the delegate types .NET declares.
         for made in (('Action[String, Action[String], Action[String]]', bridge.begin_sync),
                      ('Action[String, Action, Action[String]]', bridge.begin_remove),
                      ('Action[String, Action, Action[String]]', bridge.begin_prune),
                      ('Action[String]', bridge.push),
-                     ('Action[String, String, Action[Array[Byte]], Action[String]]', bridge.begin_camera_snapshot)):
+                     ('Action[String, String, Action[Array[Byte]], Action[String]]', bridge.begin_camera_snapshot),
+                     ('Action[String, String, Int32, Int32, Action[Array[Byte]], Action[String]]',
+                      bridge.begin_camera_snapshot_scaled),
+                     ('Action[String, Action[String, String], Action[String]]', bridge.begin_camera_source),
+                     ('Action[Action[String, String], Action[String]]', bridge.begin_video_source)):
             self.assertIn(made, self.made)
         # The platforms find the bridge when they set up, and a sync during Init finds them attached.
         self.assertIs(self.bridge_at_forward, bridge)

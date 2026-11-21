@@ -1,6 +1,6 @@
 import { For, Show } from 'solid-js'
 import type { RunTrigger } from '../types'
-import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, entityNodeName, executionLabel, executionPorts, flowMethod, isRoot, nodeCatalog, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
+import { definitionCatalog, effectiveTriggerMethod, entityCommandLabel, entityNodeName, executionLabel, executionPorts, flowMethod, isRoot, nodeCatalog, pictureInputs, type EntityDomainSpec, type Graph, type VisualCatalogSnapshot } from '../visual/contract'
 import { nodeTitle } from '../visual/flow/flowModel'
 
 /**
@@ -32,8 +32,12 @@ export function definitionNames(graph: Graph | undefined, catalog: VisualCatalog
     // An Entity node's flows run under `flowMethod`, named by its entity as the validator names it (as
     // `DefinitionGraph.HubFlows` does).
     const entity = entityNodeName(node, known)
-    if (entity !== undefined) for (const port of ['state', ...executionPorts(node, known)])
-      roots[flowMethod(node, port)] = `${entity}: ${port === 'state' ? 'State' : executionLabel(node, port, known) ?? port}`
+    if (entity !== undefined) {
+      for (const port of ['state', ...executionPorts(node, known)])
+        roots[flowMethod(node, port)] = `${entity}: ${port === 'state' ? 'State' : executionLabel(node, port, known) ?? port}`
+      // A camera's frames run in a flow of their own with no pin, made from its Image (`DefinitionGraph.FrameLabel`).
+      if (Object.keys(pictureInputs(node, known)).length) roots[flowMethod(node, 'frame')] = `${entity}: When a frame is needed`
+    }
     else roots[effectiveTriggerMethod(node)] = nodeTitle(node, known)
   }
   return { entities, domains: catalog?.entityDomains, roots }

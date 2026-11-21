@@ -660,8 +660,14 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             if (status != Running) throw NotRunning();
             running.Add(done.Task);
         }
-        // The async lambda makes a null task fail rather than look cancelled.
-        var made = Task.Run(async () => await make());
+        // The async lambda makes a null task fail rather than look cancelled. The code making the frame, and all it awaits
+        // (a graph's frame flow runs in its context too), takes the pictures of cameras live, for this camera.
+        var making = UniqueId(camera);
+        var made = Task.Run(async () =>
+        {
+            HassCameras.MakingFrame.Value = making;
+            return await make();
+        });
         _ = made.ContinueWith(_ =>
         {
             lock (gate) running.Remove(done.Task);

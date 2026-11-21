@@ -626,8 +626,12 @@ it('starts a new definition named from the address, with an Entity node, a binar
   expect(help).toContain('Turned off, the definition\'s entities stay in Home Assistant as unavailable; deleting it removes them. '
     + 'A definition saved off, such as a copy, creates its entities the first time it is turned on.')
   expect(help).toContain('each a binary sensor, a sensor, a switch, a button, a number, a select, a text, a light, a cover or a camera')
-  expect(help).toContain('A camera shows the picture its last Show frame step gave it, such as one taken with Take a picture and drawn on. '
-    + 'The steps connected to its Entity node\'s When a frame is needed output make a new picture when Home Assistant asks for one, which it does only while something is watching the camera or asks for its picture: nothing runs otherwise.')
+  // A camera shows its Image, made from values alone; Camera frame is live there, a snapshot anywhere else.
+  expect(help).toContain('A camera shows the picture connected to its Entity node\'s Image input, made from values alone: an Entity of another camera, such as camera.front_door, into Camera frame, then Draw rectangle or Draw text, then the Image input. '
+    + 'No step runs: the picture is made again each time Home Assistant asks for a frame, which it does only while something is watching the camera or asks for its picture.')
+  expect(help).toContain('Live: while it makes a camera\'s frames, connected into that camera\'s Image directly or through value nodes, it gives raw frames from one shared ffmpeg feed of the source camera, at its full frame rate.')
+  expect(help).toContain('Snapshot: read anywhere else, such as by a step that sends a doorbell notification, it takes one picture from Home Assistant and passes it on unchanged.')
+  for (const old of ['Show frame', 'Take a picture', 'When a frame is needed']) expect(help, old).not.toContain(old)
   for (const fact of ['http:// or https://', 'checks the server\'s certificate', '10 seconds', '4 MiB', 'fails on an error status unless you turn that off',
     'one to a different host fails the step when it has headers, so they are never sent there', 'Keep the response out of run history', 'SHA-256 checksum, of the file as the server sends it',
     '.storage/hass_sharp/files/', 'is not downloaded again', 'come back with the state they had after Home Assistant restarts or the definition is saved',
@@ -1458,26 +1462,26 @@ it('gives a camera its seconds between frames, with its hint, says on the field 
   choose(control(inspector(root), 'domain'), 'camera')
   const row = () => inspector(root)
   expect([...row().querySelectorAll('[data-field^="option:"]')].map(f => [f.querySelector('label')!.textContent, f.querySelector('.hs-field-hint')?.textContent])).toEqual([
-    ['Seconds between frames', 'How often Home Assistant asks for a new picture while someone is watching; 1 when left empty.']])
+    ['Seconds between frames', 'Seconds between frames at the most; empty for as fast as the source.']])
   // Below its range: said on its field at once, in the server's words, and Save waits; focus stays in the field.
   const field = control(row(), 'option:frame_interval')
   field.focus()
-  field.value = '0.2'
+  field.value = '0.02'
   field.dispatchEvent(new Event('input', { bubbles: true }))
   press(field)
-  const below = 'Seconds between frames of Front door takes a number from 0.5 to 60, not 0.2'
+  const below = 'Seconds between frames of Front door takes a number from 0.034 to 60, not 0.02'
   await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').querySelector('.hs-error')?.textContent).toBe(below))
   expect(control(row(), 'option:frame_interval')).toBe(field)
   expect(focused(field)).toBe(true)
   expect(field.getAttribute('aria-invalid')).toBe('true')
   expect(button(root, 'Save').disabled).toBe(true)
-  // Said once, though the server says it too: counted once the server has answered a preview of 0.2, and the view has taken its answer.
-  await vi.waitFor(() => expect(answered.some(request => JSON.stringify(request).includes('"frame_interval":0.2'))).toBe(true))
+  // Said once, though the server says it too: counted once the server has answered a preview of 0.02, and the view has taken its answer.
+  await vi.waitFor(() => expect(answered.some(request => JSON.stringify(request).includes('"frame_interval":0.02'))).toBe(true))
   await new Promise(resolve => setTimeout(resolve, 0))
   expect([...root.querySelectorAll('.hs-error')].filter(e => e.textContent === below)).toHaveLength(1)
   type(control(row(), 'option:frame_interval'), '61')
-  await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').textContent).toContain('Seconds between frames of Front door takes a number from 0.5 to 60, not 61'))
-  // At either end of its range it is taken.
+  await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').textContent).toContain('Seconds between frames of Front door takes a number from 0.034 to 60, not 61'))
+  // Within its range it is taken.
   type(control(row(), 'option:frame_interval'), '0.5')
   await vi.waitFor(() => expect(fieldOf(row(), 'option:frame_interval').querySelector('.hs-error')).toBeNull())
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))

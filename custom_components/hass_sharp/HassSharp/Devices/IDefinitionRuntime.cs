@@ -29,9 +29,9 @@ namespace HassSharp;
 /// </list>
 /// </para>
 /// <para>
-/// <b>A Set state, Set available or Show frame step</b> reads its inputs, checks the run's cancellation in the same way, and
-/// then calls <see cref="SetState"/>, <see cref="SetAvailable"/> or <see cref="ShowFrame"/> once. Calls already made stay made when a later step fails;
-/// nothing is undone.
+/// <b>A Set state or Set available step, and a camera's frame</b> (the picture wired into its Image), reads its inputs,
+/// checks the run's cancellation in the same way, and then calls <see cref="SetState"/>, <see cref="SetAvailable"/> or
+/// <see cref="ShowFrame"/> once. Calls already made stay made when a later step fails; nothing is undone.
 /// </para>
 /// <para>
 /// <b>What remains to the host.</b> Only a run cancelled before its call is kept from calling. A cancellation that arrives
@@ -56,7 +56,7 @@ namespace HassSharp;
 internal interface IDefinitionRuntime
 {
     /// <summary>
-    /// The definition's id, which a Take a picture step asks Home Assistant under, so that a picture of one of the
+    /// The definition's id, which a Camera frame asks Home Assistant under, so that a picture of one of the
     /// definition's own cameras (which would wait for itself) is refused at once.
     /// </summary>
     string DefinitionId { get; }
@@ -90,7 +90,8 @@ internal interface IDefinitionRuntime
     SharpFiles Files { get; }
     /// <summary>
     /// Makes <paramref name="image"/> the current frame of the definition's camera <paramref name="entityKey"/>, from any
-    /// run (a Show frame step): the frame a request for the camera's picture is answered with until another is shown.
+    /// frame flow (the picture wired into the camera's Image): the frame a request for the camera's picture is answered
+    /// with until another is shown.
     /// The definition keeps a copy, so the run may go on drawing on the picture it handed over. A run already cancelled
     /// does not call it.
     /// </summary>

@@ -35662,7 +35662,7 @@
     ]
   },
   {
-    "name": "entity graph: Take a picture, then Draw rectangle and Draw text on it",
+    "name": "entity graph: Camera frame, then Draw rectangle and Draw text on it",
     "graph": {
       "version": 5,
       "name": "Porch camera",
@@ -35683,7 +35683,7 @@
         },
         {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -35762,18 +35762,6 @@
       ],
       "edges": [
         {
-          "id": "setup:next:snap",
-          "source": "setup",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:say",
-          "source": "snap",
-          "target": "say",
-          "port": "next"
-        },
-        {
           "id": "snap.image:rect.image",
           "kind": "data",
           "source": "snap",
@@ -35796,6 +35784,12 @@
           "target": "say",
           "sourcePort": "image",
           "targetPort": "value"
+        },
+        {
+          "id": "setup:next:say",
+          "source": "setup",
+          "target": "say",
+          "port": "next"
         }
       ],
       "definition": {
@@ -35803,10 +35797,12 @@
       }
     },
     "valid": true,
-    "noDiagnostics": true
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
   },
   {
-    "name": "code node.document: Take a picture, Draw rectangle and Draw text in an automation",
+    "name": "code node.document: Camera frame, Draw rectangle and Draw text in an automation",
     "graph": {
       "version": 5,
       "name": "Automation",
@@ -35820,7 +35816,7 @@
         },
         {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -35894,18 +35890,6 @@
       ],
       "edges": [
         {
-          "id": "t:next:snap",
-          "source": "t",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:say",
-          "source": "snap",
-          "target": "say",
-          "port": "next"
-        },
-        {
           "id": "snap.image:rect.image",
           "kind": "data",
           "source": "snap",
@@ -35928,6 +35912,12 @@
           "target": "say",
           "sourcePort": "image",
           "targetPort": "value"
+        },
+        {
+          "id": "t:next:say",
+          "source": "t",
+          "target": "say",
+          "port": "next"
         }
       ]
     },
@@ -35936,7 +35926,7 @@
     "messages": [
       "Draw rectangle only works in the graph of an entity definition; delete it from this automation",
       "Draw text only works in the graph of an entity definition; delete it from this automation",
-      "Take a picture only works in the graph of an entity definition; delete it from this automation"
+      "Camera frame only works in the graph of an entity definition; delete it from this automation"
     ],
     "codes": [
       "node.document",
@@ -35966,7 +35956,7 @@
         },
         {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -36202,18 +36192,6 @@
       ],
       "edges": [
         {
-          "id": "setup:next:snap",
-          "source": "setup",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:s1",
-          "source": "snap",
-          "target": "s1",
-          "port": "next"
-        },
-        {
           "id": "s1:next:s2",
           "source": "s1",
           "target": "s2",
@@ -36338,6 +36316,12 @@
           "target": "s6",
           "sourcePort": "image",
           "targetPort": "value"
+        },
+        {
+          "id": "setup:next:s1",
+          "source": "setup",
+          "target": "s1",
+          "port": "next"
         }
       ],
       "definition": {
@@ -36379,7 +36363,7 @@
         },
         {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -36451,18 +36435,6 @@
       ],
       "edges": [
         {
-          "id": "setup:next:snap",
-          "source": "setup",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:set",
-          "source": "snap",
-          "target": "set",
-          "port": "next"
-        },
-        {
           "id": "set:next:say",
           "source": "set",
           "target": "say",
@@ -36491,6 +36463,12 @@
           "target": "say",
           "sourcePort": "image",
           "targetPort": "value"
+        },
+        {
+          "id": "setup:next:set",
+          "source": "setup",
+          "target": "set",
+          "port": "next"
         }
       ],
       "definition": {
@@ -36507,7 +36485,7 @@
     "codes": []
   },
   {
-    "name": "image steps: Take a picture takes only a camera",
+    "name": "image steps: Camera frame takes only a camera",
     "graph": {
       "version": 5,
       "name": "Porch camera",
@@ -36528,7 +36506,7 @@
         },
         {
           "id": "light",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -36539,7 +36517,7 @@
         },
         {
           "id": "typed",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -36547,20 +36525,54 @@
               "value": "light.kitchen"
             }
           }
+        },
+        {
+          "id": "said",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "typed_said",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
         }
       ],
       "edges": [
         {
-          "id": "setup:next:light",
+          "id": "setup:next:said",
           "source": "setup",
-          "target": "light",
+          "target": "said",
           "port": "next"
         },
         {
-          "id": "light:next:typed",
-          "source": "light",
-          "target": "typed",
+          "id": "said:next:typed_said",
+          "source": "said",
+          "target": "typed_said",
           "port": "next"
+        },
+        {
+          "id": "light.image:said.value",
+          "kind": "data",
+          "source": "light",
+          "target": "said",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "typed.image:typed_said.value",
+          "kind": "data",
+          "source": "typed",
+          "target": "typed_said",
+          "sourcePort": "image",
+          "targetPort": "value"
         }
       ],
       "definition": {
@@ -36577,10 +36589,10 @@
     "codes": []
   },
   {
-    "name": "camera: a graph camera makes its frame when one is needed: its frame pin, Take a picture, Draw rectangle, Draw text, Show frame",
+    "name": "camera: a graph camera makes its frame from its Image: Camera frame, Draw rectangle and Draw text wired into it, with no step",
     "graph": {
       "version": 5,
-      "name": "Annotated",
+      "name": "Contract",
       "nodes": [
         {
           "id": "annotated",
@@ -36596,7 +36608,7 @@
         },
         {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -36657,31 +36669,9 @@
               "value": 1
             }
           }
-        },
-        {
-          "id": "show",
-          "kind": "show_frame",
-          "config": {
-            "entity": "annotated",
-            "image": {
-              "kind": "unset"
-            }
-          }
         }
       ],
       "edges": [
-        {
-          "id": "annotated:frame:snap",
-          "source": "annotated",
-          "target": "snap",
-          "port": "frame"
-        },
-        {
-          "id": "snap:next:show",
-          "source": "snap",
-          "target": "show",
-          "port": "next"
-        },
         {
           "id": "snap.image:rect.image",
           "kind": "data",
@@ -36699,10 +36689,10 @@
           "targetPort": "image"
         },
         {
-          "id": "label.image:show.image",
+          "id": "label.image:annotated.image",
           "kind": "data",
           "source": "label",
-          "target": "show",
+          "target": "annotated",
           "sourcePort": "image",
           "targetPort": "image"
         }
@@ -36717,10 +36707,255 @@
     "codes": []
   },
   {
-    "name": "camera: a graph camera shows the frame another flow gives it, with no When a frame is needed",
+    "name": "camera: Camera frame's Width at most alone keeps the aspect ratio, and with Height at most the frame fits in both",
     "graph": {
       "version": 5,
-      "name": "Pushed",
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "wide",
+          "kind": "entity",
+          "config": {
+            "key": "wide",
+            "domain": "camera",
+            "name": "Wide"
+          }
+        },
+        {
+          "id": "wide_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            },
+            "maxWidth": 640
+          }
+        },
+        {
+          "id": "boxed",
+          "kind": "entity",
+          "config": {
+            "key": "boxed",
+            "domain": "camera",
+            "name": "Boxed"
+          }
+        },
+        {
+          "id": "boxed_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            },
+            "maxWidth": 320,
+            "maxHeight": 240
+          }
+        },
+        {
+          "id": "whole",
+          "kind": "entity",
+          "config": {
+            "key": "whole",
+            "domain": "camera",
+            "name": "Whole"
+          }
+        },
+        {
+          "id": "whole_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "wide_frame.image:wide.image",
+          "kind": "data",
+          "source": "wide_frame",
+          "target": "wide",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "boxed_frame.image:boxed.image",
+          "kind": "data",
+          "source": "boxed_frame",
+          "target": "boxed",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "whole_frame.image:whole.image",
+          "kind": "data",
+          "source": "whole_frame",
+          "target": "whole",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
+  },
+  {
+    "name": "camera: Camera frame's Width at most and Height at most are whole numbers from 16 to 8192",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "small",
+          "kind": "entity",
+          "config": {
+            "key": "small",
+            "domain": "camera",
+            "name": "Small"
+          }
+        },
+        {
+          "id": "small_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            },
+            "maxWidth": 8
+          }
+        },
+        {
+          "id": "large",
+          "kind": "entity",
+          "config": {
+            "key": "large",
+            "domain": "camera",
+            "name": "Large"
+          }
+        },
+        {
+          "id": "large_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            },
+            "maxHeight": 9000
+          }
+        },
+        {
+          "id": "fraction",
+          "kind": "entity",
+          "config": {
+            "key": "fraction",
+            "domain": "camera",
+            "name": "Fraction"
+          }
+        },
+        {
+          "id": "fraction_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            },
+            "maxWidth": 320.5
+          }
+        },
+        {
+          "id": "typed",
+          "kind": "entity",
+          "config": {
+            "key": "typed",
+            "domain": "camera",
+            "name": "Typed"
+          }
+        },
+        {
+          "id": "typed_frame",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            },
+            "maxHeight": "480"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "small_frame.image:small.image",
+          "kind": "data",
+          "source": "small_frame",
+          "target": "small",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "large_frame.image:large.image",
+          "kind": "data",
+          "source": "large_frame",
+          "target": "large",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "fraction_frame.image:fraction.image",
+          "kind": "data",
+          "source": "fraction_frame",
+          "target": "fraction",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "typed_frame.image:typed.image",
+          "kind": "data",
+          "source": "typed_frame",
+          "target": "typed",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "small_frame",
+    "inputId": "maxWidth",
+    "messages": [
+      "Height at most must be a whole number",
+      "Height at most must be between 16 and 8192",
+      "Width at most must be a whole number",
+      "Width at most must be between 16 and 8192"
+    ],
+    "codes": []
+  },
+  {
+    "name": "code node.unknownKind: Show frame is no longer a step and a camera has no frame pin",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
       "nodes": [
         {
           "id": "annotated",
@@ -36732,13 +36967,8 @@
           }
         },
         {
-          "id": "setup",
-          "kind": "entity_setup",
-          "config": {}
-        },
-        {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
@@ -36760,223 +36990,10 @@
       ],
       "edges": [
         {
-          "id": "setup:next:snap",
-          "source": "setup",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:show",
-          "source": "snap",
+          "id": "annotated:frame:show",
+          "source": "annotated",
           "target": "show",
-          "port": "next"
-        },
-        {
-          "id": "snap.image:show.image",
-          "kind": "data",
-          "source": "snap",
-          "target": "show",
-          "sourcePort": "image",
-          "targetPort": "image"
-        }
-      ],
-      "definition": {
-        "settings": []
-      }
-    },
-    "valid": true,
-    "noDiagnostics": true,
-    "messages": [],
-    "codes": []
-  },
-  {
-    "name": "code camera.entity: Show frame names an entity that is not a camera, by its name, else its key",
-    "graph": {
-      "version": 5,
-      "name": "Not cameras",
-      "nodes": [
-        {
-          "id": "plug",
-          "kind": "device",
-          "config": {
-            "key": "plug",
-            "name": "Hall plug"
-          }
-        },
-        {
-          "id": "lens",
-          "kind": "entity",
-          "config": {
-            "key": "lens",
-            "domain": "camera",
-            "name": "Lens"
-          }
-        },
-        {
-          "id": "power",
-          "kind": "entity",
-          "config": {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power"
-          }
-        },
-        {
-          "id": "door",
-          "kind": "entity",
-          "config": {
-            "key": "door",
-            "domain": "binary_sensor"
-          }
-        },
-        {
-          "id": "snap",
-          "kind": "camera_snapshot",
-          "config": {
-            "entity": {
-              "kind": "literal",
-              "type": "entity_id:camera",
-              "value": "camera.front"
-            }
-          }
-        },
-        {
-          "id": "show",
-          "kind": "show_frame",
-          "config": {
-            "entity": "door",
-            "image": {
-              "kind": "unset"
-            }
-          }
-        },
-        {
-          "id": "show_power",
-          "kind": "show_frame",
-          "config": {
-            "entity": "power",
-            "image": {
-              "kind": "unset"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "plug.entities:door.device",
-          "kind": "data",
-          "source": "plug",
-          "target": "door",
-          "sourcePort": "entities",
-          "targetPort": "device"
-        },
-        {
-          "id": "lens:frame:snap",
-          "source": "lens",
-          "target": "snap",
           "port": "frame"
-        },
-        {
-          "id": "snap:next:show_power",
-          "source": "snap",
-          "target": "show_power",
-          "port": "next"
-        },
-        {
-          "id": "show_power:next:show",
-          "source": "show_power",
-          "target": "show",
-          "port": "next"
-        },
-        {
-          "id": "snap.image:show_power.image",
-          "kind": "data",
-          "source": "snap",
-          "target": "show_power",
-          "sourcePort": "image",
-          "targetPort": "image"
-        },
-        {
-          "id": "snap.image:show.image",
-          "kind": "data",
-          "source": "snap",
-          "target": "show",
-          "sourcePort": "image",
-          "targetPort": "image"
-        }
-      ],
-      "definition": {
-        "settings": []
-      }
-    },
-    "valid": false,
-    "nodeId": "show_power",
-    "inputId": "entity",
-    "messages": [
-      "Lens never shows a frame: add a Show frame step for it",
-      "Power is not a camera; choose one of this definition's cameras",
-      "door is not a camera; choose one of this definition's cameras"
-    ],
-    "codes": [
-      "camera.entity",
-      "camera.entity",
-      "camera.no_frame"
-    ]
-  },
-  {
-    "name": "code camera.entity: Show frame in a definition that has no camera",
-    "graph": {
-      "version": 5,
-      "name": "No camera",
-      "nodes": [
-        {
-          "id": "power",
-          "kind": "entity",
-          "config": {
-            "key": "power",
-            "domain": "sensor",
-            "name": "Power"
-          }
-        },
-        {
-          "id": "setup",
-          "kind": "entity_setup",
-          "config": {}
-        },
-        {
-          "id": "snap",
-          "kind": "camera_snapshot",
-          "config": {
-            "entity": {
-              "kind": "literal",
-              "type": "entity_id:camera",
-              "value": "camera.front"
-            }
-          }
-        },
-        {
-          "id": "show",
-          "kind": "show_frame",
-          "config": {
-            "entity": "power",
-            "image": {
-              "kind": "unset"
-            }
-          }
-        }
-      ],
-      "edges": [
-        {
-          "id": "setup:next:snap",
-          "source": "setup",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:show",
-          "source": "snap",
-          "target": "show",
-          "port": "next"
         },
         {
           "id": "snap.image:show.image",
@@ -36993,13 +37010,596 @@
     },
     "valid": false,
     "nodeId": "show",
-    "inputId": "entity",
     "messages": [
-      "Power is not a camera; add a camera to this definition first"
+      "Annotated never shows a frame: Image is not connected",
+      "This value wire goes into Image, which this step does not have",
+      "Unknown execution port",
+      "Unknown node kind"
     ],
     "codes": [
-      "camera.entity"
+      "camera.no_frame",
+      "node.unknownKind",
+      "port.unknownExecution",
+      "port.unknownInput"
     ]
+  },
+  {
+    "name": "code scope.frameSource: a camera's Image cannot read a step, even through value nodes",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "annotated",
+          "kind": "entity",
+          "config": {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        },
+        {
+          "id": "read",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id",
+              "value": "sensor.offset"
+            }
+          }
+        },
+        {
+          "id": "offset",
+          "kind": "entity_field",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "field": "state",
+            "type": "number"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
+            }
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "unset"
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "setup:next:read",
+          "source": "setup",
+          "target": "read",
+          "port": "next"
+        },
+        {
+          "id": "read.value:offset.entity",
+          "kind": "data",
+          "source": "read",
+          "target": "offset",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "offset.value:rect.x",
+          "kind": "data",
+          "source": "offset",
+          "target": "rect",
+          "sourcePort": "value",
+          "targetPort": "x"
+        },
+        {
+          "id": "snap.image:rect.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "rect",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:annotated.image",
+          "kind": "data",
+          "source": "rect",
+          "target": "annotated",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "annotated",
+    "inputId": "image",
+    "portId": "image",
+    "messages": [
+      "Image of Annotated cannot read Read entity, which runs in a flow: make the picture from values alone, such as Camera frame and Draw rectangle"
+    ],
+    "codes": [
+      "scope.frameSource"
+    ]
+  },
+  {
+    "name": "ha_entity: an Entity of a camera feeds Camera frame, whose picture goes into a camera's Image",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "annotated",
+          "kind": "entity",
+          "config": {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        },
+        {
+          "id": "front",
+          "kind": "ha_entity",
+          "config": {
+            "entity": "camera.dummy_front_door"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "front.entity:snap.entity",
+          "kind": "data",
+          "source": "front",
+          "target": "snap",
+          "sourcePort": "entity",
+          "targetPort": "entity"
+        },
+        {
+          "id": "snap.image:rect.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "rect",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:annotated.image",
+          "kind": "data",
+          "source": "rect",
+          "target": "annotated",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
+  },
+  {
+    "name": "ha_entity: an Entity of a light is refused by Camera frame, which takes only a camera",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "annotated",
+          "kind": "entity",
+          "config": {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        },
+        {
+          "id": "lamp",
+          "kind": "ha_entity",
+          "config": {
+            "entity": "light.kitchen"
+          }
+        },
+        {
+          "id": "snap",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "lamp.entity:snap.entity",
+          "kind": "data",
+          "source": "lamp",
+          "target": "snap",
+          "sourcePort": "entity",
+          "targetPort": "entity"
+        },
+        {
+          "id": "snap.image:annotated.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "annotated",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "snap",
+    "inputId": "entity",
+    "messages": [
+      "Camera accepts Camera entity, not Light entity"
+    ],
+    "codes": []
+  },
+  {
+    "name": "code entity.id: an Entity needs its entity chosen, as an entity id; one without has no type and its wires say nothing",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "annotated",
+          "kind": "entity",
+          "config": {
+            "key": "annotated",
+            "domain": "camera",
+            "name": "Annotated"
+          }
+        },
+        {
+          "id": "blank",
+          "kind": "ha_entity",
+          "config": {
+            "entity": ""
+          }
+        },
+        {
+          "id": "wrong",
+          "kind": "ha_entity",
+          "config": {
+            "entity": "front door"
+          }
+        },
+        {
+          "id": "missing",
+          "kind": "ha_entity",
+          "config": {}
+        },
+        {
+          "id": "snap",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "again",
+          "kind": "camera_frame",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "setup",
+          "kind": "entity_setup",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "blank.entity:snap.entity",
+          "kind": "data",
+          "source": "blank",
+          "target": "snap",
+          "sourcePort": "entity",
+          "targetPort": "entity"
+        },
+        {
+          "id": "wrong.entity:again.entity",
+          "kind": "data",
+          "source": "wrong",
+          "target": "again",
+          "sourcePort": "entity",
+          "targetPort": "entity"
+        },
+        {
+          "id": "snap.image:annotated.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "annotated",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "setup:next:say",
+          "source": "setup",
+          "target": "say",
+          "port": "next"
+        },
+        {
+          "id": "again.image:say.value",
+          "kind": "data",
+          "source": "again",
+          "target": "say",
+          "sourcePort": "image",
+          "targetPort": "value"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "wrong",
+    "inputId": "entity",
+    "messages": [
+      "Entity is required",
+      "Home Assistant entity has no entity: choose one, such as camera.front_door",
+      "Home Assistant entity is not used",
+      "front door is not an entity id: choose one such as camera.front_door"
+    ],
+    "codes": [
+      "entity.id",
+      "entity.id",
+      "pure.unused"
+    ]
+  },
+  {
+    "name": "ha_entity: an Entity works in an automation too, of its entity's domain's type, and Read entity reads it",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "lamp",
+          "kind": "ha_entity",
+          "config": {
+            "entity": "light.kitchen"
+          }
+        },
+        {
+          "id": "read",
+          "kind": "read_entity",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "field",
+          "kind": "entity_field",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "field": "state",
+            "type": "string"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:read",
+          "source": "t",
+          "target": "read",
+          "port": "next"
+        },
+        {
+          "id": "read:next:say",
+          "source": "read",
+          "target": "say",
+          "port": "next"
+        },
+        {
+          "id": "lamp.entity:read.entity",
+          "kind": "data",
+          "source": "lamp",
+          "target": "read",
+          "sourcePort": "entity",
+          "targetPort": "entity"
+        },
+        {
+          "id": "read.value:field.entity",
+          "kind": "data",
+          "source": "read",
+          "target": "field",
+          "sourcePort": "value",
+          "targetPort": "entity"
+        },
+        {
+          "id": "field.value:say.value",
+          "kind": "data",
+          "source": "field",
+          "target": "say",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
+  },
+  {
+    "name": "ha_entity: an Entity node's state follows the entity an Entity gives Has state, with no state.dynamicSource",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "door",
+          "kind": "entity",
+          "config": {
+            "key": "door",
+            "domain": "binary_sensor",
+            "name": "Door"
+          }
+        },
+        {
+          "id": "contact",
+          "kind": "ha_entity",
+          "config": {
+            "entity": "binary_sensor.front_contact"
+          }
+        },
+        {
+          "id": "open",
+          "kind": "entity_is",
+          "config": {
+            "entity": {
+              "kind": "unset"
+            },
+            "state": {
+              "kind": "literal",
+              "type": "string",
+              "value": "on"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "contact.entity:open.entity",
+          "kind": "data",
+          "source": "contact",
+          "target": "open",
+          "sourcePort": "entity",
+          "targetPort": "entity"
+        },
+        {
+          "id": "open.value:door.is_on",
+          "kind": "data",
+          "source": "open",
+          "target": "door",
+          "sourcePort": "value",
+          "targetPort": "is_on"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
   },
   {
     "name": "a step of a kind this version does not have is named as unknown",
@@ -37053,7 +37653,7 @@
     ]
   },
   {
-    "name": "code camera.no_frame: a camera no Show frame step shows a frame for, by its name, else its key",
+    "name": "code camera.no_frame: a camera with nothing connected to its Image, by its name, else its key",
     "graph": {
       "version": 5,
       "name": "Never shown",
@@ -37082,26 +37682,9 @@
             "key": "yard",
             "domain": "camera"
           }
-        },
-        {
-          "id": "say",
-          "kind": "log",
-          "config": {
-            "value": {
-              "kind": "literal",
-              "type": "string",
-              "value": "asked"
-            }
-          }
         }
       ],
       "edges": [
-        {
-          "id": "annotated:frame:say",
-          "source": "annotated",
-          "target": "say",
-          "port": "frame"
-        },
         {
           "id": "plug.entities:yard.device",
           "kind": "data",
@@ -37118,10 +37701,11 @@
     "valid": true,
     "warning": "never shows a frame",
     "warningNodeId": "annotated",
-    "warningPortId": "frame",
+    "warningPortId": "image",
+    "warningInputId": "image",
     "messages": [
-      "Annotated never shows a frame: add a Show frame step for it",
-      "yard never shows a frame: add a Show frame step for it"
+      "Annotated never shows a frame: Image is not connected",
+      "yard never shows a frame: Image is not connected"
     ],
     "codes": [
       "camera.no_frame",
@@ -37157,22 +37741,12 @@
         },
         {
           "id": "snap",
-          "kind": "camera_snapshot",
+          "kind": "camera_frame",
           "config": {
             "entity": {
               "kind": "literal",
               "type": "entity_id:camera",
               "value": "camera.front"
-            }
-          }
-        },
-        {
-          "id": "show",
-          "kind": "show_frame",
-          "config": {
-            "entity": "lens",
-            "image": {
-              "kind": "unset"
             }
           }
         }
@@ -37185,22 +37759,10 @@
           "port": "next"
         },
         {
-          "id": "set:next:snap",
-          "source": "set",
-          "target": "snap",
-          "port": "next"
-        },
-        {
-          "id": "snap:next:show",
-          "source": "snap",
-          "target": "show",
-          "port": "next"
-        },
-        {
-          "id": "snap.image:show.image",
+          "id": "snap.image:lens.image",
           "kind": "data",
           "source": "snap",
-          "target": "show",
+          "target": "lens",
           "sourcePort": "image",
           "targetPort": "image"
         }
@@ -37220,7 +37782,7 @@
     ]
   },
   {
-    "name": "camera: an Entity node and Show frame only work in an entity definition",
+    "name": "camera: an Entity node and Camera frame only work in an entity definition",
     "graph": {
       "version": 5,
       "name": "Frames",
@@ -37242,31 +37804,33 @@
           }
         },
         {
-          "id": "show",
-          "kind": "show_frame",
+          "id": "snap",
+          "kind": "camera_frame",
           "config": {
-            "entity": "annotated",
-            "image": {
-              "kind": "unset"
+            "entity": {
+              "kind": "literal",
+              "type": "entity_id:camera",
+              "value": "camera.front"
             }
           }
         }
       ],
       "edges": [
         {
-          "id": "t:next:show",
-          "source": "t",
-          "target": "show",
-          "port": "next"
+          "id": "snap.image:annotated.image",
+          "kind": "data",
+          "source": "snap",
+          "target": "annotated",
+          "sourcePort": "image",
+          "targetPort": "image"
         }
       ]
     },
     "valid": false,
-    "nodeId": "show",
+    "nodeId": "snap",
     "messages": [
       "Annotated only works in the graph of an entity definition; delete it from this automation",
-      "Image is required",
-      "Show frame only works in the graph of an entity definition; delete it from this automation"
+      "Camera frame only works in the graph of an entity definition; delete it from this automation"
     ],
     "codes": [
       "node.document",
@@ -37443,7 +38007,7 @@
     ]
   },
   {
-    "name": "an Entity node that runs nothing is warned about on its command and frame pins",
+    "name": "an Entity node that runs nothing is warned about on its command pins and a camera's Image",
     "graph": {
       "version": 5,
       "name": "Relay",
@@ -37477,7 +38041,7 @@
     "warningNodeId": "relay",
     "warningPortId": "command:turn_on",
     "messages": [
-      "Camera never shows a frame: add a Show frame step for it",
+      "Camera never shows a frame: Image is not connected",
       "Relay does nothing on Turn off: connect a step to Turn off",
       "Relay does nothing on Turn on: connect a step to Turn on"
     ],
@@ -38277,7 +38841,7 @@
     ]
   },
   {
-    "name": "a camera that shows no frame is a warning on its pin",
+    "name": "a camera that shows no frame is a warning on its Image",
     "graph": {
       "version": 5,
       "name": "Cam",
@@ -38298,11 +38862,12 @@
       }
     },
     "valid": true,
-    "warning": "Cam never shows a frame: add a Show frame step for it",
+    "warning": "Cam never shows a frame: Image is not connected",
     "warningNodeId": "cam",
-    "warningPortId": "frame",
+    "warningPortId": "image",
+    "warningInputId": "image",
     "messages": [
-      "Cam never shows a frame: add a Show frame step for it"
+      "Cam never shows a frame: Image is not connected"
     ],
     "codes": [
       "camera.no_frame"
@@ -44872,5 +45437,1024 @@
       "Light accepts Light entity, not Entity"
     ],
     "codes": []
+  },
+  {
+    "name": "video_frame: Video frame reads an http, https, rtsp, rtsps or rtmp address with a user, password and port, or a file's absolute path, into a camera's Image directly or through Draw rectangle",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "cam1",
+          "kind": "entity",
+          "config": {
+            "key": "cam1",
+            "domain": "camera",
+            "name": "Cam1"
+          }
+        },
+        {
+          "id": "rtsp",
+          "kind": "video_frame",
+          "config": {
+            "source": "rtsp://admin:hunter2@door.local:8554/live?channel=1",
+            "loop": true
+          }
+        },
+        {
+          "id": "cam2",
+          "kind": "entity",
+          "config": {
+            "key": "cam2",
+            "domain": "camera",
+            "name": "Cam2"
+          }
+        },
+        {
+          "id": "rtsps",
+          "kind": "video_frame",
+          "config": {
+            "source": "RTSPS://door.local:322/stream"
+          }
+        },
+        {
+          "id": "cam3",
+          "kind": "entity",
+          "config": {
+            "key": "cam3",
+            "domain": "camera",
+            "name": "Cam3"
+          }
+        },
+        {
+          "id": "http",
+          "kind": "video_frame",
+          "config": {
+            "source": "http://10.0.0.5:8080/video.mjpg"
+          }
+        },
+        {
+          "id": "cam4",
+          "kind": "entity",
+          "config": {
+            "key": "cam4",
+            "domain": "camera",
+            "name": "Cam4"
+          }
+        },
+        {
+          "id": "https",
+          "kind": "video_frame",
+          "config": {
+            "source": "https://user:pass@example.com/clips/front.mp4?token=abc#t=1",
+            "maxWidth": 640
+          }
+        },
+        {
+          "id": "cam5",
+          "kind": "entity",
+          "config": {
+            "key": "cam5",
+            "domain": "camera",
+            "name": "Cam5"
+          }
+        },
+        {
+          "id": "rtmp",
+          "kind": "video_frame",
+          "config": {
+            "source": "rtmp://live.local/app/stream-key"
+          }
+        },
+        {
+          "id": "cam6",
+          "kind": "entity",
+          "config": {
+            "key": "cam6",
+            "domain": "camera",
+            "name": "Cam6"
+          }
+        },
+        {
+          "id": "file",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/clips/front door.mp4",
+            "loop": false,
+            "maxWidth": 1280,
+            "maxHeight": 720
+          }
+        },
+        {
+          "id": "dotted",
+          "kind": "video_frame",
+          "config": {
+            "source": "/config/www/../media/clip.mkv"
+          }
+        },
+        {
+          "id": "boxed",
+          "kind": "entity",
+          "config": {
+            "key": "boxed",
+            "domain": "camera",
+            "name": "Boxed"
+          }
+        },
+        {
+          "id": "rect",
+          "kind": "image_draw_rect",
+          "config": {
+            "image": {
+              "kind": "unset"
+            },
+            "x": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "y": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "width": {
+              "kind": "literal",
+              "type": "number",
+              "value": 20
+            },
+            "height": {
+              "kind": "literal",
+              "type": "number",
+              "value": 10
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "rtsp.image:cam1.image",
+          "kind": "data",
+          "source": "rtsp",
+          "target": "cam1",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rtsps.image:cam2.image",
+          "kind": "data",
+          "source": "rtsps",
+          "target": "cam2",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "http.image:cam3.image",
+          "kind": "data",
+          "source": "http",
+          "target": "cam3",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "https.image:cam4.image",
+          "kind": "data",
+          "source": "https",
+          "target": "cam4",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rtmp.image:cam5.image",
+          "kind": "data",
+          "source": "rtmp",
+          "target": "cam5",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "file.image:cam6.image",
+          "kind": "data",
+          "source": "file",
+          "target": "cam6",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "dotted.image:rect.image",
+          "kind": "data",
+          "source": "dotted",
+          "target": "rect",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "rect.image:boxed.image",
+          "kind": "data",
+          "source": "rect",
+          "target": "boxed",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true,
+    "messages": [],
+    "codes": []
+  },
+  {
+    "name": "code video.source: Video frame refuses every other input of ffmpeg, an address without a host or with a space, and a path that is not absolute",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "cam1",
+          "kind": "entity",
+          "config": {
+            "key": "cam1",
+            "domain": "camera",
+            "name": "Cam1"
+          }
+        },
+        {
+          "id": "v1",
+          "kind": "video_frame",
+          "config": {
+            "source": "concat:/media/a.mp4|/media/b.mp4"
+          }
+        },
+        {
+          "id": "cam2",
+          "kind": "entity",
+          "config": {
+            "key": "cam2",
+            "domain": "camera",
+            "name": "Cam2"
+          }
+        },
+        {
+          "id": "v2",
+          "kind": "video_frame",
+          "config": {
+            "source": "pipe:0"
+          }
+        },
+        {
+          "id": "cam3",
+          "kind": "entity",
+          "config": {
+            "key": "cam3",
+            "domain": "camera",
+            "name": "Cam3"
+          }
+        },
+        {
+          "id": "v3",
+          "kind": "video_frame",
+          "config": {
+            "source": "file:/media/a.mp4"
+          }
+        },
+        {
+          "id": "cam4",
+          "kind": "entity",
+          "config": {
+            "key": "cam4",
+            "domain": "camera",
+            "name": "Cam4"
+          }
+        },
+        {
+          "id": "v4",
+          "kind": "video_frame",
+          "config": {
+            "source": "file:///media/a.mp4"
+          }
+        },
+        {
+          "id": "cam5",
+          "kind": "entity",
+          "config": {
+            "key": "cam5",
+            "domain": "camera",
+            "name": "Cam5"
+          }
+        },
+        {
+          "id": "v5",
+          "kind": "video_frame",
+          "config": {
+            "source": "data:video/mp4;base64,AAAA"
+          }
+        },
+        {
+          "id": "cam6",
+          "kind": "entity",
+          "config": {
+            "key": "cam6",
+            "domain": "camera",
+            "name": "Cam6"
+          }
+        },
+        {
+          "id": "v6",
+          "kind": "video_frame",
+          "config": {
+            "source": "subfile,,0,10,:/etc/passwd"
+          }
+        },
+        {
+          "id": "cam7",
+          "kind": "entity",
+          "config": {
+            "key": "cam7",
+            "domain": "camera",
+            "name": "Cam7"
+          }
+        },
+        {
+          "id": "v7",
+          "kind": "video_frame",
+          "config": {
+            "source": "testsrc"
+          }
+        },
+        {
+          "id": "cam8",
+          "kind": "entity",
+          "config": {
+            "key": "cam8",
+            "domain": "camera",
+            "name": "Cam8"
+          }
+        },
+        {
+          "id": "v8",
+          "kind": "video_frame",
+          "config": {
+            "source": "lavfi:testsrc"
+          }
+        },
+        {
+          "id": "cam9",
+          "kind": "entity",
+          "config": {
+            "key": "cam9",
+            "domain": "camera",
+            "name": "Cam9"
+          }
+        },
+        {
+          "id": "v9",
+          "kind": "video_frame",
+          "config": {
+            "source": "clip.mp4"
+          }
+        },
+        {
+          "id": "cam10",
+          "kind": "entity",
+          "config": {
+            "key": "cam10",
+            "domain": "camera",
+            "name": "Cam10"
+          }
+        },
+        {
+          "id": "v10",
+          "kind": "video_frame",
+          "config": {
+            "source": "./media/clip.mp4"
+          }
+        },
+        {
+          "id": "cam11",
+          "kind": "entity",
+          "config": {
+            "key": "cam11",
+            "domain": "camera",
+            "name": "Cam11"
+          }
+        },
+        {
+          "id": "v11",
+          "kind": "video_frame",
+          "config": {
+            "source": "~/clip.mp4"
+          }
+        },
+        {
+          "id": "cam12",
+          "kind": "entity",
+          "config": {
+            "key": "cam12",
+            "domain": "camera",
+            "name": "Cam12"
+          }
+        },
+        {
+          "id": "v12",
+          "kind": "video_frame",
+          "config": {
+            "source": "ftp://nas.local/clip.mp4"
+          }
+        },
+        {
+          "id": "cam13",
+          "kind": "entity",
+          "config": {
+            "key": "cam13",
+            "domain": "camera",
+            "name": "Cam13"
+          }
+        },
+        {
+          "id": "v13",
+          "kind": "video_frame",
+          "config": {
+            "source": "rtmps://live.local/app"
+          }
+        },
+        {
+          "id": "cam14",
+          "kind": "entity",
+          "config": {
+            "key": "cam14",
+            "domain": "camera",
+            "name": "Cam14"
+          }
+        },
+        {
+          "id": "v14",
+          "kind": "video_frame",
+          "config": {
+            "source": "udp://0.0.0.0:1234"
+          }
+        },
+        {
+          "id": "cam15",
+          "kind": "entity",
+          "config": {
+            "key": "cam15",
+            "domain": "camera",
+            "name": "Cam15"
+          }
+        },
+        {
+          "id": "v15",
+          "kind": "video_frame",
+          "config": {
+            "source": "http:///live"
+          }
+        },
+        {
+          "id": "cam16",
+          "kind": "entity",
+          "config": {
+            "key": "cam16",
+            "domain": "camera",
+            "name": "Cam16"
+          }
+        },
+        {
+          "id": "v16",
+          "kind": "video_frame",
+          "config": {
+            "source": "http://door.local/a b"
+          }
+        },
+        {
+          "id": "cam17",
+          "kind": "entity",
+          "config": {
+            "key": "cam17",
+            "domain": "camera",
+            "name": "Cam17"
+          }
+        },
+        {
+          "id": "v17",
+          "kind": "video_frame",
+          "config": {
+            "source": " /media/clip.mp4"
+          }
+        },
+        {
+          "id": "cam18",
+          "kind": "entity",
+          "config": {
+            "key": "cam18",
+            "domain": "camera",
+            "name": "Cam18"
+          }
+        },
+        {
+          "id": "v18",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/a\nb.mp4"
+          }
+        },
+        {
+          "id": "cam19",
+          "kind": "entity",
+          "config": {
+            "key": "cam19",
+            "domain": "camera",
+            "name": "Cam19"
+          }
+        },
+        {
+          "id": "v19",
+          "kind": "video_frame",
+          "config": {
+            "source": "C:\\media\\clip.mp4"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "v1.image:cam1.image",
+          "kind": "data",
+          "source": "v1",
+          "target": "cam1",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v2.image:cam2.image",
+          "kind": "data",
+          "source": "v2",
+          "target": "cam2",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v3.image:cam3.image",
+          "kind": "data",
+          "source": "v3",
+          "target": "cam3",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v4.image:cam4.image",
+          "kind": "data",
+          "source": "v4",
+          "target": "cam4",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v5.image:cam5.image",
+          "kind": "data",
+          "source": "v5",
+          "target": "cam5",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v6.image:cam6.image",
+          "kind": "data",
+          "source": "v6",
+          "target": "cam6",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v7.image:cam7.image",
+          "kind": "data",
+          "source": "v7",
+          "target": "cam7",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v8.image:cam8.image",
+          "kind": "data",
+          "source": "v8",
+          "target": "cam8",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v9.image:cam9.image",
+          "kind": "data",
+          "source": "v9",
+          "target": "cam9",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v10.image:cam10.image",
+          "kind": "data",
+          "source": "v10",
+          "target": "cam10",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v11.image:cam11.image",
+          "kind": "data",
+          "source": "v11",
+          "target": "cam11",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v12.image:cam12.image",
+          "kind": "data",
+          "source": "v12",
+          "target": "cam12",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v13.image:cam13.image",
+          "kind": "data",
+          "source": "v13",
+          "target": "cam13",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v14.image:cam14.image",
+          "kind": "data",
+          "source": "v14",
+          "target": "cam14",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v15.image:cam15.image",
+          "kind": "data",
+          "source": "v15",
+          "target": "cam15",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v16.image:cam16.image",
+          "kind": "data",
+          "source": "v16",
+          "target": "cam16",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v17.image:cam17.image",
+          "kind": "data",
+          "source": "v17",
+          "target": "cam17",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v18.image:cam18.image",
+          "kind": "data",
+          "source": "v18",
+          "target": "cam18",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "v19.image:cam19.image",
+          "kind": "data",
+          "source": "v19",
+          "target": "cam19",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "v1",
+    "inputId": "source",
+    "messages": [
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4",
+      "Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4"
+    ],
+    "codes": [
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source",
+      "video.source"
+    ]
+  },
+  {
+    "name": "code video.source: a Video frame's source left blank is required, as one left out is",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "cam1",
+          "kind": "entity",
+          "config": {
+            "key": "cam1",
+            "domain": "camera",
+            "name": "Cam1"
+          }
+        },
+        {
+          "id": "empty",
+          "kind": "video_frame",
+          "config": {
+            "source": ""
+          }
+        },
+        {
+          "id": "cam2",
+          "kind": "entity",
+          "config": {
+            "key": "cam2",
+            "domain": "camera",
+            "name": "Cam2"
+          }
+        },
+        {
+          "id": "blank",
+          "kind": "video_frame",
+          "config": {
+            "source": "   "
+          }
+        },
+        {
+          "id": "cam3",
+          "kind": "entity",
+          "config": {
+            "key": "cam3",
+            "domain": "camera",
+            "name": "Cam3"
+          }
+        },
+        {
+          "id": "missing",
+          "kind": "video_frame",
+          "config": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "empty.image:cam1.image",
+          "kind": "data",
+          "source": "empty",
+          "target": "cam1",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "blank.image:cam2.image",
+          "kind": "data",
+          "source": "blank",
+          "target": "cam2",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "missing.image:cam3.image",
+          "kind": "data",
+          "source": "missing",
+          "target": "cam3",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "empty",
+    "inputId": "source",
+    "messages": [
+      "Source is required",
+      "Source is required",
+      "Source is required"
+    ],
+    "codes": [
+      "video.source",
+      "video.source"
+    ]
+  },
+  {
+    "name": "video_frame: Width at most and Height at most are whole numbers from 16 to 8192, and Loop is on or off",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "cam1",
+          "kind": "entity",
+          "config": {
+            "key": "cam1",
+            "domain": "camera",
+            "name": "Cam1"
+          }
+        },
+        {
+          "id": "small",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/a.mp4",
+            "maxWidth": 8
+          }
+        },
+        {
+          "id": "cam2",
+          "kind": "entity",
+          "config": {
+            "key": "cam2",
+            "domain": "camera",
+            "name": "Cam2"
+          }
+        },
+        {
+          "id": "large",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/a.mp4",
+            "maxHeight": 9000
+          }
+        },
+        {
+          "id": "cam3",
+          "kind": "entity",
+          "config": {
+            "key": "cam3",
+            "domain": "camera",
+            "name": "Cam3"
+          }
+        },
+        {
+          "id": "fraction",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/a.mp4",
+            "maxWidth": 320.5
+          }
+        },
+        {
+          "id": "cam4",
+          "kind": "entity",
+          "config": {
+            "key": "cam4",
+            "domain": "camera",
+            "name": "Cam4"
+          }
+        },
+        {
+          "id": "said",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/a.mp4",
+            "loop": "yes"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "small.image:cam1.image",
+          "kind": "data",
+          "source": "small",
+          "target": "cam1",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "large.image:cam2.image",
+          "kind": "data",
+          "source": "large",
+          "target": "cam2",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "fraction.image:cam3.image",
+          "kind": "data",
+          "source": "fraction",
+          "target": "cam3",
+          "sourcePort": "image",
+          "targetPort": "image"
+        },
+        {
+          "id": "said.image:cam4.image",
+          "kind": "data",
+          "source": "said",
+          "target": "cam4",
+          "sourcePort": "image",
+          "targetPort": "image"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "small",
+    "inputId": "maxWidth",
+    "messages": [
+      "Height at most must be between 16 and 8192",
+      "Loop must be true or false",
+      "Width at most must be a whole number",
+      "Width at most must be between 16 and 8192"
+    ],
+    "codes": []
+  },
+  {
+    "name": "code node.document: Video frame in an automation",
+    "graph": {
+      "version": 5,
+      "name": "Automation",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "clip",
+          "kind": "video_frame",
+          "config": {
+            "source": "/media/clip.mp4"
+          }
+        },
+        {
+          "id": "say",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "clip.image:say.value",
+          "kind": "data",
+          "source": "clip",
+          "target": "say",
+          "sourcePort": "image",
+          "targetPort": "value"
+        },
+        {
+          "id": "t:next:say",
+          "source": "t",
+          "target": "say",
+          "port": "next"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "clip",
+    "messages": [
+      "Video frame only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "node.document"
+    ]
   }
 ]

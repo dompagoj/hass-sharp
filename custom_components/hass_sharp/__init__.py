@@ -289,6 +289,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         PyInterop.BeginCameraSnapshot = Action[String, String, Action[Array[Byte]], Action[String]](
             entity_bridge.begin_camera_snapshot
         )
+        PyInterop.BeginCameraSnapshotScaled = Action[String, String, Int32, Int32, Action[Array[Byte]], Action[String]](
+            entity_bridge.begin_camera_snapshot_scaled
+        )
+        PyInterop.BeginCameraSource = Action[String, Action[String, String], Action[String]](
+            entity_bridge.begin_camera_source
+        )
+        PyInterop.BeginVideoSource = Action[Action[String, String], Action[String]](entity_bridge.begin_video_source)
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         hass.data.setdefault("hass_sharp_services", {})[entry.entry_id] = await services.async_start(hass, hass_sharp)

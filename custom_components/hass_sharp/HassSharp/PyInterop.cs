@@ -215,6 +215,25 @@ public static class PyInterop
     /// <see cref="HassCameras.SnapshotAsync"/>.
     /// </summary>
     public static Action<string, string, Action<byte[]>, Action<string>> BeginCameraSnapshot { get; set; } = null!;
+    /// <summary>
+    /// As <see cref="BeginCameraSnapshot"/>, with the width and height the picture is to fit in, which Home Assistant scales
+    /// it to (<c>async_get_image</c>'s own). Without it, a picture of a size is taken at the camera's own.
+    /// </summary>
+    public static Action<string, string, int, int, Action<byte[]>, Action<string>>? BeginCameraSnapshotScaled { get; set; }
+    /// <summary>
+    /// Asks Home Assistant what a live feed of a camera reads (<see cref="CameraFeeds"/>), by the camera's entity id: Python
+    /// calls the first callback with the camera's stream source and the ffmpeg binary Home Assistant's ffmpeg integration
+    /// runs, or the second with why there is none (no stream source, ffmpeg not set up, or Home Assistant's message for a
+    /// camera that is missing or off). Without it there are no live feeds, and every picture is a snapshot.
+    /// </summary>
+    public static Action<string, Action<string, string>, Action<string>>? BeginCameraSource { get; set; }
+    /// <summary>
+    /// Asks Home Assistant what a video is read with (<see cref="VideoSources"/>): Python calls the first callback with the
+    /// ffmpeg binary Home Assistant's ffmpeg integration runs and a JSON array of the folders Home Assistant allows files in
+    /// (its <c>allowlist_external_dirs</c> and <c>media_dirs</c>), or the second with why there is none (ffmpeg not set up,
+    /// HassSharp stopping). Without it no video is read.
+    /// </summary>
+    public static Action<Action<string, string>, Action<string>>? BeginVideoSource { get; set; }
 
     /// <summary>Creates or updates a definition's entities; completes with Python's result JSON.</summary>
     public static Task<string> SyncEntitiesAsync(string definitionJson)

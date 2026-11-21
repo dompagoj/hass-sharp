@@ -36,10 +36,11 @@ export interface ConfigSpec { label?: string; description?: string; type: string
  * `connectable: false` marks an input that takes a value only (a Constant's value): it has no pin, and a wire into it is
  * refused as into an input the step does not have. `wireOnly` is set by `dataInputs` (never in the catalog) on an input
  * whose catalog types are `$properties`: it takes a wire only, and the editor offers no value to type in. `structural` (an
- * Entity node's Device pin) takes a wire of a structural type only and is no state value (see `stateInputs`).
+ * Entity node's Device pin) takes a wire of a structural type only and is no state value (see `stateInputs`). `picture`
+ * (a camera's Image, set by `dataInputs`) is a picture an Entity node shows: no state value either (see `pictureInput`).
  */
 export interface InputSpec {
-  connectable?: boolean; wireOnly?: boolean; structural?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
+  connectable?: boolean; wireOnly?: boolean; structural?: boolean; picture?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
   /** A class node's setting pin (see `settingInput`): the setting's own type, secret flag, options, range, entity domain and whether it is required. */
@@ -89,10 +90,10 @@ export interface ServicesSection { servicesGeneration: string; items: Record<str
 export interface EntityValueSpec { types: string[]; label?: string; required?: boolean }
 /**
  * One entity domain a definition's graph can define: its state values (inputs of an Entity node and Set state), its
- * commands, each with the values of its data (outputs of an Entity node), and its options. `frame`: the type is asked for frames
- * (a camera), and its Entity node has a `frame` execution pin with this label.
+ * commands, each with the values of its data (outputs of an Entity node), and its options. `picture`: the pictures the
+ * type shows (a camera's Image), each an input of its Entity node read in the flow that makes a frame, never a state value.
  */
-export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; frame?: { label: string }; options: Record<string, ConfigSpec> }
+export interface EntityDomainSpec { label: string; state: Record<string, EntityValueSpec>; commands: Record<string, { label?: string; data?: Record<string, CommandValueSpec> }>; picture?: Record<string, EntityValueSpec & { description?: string }>; options: Record<string, ConfigSpec> }
 /**
  * A data value of a command: `default` is what the host gives a flow when Home Assistant sends none and the entity has no
  * state value of the same name, if the entity takes it (a light turned on at full). No validator reads it.
@@ -220,9 +221,9 @@ export const scopePorts = (node: GraphNode, catalog: VisualCatalogSnapshot = nod
   (flowSource(node, catalog)?.scopePorts ?? []).filter((port): port is string => typeof port === 'string')
 /** The label a node's own entry (or signature) gives an execution port, such as Done or a flow's label; undefined when it gives none. */
 export function executionLabel(node: GraphNode, port: string, catalog: VisualCatalogSnapshot = nodeCatalog): string | undefined {
-  // An Entity node's pin: its command's label, or the type's frame label.
+  // An Entity node's pin: its command's label.
   if (nodeSpec(node.kind, catalog)?.dynamicExecution === 'declared' && declaredExecution(node, catalog).includes(port))
-    return port === 'frame' ? declaredDomain(node, catalog)?.frame?.label : entityCommandLabel(catalog, text(node.config.domain), port.slice('command:'.length))
+    return entityCommandLabel(catalog, text(node.config.domain), port.slice('command:'.length))
   const labels = flowSource(node, catalog)?.executionLabels
   const label = labels && Object.hasOwn(labels, port) ? labels[port] : undefined
   return typeof label === 'string' && label.trim() ? label : undefined
@@ -461,13 +462,14 @@ export function entityDomain(catalog: VisualCatalogSnapshot, key: string): Entit
 export const declaredDomain = (node: GraphNode, catalog: VisualCatalogSnapshot): EntityDomainSpec | undefined =>
   domainRow(catalog, text(record(node.config) ? node.config.domain : undefined))
 /**
- * An Entity node's execution pins: `command:<command>` per command of its type, in the row's order, then `frame` when the
- * row has `frame` (a camera); none for an unknown type. Mirrors `VisualNodeCatalog.DeclaredExecution`.
+ * An Entity node's execution pins: `command:<command>` per command of its type, in the row's order; none for an unknown
+ * type. A camera has no pin for its frames: its Image input says what it shows (`pictureInputs`). Mirrors
+ * `VisualNodeCatalog.DeclaredExecution`.
  */
 function declaredExecution(node: GraphNode, catalog: VisualCatalogSnapshot): string[] {
   const row = declaredDomain(node, catalog)
   if (!row) return []
-  return [...Object.keys(record(row.commands) ? row.commands : {}).map(command => `command:${command}`), ...(record(row.frame) ? ['frame'] : [])]
+  return Object.keys(record(row.commands) ? row.commands : {}).map(command => `command:${command}`)
 }
 /** The `entityDomains` row of a domain; undefined for one the catalog does not have. */
 function domainRow(catalog: Pick<VisualCatalogSnapshot, 'entityDomains'>, domain: string): EntityDomainSpec | undefined {
@@ -493,15 +495,10 @@ export function entityCommandLabel(catalog: Pick<VisualCatalogSnapshot, 'entityD
 }
 /** The definition's entities and settings (each with a text `key`), the first of each key. */
 export const definitionEntities = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'entities')
-/** Whether the definition's entity with this key is a camera. */
-const isCamera = (catalog: VisualCatalogSnapshot, key: string) => text(definitionEntity(catalog, key)?.domain) === 'camera'
-/** The definition's entity with this key as a validator's sentence names it: its name, else its key. */
-const cameraName = (catalog: VisualCatalogSnapshot, key: string) => { const name = text(definitionEntity(catalog, key)?.name); return name.replace(blankEnds, '') ? name : key }
 export const definitionSettings = (catalog: VisualCatalogSnapshot) => definitionItems(catalog, 'settings')
-/** The definition's entities a step of this kind can name: Show frame only its cameras. */
-export function entityChoices(catalog: VisualCatalogSnapshot, kind: string): Record<string, unknown>[] {
-  const entities = definitionEntities(catalog)
-  return kind === 'show_frame' ? entities.filter(e => text(e.domain) === 'camera') : entities
+/** The definition's entities a step of this kind can name: any of them, whatever the step. */
+export function entityChoices(catalog: VisualCatalogSnapshot, _kind: string): Record<string, unknown>[] {
+  return definitionEntities(catalog)
 }
 /**
  * The value a Set state is for, of the state values of its entity's type: the first its row does not mark optional, else
@@ -570,11 +567,19 @@ export function takesOnlyEntityIds(input: { types?: unknown } | undefined): bool
 }
 /**
  * Whether a wire from this node into an entity id input still lets an Entity node's state follow the entity: a
- * Constant of an entity id type, whose chosen entity the state's dependencies count. Mirrors `VisualNodeCatalog.FollowedSource`.
+ * Constant of an entity id type, or a Home Assistant entity (`ha_entity`), whose chosen entity the state's dependencies count. Mirrors
+ * `VisualNodeCatalog.FollowedSource`.
  */
 export function followedSource(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): boolean {
-  return node.kind === 'constant' && takesOnlyEntityIds(dataInputs(node, undefined, catalog).value)
+  return node.kind === 'ha_entity' || node.kind === 'constant' && takesOnlyEntityIds(dataInputs(node, undefined, catalog).value)
 }
+const entityIdPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/
+/**
+ * The domain of an entity id as a Home Assistant entity (`ha_entity`) takes one: `camera` for `camera.front_door`; null for a text that
+ * is not an entity id (a domain, a dot and an object id, each of lowercase letters, digits and underscores). Mirrors
+ * `VisualNodeCatalog.EntityIdDomain`.
+ */
+export const entityIdDomain = (id: unknown): string | null => typeof id === 'string' && entityIdPattern.test(id) ? id.slice(0, id.indexOf('.')) : null
 /** The pins a Custom C# node's code gives, as the compiler wrote them into `config.signature`. */
 export interface CustomSignature {
   title: string; description: string; pure: boolean; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; types: Record<string, TypeSpec>
@@ -714,14 +719,33 @@ export function withGraphTypes(catalog: VisualCatalogSnapshot, graph: unknown): 
     }
   const selecting = selectingNodes(catalog, graph)
   const definition = record(graph) && record(graph.definition) ? graph.definition as unknown as GraphDefinition : undefined
-  if (!Object.keys(added).length && !selecting.length && !definition) return catalog
+  const picked = [...graphNodes(graph).values()].some(node => node.kind === 'ha_entity')
+  if (!Object.keys(added).length && !selecting.length && !definition && !picked) return catalog
   const merged: VisualCatalogSnapshot = { ...catalog, types: Object.keys(added).length ? Object.assign(Object.create(null), catalog.types, added) : catalog.types }
+  // Resolved afresh, for a catalog already merged for a graph too (the connection index merges one again for a wire it
+  // weighs). An Entity's type before the Select property nodes that may read it, which keep it (resolveOutputs).
+  if (picked || selecting.length) delete merged.resolvedOutputs
+  if (picked) resolveEntities(merged, graph)
   if (selecting.length) resolveOutputs(merged, graph)
   if (definition) {
     merged.definition = { ...structuredClone(definition), entities: derivedEntities(graph, catalog), devices: derivedDevices(graph, catalog) }
     resolveSettings(merged, graph)
   }
   return merged
+}
+/**
+ * The graph's Entity nodes (`ha_entity`): the output of each has the type of an entity id of its entity's domain
+ * (`entity_id:camera` for `camera.front_door`), under `resolvedOutputs`; one whose entity is not an entity id
+ * (`entityIdDomain`) has none (an empty type). Mirrors `VisualNodeCatalog.ResolveEntities`.
+ */
+function resolveEntities(catalog: VisualCatalogSnapshot, graph: unknown) {
+  if (!nodeSpec('ha_entity', catalog)) return
+  for (const node of graphNodes(graph).values()) {
+    const domain = node.kind === 'ha_entity' ? entityIdDomain(node.config.entity) : null
+    if (!domain) continue
+    const resolved: Record<string, Record<string, string>> = catalog.resolvedOutputs ??= Object.create(null)
+    resolved[node.id] = Object.assign(Object.create(null), resolved[node.id], { entity: `entity_id:${domain}` })
+  }
 }
 /**
  * An entity graph's Setting nodes: the value of each has the type of the definition's setting it names, under
@@ -776,11 +800,13 @@ export function typeProperties(catalog: VisualCatalogSnapshot, type: string): Pr
  * chosen property of the type the first value wire into its input brings. A node reading another such node is resolved
  * after it: each waits for the ones it reads, and is resolved once none is left (in the order the graph lists the ready
  * ones), so no call goes one level deeper per node, however long the chain. A node on a cycle of such nodes, or reading
- * one, is never ready and has none; so has an output whose input, property or source type is missing. Mirrors
+ * one, is never ready and has none; so has an output whose input, property or source type is missing. The types already
+ * resolved (an Entity's, `resolveEntities`) are kept, so that a property of an Entity's entity can be selected. Mirrors
  * `VisualNodeCatalog.ResolveOutputs`.
  */
 export function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
-  const resolved: Record<string, Record<string, string>> = Object.create(null)
+  // A copy: the catalog withGraphTypes was given keeps its own.
+  const resolved: Record<string, Record<string, string>> = Object.assign(Object.create(null), catalog.resolvedOutputs)
   catalog.resolvedOutputs = resolved
   const nodes = graphNodes(graph)
   const incoming = new Map<string, Record<string, unknown>>()
@@ -813,7 +839,7 @@ export function resolveOutputs(catalog: VisualCatalogSnapshot, graph: unknown) {
       const outputs = dataOutputs(nodes.get(edge.source as string)!, catalog), sourcePort = edge.sourcePort as string
       const type = Object.hasOwn(outputs, sourcePort) ? text(outputs[sourcePort].type) : ''
       const found = text(typeProperties(catalog, type).find(p => text(p.name) === text(node.config.property))?.type)
-      if (found) (resolved[node.id] ??= Object.create(null) as Record<string, string>)[port] = found
+      if (found) resolved[node.id] = Object.assign(Object.create(null), resolved[node.id], { [port]: found })
     }
     for (const reader of readers.get(node.id) ?? []) {
       const left = waiting.get(reader.id)! - 1
@@ -953,14 +979,33 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   if (record(state)) for (const [key, value] of Object.entries(state)) {
     ports[key] = { types: typeIds(record(value) ? value.types : undefined), required: false, ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}) }
   }
+  // An Entity node's pictures (a camera's Image), after its state values, none required, each marked picture: they are
+  // read in its frame flow, never in its state's (`pictureInput`). A Set state sets no picture.
+  const pictures = dynamic === 'declared' ? declaredDomain(node, catalog)?.picture : undefined
+  if (record(pictures)) for (const [key, value] of Object.entries(pictures)) {
+    const described = record(value) && typeof value.description === 'string' && value.description ? value.description : undefined
+    ports[key] = { types: typeIds(record(value) ? value.types : undefined), required: false, ...(described ? { description: described } : {}), ...(record(value) && typeof value.label === 'string' && value.label ? { label: value.label } : {}), picture: true }
+  }
   return ports
 }
 /**
- * The node's data inputs (`dataInputs`) without the structural ones: an Entity node's or a Set state's state values. A
- * class node has none: its pins are its settings, and its code gives its state. Mirrors `VisualNodeCatalog.StateInputs`.
+ * The node's data inputs (`dataInputs`) without the structural ones and the pictures it shows (`pictureInput`): an
+ * Entity node's or a Set state's state values. A class node has none: its pins are its settings, and its code gives its
+ * state. Mirrors `VisualNodeCatalog.StateInputs`.
  */
 export const stateInputs = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> =>
-  isClassNode(nodeSpec(node.kind, catalog)) ? {} : Object.fromEntries(Object.entries(dataInputs(node, undefined, catalog)).filter(([, input]) => !structural(input)))
+  isClassNode(nodeSpec(node.kind, catalog)) ? {} : Object.fromEntries(Object.entries(dataInputs(node, undefined, catalog)).filter(([, input]) => !structural(input) && !pictureInput(input)))
+/**
+ * Whether an input is a picture an Entity node shows (`picture: true`, a camera's Image, from its type's `picture` row):
+ * no state value, it is read in the node's frame flow alone. Mirrors `VisualNodeCatalog.PictureInput`.
+ */
+export const pictureInput = (input: unknown): boolean => record(input) && input.picture === true
+/**
+ * The pictures an Entity node shows (`pictureInput`): a camera's Image, which its frame flow reads each time a frame is
+ * needed; none for any other node. Mirrors `VisualNodeCatalog.PictureInputs`.
+ */
+export const pictureInputs = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): Record<string, InputSpec> =>
+  Object.fromEntries(Object.entries(dataInputs(node, undefined, catalog)).filter(([, input]) => pictureInput(input)))
 /** An own property only, as `TryGetInputValue` reads it: a field named `constructor` or `toString` is not inherited. */
 const own = (container: unknown, key: string): unknown => record(container) && Object.hasOwn(container, key) ? container[key] : undefined
 export function inputValue(node: GraphNode, port: string, catalog: VisualCatalogSnapshot): unknown {
@@ -1082,6 +1127,16 @@ export const words = {
   timeOfDay: '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$',
   /** A web address as an HTTP request or a download takes one: http:// or https://, a host, then anything without a space. */
   webAddressPattern: '^[Hh][Tt][Tt][Pp][Ss]?://[^\\x00-\\x20\\x7f/?#]+(?:[/?#][^\\x00-\\x20\\x7f]*)?$',
+  /**
+   * What a Video frame reads (the runtime's `VideoSources` checks the same): an http, https, rtsp, rtsps or rtmp address
+   * with a host and no spaces, or a file's absolute path without control characters. Nothing else reaches ffmpeg: none of
+   * its other protocols (concat:, pipe:, file:, data:, subfile, ...) and no relative path.
+   */
+  videoSourcePattern: '^(?:(?:[Hh][Tt][Tt][Pp][Ss]?|[Rr][Tt][Ss][Pp][Ss]?|[Rr][Tt][Mm][Pp])://[^\\x00-\\x20\\x7f/?#]+(?:[/?#][^\\x00-\\x20\\x7f]*)?|/[^\\x00-\\x1f\\x7f]*)$',
+  /** A Video frame's source that is not one it reads. */
+  videoSource: (label: string) => `${label} must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4`,
+  /** A Video frame's source left blank. */
+  videoSourceMissing: (label: string) => `${label} is required`,
   /** A SHA-256 checksum: 64 hexadecimal characters, in either case. */
   checksumPattern: '^[0-9A-Fa-f]{64}$',
   timeOfDayMessage: (label: string) => `${label} must be HH:MM in 24-hour time, from 00:00 to 23:59`,
@@ -1249,10 +1304,14 @@ export const words = {
   stateless: (type: string) => { const article = words.article(type); return `${article[0].toUpperCase()}${article.slice(1)} ${type.toLowerCase()} has no state to set` },
   /** A Set state step given none of its entity's state values. */
   noValue: (step: string) => `${step} needs at least one value`,
-  /** A Show frame step naming an entity of the definition that is not a camera, by its name; whether the definition has one. */
-  notACamera: (name: string, anyCamera: boolean) => anyCamera ? `${words.name(name)} is not a camera; choose one of this definition's cameras` : `${words.name(name)} is not a camera; add a camera to this definition first`,
-  /** A camera no Show frame step shows a frame for, named by its name. */
-  noFrame: (name: string, label: string) => `${words.name(name)} never shows a frame: add ${words.article(label)} ${label} step for it`,
+  /** A camera an Entity node declares with nothing connected to its picture input (`label`, its Image), named by its name. */
+  noFrame: (name: string, label: string) => `${words.name(name)} never shows a frame: ${label} is not connected`,
+  /** A camera's picture input (its Image) that reads a step: a frame is made in a flow of its own, from values alone, in which no step runs. */
+  frameSource: (value: string, name: string, step: string) => `${value} of ${name} cannot read ${step}, which runs in a flow: make the picture from values alone, such as Camera frame and Draw rectangle`,
+  /** A Home Assistant entity (`ha_entity`) whose entity is left blank. */
+  entityIdMissing: (node: string) => `${node} has no entity: choose one, such as camera.front_door`,
+  /** A Home Assistant entity (`ha_entity`) whose entity is not an entity id, quoted as written. */
+  notAnEntityId: (id: string) => `${words.name(id)} is not an entity id: choose one such as camera.front_door`,
   // An Entity node's entity, named by entityNodeName.
   /** What an Entity node's key must be, as an entity key is (`SharpEntity.KeyPattern`); a Device node's key is of the same form. */
   entityKeyPattern: '^[a-z][a-z0-9_]{0,39}$',
@@ -1347,8 +1406,8 @@ export const incompatibleInput = (node: GraphNode, spec: InputSpec, port: string
 export function wireTypeError(source: GraphNode, output: OutputSpec, target: GraphNode, input: InputSpec, port: string, catalog: VisualCatalogSnapshot = nodeCatalog,
   assignable: (source: string, target: string) => boolean = (a, b) => isAssignable(a, b, catalog)): { message: string; code?: DiagnosticCode } | undefined {
   if (propertyOf(output) && !output.type) return text(source.config.property) ? undefined : { message: words.chooseProperty(words.stepName(source, catalog)), code: 'property.unset' }
-  // A Setting whose setting is unknown has no type; the Setting node itself says so.
-  if (!output.type && source.kind === 'setting') return
+  // A Setting whose setting is unknown, and an Entity whose entity is not an entity id, have no type; the node itself says so.
+  if (!output.type && (source.kind === 'setting' || source.kind === 'ha_entity')) return
   const selects = selectsProperties(nodeSpec(target.kind, catalog), port)
   if (selects ? typeProperties(catalog, output.type).length > 0 : input.types.some(t => assignable(output.type, t))) return
   return { message: wrongDomain(target, port, output.type, catalog) ?? (selects && typeChain(output.type, catalog).length > 0 ? words.noProperties(output.type, catalog) : words.incompatible(inputSubject(target, input, port, catalog), output.type, input.types, catalog)) }
@@ -1384,14 +1443,14 @@ export const diagnosticCodes = [
   'node.invalid', 'node.duplicate', 'node.unknownKind', 'node.unreachable', 'limit.nesting',
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
-  'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow', 'scope.settingSource',
+  'cycle.execution', 'cycle.data', 'scope.execution', 'scope.data', 'scope.conditionResult', 'scope.loopResult', 'scope.stateSource', 'scope.flow', 'scope.settingSource', 'scope.frameSource',
   'flow.pure', 'flow.declaration', 'pure.unused', 'custom.signature', 'csharp.signature', 'property.unset', 'property.unknown',
   'definition.invalid', 'definition.unknownEntity', 'definition.entityKey', 'definition.duplicateEntity', 'definition.entityDomain',
   'definition.deviceKey', 'definition.duplicateDevice',
   'node.document', 'node.singleton', 'root.incoming',
   'setting.unknown', 'setting.secretLiteral', 'state.dynamicSource', 'command.unhandled', 'entity.stateless', 'entity.no_value', 'entity.name', 'entity.partialState',
   'device.name', 'device.via', 'device.viaUnknown', 'device.viaCycle', 'device.configurationUrl', 'device.empty',
-  'http.url', 'http.body', 'download.checksum', 'camera.entity', 'camera.no_frame',
+  'http.url', 'http.body', 'download.checksum', 'camera.no_frame', 'entity.id', 'video.source',
 ] as const
 export type DiagnosticCode = typeof diagnosticCodes[number]
 /**
@@ -1785,11 +1844,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (Array.isArray(spec.documents) && !spec.documents.includes(document)) error(node.id, words.wrongDocument(words.stepName(node, catalog), document), undefined, undefined, 'node.document')
     // An entity graph's steps name its definition's entities and its settings.
     const entityKey = node.config.entity
-    if (entityGraph && Array.isArray(spec.documents) && Object.hasOwn(spec.config, 'entity') && typeof entityKey === 'string') {
-      if (!definitionEntity(catalog, entityKey)) error(node.id, words.unknownEntity(entityKey, configLabel(spec.config.entity, 'entity')), 'entity', undefined, 'definition.unknownEntity')
-      // Show frame names one of the definition's cameras.
-      else if (node.kind === 'show_frame' && !isCamera(catalog, entityKey))
-        error(node.id, words.notACamera(cameraName(catalog, entityKey), definitionItems(catalog, 'entities').some(e => isCamera(catalog, text(e.key)))), 'entity', undefined, 'camera.entity')
+    if (entityGraph && Array.isArray(spec.documents) && Object.hasOwn(spec.config, 'entity') && typeof entityKey === 'string' && !definitionEntity(catalog, entityKey))
+      error(node.id, words.unknownEntity(entityKey, configLabel(spec.config.entity, 'entity')), 'entity', undefined, 'definition.unknownEntity')
+    // A Home Assistant entity (ha_entity) gives one of Home Assistant's entities, by its id: chosen, and an entity id (one left out is
+    // the config rule's below). Its output's type is its entity's domain's (resolveEntities).
+    if (node.kind === 'ha_entity' && typeof entityKey === 'string') {
+      if (!entityKey.replace(blankEnds, '')) error(node.id, words.entityIdMissing(words.stepName(node, catalog)), 'entity', undefined, 'entity.id')
+      else if (entityIdDomain(entityKey) === null) error(node.id, words.notAnEntityId(entityKey), 'entity', undefined, 'entity.id')
     }
     // A Set state needs an entity whose type has a state, and at least one of its values.
     const row = node.kind === 'set_entity_state' && typeof entityKey === 'string' && definitionEntity(catalog, entityKey) ? entityDomain(catalog, entityKey) : undefined
@@ -1955,6 +2016,13 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         origin = graphOrigin
       }
     }
+    // A Video frame's source, typed in: an address of a protocol it allows, or a file's absolute path (whether the file
+    // is in a folder Home Assistant allows is known only at run time).
+    if (node.kind === 'video_frame' && typeof node.config.source === 'string') {
+      const label = configLabel(spec.config.source, 'source')
+      if (!node.config.source.replace(blankEnds, '')) error(node.id, words.videoSourceMissing(label), 'source', undefined, 'video.source')
+      else if (!matches(node.config.source, words.videoSourcePattern)) error(node.id, words.videoSource(label), 'source', undefined, 'video.source')
+    }
     if (node.kind === 'parallel' && Array.isArray(node.config.branches)) {
       const ids = new Set<string>()
       for (const branch of node.config.branches) {
@@ -2003,7 +2071,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   }
   /**
    * The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, an Entity node's state
-   * reading an entity given over a wire, a command no step handles, a camera no Show frame step shows a frame for, one
+   * reading an entity given over a wire, a command no step handles, a camera with nothing connected to its Image, one
    * Entity node per key, and the flows of Entity nodes (`entityScopes`). Mirrors `VisualGraphValidator` `GraphRules`.
    */
   function graphRules() {
@@ -2036,7 +2104,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         errors.push({ nodeId: reader.id, message: words.dynamicSource(words.stepName(reader, catalog), words.stepName(state, catalog), words.portLabel(wired[1], wired[0])), severity: 2, code: 'state.dynamicSource' }); origins.push(origin)
       }
     // Every node that declares an entity (an Entity node, a C# entity): a key no earlier one (in the graph's order)
-    // declares. An Entity node's: a step on each command's pin, and for a camera, a Show frame step that names it.
+    // declares. An Entity node's: a step on each command's pin, and for a camera, a wire into each picture it shows (its Image).
     const keys = new Map<string, GraphNode>()
     for (const hub of [...nodes.values()].filter(n => nodeSpec(n.kind)?.declares === 'entity')) {
       const name = words.stepName(hub, catalog), key = choice(hub, 'key'), first = keys.get(key)
@@ -2048,9 +2116,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         if (!outgoing.get(hub.id)!.some(e => flowPort(hub, e) === `command:${command}`)) {
           errors.push({ nodeId: hub.id, message: words.nothingOn(name, entityCommandLabel(catalog, choice(hub, 'domain'), command)), severity: 2, portId: `command:${command}`, code: 'command.unhandled' }); origins.push(origin)
         }
-      if (choice(hub, 'domain') === 'camera' && !ofKind('show_frame').some(n => choice(n, 'entity') === choice(hub, 'key'))) {
-        errors.push({ nodeId: hub.id, message: words.noFrame(name, kindLabel('show_frame')), severity: 2, portId: 'frame', code: 'camera.no_frame' }); origins.push(origin)
-      }
+      for (const [port, input] of Object.entries(pictureInputs(hub, catalog)))
+        if (!incoming.has(JSON.stringify([hub.id, port]))) {
+          errors.push({ nodeId: hub.id, message: words.noFrame(name, words.portLabel(input, port)), severity: 2, inputId: port, portId: port, code: 'camera.no_frame' }); origins.push(origin)
+        }
     }
     deviceRules()
     for (const found of entityScopes(nodes, data, outgoing, catalog)) { errors.push(found); origins.push(origin) }
@@ -2101,7 +2170,8 @@ export function valueSources(start: GraphNode, nodes: ReadonlyMap<string, GraphN
 }
 /**
  * The flows of Entity nodes, from the validator's nodes, value wires and step order wires: a state value reads no step
- * that runs in a flow (`stateSource`), its state being worked out in none; and a step reads a command's value only when no
+ * that runs in a flow (`stateSource`), its state being worked out in none, and neither does a picture a camera shows (its
+ * Image), which its frame flow works out from values alone; and a step reads a command's value only when no
  * other flow runs it (`flowPins`), each reported once per input, for the first such value it reads. The connection index
  * works these out again for a wire it weighs. Mirrors `VisualGraphValidator` `EntityScopes`.
  */
@@ -2110,11 +2180,16 @@ export function entityScopes(nodes: ReadonlyMap<string, GraphNode>, data: readon
   const error = (nodeId: string, message: string, port: string, code: DiagnosticCode) => found.push({ nodeId, message, severity: 3, inputId: port, portId: port, code })
   const declares = (node: GraphNode) => isHub(nodeSpec(node.kind, catalog))
   // Its Device input reads no step: the Device node it is wired to is a declaration, not a flow's step.
-  for (const hub of [...nodes.values()].filter(declares))
+  for (const hub of [...nodes.values()].filter(declares)) {
     for (const [port, input] of Object.entries(stateInputs(hub, catalog))) {
       const step = stateSource(hub, port, nodes, data, catalog)
       if (step) error(hub.id, words.stateSource(words.portLabel(input, port), words.stepName(hub, catalog), words.stepName(step, catalog)), port, 'scope.stateSource')
     }
+    for (const [port, input] of Object.entries(pictureInputs(hub, catalog))) {
+      const step = stateSource(hub, port, nodes, data, catalog)
+      if (step) error(hub.id, words.frameSource(words.portLabel(input, port), words.stepName(hub, catalog), words.stepName(step, catalog)), port, 'scope.frameSource')
+    }
+  }
   const pins = flowPins(nodes, outgoing, catalog)
   const first = new Map<string, DataEdge>()
   for (const edge of data) { const key = JSON.stringify([edge.target, edge.targetPort]); if (!first.has(key)) first.set(key, edge) }
@@ -2145,7 +2220,7 @@ export function settingSourceError(source: GraphNode, target: GraphNode, input: 
   return isClassNode(nodeSpec(target.kind, catalog)) && record(input.setting) && source.kind !== 'setting' ? words.settingSource(words.portLabel(input, port)) : undefined
 }
 /**
- * The step a state value of an Entity node reads: the source of the wire into it, else the first step a value node on
+ * The step a state value or picture of an Entity node reads: the source of the wire into it, else the first step a value node on
  * that wire reads, depth first in the order of the graph's value wires; undefined when nothing or only values are read.
  * Mirrors `VisualGraphValidator` `StateSource`.
  */
@@ -2179,10 +2254,9 @@ export function flowPins(nodes: ReadonlyMap<string, GraphNode>, outgoing: Readon
     else pins.push({ root, reached: reached(outgoing.get(root.id) ?? []) })
   return pins
 }
-/** An Entity node's pin as people read it: its command's label, or its type's frame label. */
+/** An Entity node's pin as people read it: its command's label, else its command in words. */
 function pinLabel(hub: GraphNode, port: string, catalog: VisualCatalogSnapshot): string {
-  return executionLabel(hub, port, catalog)
-    ?? (port.startsWith('command:') ? entityCommandLabel(catalog, text(hub.config.domain), port.slice('command:'.length)) : 'When a frame is needed')
+  return executionLabel(hub, port, catalog) ?? entityCommandLabel(catalog, text(hub.config.domain), port.slice('command:'.length))
 }
 
 export function fillGraphLayout<T extends { nodes: GraphNode[] }>(graph: T): T {
@@ -2219,8 +2293,9 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
     : spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
     : spec.declares === 'device' ? { name: 'Device', key: freeKey('device', definitionDeviceKeys(graph, catalog)) }
     : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, definitionCatalog(catalog, graph)) : {}
-  // A Custom C# node is titled by its method until someone names it; a node that declares an entity is named by it.
-  const label = spec.dynamicInputs === 'custom' || spec.declares ? {} : { label: spec.label }
+  // A Custom C# node is titled by its method until someone names it; a node that declares an entity is named by it, and
+  // an Entity of one of Home Assistant's entities by that entity (`nodeTitle`).
+  const label = spec.dynamicInputs === 'custom' || spec.declares || kind === 'ha_entity' ? {} : { label: spec.label }
   return fillGraphLayout({ ...graph, nodes: [...graph.nodes, { id, kind, ...label, config: { ...config, ...named } }] })
 }
 /** A new Entity node's entity of the type `domain`: named by its type, keyed by that name past the definition's keys. */

@@ -313,10 +313,10 @@ envelope; validation, conflicts and revisions work as above.
    only when `state` or `frame` is true. When started records its runs unless its
    `trackHistory` is false, a Trigger only when it is true (the opposite of an
    automation's default); a run started with `entities_run` is always recorded. An
-   Entity node's runs are named `Relay: State`, `Relay: Turn on` or `Relay: When a
-   frame is needed` (its entity's name, else its key, else `Entity`, and the pin),
-   and their trace has the node as `rootNodeId` and the pin as `rootPort` (`state`
-   for its state).
+   Entity node's runs are named `Relay: State`, `Relay: Turn on` or `Front door:
+   When a frame is needed` (its entity's name, else its key, else `Entity`, and the
+   flow), and their trace has the node as `rootNodeId` and the pin as `rootPort`
+   (`state` for its state, `frame` for a camera's frame).
    A graph that `trace` returns with `graph: true` carries the definition without
    its settings' values: it is not a definition to save.
 
@@ -330,7 +330,7 @@ are that domain's. Leave out a field the entity does not need: `name`, `icon`,
 `deviceClass` and `entityCategory` take no `null`. An entity on no device needs a
 `name` (`entity.name`); one on a device may leave it out. Its `device` input puts
 it on a device (see [The Device node](#the-device-node)). Other steps, such as Set
-state, Set available and Show frame, name it by its key in `config.entity`.
+state and Set available, name it by its key in `config.entity`.
 
 - **State.** The node has one input per value of `entityDomains[domain].state`,
   by that value's name (`is_on`, `value`, `brightness`). Give a value under
@@ -349,9 +349,46 @@ state, Set available and Show frame, name it by its key in `config.entity`.
   steps that run from that command alone (`scope.flow`). A command with no edge is
   a warning (`command.unhandled`). The steps must finish within 30 seconds, or the
   service call that sent the command fails.
-- **Frames.** A camera's node has the execution output `frame` instead (When a
-  frame is needed); a camera that no Show frame step names is a warning
-  (`camera.no_frame`).
+- **Frames.** A camera's node has no state values, no commands and no execution
+  output: its `image` input (from `entityDomains.camera.picture`) takes the picture
+  it shows, made from values alone each time Home Assistant asks for a frame. Wire
+  it from Camera frame (kind `camera_frame`, a value whose `entity` input takes a
+  `camera.*` id or a wire from an `ha_entity` node), through Draw
+  rectangle and Draw text if the picture is drawn on. An `image` with no wire is a
+  warning (`camera.no_frame`), and one that reads a step, even through value steps,
+  is an error (`scope.frameSource`).
+- **Live or snapshot.** Camera frame is live while it makes a camera's frame: when
+  its `image` output reaches a camera's `image` input through value steps alone, it
+  gives raw frames from one shared ffmpeg feed of the source camera, at its full
+  frame rate; a wrapper camera such as *Camera with a box* is live. Read anywhere
+  else, such as by a step after a Trigger that sends a doorbell notification, it
+  takes one snapshot from Home Assistant and passes the JPEG on unchanged. The
+  editor shows which as a badge on the node; there is no setting for it.
+- **Size.** Camera frame's optional `config.maxWidth` and `config.maxHeight`, whole
+  numbers from 16 to 8192, make the frame no larger than that, its aspect ratio
+  kept and never larger than the camera's own: with both it fits in both, with one
+  the other side follows the aspect ratio, and with neither it is the camera's own
+  size. A value outside 16 to 8192 or not whole is an error naming the field (Width
+  at most, Height at most). A live frame is read at that size; a snapshot is
+  scaled to fit.
+- **Video.** Video frame (kind `video_frame`, a value) gives a frame of a video:
+  its `config.source` is an `http://`, `https://`, `rtsp://`, `rtsps://` or
+  `rtmp://` address with a host and no spaces, or a file's absolute path such as
+  `/media/clip.mp4`; anything else, such as `concat:`, `pipe:`, `file:` or a
+  relative path, and a blank source are errors (`video.source`). `config.loop`
+  (true unless set false) starts a file again when it ends, and `maxWidth` and
+  `maxHeight` work as Camera frame's. A file must be in a folder Home Assistant
+  allows (`allowlist_external_dirs` or `media_dirs`), which is checked only when a
+  frame is made: one elsewhere fails the frame, saying so. It is live in a
+  camera's frame as Camera frame is; elsewhere it gives the newest frame of an open
+  feed of the video, else one frame read by a short run of ffmpeg.
+
+A node of kind `ha_entity` (labelled Home Assistant entity, in the Hass category, in any graph,
+automations too) gives one of Home Assistant's entities: its `config` is `{entity}`, an entity id such as
+`camera.front_door` (`entity.id` when it is blank or not an entity id), and its one
+output `entity` is an entity id of that id's domain (`entity_id:camera`), so it
+goes only into an input that takes that domain. An Entity node's state that reads
+it follows its entity, as one chosen on the step.
 
 The relay of the example *Plug over HTTP* and the edges of its two commands:
 

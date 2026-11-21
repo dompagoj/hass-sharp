@@ -54,6 +54,9 @@
 .hs-app .hs-card__title { overflow: hidden; font-size: 13px; font-weight: 650; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-card__summary { overflow: hidden; color: var(--hs-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-card__summary:empty { display: none; }
+/* A Camera frame's mode: a small chip under its summary, in the image pin's colour while it is live. */
+.hs-app .hs-card__mode { justify-self: start; overflow: hidden; max-width: 100%; margin-top: 3px; padding: 1px 7px; border: 1px solid var(--hs-line); border-radius: 6px; background: var(--hs-soft); color: var(--hs-muted); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.hs-app .hs-card__mode--live { border-color: color-mix(in oklab, var(--hs-port-image) 40%, var(--hs-line)); background: color-mix(in oklab, var(--hs-port-image) 13%, var(--hs-surface)); color: color-mix(in oklab, var(--hs-port-image) 62%, var(--hs-text)); }
 /* The device an entity is on, beside its header pin: cut short so a long name never widens the card. */
 .hs-app .hs-card__device { flex: 0 1 auto; min-width: 0; max-width: 96px; }
 /* Triggers start the automation: a solid header sets them apart from the steps they run. */

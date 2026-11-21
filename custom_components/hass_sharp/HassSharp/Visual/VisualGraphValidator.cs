@@ -36,14 +36,14 @@ public static class VisualGraphValidator
         "node.invalid", "node.duplicate", "node.unknownKind", "node.unreachable", "limit.nesting",
         "edge.invalid", "edge.duplicate", "edge.endpoint", "edge.unknownKind", "edge.valueWirePins", "edge.orderWirePins", "edge.orderPinName",
         "port.unknownExecution", "port.executionTaken", "port.unknownOutput", "port.unknownInput", "port.inputTaken", "trigger.incoming",
-        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow", "scope.settingSource",
+        "cycle.execution", "cycle.data", "scope.execution", "scope.data", "scope.conditionResult", "scope.loopResult", "scope.stateSource", "scope.flow", "scope.settingSource", "scope.frameSource",
         "flow.pure", "flow.declaration", "pure.unused", "custom.signature", "csharp.signature", "property.unset", "property.unknown",
         "definition.invalid", "definition.unknownEntity", "definition.entityKey", "definition.duplicateEntity", "definition.entityDomain",
         "definition.deviceKey", "definition.duplicateDevice",
         "node.document", "node.singleton", "root.incoming",
         "setting.unknown", "setting.secretLiteral", "state.dynamicSource", "command.unhandled", "entity.stateless", "entity.no_value", "entity.name", "entity.partialState",
         "device.name", "device.via", "device.viaUnknown", "device.viaCycle", "device.configurationUrl", "device.empty",
-        "http.url", "http.body", "download.checksum", "camera.entity", "camera.no_frame",
+        "http.url", "http.body", "download.checksum", "camera.no_frame", "entity.id", "video.source",
     ];
 
     /// <summary>
@@ -172,6 +172,16 @@ public static class VisualGraphValidator
         internal const string TimeOfDay = "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$";
         /// <summary>A web address as an HTTP request or a download takes one: http:// or https://, a host, then anything without a space.</summary>
         internal const string WebAddressPattern = @"^[Hh][Tt][Tt][Pp][Ss]?://[^\x00-\x20\x7f/?#]+(?:[/?#][^\x00-\x20\x7f]*)?$";
+        /// <summary>
+        /// What a Video frame reads (<c>VideoSources</c> checks the same at run time): an http, https, rtsp, rtsps or rtmp address
+        /// with a host and no spaces, or a file's absolute path without control characters. Nothing else reaches ffmpeg: none
+        /// of its other protocols (concat:, pipe:, file:, data:, subfile, ...) and no relative path.
+        /// </summary>
+        internal const string VideoSourcePattern = @"^(?:(?:[Hh][Tt][Tt][Pp][Ss]?|[Rr][Tt][Ss][Pp][Ss]?|[Rr][Tt][Mm][Pp])://[^\x00-\x20\x7f/?#]+(?:[/?#][^\x00-\x20\x7f]*)?|/[^\x00-\x1f\x7f]*)$";
+        /// <summary>A Video frame's source that is not one it reads.</summary>
+        internal static string VideoSource(string label) => $"{label} must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's absolute path such as /media/clip.mp4";
+        /// <summary>A Video frame's source left blank.</summary>
+        internal static string VideoSourceMissing(string label) => $"{label} is required";
         /// <summary>A SHA-256 checksum: 64 hexadecimal characters, in either case.</summary>
         internal const string ChecksumPattern = "^[0-9A-Fa-f]{64}$";
         /// <summary>An address typed into an HTTP request or a download that is not a web address.</summary>
@@ -441,10 +451,17 @@ public static class VisualGraphValidator
         internal static string Stateless(string type) => $"{Capital(Article(type))} {type.ToLowerInvariant()} has no state to set";
         /// <summary>A Set state step given none of its entity's state values.</summary>
         internal static string NoValue(string step) => $"{step} needs at least one value";
-        /// <summary>A Show frame step naming an entity of the definition that is not a camera, by its name; whether the definition has one.</summary>
-        internal static string NotACamera(string name, bool anyCamera) => anyCamera ? $"{Name(name)} is not a camera; choose one of this definition's cameras" : $"{Name(name)} is not a camera; add a camera to this definition first";
-        /// <summary>A camera an Entity node declares that no Show frame step shows a frame for, named by its name.</summary>
-        internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: add {Article(label)} {label} step for it";
+        /// <summary>A camera an Entity node declares with nothing connected to its picture input (<paramref name="label"/>, its Image), named by its name.</summary>
+        internal static string NoFrame(string name, string label) => $"{Name(name)} never shows a frame: {label} is not connected";
+        /// <summary>
+        /// A camera's picture input (its Image) that reads a step: a frame is made in a flow of its own, from values alone,
+        /// in which no step runs.
+        /// </summary>
+        internal static string FrameSource(string value, string name, string step) => $"{value} of {name} cannot read {step}, which runs in a flow: make the picture from values alone, such as Camera frame and Draw rectangle";
+        /// <summary>A Home Assistant entity (<c>ha_entity</c>) whose entity is left blank.</summary>
+        internal static string EntityIdMissing(string node) => $"{node} has no entity: choose one, such as camera.front_door";
+        /// <summary>A Home Assistant entity (<c>ha_entity</c>) whose entity is not an entity id, quoted as written.</summary>
+        internal static string NotAnEntityId(string id) => $"{Name(id)} is not an entity id: choose one such as camera.front_door";
         // An Entity node's entity, named by EntityName.
         /// <summary>What an Entity node's key must be, as an entity key is (<c>SharpEntity.KeyPattern</c>); a Device node's key is of the same form.</summary>
         internal const string EntityKeyPattern = "^[a-z][a-z0-9_]{0,39}$";
@@ -703,8 +720,8 @@ public static class VisualGraphValidator
                     // An output whose property is not chosen yet has no type: a wire from it says to choose one. When one is chosen
                     // but cannot be read (a property the value's type lacks), the node itself says so and the wire gets nothing.
                     if (PropertyOf(output) != "" && type == "") { if (Text(Config(source), "property") == "") Error(Id(target), Words.ChooseProperty(Words.StepName(source, Spec(source))), tp, tp, "property.unset"); }
-                    // A Setting whose setting is unknown has no type; the Setting node itself says so.
-                    else if (type == "" && Kind(source) == "setting") { }
+                    // A Setting whose setting is unknown, and an Entity whose entity is not an entity id, have no type; the node itself says so.
+                    else if (type == "" && Kind(source) is "setting" or "ha_entity") { }
                     // A Select property node reads a value whose own type has properties.
                     else if (SelectsProperties(Spec(target), tp) ? TypeProperties(Root, type).Length == 0 : !expected.Any(t => CompatibleTypes(type, t)))
                         Error(Id(target), WrongDomain(target, tp, type) ?? (SelectsProperties(Spec(target), tp) && KnownType(type) ? Words.NoProperties(Root, type) : Words.Incompatible(Root, Prefix(target) + Words.PortLabel(input, tp), type, expected)), tp, tp);
@@ -763,7 +780,7 @@ public static class VisualGraphValidator
         string KindLabel(string kind) => Text(Root["nodes"]?[kind], "label", Words.KeyWords(kind));
         /// <summary>
         /// The rules about the graph as a whole: a kind a graph holds once, and in an entity graph, an Entity node's state
-        /// reading an entity given over a wire, a command no step handles, a camera no Show frame step shows a frame for,
+        /// reading an entity given over a wire, a command no step handles, a camera with nothing connected to its Image,
         /// one Entity node per key, and the flows of Entity nodes (<see cref="EntityScopes"/>).
         /// </summary>
         void GraphRules()
@@ -787,7 +804,7 @@ public static class VisualGraphValidator
                             !FollowedSource(nodes[Text(wire, "source")], snapshot)) is { Key: not null } wired && readers.Add(Id(reader)))
                         errors.Add(new(Id(reader), Words.DynamicSource(Words.StepName(reader, Spec(reader)), Words.StepName(state, Spec(state)), Words.PortLabel(wired.Value, wired.Key)), 2, Code: "state.dynamicSource"));
             // Every node that declares an entity (an Entity node, a C# entity): a key no earlier one (in the graph's order)
-            // declares. An Entity node's: a step on each command's pin, and for a camera, a Show frame step that names it.
+            // declares. An Entity node's: a step on each command's pin, and for a camera, a wire into each picture it shows (its Image).
             var keys = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             foreach (var hub in nodes.Values.Where(n => Declares(Spec(n), "entity")))
             {
@@ -798,8 +815,9 @@ public static class VisualGraphValidator
                 foreach (var (command, entry) in DeclaredDomain(hub, Root)?["commands"] as JsonObject ?? [])
                     if (!outgoing[Id(hub)].Any(e => FlowPort(hub, e) == "command:" + command))
                         errors.Add(new(Id(hub), Words.NothingOn(name, Text(entry, "label", Words.KeyWords(command))), 2, PortId: "command:" + command, Code: "command.unhandled"));
-                if (Choice(hub, "domain") == HassDomains.Camera && !OfKind("show_frame").Any(n => Choice(n, "entity") == Choice(hub, "key")))
-                    errors.Add(new(Id(hub), Words.NoFrame(name, KindLabel("show_frame")), 2, PortId: "frame", Code: "camera.no_frame"));
+                foreach (var (port, input) in PictureInputs(hub, snapshot))
+                    if (!incoming.ContainsKey((Id(hub), port)))
+                        errors.Add(new(Id(hub), Words.NoFrame(name, Words.PortLabel(input, port)), 2, InputId: port, PortId: port, Code: "camera.no_frame"));
             }
             DeviceRules();
             EntityScopes();
@@ -831,16 +849,22 @@ public static class VisualGraphValidator
         }
         /// <summary>
         /// The flows of Entity nodes: a state value reads no step that runs in a flow (<see cref="StateSource"/>), its state
-        /// being worked out in none; and a step reads a command's value only when no other flow runs it (<see cref="FlowPins"/>),
-        /// each reported once per input, for the first such value it reads.
+        /// being worked out in none, and neither does a picture a camera shows (its Image), which its frame flow works out from
+        /// values alone; and a step reads a command's value only when no other flow runs it (<see cref="FlowPins"/>), each
+        /// reported once per input, for the first such value it reads.
         /// </summary>
         void EntityScopes()
         {
             // Its Device input reads no step: the Device node it is wired to is a declaration, not a flow's step.
             foreach (var hub in nodes.Values.Where(n => IsHub(Spec(n))))
+            {
                 foreach (var (port, input) in StateInputs(hub, Root))
                     if (StateSource(hub, port) is { } step)
                         Error(Id(hub), Words.StateSource(Words.PortLabel(input, port), Words.StepName(hub, Spec(hub)), Words.StepName(step, Spec(step))), port, port, "scope.stateSource");
+                foreach (var (port, input) in PictureInputs(hub, snapshot))
+                    if (StateSource(hub, port) is { } step)
+                        Error(Id(hub), Words.FrameSource(Words.PortLabel(input, port), Words.StepName(hub, Spec(hub)), Words.StepName(step, Spec(step))), port, port, "scope.frameSource");
+            }
             var pins = FlowPins();
             foreach (var edge in data)
             {
@@ -868,7 +892,7 @@ public static class VisualGraphValidator
         string? SettingSourceError(JsonObject source, JsonObject target, JsonNode input, string port) =>
             IsClassNode(Spec(target)) && input["setting"] is JsonObject && Kind(source) != "setting" ? Words.SettingSource(Words.PortLabel(input, port)) : null;
         /// <summary>
-        /// The step a state value of an Entity node reads: the source of the wire into it, else the first step a value node
+        /// The step a state value or picture of an Entity node reads: the source of the wire into it, else the first step a value node
         /// on that wire reads, depth first in the order of the graph's value wires; null when nothing or only values are read.
         /// Mirrored by <c>stateSource</c> in <c>contract.ts</c>.
         /// </summary>
@@ -906,14 +930,9 @@ public static class VisualGraphValidator
                 else pins.Add((root, null, Reached(outgoing[Id(root)])));
             return pins;
         }
-        /// <summary>An Entity node's pin as people read it: its command's label, or its type's frame label.</summary>
-        string PinLabel(JsonObject hub, string port) => DeclaredDomain(hub, Root) is var row && port.StartsWith("command:", StringComparison.Ordinal)
-            ? Text(row?["commands"]?[port["command:".Length..]], "label", Words.KeyWords(port["command:".Length..]))
-            : Text(row?["frame"], "label", "When a frame is needed");
-        /// <summary>Whether the definition's entity with this key is a camera.</summary>
-        bool IsCamera(string key) => Text(DefinitionEntity(Root, key), "domain") == HassDomains.Camera;
-        /// <summary>The definition's entity with this key as a sentence names it: its name, else its key.</summary>
-        string EntityName(string key) => Text(DefinitionEntity(Root, key), "name") is { } name && Words.Trimmed(name).Length > 0 ? name : key;
+        /// <summary>An Entity node's pin as people read it: its command's label, else its command in words.</summary>
+        string PinLabel(JsonObject hub, string port) =>
+            Text(DeclaredDomain(hub, Root)?["commands"]?[port["command:".Length..]], "label", Words.KeyWords(port["command:".Length..]));
         /// <summary>Whether a step's input is given a value: a wire into it, or an operand that is not unset.</summary>
         bool Supplied(JsonObject node, string port) =>
             incoming.ContainsKey((Id(node), port)) || TryGetInputValue(node, port, out var operand) && operand is JsonObject given && Text(given, "kind") != "unset";
@@ -1088,12 +1107,12 @@ public static class VisualGraphValidator
             if (spec["documents"] is JsonArray documents && !Strings(documents).Contains(document)) Error(id, Words.WrongDocument(Words.StepName(node, spec), document), code: "node.document");
             // An entity graph's steps name its definition's entities and its settings.
             if (EntityGraph && spec["documents"] is JsonArray && spec["config"]?["entity"] != null && cfg["entity"] is JsonValue ev && ev.TryGetValue<string>(out var entityKey))
-            {
                 if (DefinitionEntity(Root, entityKey) == null) Error(id, Words.UnknownEntity(entityKey, ConfigLabel(spec["config"]?["entity"], "entity")), "entity", code: "definition.unknownEntity");
-                // Show frame names one of the definition's cameras.
-                else if (kind == "show_frame" && !IsCamera(entityKey))
-                    Error(id, Words.NotACamera(EntityName(entityKey), DefinitionItems(Root, "entities").Any(e => IsCamera(Text(e, "key")))), "entity", code: "camera.entity");
-            }
+            // A Home Assistant entity (ha_entity) gives one of Home Assistant's entities, by its id: chosen, and an entity id (one left out is
+            // the config rule's below). Its output's type is its entity's domain's (ResolveEntities).
+            if (kind == "ha_entity" && cfg["entity"] is JsonValue pickedValue && pickedValue.TryGetValue<string>(out var picked))
+                if (Words.Trimmed(picked).Length == 0) Error(id, Words.EntityIdMissing(Words.StepName(node, spec)), "entity", code: "entity.id");
+                else if (EntityIdDomain(picked) == null) Error(id, Words.NotAnEntityId(picked), "entity", code: "entity.id");
             // A Set state needs an entity whose type has a state, and at least one of its values.
             if (EntityGraph && kind == "set_entity_state" && DefinitionEntity(Root, Text(cfg, "entity")) is { } described && EntityDomain(Root, Text(cfg, "entity")) is { } row)
             {
@@ -1249,6 +1268,14 @@ public static class VisualGraphValidator
                 if (kind == "http_request" && method is "GET" or "HEAD" && Supplied(node, "body"))
                     Error(id, Words.BodyMethod(Words.PortLabel(inputs["body"], "body"), method), "body", code: "http.body");
                 if (kind == "download_file" && Typed("sha256") is { } checksum && !Match(checksum, Words.ChecksumPattern)) Error(id, Words.Checksum(Words.PortLabel(inputs["sha256"], "sha256")), "sha256", code: "download.checksum");
+            }
+            // A Video frame's source, typed in: an address of a protocol it allows, or a file's absolute path (whether the file
+            // is in a folder Home Assistant allows is known only at run time).
+            if (kind == "video_frame" && cfg["source"] is JsonValue sourceValue && sourceValue.TryGetValue<string>(out var source))
+            {
+                var label = ConfigLabel(spec["config"]?["source"], "source");
+                if (Words.Trimmed(source).Length == 0) Error(id, Words.VideoSourceMissing(label), "source", code: "video.source");
+                else if (!Match(source, Words.VideoSourcePattern)) Error(id, Words.VideoSource(label), "source", code: "video.source");
             }
             if (kind == "parallel" && cfg["branches"] is JsonArray branches)
             {

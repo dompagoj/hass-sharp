@@ -543,7 +543,7 @@ it('wiring an entity to a device takes away its need for a name', () => {
 it('a wire refused for its type onto a nameless entity\'s wired Device pin is refused for that alone', () => {
   let graph = add(empty(), 'device', 'plug', { key: 'plug', name: 'Hall plug' })
   graph = add(graph, 'entity', 'relay', { key: 'relay', domain: 'binary_sensor', name: '' })
-  graph = add(graph, 'camera_snapshot', 'snap', { entity: lit('entity_id:camera', 'camera.front') })
+  graph = add(graph, 'camera_frame', 'snap', { entity: lit('entity_id:camera', 'camera.front') })
   graph = connectData(graph, 'plug', 'entities', 'relay', 'device')
   expect(validateGraph(graph).filter(d => d.nodeId === 'relay' || d.nodeId === 'plug')).toEqual([])
   // An image is no device. Dropped on the Device pin, the wire would also leave the entity with no device, and so in
@@ -745,9 +745,12 @@ it('the node has the pins of its type', () => {
   expect(executionPorts(light)).toEqual(['command:turn_on', 'command:turn_off'])
   expect(executionLabel(light, 'command:turn_on')).toBe('Turn on')
   expect(dataOutputs(light)['command:turn_on:brightness']).toMatchObject({ pointer: '/data/brightness', group: 'command:turn_on' })
+  // A camera has no execution pin: what it shows comes into its Image, a picture input that is no state value.
   const camera = add(empty(), 'entity', 'c', { key: 'cam', domain: 'camera' }).nodes[0]
-  expect(executionPorts(camera)).toEqual(['frame'])
-  expect(executionLabel(camera, 'frame')).toBe('When a frame is needed')
+  expect(executionPorts(camera)).toEqual([])
+  expect(Object.keys(dataInputs(camera))).toEqual(['device', 'image'])
+  expect(dataInputs(camera).image).toMatchObject({ types: ['image'], required: false, label: 'Image', picture: true })
+  expect(stateInputs(camera, nodeCatalog)).toEqual({})
   expect(Object.keys(stateInputs({ ...light, config: { ...light.config, key: '' } }, nodeCatalog))).toEqual(['is_on', 'brightness'])
 })
 
@@ -778,11 +781,21 @@ it('a step can be connected to a command, and the card lists each command with i
   expect(brightness.name).toMatch(/^Output Turn on: Brightness, /)
 })
 
-it('a camera\'s card shows its frame pin by its label', () => {
-  const graph = add(empty(), 'entity', 'c', { key: 'cam', domain: 'camera', name: 'Door' })
-  expect(rightColumn(graph, 'c')).toEqual(['When a frame is needed'])
-  const view = buildNodeView(graph.nodes[0], { graph, catalog: nodeCatalog, diagnostics: [] })
-  expect(view.rows.find(r => r.output?.id === 'frame')!.output!.name).toBe('When a frame is needed execution output, not connected')
+it('a camera\'s card shows its Image input on the left, and no pin on the right', () => {
+  let graph = add(empty(), 'entity', 'c', { key: 'cam', domain: 'camera', name: 'Door' })
+  expect(rightColumn(graph, 'c')).toEqual([])
+  let view = buildNodeView(graph.nodes[0], { graph, catalog: nodeCatalog, diagnostics: [] })
+  // Its Device pin is in the header; its Image is the one row, an input that takes a wire.
+  expect(view.headerInput?.port).toBe('device')
+  expect(view.rows.map(r => [r.input?.port, r.output?.id])).toEqual([['image', undefined]])
+  const image = view.rows[0].input!
+  expect(image.pin).toMatchObject({ id: 'data:image', side: 'in', label: 'Image', typeId: 'image', connected: false })
+  expect(image.pin.name).toBe('Input Image, Image, not connected')
+  // A Camera frame connected into it is its source.
+  graph = add(graph, 'camera_frame', 'take', { entity: lit('entity_id:camera', 'camera.front') })
+  graph = connectData(graph, 'take', 'image', 'c', 'image')
+  view = buildNodeView(graph.nodes[0], { graph, catalog: nodeCatalog, diagnostics: [] })
+  expect(view.rows[0].input).toMatchObject({ mode: 'connected', source: 'Camera frame · Frame', sourceNode: 'take' })
 })
 
 it('a flow is named by node and port, as the server names it', () => {
@@ -804,7 +817,9 @@ it('a run of a node\'s flow reads as the entity and the flow', () => {
   cameras = add(cameras, 'entity', 'k', { key: 'yard', domain: 'camera', name: '' })
   cameras = add(cameras, 'entity', 'n', { key: '', domain: 'switch', name: '' })
   const named = definitionNames(cameras, nodeCatalog)!
+  // A camera's frames run in a flow with no pin, named as the server names it.
   expect(runName(flowMethod(cameras.nodes[0], 'frame'), named)).toBe('Front door: When a frame is needed')
+  expect(runName(flowMethod(cameras.nodes[1], 'frame'), named)).toBe('yard: When a frame is needed')
   expect(runName(flowMethod(cameras.nodes[1], 'state'), named)).toBe('yard: State')
   expect(runName(flowMethod(cameras.nodes[2], 'command:turn_on'), named)).toBe('Entity: Turn on')
   // A port the node does not have is no run of it, and keeps its recorded name.
@@ -866,7 +881,8 @@ it('a declaring node is named by its entity in messages and run names', () => {
 })
 
 it('the old steps are gone from the catalog and the step library', () => {
-  for (const kind of ['entity_state', 'entity_command', 'camera_frame']) expect(nodeCatalog.nodes).not.toHaveProperty(kind)
+  for (const kind of ['entity_state', 'entity_command', 'camera_snapshot', 'show_frame']) expect(nodeCatalog.nodes).not.toHaveProperty(kind)
+  expect(catalogPalette(nodeCatalog, 'entity').map(item => item.kind)).not.toContain('show_frame')
   const entity = catalogPalette(nodeCatalog, 'entity').filter(item => item.category === 'Entity').map(item => item.kind)
   expect(entity.slice(0, 6)).toEqual(['entity', 'device', 'csharp_entity', 'csharp_device', 'entity_setup', 'set_entity_state'])
   expect(diagnosticCodes).not.toContain('state.duplicate')

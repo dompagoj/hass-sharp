@@ -367,7 +367,7 @@ it('a problem on a field focuses that field', async () => {
   expect(document.activeElement).toBe(control(keyed.root, 'Key'))
 })
 
-it('a problem on a command or a frame pin has no field to go to', () => {
+it('a problem on a command pin has no field to go to, and a camera\'s unconnected Image goes to its row', () => {
   const warning = (nodeId: string, portId: string, message: string): VisualDiagnostic =>
     ({ nodeId, portId, code: null, message, severity: 2, startLine: null, startColumn: null })
   const unhandled = 'Lamp does nothing on Turn on: connect a step to Turn on'
@@ -378,11 +378,13 @@ it('a problem on a command or a frame pin has no field to go to', () => {
   dispose?.()
   document.body.innerHTML = ''
 
-  const noFrame = 'Door never shows a frame: add a Show frame step for it'
-  const camera = mount(add(empty(), 'entity', 'c', { key: 'door', domain: 'camera', name: 'Door' }), 'c', { diagnostics: [warning('c', 'frame', noFrame)] })
+  // A camera has no frame pin: its warning is on its Image input, whose row it goes to.
+  const noFrame = 'Door never shows a frame: Image is not connected'
+  const camera = mount(add(empty(), 'entity', 'c', { key: 'door', domain: 'camera', name: 'Door' }), 'c', { diagnostics: [{ ...warning('c', 'image', noFrame), inputId: 'image' }] })
   const cameraListed = camera.root.querySelector('.hs-insp-problems')!
   expect(cameraListed.textContent).toContain(noFrame)
-  expect(cameraListed.querySelector('button.hs-insp-problem__body')).toBeNull()
+  expect(cameraListed.querySelector('button.hs-insp-problem__body')).not.toBeNull()
+  expect(row(camera.root, 'image')).not.toBeNull()
 })
 
 it('a command\'s value in the Outputs list says which command it belongs to', () => {

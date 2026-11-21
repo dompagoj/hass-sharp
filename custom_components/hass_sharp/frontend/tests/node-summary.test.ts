@@ -25,7 +25,7 @@ describe('the summaries of an entity definition\'s steps', () => {
     expect(both(node('set_entity_available', { entity: 'relay', available: lit('boolean', true) }))).toBe('Set available ▸ Relay')
   })
   it('read a step of a kind this version does not have, such as the old State, as an unknown kind', () => {
-    for (const kind of ['entity_state', 'entity_command', 'camera_frame']) {
+    for (const kind of ['entity_state', 'entity_command', 'camera_snapshot', 'show_frame']) {
       expect(stepSummary(node(kind, { entity: 'power', command: 'turn_on' }), nodeCatalog, undefined, graph), kind).toBeUndefined()
       expect(both(node(kind, { entity: 'power', command: 'turn_on' })), kind).toBe('Unknown node kind')
     }
@@ -110,33 +110,47 @@ describe('HTTP request and Download file', () => {
   })
 })
 
-describe('Take a picture, Draw rectangle and Draw text', () => {
+describe('Camera frame, Draw rectangle and Draw text', () => {
   it('name the camera and the colour', () => {
-    expect(both(node('camera_snapshot', { entity: lit('entity_id:camera', 'camera.front') }))).toBe('Take a picture · camera.front')
-    expect(nodeSummary(node('camera_snapshot', { entity: lit('entity_id:camera', 'camera.front') }), nodeCatalog, { entities: [{ entity_id: 'camera.front', name: 'Front door' }] })).toBe('Take a picture · Front door')
+    expect(both(node('camera_frame', { entity: lit('entity_id:camera', 'camera.front') }))).toBe('Camera frame · camera.front')
+    expect(nodeSummary(node('camera_frame', { entity: lit('entity_id:camera', 'camera.front') }), nodeCatalog, { entities: [{ entity_id: 'camera.front', name: 'Front door' }] })).toBe('Camera frame · Front door')
     expect(both(node('image_draw_rect', { image: { kind: 'unset' } }))).toBe('Draw rectangle · Red')
     expect(both(node('image_draw_rect', { image: { kind: 'unset' }, color: 'Green' }))).toBe('Draw rectangle · Green')
     expect(both(node('image_draw_text', { image: { kind: 'unset' }, text: lit('string', 'Front door') }))).toBe('Draw text · White')
     expect(both(node('image_draw_text', { image: { kind: 'unset' }, color: 'Yellow' }))).toBe('Draw text · Yellow')
   })
+  it('name a connected camera as its source does: an Entity by its entity\'s name, else its id', () => {
+    const wired = (source: GraphNode): Graph => ({ ...graph, nodes: [...graph.nodes, source, node('camera_frame', { entity: { kind: 'unset' } })],
+      edges: [{ id: 'w', kind: 'data', source: source.id, sourcePort: source.kind === 'ha_entity' ? 'entity' : 'value', target: 'n', targetPort: 'entity' }] })
+    const door: GraphNode = { id: 'door', kind: 'ha_entity', config: { entity: 'camera.dummy_front_door' } }
+    const names = { entities: [{ entity_id: 'camera.dummy_front_door', name: 'Dummy Front Door' }] }
+    expect(nodeSummary(node('camera_frame', {}), nodeCatalog, names, wired(door))).toBe('Camera frame · Dummy Front Door')
+    expect(nodeSummary(node('camera_frame', {}), nodeCatalog, undefined, wired(door))).toBe('Camera frame · camera.dummy_front_door')
+    expect(nodeSummary(node('camera_frame', {}), nodeCatalog, undefined, wired({ id: 'c', kind: 'constant', label: 'Porch', config: { type: 'entity_id:camera' } }))).toBe('Camera frame · Porch')
+  })
   it('fall back to the description for a camera not chosen', () => {
-    expect(nodeSummary(node('camera_snapshot', {}))).toBe(nodeCatalog.nodes.camera_snapshot.description)
+    expect(nodeSummary(node('camera_frame', {}))).toBe(nodeCatalog.nodes.camera_frame.description)
   })
 })
 
-describe('Show frame', () => {
-  const cameras = definitionOf([hub('annotated', 'camera', 'Annotated'), hub('yard', 'camera')])
-  const summary = (n: GraphNode) => {
-    const lifted = nodeSummary(n, withGraphTypes(nodeCatalog, cameras), undefined, cameras)
-    expect(nodeSummary(n, nodeCatalog, undefined, cameras)).toBe(lifted)
-    return lifted
-  }
-  it('name the camera by its name, else its key', () => {
-    expect(summary(node('show_frame', { entity: 'annotated', image: { kind: 'unset' } }))).toBe('Show frame ▸ Annotated')
-    expect(summary(node('show_frame', { entity: 'yard', image: { kind: 'unset' } }))).toBe('Show frame ▸ yard')
-    expect(summary(node('show_frame', { entity: 'gone' }))).toBe('Show frame ▸ gone')
+describe('Video frame', () => {
+  it('names a file by its name and an address by its host and port, never its user, password, path or query', () => {
+    expect(both(node('video_frame', { source: '/media/clips/front door.mp4' }))).toBe('Video frame · front door.mp4')
+    expect(both(node('video_frame', { source: 'rtsp://admin:hunter2@door.local:8554/live' }))).toBe('Video frame · door.local:8554')
+    expect(both(node('video_frame', { source: 'https://example.com/clip.mp4?token=hunter2' }))).toBe('Video frame · example.com')
   })
-  it('fall back to the description for a camera not chosen', () => {
-    expect(summary(node('show_frame', {}))).toBe(nodeCatalog.nodes.show_frame.description)
+  it('falls back to the description for a source left blank', () => {
+    expect(nodeSummary(node('video_frame', { source: '' }))).toBe(nodeCatalog.nodes.video_frame.description)
+    expect(nodeSummary(node('video_frame', {}))).toBe(nodeCatalog.nodes.video_frame.description)
+  })
+})
+
+describe('an Entity of one of Home Assistant\'s entities', () => {
+  it('says the domain of its entity, its name being its title', () => {
+    expect(nodeSummary(node('ha_entity', { entity: 'camera.dummy_front_door' }))).toBe('Home Assistant entity · camera')
+    expect(nodeSummary(node('ha_entity', { entity: 'light.kitchen' }))).toBe('Home Assistant entity · light')
+  })
+  it('falls back to the description without an entity id', () => {
+    for (const entity of ['', 'not an id', undefined]) expect(nodeSummary(node('ha_entity', { entity }))).toBe(nodeCatalog.nodes.ha_entity.description)
   })
 })

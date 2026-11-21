@@ -134,7 +134,7 @@ entity class, which the class of a [C# entity](#c-nodes) derives from.
 | Text | **Text** | Set text (**Text**) | **Shortest length** (0), **Longest length** (100, at most 255), **Pattern**: a regular expression matched from the start of the text (end it with `$` to match the whole text); **Shown as**: text or password | `SharpText` |
 | Light | **On**; **Brightness**, a whole number from 0 to 255, optional, only with **Can be dimmed** | Turn on (**Brightness**, optional), Turn off | **Can be dimmed** | `SharpLight` |
 | Cover | **Closed**, optional; **Position**, a whole number from 0 (closed) to 100 (open), optional, only with **Has a position** | Open, Close, Stop, Set position (**Position**) | **Has a position** | `SharpCover` |
-| Camera | nothing: its picture comes from Show frame | none; **When a frame is needed** instead (see [Cameras](#cameras)) | **Seconds between frames**: 0.5 to 60 (1) | `SharpCamera` |
+| Camera | nothing: its picture comes into its **Image** (see [Cameras](#cameras)) | none | **Seconds between frames**: the fewest seconds between two frames, from 1/30 to 60; empty for as fast as the source gives them, at most 30 a second | `SharpCamera` |
 
 Select an Entity node to edit it in the panel on the right: its name at the top
 (what Home Assistant shows), then its **Key**, its **Type**, a **Device class** (a
@@ -180,8 +180,8 @@ new definition starts with one, a binary sensor named after the definition.
   30 seconds passing, fails the service call that sent the command (a flow past its
   30 seconds goes on in the background). A command with no step connected to it is a
   warning: "Relay does nothing on Turn on: connect a step to Turn on".
-- **A camera** has **When a frame is needed** on its right instead; see
-  [Cameras](#cameras).
+- **A camera** has no state values and no commands: its **Image** input on the left
+  takes the picture it shows; see [Cameras](#cameras).
 - **Its device.** The **Device** pin in its header takes a wire from a Device
   node's **Entities** pin, which puts the entity on that device; the **Device** field
   in its panel does the same. Without one it stands alone. See [Devices](#devices).
@@ -227,7 +227,7 @@ while the definition is off, starting or not running. Unlike an automation, a
 definition that is off cannot be run. Nothing else is run by hand: a command runs
 when the entity's service is called in Home Assistant (try it on the entity's page),
 an Entity node's state follows its sources, When started runs when the definition
-starts, and a frame is made when a camera is watched.
+starts, and a camera's frame is made when it is watched.
 
 ## Settings and secrets
 
@@ -370,35 +370,106 @@ time. A C# node's class chooses this per entity with `RestoreState`.
 
 ## Cameras
 
-A camera shows the picture its last **Show frame** step gave it. A camera's Entity
-node and four steps work with pictures, in definitions only:
+A camera shows the picture connected to its Entity node's **Image** input, on its
+left. The picture is made from values alone, read left to right, with no step order
+wire and no step: Home Assistant asks for a frame only while someone watches the
+camera or asks for its picture, and the values connected to Image are worked out
+then; nothing runs otherwise. These work with pictures, in definitions only but for
+Home Assistant entity:
 
-- **When a frame is needed**, the pin on the right of a camera's Entity node, runs
-  the steps connected to it when Home Assistant needs a new picture from the camera,
-  which it does only while someone watches it or asks for its picture: nothing runs
-  otherwise.
-- **Take a picture** takes the current picture of another Home
-  Assistant camera.
+- **Home Assistant entity**, in the step library's **Home Assistant** group, gives
+  one of Home Assistant's entities by its id, chosen from all of them in its panel.
+  Its card is titled by the entity's name, else its id, with its type under it
+  ("Home Assistant entity · camera"), and its pin is an entity id of that type: a
+  camera's goes into Camera frame, a light's does not. It works in automations too,
+  wherever an entity id is taken, and an Entity node's state that reads it follows
+  its entity as one chosen on the step.
+- **Camera frame** gives a frame of a Home Assistant camera as its **Frame**:
+  connect a Home Assistant entity of the camera to its **Camera**, or choose the
+  camera there. It is a value, worked out each time something reads it, and a camera
+  that cannot give a frame fails what reads it. **Width at most** and **Height at
+  most** (whole numbers from 16 to 8192 pixels, both empty unless set) make the frame
+  no larger than that: with both, it fits in both; with one alone, that side is
+  limited and the other follows the aspect ratio. A frame keeps its aspect ratio and
+  is never made larger than the camera's own.
+- **Video frame** gives a frame of a video as its **Frame**: its **Source** is a
+  stream's address (`http://`, `https://`, `rtsp://`, `rtsps://` or `rtmp://`, such
+  as `rtsp://door.local:8554/live`) or a file's absolute path (such as
+  `/media/clips/porch.mp4`). A file plays at its own frame rate and, with **Loop**
+  (on unless set off), starts again when it ends; with Loop off its last frame stays.
+  Width at most and Height at most work as Camera frame's. Its card reads "Video
+  frame · porch.mp4", or the address's host ("Video frame · door.local:8554"), never
+  its password. See [Videos](#videos).
 - **Draw rectangle** and **Draw text** are value steps that draw on a picture: a
   **Colour** (Red, Green, Blue, Yellow, Orange, White or Black), a rectangle's
   **Thickness** (1 to 50 pixels, 2 unless set), a text's **Size** (8 to 200 pixels,
   16 unless set) and **Background**, a translucent box behind it.
-- **Show frame** makes a picture the camera's current one, in a frame
-  flow or in any other flow, such as a Trigger's.
 
-So a camera either makes its frames when they are needed (steps on When a frame is
-needed that end in Show frame), or is given them by other flows. A frame flow that
-ends without Show frame keeps the current picture, and a camera that no Show frame
-step names is a warning: "Front door with a box never shows a frame: add a Show
-frame step for it". The example "Camera with a box" takes a picture of
-`camera.front_door`, draws a box and a caption on it and shows it.
-A camera written in C# does the same with `Frame()` or `OnFrame`, and `Show`; see
-[Cameras in C#](#cameras-in-c).
+The example "Camera with a box" reads like this: a Home Assistant entity of
+`camera.front_door` goes into Camera frame, Draw rectangle and Draw text draw a box and a caption on its
+Frame, and the result goes into the Image of the camera "Front door with a box".
+A camera whose Image has nothing connected is a warning: "Front door with a box
+never shows a frame: Image is not connected". Image cannot read a step's output, even
+through value steps: "Image of Front door with a box cannot read HTTP request, which
+runs in a flow: make the picture from values alone, such as Camera frame and Draw
+rectangle". A camera written in C# makes its frames with `Frame()` or `OnFrame`, or
+is given them with `Show`; see [Cameras in C#](#cameras-in-c).
+
+### Videos
+
+Video frame reads its Source with ffmpeg, which Home Assistant's ffmpeg integration
+runs, as a live Camera frame reads a camera's stream. Nothing else reaches ffmpeg:
+the Source must be an `http`, `https`, `rtsp`, `rtsps` or `rtmp` address with a host
+and no spaces, or a file's absolute path, and anything else is an error on the card,
+"Source must be an http, https, rtsp, rtsps or rtmp address with a host, or a file's
+absolute path such as /media/clip.mp4": ffmpeg's other inputs (`concat:`, `pipe:`,
+`file:`, `data:`, `subfile`, a device, a test source) and a relative path. ffmpeg
+opens only the protocols of the address's scheme (`-protocol_whitelist`: `file` for a
+file; `http`, `https`, `tcp` and `tls` for an HTTP address; `rtsp`, `rtp`, `udp`,
+`tcp` and `tls` for RTSP; `rtmp` and `tcp` for RTMP), so a playlist or a stream cannot
+lead it to another. A file is read only from a folder Home Assistant allows, its
+`allowlist_external_dirs` and `media_dirs` in `configuration.yaml`, after its links
+and `..` are followed to where they lead: one elsewhere fails the frame with "the
+file is in no folder Home Assistant allows: add its folder to allowlist_external_dirs
+(or media_dirs) in configuration.yaml", as a missing file does with "the file does not
+exist". The folders allowed are known only when the frame is made, so the editor
+checks the Source's form alone. The log names an address by its scheme, host and
+port, without its user, password, path or query.
+
+Video frame takes its frames by Camera frame's rule, below: live in a camera's
+frame, each frame newer than the last that camera showed; anywhere else, the newest
+frame of the video's feed while one is open, else one frame read by a short run of
+ffmpeg. Its badge reads **Live · raw frames**, **Newest frame**, or **Live for
+Porch's frames · Newest frame elsewhere**.
+
+### Live frames and snapshots
+
+Camera frame takes its frames in one of two ways, and a badge on its card says
+which, worked out from what its Frame is connected to:
+
+- **Live · raw frames**: its Frame goes into a camera's Image, directly or through
+  value steps such as Draw rectangle. While that camera's frame is made, Camera frame
+  reads raw frames from one ffmpeg feed of the source camera, which everything
+  reading that camera live shares, at the source's full frame rate; each frame is a
+  newer one than the camera showed last.
+- **Snapshot · JPEG**: anything else reads it, such as a step. It asks Home Assistant
+  for one picture of the camera, a JPEG passed on unchanged.
+- **Live for Porch's frames · Snapshot elsewhere**: it does both, live for Porch's
+  Image and a snapshot for the rest.
+
+For example, a wrapper camera that draws a box on the front door's picture, as
+"Camera with a box" does, is live: while someone watches it, it shows the front
+door's frames as fast as they come, up to 30 a second. A doorbell notification is a
+snapshot: a Trigger on the doorbell's button runs a step that sends the front door's
+picture, such as a C# step whose input is connected to Camera frame, and that step
+reads one picture each time the doorbell rings.
 
 While someone watches, Home Assistant asks for a frame every **Seconds between
-frames**. Viewers share one frame: a request within 0.8 of an interval of the last
-frame begun gets that frame again. Making a frame has 8 seconds; a graph's frame flow
-is cancelled then. When making one fails, the last good frame is shown for the longer
+frames**, 1/30 of a second unless set. A live Camera frame waits for its source's
+next frame, so such a camera goes at its source's pace, up to 30 frames a second.
+Viewers share one frame: a request within 0.8 of an interval of the last frame begun
+gets that frame again. Making a frame has 8 seconds; working out a graph camera's
+Image is cancelled then. When making one fails, the last good frame is shown for the longer
 of 30 seconds and twice the interval; after that, or when there has never been one,
 Home Assistant shows no picture. Failures are logged once per reason, naming the
 camera, and once when it works again.
@@ -406,8 +477,12 @@ camera, and once when it works again.
 Limits: a picture is a JPEG of at most 20 MiB and 40 megapixels, and carries at most
 500 drawings; a text is at most 200 characters. A position or size that is not whole
 is rounded to the nearest pixel, and drawing outside the picture is left out, never
-an error. A drawn picture is encoded at JPEG quality 80. Pictures are not resized:
-Home Assistant scales a still picture itself.
+an error. A drawn picture is encoded at JPEG quality 80. A picture is resized only to
+Camera frame's Width at most and Height at most (and `CameraSnapshot`'s, below): a
+live frame by ffmpeg, which reads it at that size; a snapshot by Home Assistant when
+both are set (it scales by eighths, to no less than the size), then averaged down to
+fit here and encoded at quality 80. Home Assistant scales a camera's still picture
+for its own views itself.
 
 Decoding and drawing need the system's libjpeg-turbo library (`libturbojpeg`).
 Home Assistant's container image has it; on 32-bit ARM, on i386 and for Home
@@ -868,13 +943,108 @@ bytes with `ToJpeg()`. Colours are `SharpColor.Red` (the default), `Green`, `Blu
 `Yellow`, `Orange`, `White`, `Black` or `SharpColor.FromRgb(r, g, b)`. A picture is
 for one flow at a time: hand another thread a `Copy()`.
 
+A picture can be made of pixels, from any source code can reach: a capture API, a
+decoder, a model's output. **`SharpImage.FromRgb(width, height, pixels, stride)`**,
+**`FromBgr`**, **`FromRgba`** and **`FromBgra`** take packed rows of three or four
+bytes a pixel (alpha is ignored), `stride` bytes apart, 0 for rows packed;
+**`FromYuv420(width, height, y, u, v, yStride, uStride, vStride, limitedRange)`**
+takes the three planes of YUV 4:2:0 as a video decoder gives them, stretched to full
+range when `limitedRange` is true; and **`FromPixels(width, height, format, pixels,
+stride)`** takes any `SharpPixelFormat` (`Rgb`, `Bgr`, `Rgba`, `Bgra`, `Yuv420`). Each
+copies the pixels once into a pooled buffer and keeps them in the layout they came
+in, so nothing is converted until the picture is drawn on or read in another layout:
+a picture with nothing drawn on it is encoded straight from its pixels. To decode
+straight into that buffer instead, with no copy at all, **`SharpImage.Create(width,
+height, format, pixels => ...)`** hands the buffer to a callback, and
+**`SharpImage.Writer(width, height, format)`** gives a `SharpFrameWriter` whose
+`Pixels` code fills, awaiting what it needs, and whose `ToImage()` makes it the
+picture; dispose the writer, as with `using`, so that one that made no picture gives
+its buffer back. **`Width`** and **`Height`** give a picture's size, and
+**`CopyPixels(destination, format)`** (or **`ToPixels(format)`**, a new array) gives
+its pixels in any layout, `PixelsLength(format)` bytes, with its drawings drawn on
+them: read a frame before drawing on it to see what the camera saw. Pictures are 1 to
+8192 pixels on each side and at most 40 megapixels.
+
+A picture made of pixels, and each frame of a video, holds its pooled buffer until it
+is disposed: **`Dispose()`** (or `using`) gives it back at once, so that the next
+frame takes it again, which matters at 4K and many frames a second. Disposing is never
+needed: a picture never disposed is left to the garbage collector, and its pixels are
+never another picture's. A `Copy()`, and the picture a camera keeps when it is shown,
+share the pixels and hold the buffer too, so disposing a picture after `Show` leaves
+the camera's frame whole.
+
+**`SharpVideo.Open(source, options)`** reads a video's raw frames: a stream's address
+or a file's path, as Video frame takes them and with the same checks (see
+[Videos](#videos)), or a camera's entity id (or a `CameraEntity` setting), whose live
+feed it reads, as a live Camera frame does. `VideoOptions` has `MaxWidth` and
+`MaxHeight` (as Width at most and Height at most, 0 for no limit), `Loop` and
+`RealTime` (a file only, both on unless set off; a file not in real time is read as
+fast as ffmpeg decodes it, and a reader that is slower skips frames). Opening starts
+nothing and never waits; **`await video.NextFrameAsync(cancellation)`** gives a frame
+newer than the last that reader got, waiting for it, and null once a file that does
+not loop has given its last, and **`await foreach (var frame in
+video.Frames(cancellation))`** gives each one. A source that is not one a video is
+read from throws an `ArgumentException` when it is opened; a file outside the folders
+Home Assistant allows, or missing, throws an `InvalidOperationException` when its
+first frame is asked for. One ffmpeg reads each video and size for every reader and
+Video frame of it; it closes when the last reader is disposed (`await using`) or
+nobody has asked for a frame for 10 seconds, and is killed when HassSharp unloads. A
+frame is the video's own YUV 4:2:0, shown and encoded without being converted.
+
 A class that derives from `SharpCamera` takes a picture with one of Home Assistant's
 cameras, as a `SharpImage` and within 10 seconds, with **`CameraSnapshot(entityId)`**,
 or **`CameraSnapshot(entityId, cancellation)`** to stop waiting when a token is
-cancelled. Only a camera class has it: a sensor, a switch or a `SharpDevice` does
-not, so a device's own code cannot call it. A camera that shows another camera's
+cancelled. **`CameraSnapshot(entityId, maxWidth, maxHeight)`** and
+**`CameraSnapshot(entityId, maxWidth, maxHeight, cancellation)`** make the picture no
+larger than that, as Camera frame's Width at most and Height at most do: each side
+from 16 to 8192 pixels, or 0 for no limit on it, so `CameraSnapshot("camera.front_door",
+640, 0)` is at most 640 pixels wide, its aspect ratio kept; a side outside that throws
+an `ArgumentException`. It follows the rule Camera frame does (see
+[Live frames and snapshots](#live-frames-and-snapshots)): called from `Frame()` or
+`OnFrame`, while the camera's frame is made, it gives the source's next raw frame
+from its shared live feed; called anywhere else, such as from a `Track` callback that
+sends a doorbell notification, it gives one snapshot from Home Assistant. Only a
+camera class has it: a sensor, a switch or a `SharpDevice` does not, so a device's
+own code cannot call it. A camera that shows another camera's
 picture is a class of its own: a C# entity node, or a camera class written beside
 the device's class that the device adds.
+
+A camera can also be pushed its frames: `Show` takes a frame by reference, without
+copying its pixels, and Home Assistant gets the newest at its cadence. `Start()` must
+return, so the camera reads its video from a timer, which runs one call at a time and
+stops with the definition:
+
+```csharp
+/// <summary>A stream with a box on each frame, as fast as its frames come.</summary>
+public class BoxedStream : SharpCamera
+{
+    SharpVideo? video;
+
+    protected override Task Start()
+    {
+        video = SharpVideo.Open("rtsp://door.local:8554/live", new VideoOptions { MaxWidth = 1280 });
+        // Each call waits for the next frame; a tick that comes meanwhile is taken after it.
+        Every(TimeSpan.FromMilliseconds(1), async () =>
+        {
+            using var frame = await video.NextFrameAsync(Stopping);
+            if (frame != null) Show(frame.DrawRect(40, 40, 240, 160, SharpColor.Green, 4));
+        });
+        return Task.CompletedTask;
+    }
+
+    protected override async Task Stop()
+    {
+        if (video != null) await video.DisposeAsync();
+    }
+}
+```
+
+The same works for frames from anywhere else: a camera that gets frames from an SDK
+or a decoder makes each a `SharpImage` of its pixels (or writes it with
+`SharpImage.Writer`) and shows it. A graph camera pulls its frames instead: a Custom
+C# step or a library node that returns a `SharpImage`, such as one made with
+`FromRgb`, goes into a camera's Image, directly or through Draw rectangle, and is
+worked out for each frame.
 
 This is the code of a C# entity that is a camera:
 
@@ -882,10 +1052,7 @@ This is the code of a C# entity that is a camera:
 /// <summary>The front door's camera with a box drawn on its picture.</summary>
 public class BoxedDoor : SharpCamera
 {
-    /// <summary>A frame every 2 seconds while someone watches.</summary>
-    public BoxedDoor() { FrameInterval = 2; }
-
-    /// <summary>Takes the door camera's picture and draws on it.</summary>
+    /// <summary>Takes the door camera's next live frame and draws on it.</summary>
     protected override async Task<SharpImage?> Frame()
     {
         var picture = await CameraSnapshot("camera.front_door", Stopping);
@@ -990,7 +1157,8 @@ node's code does is not recorded: it has no steps to trace.
   is, and a step that returns what it was given can show it.
 - Compare refuses a Text against a Number, and Entity field gives Text unless you
   choose another type: convert the state when you compare it with a number.
-- A frame flow's failures show only in the log unless its run history is on.
+- A camera's failures to make a frame show only in the log unless its **Record
+  frames** is on.
 
 ### Secrets
 
@@ -1021,13 +1189,19 @@ node's code does is not recorded: it has no steps to trace.
 
 - A definition cannot take a picture of its own camera: it is refused at once. Two
   definitions that photograph each other's cameras time out.
-- Pictures from another camera must be JPEG.
+- A snapshot from another camera must be JPEG. A live Camera frame needs the source
+  camera's stream (an ffmpeg camera, or one with a stream source) and Home
+  Assistant's ffmpeg; without them it takes snapshots one after another instead.
 - Each camera in a chain keeps its own last good frame, so a chain of several
   cameras can show a picture that many times as old.
-- Take pictures in a frame flow or a Trigger, not in When started: a camera that is
-  not up when Home Assistant starts would keep the definition from starting.
-- After a restart, a camera that is given its frames by a Trigger has no picture
-  until that Trigger fires.
+- Read Camera frame in a camera's Image or after a Trigger, not in When started: a
+  camera that is not up when Home Assistant starts would keep the definition from
+  starting.
+- After a restart, a C# camera that is given its frames with `Show` from a timer or
+  a track has no picture until its code shows one.
+- A Video frame or a `SharpVideo` of a file needs the file in a folder Home Assistant
+  allows (`allowlist_external_dirs` or `media_dirs`); Home Assistant's own media
+  folder is one. Both need Home Assistant's ffmpeg integration.
 - A `SharpImage` is for one flow at a time.
 
 ## Through MCP
@@ -1054,8 +1228,9 @@ name the command pin under `port`:
 ```
 
 A command's values are the node's data outputs `command:<command>:<value>`, such as
-`command:turn_on:brightness` for a light, and a camera's frame flow starts at its
-`frame` output. Each device is a Device node, wired to its entities as in
+`command:turn_on:brightness` for a light. A camera's Entity node has no output for
+its frames: a value wire into its `image` input, from Camera frame, Video frame or a Draw step,
+gives the picture it shows, and an `ha_entity` node gives Camera frame its camera. Each device is a Device node, wired to its entities as in
 [Devices](#devices). A definition it sends is `{name, settings, logic}`: it
 carries no `entities` list (one that does, even an empty one, is refused with
 "Entities are Entity nodes in the graph now: leave entities out and add one Entity

@@ -255,25 +255,27 @@ it('an Entity node of a button has no state pins, and a Set state of it is refus
   expect(validateGraph(graph, nodeCatalog).filter(d => d.nodeId === 'bell')).toEqual([])
 })
 
-it('a camera\'s When a frame is needed starts a flow as a command does: no step order wire leads into it, and its steps run', () => {
+it('a camera shows the picture its Image is given, from values alone: no step order wire into or out of it, and no step runs', () => {
   let graph = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
-  graph = add(graph, 'camera_snapshot', 'snap', { entity: lit('entity_id:camera', 'camera.front') })
-  graph = add(graph, 'show_frame', 'show')
-  graph = connectNodes(connectNodes(graph, 'annotated', 'snap', 'frame'), 'snap', 'show')
-  graph = connectData(graph, 'snap', 'image', 'show', 'image')
-  // A new step for the definition's only camera names it.
-  expect(graph.nodes.find(n => n.id === 'show')!.config.entity).toBe('annotated')
+  graph = add(graph, 'ha_entity', 'door', { entity: 'camera.front' })
+  graph = add(graph, 'camera_frame', 'snap')
+  graph = add(graph, 'image_draw_rect', 'box', { x: lit('number', 10), y: lit('number', 10), width: lit('number', 80), height: lit('number', 40) })
+  graph = connectData(connectData(connectData(graph, 'door', 'entity', 'snap', 'entity'), 'snap', 'image', 'box', 'image'), 'box', 'image', 'annotated', 'image')
   expect(validateGraph(graph, nodeCatalog)).toEqual([])
-  expect(canConnect(graph, 'snap', 'annotated')).toBe(false)
-  expect(canConnect(graph, 'show', 'annotated')).toBe(false)
+  expect(graph.edges.every(e => e.kind === 'data')).toBe(true)
+  // The camera has no pin on its right; Camera frame and Draw rectangle are values, with no execution pins at all.
+  expect(executionPorts(graph.nodes[0])).toEqual([])
+  expect(outputs(graph, 'annotated')).toEqual([])
   expect(view(graph, 'annotated').execIn).toBeUndefined()
-  expect(view(graph, 'annotated').rows.flatMap(r => (r.output?.kind === 'exec' ? [r.output.id] : []))).toEqual(['frame'])
-  expect(outputs(graph, 'annotated')).toEqual(['When a frame is needed'])
-  expect(view(graph, 'show').execIn?.id).toBe('in')
-  expect(view(graph, 'show').unreachable).toBe(false)
-  expect(canAddFor(graph, 'entity', { nodeId: 'snap', handle: 'next', type: 'source' }, nodeCatalog)).toBe(false)
-  // Quick-add from its frame pin runs the new step when a frame is needed.
+  expect(view(graph, 'annotated').rows.map(r => r.input?.port)).toEqual(['image'])
+  for (const id of ['door', 'snap', 'box']) {
+    expect(view(graph, id).pure, id).toBe(true)
+    expect(view(graph, id).execIn, id).toBeUndefined()
+    expect(view(graph, id).unreachable, id).toBe(false)
+  }
+  expect(canConnect(graph, 'snap', 'annotated')).toBe(false)
+  // Quick-add of Camera frame from the camera's Image wires its frame into it.
   const fresh = add(empty('Annotated'), 'entity', 'annotated', { key: 'annotated', domain: 'camera', name: 'Annotated' })
-  const added = addConnected(fresh, 'camera_snapshot', { x: 400, y: 0 }, { nodeId: 'annotated', handle: 'frame', type: 'source' }, nodeCatalog, 'snap')!
-  expect(added.graph.edges).toMatchObject([{ source: 'annotated', target: 'snap', port: 'frame' }])
+  const added = addConnected(fresh, 'camera_frame', { x: -300, y: 0 }, { nodeId: 'annotated', handle: 'data:image', type: 'target' }, nodeCatalog, 'snap')!
+  expect(added.graph.edges).toMatchObject([{ kind: 'data', source: 'snap', sourcePort: 'image', target: 'annotated', targetPort: 'image' }])
 })

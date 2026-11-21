@@ -56,6 +56,7 @@ public partial class HassSharpManager
         try
         {
             if (_languageLifetime.IsCancellationRequested) _languageLifetime = new();
+            CameraFeeds.Open();
             PythonNetAssemblies.IgnoreCollectible(Logger.Warn);
             // Services appear gradually while Home Assistant starts: the persisted schema keeps node code compiling.
             // Whatever goes wrong there leaves the previous (or empty) typed calls: setup goes on without them.
@@ -456,6 +457,8 @@ public partial class HassSharpManager
     // The entity states pending or remembered as sent are dropped with the scripts: after a reload every state is sent
     // anew. The states the entities come back with are written now, and the store then closed, so that it writes nothing
     // after its manager has gone (closing never throws; Init opens it again).
+    // The cameras' live feeds close with them, and their ffmpeg is killed and reaped (CameraFeeds.CloseAllAsync): nothing
+    // of them outlives the unload; setting up again opens them.
     public void Unload(bool stopping = false)
     {
         _languageLifetime.Cancel();
@@ -463,6 +466,7 @@ public partial class HassSharpManager
         finally
         {
             _userScriptManager.Pump.Reset();
+            CameraFeeds.CloseAllAsync().GetAwaiter().GetResult();
             _userScriptManager.States?.CloseAsync().GetAwaiter().GetResult();
         }
     }
@@ -473,19 +477,24 @@ public partial class HassSharpManager
         finally
         {
             _userScriptManager.Pump.Reset();
+            await CameraFeeds.CloseAllAsync();
             if (_userScriptManager.States is { } states) await states.CloseAsync();
         }
     }
 
     /// <summary>
     /// Home Assistant is stopping (it does not unload config entries then): cancel every running and later
-    /// run with that reason, and write the states the entities come back with. Scripts stay loaded; a later unload
-    /// still cleans them up.
+    /// run with that reason, close the cameras' live feeds, killing their ffmpeg, and write the states the entities come
+    /// back with. Scripts stay loaded; a later unload still cleans them up.
     /// </summary>
     public void CancelRunsForShutdown()
     {
         try { _userScriptManager.CancelRuns(CancelReasons.Stopping); }
-        finally { _userScriptManager.States?.FlushAsync().GetAwaiter().GetResult(); }
+        finally
+        {
+            CameraFeeds.CloseAllAsync().GetAwaiter().GetResult();
+            _userScriptManager.States?.FlushAsync().GetAwaiter().GetResult();
+        }
     }
 
     public Task OnTrackedEntityChange(string entityId, HasEntityState newState, HasEntityState? oldState)

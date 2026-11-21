@@ -361,7 +361,7 @@ class GuidanceTests(unittest.TestCase):
             with self.subTest(definition['name']):
                 self.assertNotIn('entities', definition)
                 self.assertTrue({'entity', 'csharp_entity', 'csharp_device'} & set(kinds))
-                self.assertFalse({'entity_state', 'entity_command', 'camera_frame'} & set(kinds))
+                self.assertFalse({'entity_state', 'entity_command', 'camera_snapshot', 'show_frame'} & set(kinds))
         csharp = {example['title']: [node['kind'] for node in example['definition']['logic']['graph']['nodes'] if node['kind'].startswith('csharp_')]
                   for example in examples['definitions']}
         self.assertEqual({title: kinds for title, kinds in csharp.items() if kinds},
@@ -434,7 +434,7 @@ class GuidanceTests(unittest.TestCase):
     def test_the_guidance_does_not_name_the_removed_steps(self):
         text = ''.join((ROOT / path).read_text() for path in ('custom_components/hass_sharp/llm.py', 'docs/custom-entities.md', 'docs/mcp-authoring.md'))
         # A whole name: Set state's kind, set_entity_state, stays.
-        for gone in ('entity_state', 'entity_command', 'camera_frame', 'When commanded'):
+        for gone in ('entity_state', 'entity_command', 'camera_snapshot', 'show_frame', 'Show frame', 'Take a picture', 'When commanded'):
             self.assertIsNone(re.search(rf'(?<![A-Za-z0-9_]){gone}(?![A-Za-z0-9_])', text), gone)
         self.assertIn('set_entity_state', text)
 

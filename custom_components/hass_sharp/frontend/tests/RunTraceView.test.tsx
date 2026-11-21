@@ -871,25 +871,22 @@ it('never shows a definition\'s secret setting value on its run\'s page', async 
 })
 
 it('shows a picture as the recorder\'s short text, as plain words on its card and in the panel', async () => {
+  // A camera shows what its Image is given: a Camera frame, drawn on, worked out in its frame flow.
   const doorbell = (): Graph => ({ version: 5, name: 'Doorbell',
     nodes: [
-      { id: 'front', kind: 'entity', config: { key: 'front', domain: 'camera', name: 'Front door', history: { frame: true } }, position: { x: 60, y: 100 } },
-      { id: 'snap', kind: 'camera_snapshot', config: { entity: { kind: 'literal', type: 'entity_id:camera', value: 'camera.porch' } }, position: { x: 360, y: 100 } },
-      { id: 'text', kind: 'image_draw_text', config: { color: 'White', size: 16, background: true, text: { kind: 'literal', type: 'string', value: 'Porch' }, x: { kind: 'literal', type: 'number', value: 8 }, y: { kind: 'literal', type: 'number', value: 8 } }, position: { x: 660, y: 300 } },
-      { id: 'show', kind: 'show_frame', config: { entity: 'front' }, position: { x: 960, y: 100 } },
+      { id: 'front', kind: 'entity', config: { key: 'front', domain: 'camera', name: 'Front door', history: { frame: true } }, position: { x: 960, y: 100 } },
+      { id: 'snap', kind: 'camera_frame', config: { entity: { kind: 'literal', type: 'entity_id:camera', value: 'camera.porch' } }, position: { x: 360, y: 100 } },
+      { id: 'text', kind: 'image_draw_text', config: { color: 'White', size: 16, background: true, text: { kind: 'literal', type: 'string', value: 'Porch' }, x: { kind: 'literal', type: 'number', value: 8 }, y: { kind: 'literal', type: 'number', value: 8 } }, position: { x: 660, y: 100 } },
     ],
     edges: [
-      { id: 'front:frame->snap', source: 'front', target: 'snap', port: 'frame' },
-      { id: 'snap->show', kind: 'execution', source: 'snap', sourcePort: 'next', target: 'show', targetPort: 'in' },
       { id: 'snap.image:text.image', kind: 'data', source: 'snap', sourcePort: 'image', target: 'text', targetPort: 'image' },
-      { id: 'text.image:show.image', kind: 'data', source: 'text', sourcePort: 'image', target: 'show', targetPort: 'image' },
+      { id: 'text.image:front.image', kind: 'data', source: 'text', sourcePort: 'image', target: 'front', targetPort: 'image' },
     ] } as unknown as Graph)
   const taken = 'Image · 48 KB · 0 drawings', drawn = 'Image · 48 KB · 1 drawing'
   const list: TraceEvent[] = [
-    { seq: 1, node: 'front', frame: '', t: 0, ms: 1, status: 'ok', port: 'frame' },
-    { seq: 2, node: 'snap', frame: '', t: 1, ms: 120, status: 'ok', port: 'next', inputs: { entity: { type: 'entity_id:camera', v: 'camera.porch' } }, outputs: { image: { type: 'image', v: taken } } },
-    { seq: 3, node: 'text', frame: '', t: 121, ms: 1, status: 'ok', port: 'next', inputs: { image: { type: 'image', v: taken, src: { node: 'snap', port: 'image' } } }, outputs: { image: { type: 'image', v: drawn } } },
-    { seq: 4, node: 'show', frame: '', t: 122, ms: 1, status: 'ok', port: 'next', inputs: { image: { type: 'image', v: drawn, src: { node: 'text', port: 'image' } } } },
+    { seq: 1, node: 'snap', frame: '', t: 0, ms: 120, status: 'ok', inputs: { entity: { type: 'entity_id:camera', v: 'camera.porch' } }, outputs: { image: { type: 'image', v: taken } } },
+    { seq: 2, node: 'text', frame: '', t: 120, ms: 1, status: 'ok', inputs: { image: { type: 'image', v: taken, src: { node: 'snap', port: 'image' } } }, outputs: { image: { type: 'image', v: drawn } } },
+    { seq: 3, node: 'front', frame: '', t: 121, ms: 1, status: 'ok', port: 'frame', inputs: { image: { type: 'image', v: drawn, src: { node: 'text', port: 'image' } } } },
   ]
   const summary: RunTrace['summary'] = {}
   for (const event of list) { const row = (summary[event.node] ??= { count: 0, failed: 0, last: 'ok' }); row.count++; row.last = event.status }
@@ -901,14 +898,14 @@ it('shows a picture as the recorder\'s short text, as plain words on its card an
   }
   const { root } = mountDefinition(async () => answer, { path: '/entities/doorbell/runs/run-8', prepare: fixture => fixture.entities.seed('doorbell', {
     name: 'Doorbell', settings: [], logic: { kind: 'graph', graph: doorbell() } }) })
-  await vi.waitFor(() => expect(steps(root)).toHaveLength(4))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
   // On the cards: the words alone, never in quotes.
   const chips = (id: string) => [...card(root, id).querySelectorAll('.hs-value-chip')].map(chip => chip.textContent)
   expect(chips('snap')).toContain(taken)
-  expect(chips('show')).toContain(drawn)
+  expect(chips('text')).toContain(drawn)
   expect(root.textContent).not.toContain(`"${drawn}"`)
-  // In the panel: the words, typed Image, not a tree.
-  steps(root)[3].click()
+  // In the panel, on the camera's Image: the words, typed Image, not a tree.
+  steps(root)[2].click()
   await vi.waitFor(() => expect(port(root, 'image')).not.toBeNull())
   expect(port(root, 'image').querySelector('.hs-trace-value')!.textContent).toBe(drawn)
   expect(port(root, 'image').querySelector('.hs-type-chip__name')!.textContent).toBe('Image')

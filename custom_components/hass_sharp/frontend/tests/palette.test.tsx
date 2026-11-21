@@ -8,7 +8,7 @@ import { nodeCatalog } from '../src/visual/contract'
 import { add, empty } from './visual-fixture'
 
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
-const entityOnly = ['entity', 'device', 'csharp_entity', 'csharp_device', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_snapshot', 'image_draw_rect', 'image_draw_text', 'show_frame']
+const entityOnly = ['entity', 'device', 'csharp_entity', 'csharp_device', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_frame', 'video_frame', 'image_draw_rect', 'image_draw_text']
 
 let dispose: (() => void) | undefined
 afterEach(() => {
@@ -21,6 +21,10 @@ const label = (kind: string) => {
   expect(Object.hasOwn(nodeCatalog.nodes, kind), `the catalog has ${kind}`).toBe(true)
   return nodeCatalog.nodes[kind].label
 }
+/** What the step library offers, by its items' labels. */
+const libraryItems = (root: Element) => new Set([...root.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label')))
+/** What quick-add offers, by its options' labels after Create. */
+const quickAddItems = (root: Element) => new Set([...root.querySelectorAll('[role="option"]')].map(option => option.getAttribute('aria-label')!.replace(/^Create /, '')))
 
 it('the automation palette leaves out the entity-only steps and keeps the entity readers', () => {
   for (const kind of entityOnly) expect(nodeCatalog.nodes[kind]?.documents, kind).toEqual(['entity'])
@@ -35,37 +39,37 @@ it('the automation palette leaves out the entity-only steps and keeps the entity
 it('the step library of an automation lists no entity-only step', () => {
   const root = host()
   dispose = render(() => <NodeLibraryPanel collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
-  const offered = new Set([...root.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label')))
+  const offered = libraryItems(root)
   for (const kind of entityOnly) expect(offered, kind).not.toContain(label(kind))
-  expect(offered).toContain(label('entity_is'))
-  expect(offered).toContain(label('entity_current'))
-  expect(offered).toContain(label('http_request'))
+  for (const kind of ['entity_is', 'entity_current', 'http_request', 'ha_entity']) expect(offered, kind).toContain(label(kind))
 })
 
 it('quick-add in an automation lists no entity-only step', () => {
   const root = host()
   dispose = render(() => <QuickAdd x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)
-  const offered = new Set([...root.querySelectorAll('[role="option"]')].map(option => option.getAttribute('aria-label')))
-  for (const kind of entityOnly) expect(offered, kind).not.toContain(`Create ${label(kind)}`)
-  expect(offered).toContain(`Create ${label('entity_is')}`)
-  expect(offered).toContain(`Create ${label('entity_current')}`)
+  const offered = quickAddItems(root)
+  for (const kind of entityOnly) expect(offered, kind).not.toContain(label(kind))
+  for (const kind of ['entity_is', 'entity_current', 'ha_entity']) expect(offered, kind).toContain(label(kind))
 })
 
 // An entity definition's graph: its own steps beside everything an automation offers (a trigger is how it polls).
-const entityKinds = [...entityOnly, 'entity_is', 'entity_current', 'trigger', 'log', 'http_request']
+const entityKinds = [...entityOnly, 'entity_is', 'entity_current', 'ha_entity', 'trigger', 'log', 'http_request']
 
 it('the step library of an entity definition lists its steps and every automation step', () => {
   const root = host()
   dispose = render(() => <NodeLibraryPanel document="entity" collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
-  const offered = new Set([...root.querySelectorAll('.hs-lib__item')].map(item => item.getAttribute('aria-label')))
+  const offered = libraryItems(root)
   for (const kind of entityKinds) expect(offered, kind).toContain(label(kind))
+  // Show frame is no step any longer: a camera shows what its Image is given.
+  expect(offered.has('Show frame')).toBe(false)
 })
 
 it('quick-add in an entity definition lists its steps and every automation step', () => {
   const root = host()
   dispose = render(() => <QuickAdd document="entity" x={0} y={0} title="Add a step" allowed={() => true} onClose={() => {}} onChoose={() => {}} />, root)
-  const offered = new Set([...root.querySelectorAll('[role="option"]')].map(option => option.getAttribute('aria-label')))
-  for (const kind of entityKinds) expect(offered, kind).toContain(`Create ${label(kind)}`)
+  const offered = quickAddItems(root)
+  for (const kind of entityKinds) expect(offered, kind).toContain(label(kind))
+  expect(offered.has('Show frame')).toBe(false)
 })
 
 it.each([
@@ -92,15 +96,15 @@ it('the canvas quick-add offers the steps of the document its graph is', async (
     dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />, root)
     root.querySelector('.solid-flow__pane')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 160, clientY: 470, button: 0 }))
     await vi.waitFor(() => expect(root.querySelector('[role="dialog"][aria-label="Add a step"]')).not.toBeNull())
-    const kinds = new Set([...root.querySelectorAll('[role="option"]')].map(option => option.getAttribute('aria-label')))
+    const kinds = quickAddItems(root)
     root.remove()
     return kinds
   }
   const automation = await offered(createGraph('Hall'))
-  for (const kind of entityOnly) expect(automation, kind).not.toContain(`Create ${label(kind)}`)
-  expect(automation).toContain(`Create ${label('trigger')}`)
+  for (const kind of entityOnly) expect(automation, kind).not.toContain(label(kind))
+  expect(automation).toContain(label('trigger'))
   const entity = await offered(add(empty('Relay'), 'entity', 'relay', { key: 'relay', domain: 'switch', name: 'Relay' }))
-  for (const kind of entityKinds) expect(entity, kind).toContain(`Create ${label(kind)}`)
+  for (const kind of entityKinds) expect(entity, kind).toContain(label(kind))
 })
 
 it('an entity definition lists the Entity group first, then the catalog\'s order with Trigger leading it', () => {

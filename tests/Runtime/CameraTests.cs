@@ -31,7 +31,7 @@ static class CameraTests
         {
             public Feed()
             {
-                Add(new SharpCamera("view", "View") { OnFrame = () => ((Func<CancellationToken, Task<SharpImage?>>)AppContext.GetData("HassSharp.CameraTests.Feed")!)(Stopping) });
+                Add(new SharpCamera("view", "View") { FrameInterval = 1, OnFrame = () => ((Func<CancellationToken, Task<SharpImage?>>)AppContext.GetData("HassSharp.CameraTests.Feed")!)(Stopping) });
                 Add(new SharpSwitch("relay"));
             }
         }
@@ -39,6 +39,7 @@ static class CameraTests
     const string DoorCode = """
         public class Door : SharpCamera
         {
+            public Door() { FrameInterval = 1; }
             protected override async Task<SharpImage?> Frame()
             {
                 try { return (await CameraSnapshot("camera.porch")).DrawRect(2, 2, 8, 4); }
@@ -49,6 +50,7 @@ static class CameraTests
     const string RelayCode = """
         public class Relay : SharpCamera
         {
+            public Relay() { FrameInterval = 1; }
             protected override async Task<SharpImage?> Frame() => await CameraSnapshot("camera.porch");
         }
         """;
@@ -156,6 +158,8 @@ static class CameraTests
             var still = JsonNode.Parse(home.Syncs("still").Last())!["entities"]!.AsArray().Single()!;
             Check(still["uniqueId"]!.GetValue<string>() == "still:camera" && still["key"]!.GetValue<string>() == "camera" && still["name"]?.GetValue<string>() == "Still",
                 "a C# entity's camera takes its node's key and its class's title: " + still.ToJsonString());
+            Check(still["options"]!.ToJsonString() == """{"frame_interval":0.03333333333333333}""", "a camera that sets no interval is synced with 1/30 s, as fast as frames come: " + still.ToJsonString());
+            Intervals();
 
             await Shown(api);
             await Shared(api);
@@ -700,6 +704,27 @@ static class CameraTests
         Console.WriteLine("PASS camera: CameraSnapshot with a token ends its wait as the token is cancelled; without one it waits for the picture or the definition's stop, as before");
     }
 
+    /// <summary>
+    /// A camera's frame interval is 1/30 s unless set: as fast as its frames come, at most 30 a second. It takes 1/30 to 60
+    /// seconds, and refuses anything shorter.
+    /// </summary>
+    static void Intervals()
+    {
+        Check(new SharpCamera().FrameInterval == 1.0 / 30 && new SharpCamera { FrameInterval = 1.0 / 30 }.FrameInterval == 1.0 / 30 && new SharpCamera { FrameInterval = 60 }.FrameInterval == 60,
+            "a camera's interval is 1/30 s unless set, and takes 1/30 to 60 s");
+        foreach (var refused in new[] { 0.03, 0, 60.5, double.NaN })
+        {
+            try { _ = new SharpCamera { FrameInterval = refused }; throw new Exception($"a frame interval of {refused} was taken"); }
+            catch (ArgumentException error)
+            {
+                var shown = refused.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                Check(error.Message == $"main takes a frame interval from 0.034 to 60 seconds, not {shown}",
+                    $"a frame interval of {shown} is refused: " + error.Message);
+            }
+        }
+        Console.WriteLine("PASS camera: a camera's frame interval is 1/30 s unless set, from 1/30 to 60 s, and anything shorter is refused");
+    }
+
     /// <summary>Taking a picture of another camera is a camera's: a sensor's class and a device's class cannot name it.</summary>
     static void OnlyACamera()
     {
@@ -747,15 +772,15 @@ static class CameraTests
             logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Lens", ["edges"] = new JsonArray(),
                 ["nodes"] = new JsonArray(VisualExecutionTests.Hub("lens", "lens", "camera", new JsonObject { ["name"] = "Lens", ["options"] = new JsonObject { ["frame_interval"] = JsonSerializer.SerializeToNode(frameInterval) } })) } },
         };
-        foreach (var refused in new[] { 0.1, 100 })
+        foreach (var refused in new[] { 0.03, 100 })
         {
             var answer = JsonNode.Parse(await api.EntityRequest(JsonSerializer.Serialize(new { operation = "save", id = "lens", expectedRevision = 0, definition = Lens(refused) })))!;
-            // The one error; the camera's Entity node has no step on its frame pin, which is only warned of.
+            // The one error; the camera's Entity node has nothing connected to its Image, which is only warned of.
             var problem = answer["error"]?["detail"]?["diagnostics"]?.AsArray().SingleOrDefault(d => d!["severity"]!.GetValue<int>() == 3);
             var shown = refused.ToString(System.Globalization.CultureInfo.InvariantCulture);
             Check(answer["ok"]!.GetValue<bool>() == false && answer["error"]!["code"]!.GetValue<string>() == "validation" && problem?["code"]?.GetValue<string>() == "definition.entityOption"
                 && problem["nodeId"]?.GetValue<string>() == "lens" && problem["inputId"]?.GetValue<string>() == "option:frame_interval" && problem["portId"] == null
-                && problem["message"]?.GetValue<string>() == $"Seconds between frames of Lens takes a number from 0.5 to 60, not {shown}", $"a frame interval of {shown} is refused: " + answer.ToJsonString());
+                && problem["message"]?.GetValue<string>() == $"Seconds between frames of Lens takes a number from 0.034 to 60, not {shown}", $"a frame interval of {shown} is refused: " + answer.ToJsonString());
         }
         var saved = await ok(new { operation = "save", id = "lens", expectedRevision = 0, definition = Lens(2) });
         Check(saved["active"]!.GetValue<bool>(), "a camera built from nodes runs: " + saved.ToJsonString());
@@ -807,7 +832,15 @@ static class CameraTests
         CameraFrames.MakeLimit = limit;
         try { host.SetFrame("nothing", SharpImage.Blank(1, 1)); throw new Exception("a frame for an entity the definition does not have was taken"); }
         catch (InvalidOperationException refused) { Check(refused.Message == "Lens has no entity nothing", "a frame for an unknown entity: " + refused.Message); }
-        Console.WriteLine("PASS camera: a frame interval outside 0.5 to 60 is refused at save; a camera built from nodes runs with its own, and the frame flow its graph gives runs before a request is answered, one at a time also past the limit, and one that hangs on a camera with no frame times out without another starting");
+        // A camera built from nodes with no interval goes as fast as its frames come: 1/30 s.
+        var plain = await ok(new { operation = "save", id = "plain", expectedRevision = 0, definition = new
+        {
+            name = "Plain", settings = Array.Empty<object>(),
+            logic = new { kind = "graph", graph = new JsonObject { ["version"] = 5, ["name"] = "Plain", ["edges"] = new JsonArray(), ["nodes"] = new JsonArray(VisualExecutionTests.Hub("plain", "plain", "camera", new JsonObject { ["name"] = "Plain" })) } },
+        } });
+        Check(plain["active"]!.GetValue<bool>() && Running(api, "plain:plain").Camera.FrameInterval == 1.0 / 30
+            && JsonNode.Parse(home.Syncs("plain").Last())!["entities"]![0]!["options"]!.ToJsonString() == """{"frame_interval":0.03333333333333333}""", "a camera built from nodes with no interval has 1/30 s: " + plain.ToJsonString());
+        Console.WriteLine("PASS camera: a frame interval outside 1/30 to 60 is refused at save, and none is 1/30; a camera built from nodes runs with its own, and the frame flow its graph gives runs before a request is answered, one at a time also past the limit, and one that hangs on a camera with no frame times out without another starting");
     }
 
     /// <summary>

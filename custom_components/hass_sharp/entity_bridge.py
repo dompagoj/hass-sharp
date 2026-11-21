@@ -8,7 +8,9 @@ build made one device `(DOMAIN, "<definition id>")`, which the next sync removes
 .NET asks, with JSON text, to sync a definition's entities, remove a definition, prune the definitions that no
 longer exist, and write a batch of states; Home Assistant's commands go back through `EntityCommand`, and its
 requests for a camera's picture through `CameraImage`. .NET also asks for pictures of Home Assistant's cameras
-(`begin_camera_snapshot`). The rules come from the spike findings
+(`begin_camera_snapshot`), and for what its live feed of one reads: the camera's stream source and Home Assistant's
+ffmpeg (`begin_camera_source`), which .NET runs itself; and for what it reads a video with: Home Assistant's ffmpeg and
+the folders it allows files in (`begin_video_source`). The rules come from the spike findings
 (docs/superpowers/plans/2026-11-17-custom-entities-phase-1-spike.md).
 
 Every Home Assistant call runs on the event loop (spike rule 1): .NET's calls arrive on its own threads and are
@@ -88,6 +90,28 @@ def _camera():
     platform has loaded it, and importing it with this module would block the event loop."""
     from homeassistant.components import camera
     return camera
+
+
+def _ffmpeg_binary(hass):
+    """The ffmpeg Home Assistant's ffmpeg integration runs, or None when that integration is not set up. Its module is
+    imported only once the integration has loaded it, so the import does not block the event loop."""
+    if "ffmpeg" not in hass.config.components:
+        return None
+    try:
+        from homeassistant.components.ffmpeg import get_ffmpeg_manager
+
+        return get_ffmpeg_manager(hass).binary or None
+    except Exception:
+        return None
+
+
+def _allowed_folders(hass):
+    """The folders Home Assistant allows files to be read from, sorted: its allowlist_external_dirs and its media_dirs
+    (which Home Assistant adds to the allowlist itself; listed again, should a configuration keep them apart). .NET
+    resolves each, and a video file's path, before it checks that the file is inside one."""
+    folders = set(hass.config.allowlist_external_dirs or ())
+    folders.update((hass.config.media_dirs or {}).values())
+    return sorted(str(folder) for folder in folders if folder)
 
 
 def _dotnet_bytes(data):
@@ -175,17 +199,47 @@ class EntityBridge:
             logger.debug("No picture from %s: %s", unique_id, _message(error))
             return None
 
-    def begin_camera_snapshot(self, definition_id, entity_id, on_bytes, on_error) -> None:
+    def begin_camera_snapshot(self, definition_id, entity_id, on_bytes, on_error, width=None, height=None) -> None:
         """From a .NET thread: take a picture with one of Home Assistant's cameras, for the definition `definition_id`
         (empty for none). Answers exactly once, on the loop: `on_bytes` with the JPEG as a System.Byte[], or
         `on_error` with one sentence. A camera of the asking definition itself is refused at once, as it would wait for
-        itself. Never raises.
+        itself. With a width and height, Home Assistant scales the picture to fit (`async_get_image`'s own). Never
+        raises.
         """
         operation = _Operation(f"take a picture with {entity_id}", None, on_bytes, on_error)
         try:
-            self.hass.loop.call_soon_threadsafe(self._start_snapshot, definition_id, entity_id, operation)
+            self.hass.loop.call_soon_threadsafe(self._start_snapshot, definition_id, entity_id, operation, width, height)
         except Exception:
             # The loop has closed, so nothing on it will answer.
+            operation.answer(operation.error, SNAPSHOT_STOPPED)
+
+    def begin_camera_snapshot_scaled(self, definition_id, entity_id, width, height, on_bytes, on_error) -> None:
+        """begin_camera_snapshot of a picture that fits in `width` × `height`, as .NET's delegate orders them."""
+        self.begin_camera_snapshot(definition_id, entity_id, on_bytes, on_error, width, height)
+
+    def begin_camera_source(self, entity_id, on_source, on_error) -> None:
+        """From a .NET thread: what a live feed of one of Home Assistant's cameras reads. Answers exactly once, on the
+        loop: `on_source` with the camera's stream source and the ffmpeg binary Home Assistant's ffmpeg integration runs,
+        or `on_error` with why there is none: the camera has no stream source, the ffmpeg integration is not set up,
+        Home Assistant's message for a camera that is missing or off, or SNAPSHOT_STOPPED or SNAPSHOT_CLOSED. Never
+        raises. The stream source may hold a password: it is never logged here.
+        """
+        operation = _Operation(f"find the stream source of {entity_id}", None, on_source, on_error)
+        try:
+            self.hass.loop.call_soon_threadsafe(self._start_source, entity_id, operation)
+        except Exception:
+            operation.answer(operation.error, SNAPSHOT_STOPPED)
+
+    def begin_video_source(self, on_source, on_error) -> None:
+        """From a .NET thread: what .NET reads a video with (a Video frame node, SharpVideo). Answers exactly once, on
+        the loop: `on_source` with the ffmpeg binary Home Assistant's ffmpeg integration runs and a JSON array of the
+        folders Home Assistant allows files in (`_allowed_folders`), or `on_error` with why there is none: the ffmpeg
+        integration is not set up, or SNAPSHOT_STOPPED or SNAPSHOT_CLOSED. Never raises.
+        """
+        operation = _Operation("find what a video is read with", None, on_source, on_error)
+        try:
+            self.hass.loop.call_soon_threadsafe(self._answer_video_source, operation)
+        except Exception:
             operation.answer(operation.error, SNAPSHOT_STOPPED)
 
     def close(self) -> None:
@@ -277,7 +331,7 @@ class EntityBridge:
 
     # Pictures
 
-    def _start_snapshot(self, definition_id, entity_id, operation):
+    def _start_snapshot(self, definition_id, entity_id, operation, width=None, height=None):
         if self._closed:
             operation.answer(operation.error, SNAPSHOT_CLOSED)
             return
@@ -288,7 +342,7 @@ class EntityBridge:
             operation.answer(operation.error, f"{entity_id} is a camera of this definition; a definition cannot take a "
                                               "picture of its own camera")
             return
-        snapshot = self._async_snapshot(entity_id, operation)
+        snapshot = self._async_snapshot(entity_id, operation, width, height)
         try:
             # Not waited for by Home Assistant's startup; cancelled when it stops.
             self.hass.async_create_background_task(snapshot, f"HassSharp picture of {entity_id}")
@@ -296,9 +350,11 @@ class EntityBridge:
             snapshot.close()
             operation.answer(operation.error, _message(error))
 
-    async def _async_snapshot(self, entity_id, operation):
+    async def _async_snapshot(self, entity_id, operation, width=None, height=None):
         try:
-            image = await _camera().async_get_image(self.hass, entity_id, timeout=SNAPSHOT_TIMEOUT)
+            # Only a size Home Assistant can scale to is passed: it scales a JPEG when given both.
+            size = {"width": width, "height": height} if width and height else {}
+            image = await _camera().async_get_image(self.hass, entity_id, timeout=SNAPSHOT_TIMEOUT, **size)
             content_type = image.content_type or ""
             # As Home Assistant tells a JPEG it can scale.
             if "jpeg" not in content_type and "jpg" not in content_type:
@@ -314,6 +370,56 @@ class EntityBridge:
             raise
         else:
             operation.answer(operation.success, picture)
+
+    def _start_source(self, entity_id, operation):
+        if self._closed:
+            operation.answer(operation.error, SNAPSHOT_CLOSED)
+            return
+        source = self._async_source(entity_id, operation)
+        try:
+            self.hass.async_create_background_task(source, f"HassSharp stream source of {entity_id}")
+        except Exception as error:
+            source.close()
+            operation.answer(operation.error, _message(error))
+
+    def _answer_video_source(self, operation):
+        if self._closed:
+            operation.answer(operation.error, SNAPSHOT_CLOSED)
+            return
+        try:
+            binary = _ffmpeg_binary(self.hass)
+            folders = json.dumps(_allowed_folders(self.hass))
+        except Exception as error:
+            operation.answer(operation.error, _message(error))
+            return
+        if binary is None:
+            operation.answer(operation.error, "Home Assistant's ffmpeg integration is not set up")
+            return
+        operation.answer(operation.success, binary, folders)
+
+    async def _async_source(self, entity_id, operation):
+        try:
+            # As Home Assistant's own helpers find a camera: refused when it is missing or off.
+            camera = _camera().get_camera_from_entity_id(self.hass, entity_id)
+            async with asyncio.timeout(SNAPSHOT_TIMEOUT):
+                source = await camera.stream_source()
+        except TimeoutError:
+            operation.answer(operation.error, f"it did not name its stream source within {SNAPSHOT_TIMEOUT} s")
+            return
+        except Exception as error:
+            operation.answer(operation.error, _message(error))
+            return
+        except BaseException:
+            operation.answer(operation.error, SNAPSHOT_STOPPED)
+            raise
+        if not isinstance(source, str) or not source:
+            operation.answer(operation.error, "it has no stream source")
+            return
+        binary = _ffmpeg_binary(self.hass)
+        if binary is None:
+            operation.answer(operation.error, "Home Assistant's ffmpeg integration is not set up")
+            return
+        operation.answer(operation.success, source, binary)
 
     # Operations
 

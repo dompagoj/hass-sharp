@@ -17,8 +17,9 @@ using static VisualExecutionTests;
 /// left waiting across the reload, which the stop answers with that frame; a library save then rebuilds it
 /// (and the automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
 /// each revision replacing the one before, taking a command on its switch and working out its State from its setting;
-/// its camera shows a picture as it starts, and a request leaves its frame flow waiting across the save, which the
-/// stop cancels and answers with that picture; last it is turned off while a frame flow waits.
+/// its camera's Image is a Camera frame, whose picture its first frame shows, and a request then leaves its frame flow
+/// waiting across the save for a picture that never comes, which the stop cancels and answers with that picture; last
+/// it is turned off while a frame flow waits.
 /// Every generation's automation and definition load contexts, and every graph revision's, must be collected, and
 /// managed memory must stop growing.
 /// <para>
@@ -56,10 +57,11 @@ static class ReloadMemoryTests
         var log = PyInterop.Log; var schedule = PyInterop.RegisterSchedule;
         var register = PyInterop.BeginRegisterHaTriggers; var remove = PyInterop.BeginRemoveHaTriggers; var call = PyInterop.CallService;
         var push = PyInterop.PushEntityStates;
-        // The picture the gauge's camera takes as it starts.
+        // The picture the gauge's camera takes, until it is held: then none comes.
         var snapshot = PyInterop.BeginCameraSnapshot;
         var picture = SharpImage.Blank(24, 16).ToJpeg();
-        PyInterop.BeginCameraSnapshot = (_, _, ok, _) => ok(picture);
+        var held = false;
+        PyInterop.BeginCameraSnapshot = (_, _, ok, _) => { if (!Volatile.Read(ref held)) ok(picture); };
         // A camera's interval of half a second lasts 5 ms here.
         var second = CameraFrames.IntervalSecond;
         CameraFrames.IntervalSecond = TimeSpan.FromMilliseconds(10);
@@ -150,6 +152,10 @@ static class ReloadMemoryTests
                 var saved = await Request(manager.EntityRequest, new { operation = "save", id = "gauge", expectedRevision = revision, definition = GraphDefinition(revision) });
                 Check(saved["active"]!.GetValue<bool>(), $"graph revision {revision + 1} runs: " + saved.ToJsonString()[..Math.Min(1200, saved.ToJsonString().Length)]);
                 if (flowing != null) await Answered(flowing, picture, $"graph revision {revision + 1}");
+                Volatile.Write(ref held, false);
+                Check((await manager.CameraImage("gauge:view")).AsSpan().SequenceEqual(picture), $"graph revision {revision + 1}: the camera's first frame is the picture its Image takes");
+                Volatile.Write(ref held, true);
+                await Task.Delay(5);
                 flowing = await Waiting(manager, "gauge:view", $"graph revision {revision + 1}");
                 await manager.EntityCommand("gauge:relay", "turn_on", null);
                 var level = revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -363,8 +369,8 @@ static class ReloadMemoryTests
 
     const int GraphRevisions = 100;
 
-    // A gauge whose level is its setting's value and whose switch's turn on flow sets it on; its camera shows a picture
-    // as it starts, and its frame flow waits an hour.
+    // A gauge whose level is its setting's value and whose switch's turn on flow sets it on; its camera's Image is a
+    // Camera frame of camera.memory.
     static object GraphDefinition(int value) => new
     {
         name = "Gauge",
@@ -374,10 +380,8 @@ static class ReloadMemoryTests
             ["version"] = 5, ["name"] = "Gauge",
             ["nodes"] = new JsonArray(N("k", "setting", new { key = "level" }), VisualExecutionTests.Hub("s", "level", "sensor"),
                 VisualExecutionTests.Hub("relay", "relay", "switch"), N("set", "set_entity_state", new JsonObject { ["entity"] = "relay", ["is_on"] = Lit("boolean", true) }),
-                N("setup", "entity_setup"), N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.memory") }),
-                N("show", "show_frame", new JsonObject { ["entity"] = "view", ["image"] = new JsonObject { ["kind"] = "unset" } }),
-                VisualExecutionTests.Hub("view", "view", "camera"), N("wait", "delay", new { seconds = Lit("number", 3600) })),
-            ["edges"] = new JsonArray(D("k", "s", "value"), E("relay", "set", "command:turn_on"), E("setup", "snap"), E("snap", "show"), D("snap", "show", "image", "image"), E("view", "wait", "frame")),
+                N("snap", "camera_frame", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.memory") }), VisualExecutionTests.Hub("view", "view", "camera")),
+            ["edges"] = new JsonArray(D("k", "s", "value"), E("relay", "set", "command:turn_on"), D("snap", "view", "image", "image")),
         } },
     };
 
@@ -429,7 +433,7 @@ static class ReloadMemoryTests
         Check(answer is [0xFF, 0xD8, ..] && (frame == null || answer.AsSpan().SequenceEqual(frame)), $"{when}: the camera's request in flight is answered with its last good frame");
     }
 
-    // A frame request that waits for the camera's frame flow, which waits an hour.
+    // A frame request that waits for the camera's frame flow, which waits for a picture.
     static async Task<Task<byte[]>> Waiting(HassSharpManager manager, string uniqueId, string when)
     {
         var waiting = manager.CameraImage(uniqueId);

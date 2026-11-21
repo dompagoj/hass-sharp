@@ -407,7 +407,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # schema still answers, and the server's catalog itself is left as it was.
         self.service.node_library.side_effect=self.library
         entity_only={kind for kind,node in self.CATALOG['nodes'].items() if 'automation' not in node.get('documents',['automation'])}
-        self.assertEqual(entity_only,{'entity','device','csharp_entity','csharp_device','entity_setup','set_entity_state','set_entity_available','setting','download_file','camera_snapshot','image_draw_rect','image_draw_text','show_frame'})
+        self.assertEqual(entity_only,{'entity','device','csharp_entity','csharp_device','entity_setup','set_entity_state','set_entity_available','setting','download_file','camera_frame','video_frame','image_draw_rect','image_draw_text'})
         capabilities=(await self.call('get_capabilities',{})).data['result']['catalog']
         whole=(await self.call('get_node_schema',{})).data['result']['catalog']
         for catalog in (capabilities,whole):
@@ -1169,8 +1169,8 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(result['semantics']),{'execution','types','triggers','service','runs','csharp','definitions'})
         definitions=result['semantics']['definitions']
         for phrase in ('Entity node (kind entity)','command:<command>','command:<command>:<value>','config.arguments.<name>','targetPort <name>',
-                       'execution output frame','config.history {state, commands, frame}','rootPort','entity.name','entity.partialState',
-                       'scope.stateSource','scope.flow','command.unhandled','camera.no_frame','{name, settings?, logic}','Device node (kind device)',
+                       'targetPort: image','config.history {state, commands, frame}','rootPort','entity.name','entity.partialState',
+                       'scope.stateSource','scope.frameSource','scope.flow','command.unhandled','camera.no_frame','entity.id','kind camera_frame','kind ha_entity','{name, settings?, logic}','Device node (kind device)',
                        'sourcePort: entities','targetPort: device','definition.deviceKey','definition.duplicateDevice','device.name','device.via',
                        'device.viaUnknown','device.viaCycle','device.configurationUrl','device.empty',
                        'set_entity_state','entityDomains[domain].commands','entityDomains[domain].state','30 s','Stop','setting',
@@ -1192,6 +1192,11 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('such as the entity of a Has state or a Current state step, or of a Constant of an entity id type',definitions)
         self.assertNotIn('Entity field step',definitions)
         self.assertIn('own camera (it is refused at once)',definitions)
+        # A camera's picture is data into its Image: no frame pin, no Show frame, and Camera frame is live there, a snapshot elsewhere.
+        for gone in ('show_frame','Show frame','camera_snapshot','Take a picture','execution output frame (When'):
+            self.assertNotIn(gone,definitions)
+        self.assertIn('raw frames from one shared ffmpeg feed of the source camera',definitions)
+        self.assertIn('takes one snapshot from Home Assistant and passes the JPEG on unchanged',definitions)
         # C# entity and C# device nodes: their config, that signature is worked out (leave it out), what a setting pin takes,
         # a secret only by wire, the keys and unique ids, and that a C# device's own entities are known once it has run.
         for phrase in ('C# entity node (kind csharp_entity)','C# device node (kind csharp_device)','its config is {key, source, signature?, arguments?}',
@@ -1237,7 +1242,7 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(whole['nodes']),set(result['catalog']['nodes']))
         self.assertEqual(set((await self.call('get_node_schema',{'document':'automation'})).data['result']['catalog']['nodes']),set(self.CATALOG['nodes'])-entity_only)
         # The steps whose ports come from the entity's domain carry entityDomains, whatever document says: the Entity node
-        # (its state inputs, command and frame outputs) among them.
+        # (its state inputs, its command outputs and a camera's Image) among them.
         for kind in ('entity','set_entity_state'):
             for args in ({'kind':kind},{'kind':kind,'document':'entity'},{'kind':kind,'document':'automation'}):
                 schema=(await self.call('get_node_schema',args)).data['result']

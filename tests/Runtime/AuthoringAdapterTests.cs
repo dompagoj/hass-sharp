@@ -149,7 +149,7 @@ static class AuthoringAdapterTests
     {
         ["Motion in either room"]="""[{"key":"any_motion","domain":"binary_sensor","name":"Any motion","deviceClass":"motion","device":null}]""",
         ["Plug over HTTP"]="""[{"key":"relay","domain":"switch","name":"Relay","deviceClass":"outlet","device":"plug"},{"key":"power","domain":"sensor","name":"Power","deviceClass":"power","options":{"unit":"W","stateClass":"measurement"},"device":"plug"}]""",
-        ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","options":{"frame_interval":2},"device":null}]""",
+        ["Camera with a box"]="""[{"key":"boxed","domain":"camera","name":"Front door with a box","device":null}]""",
         ["File at setup"]="""[{"key":"model","domain":"sensor","name":"Model file","entityCategory":"diagnostic","device":null}]""",
         ["Plug in C#"]="[]",
         ["Thermometer over HTTP"]="""[{"key":"thermometer","domain":"sensor","name":null,"device":null,"csharp":true}]""",
@@ -228,7 +228,7 @@ static class AuthoringAdapterTests
                 kinds.Add(node["kind"]!.GetValue<string>());
             }
         }
-        string[] shown=["entity","device","csharp_entity","csharp_device","camera_snapshot","image_draw_rect","image_draw_text","show_frame","http_request","download_file","entity_setup","set_entity_state","entity_is","setting","set_entity_available"];
+        string[] shown=["entity","device","csharp_entity","csharp_device","camera_frame","image_draw_rect","image_draw_text","ha_entity","http_request","download_file","entity_setup","set_entity_state","entity_is","setting","set_entity_available"];
         VisualExecutionTests.Check(shown.All(kinds.Contains),"the example definitions use every kind they show: missing "+string.Join(", ",shown.Where(k=>!kinds.Contains(k))));
         Console.WriteLine("PASS the example definitions preview with no diagnostics, lay out their steps, carry no secret, hold their code's signatures, list what a save stores and use every kind they show");
     }

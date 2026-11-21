@@ -37,6 +37,7 @@
   "entity ID is a string subtype": "7078e8a43c4d1ea796ef1bce435d21ec6753e533c693a9db1da4bfcfca9e2c23",
   "error details: a value node a step reads": "1f15a1decd8bfe0787c6121dd764508995205ba9e9a2d4862d983d36d75765e4",
   "foreach array snapshot item index and carry": "dd6834fe3a5eab0779eb4e37813ca3e330859447892a9984390f0fa9d80d91d8",
+  "ha_entity: an Entity works in an automation too, of its entity's domain's type, and Read entity reads it": "f8338fd1218b41ce78ec8ad8a832362200f3b2fee9b97930fd2213e84968c053",
   "inactive once timestamp is preserved after changing trigger type": "425bae853f58b1a533ae5e0723562a10637bfdf34845ef7e68bb1624a297659d",
   "input enum accepts listed literals": "027bd25f900c57e514446ac1e1b7cd7c6ac2e6a69308ff9f080122ab29948f50",
   "input enum does not constrain wired values": "25d252c5dabe94d685a952479c1bd5ba406f739c368638f09293e19f54db486e",

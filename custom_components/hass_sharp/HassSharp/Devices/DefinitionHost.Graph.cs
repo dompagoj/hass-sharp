@@ -404,8 +404,8 @@ internal sealed partial class DefinitionHost
 
     /// <summary>
     /// Runs the graph's frame flow <paramref name="method"/> to its end, for a request for its camera's
-    /// picture (<see cref="FrameNeeded"/>, under the rule of <see cref="CameraFrames"/>): what it shows, it shows through
-    /// <see cref="ShowFrame"/>. A run still going at <see cref="CameraFrames.MakeLimit"/> is cancelled, so that a flow
+    /// picture (<see cref="FrameNeeded"/>, under the rule of <see cref="CameraFrames"/>): it works out the camera's Image and
+    /// shows it through <see cref="ShowFrame"/>. A run still going at <see cref="CameraFrames.MakeLimit"/> is cancelled, so that a flow
     /// that hangs (a camera that never answers) does not keep its camera from making the next frame; its record says why.
     /// Completes when the flow succeeded or ended at a Stop step; otherwise throws, for the camera to log once per reason:
     /// the flow's failure as <see cref="FlowFailed"/> words it, wrapping what the run threw; a
@@ -565,7 +565,7 @@ internal sealed partial class DefinitionHost
 
     /// <inheritdoc/>
     /// <remarks>
-    /// <see cref="SetFrame"/>: whichever flow runs it, a frame flow or any other.
+    /// <see cref="SetFrame"/>, from the camera's frame flow.
     /// Ignored once the definition stops or is replaced.
     /// </remarks>
     /// <exception cref="InvalidOperationException">The definition has no such entity, or it is not a camera.</exception>
@@ -732,7 +732,7 @@ internal sealed partial class DefinitionHost
     (string Name, FlowKind Kind) Flow(string method, InvocationCause cause)
     {
         var roots = definition.Roots;
-        if (roots?.Frames.FirstOrDefault(frame => frame.Value == method).Key is { } camera) return ($"{Named(camera)}: When a frame is needed", FlowKind.Frame);
+        if (roots?.Frames.FirstOrDefault(frame => frame.Value == method).Key is { } camera) return ($"{Named(camera)}: {DefinitionGraph.FrameLabel}", FlowKind.Frame);
         if (roots?.Commands.FirstOrDefault(command => command.Value == method).Key is { } handled)
         {
             // Keyed <entity key>:<command>; an entity key has no colon.

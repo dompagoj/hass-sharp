@@ -2,6 +2,7 @@ import { addGraphNode, declaredEntities, listedEntities, nodeCatalog, withGraphT
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
 import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, RegisteredEntity } from '../src/entities/model'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
+import { bound } from '../src/entities/definitionEdits'
 
 /** A value typed in on a step's input. */
 export const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
@@ -300,7 +301,7 @@ function entitiesFixture(generation: () => string) {
         : domain === 'text' && option === 'max' && value > 255 ? '255 or less, as Home Assistant keeps at most 255 characters' : undefined
     // A number outside the range its rule gives, such as a camera's seconds between frames (`DefinitionDocument.Range`).
     const range = (rule: { min?: number; max?: number }, value: number) =>
-      typeof rule.min === 'number' && typeof rule.max === 'number' && (value < rule.min || value > rule.max) ? `a number from ${rule.min} to ${rule.max}` : undefined
+      typeof rule.min === 'number' && typeof rule.max === 'number' && (value < rule.min || value > rule.max) ? `a number from ${bound(rule.min, true)} to ${bound(rule.max, false)}` : undefined
     let bounded = false
     for (const [option, value] of Object.entries(options)) {
       if (!Object.hasOwn(known, option)) {

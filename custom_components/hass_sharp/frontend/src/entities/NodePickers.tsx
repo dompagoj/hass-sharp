@@ -102,34 +102,27 @@ const configLabel = (ctx: StepPickerContext, key: string, fallback: string) => t
 const configHint = (ctx: StepPickerContext, key: string) => text(nodeSpec(ctx.node().kind, ctx.catalog())?.config[key]?.description) || undefined
 
 /**
- * The entity of a Set state or Set available, and the camera of a Show frame: the definition's entities by name, with
- * their type (a Show frame's only its cameras). A key the definition does not have stays chosen, marked missing, so the
- * validator's problem about it can be acted on.
+ * The entity of a Set state or Set available: the definition's entities by name, with their type. A key the definition
+ * does not have stays chosen, marked missing, so the validator's problem about it can be acted on.
  */
 function EntityPicker(props: { ctx: StepPickerContext }) {
   const ctx = props.ctx
   const current = () => text(ctx.node().config.entity)
-  const camera = () => ctx.node().kind === 'show_frame'
   const choices = createMemo(() => entityChoices(ctx.catalog(), ctx.node().kind))
   // A Set state cannot name an entity whose type has no state (a button): offered, and marked so.
   const stateless = (entity: Record<string, unknown>) => ctx.node().kind === 'set_entity_state' && !hasState(ctx.catalog(), text(entity.domain))
-  const option = (entity: Record<string, unknown>, detail?: string): SearchOption => {
+  const option = (entity: Record<string, unknown>): SearchOption => {
     const type = entityTypeLabel(ctx.catalog(), text(entity.domain))
-    return { value: text(entity.key), label: entityName(entity), detail: detail ?? (stateless(entity) ? `${type} · has no state` : type) }
+    return { value: text(entity.key), label: entityName(entity), detail: stateless(entity) ? `${type} · has no state` : type }
   }
-  const known = () => definitionEntity(ctx.catalog(), current())
-  const listed = () => choices().some(e => e.key === current())
-  const missing = () => current() !== '' && !known()
+  const missing = () => current() !== '' && !definitionEntity(ctx.catalog(), current())
   const options = createMemo((): SearchOption[] => [
     ...(missing() ? [{ value: current(), label: `Missing entity: ${current()}` }] : []),
-    // An entity the definition has that this step cannot name (one that is not a camera) is still shown as chosen.
-    ...(current() !== '' && known() && !listed() ? [option(known()!, `${entityTypeLabel(ctx.catalog(), text(known()!.domain))} · not a camera`)] : []),
     ...choices().map(e => option(e)),
   ])
-  const hint = () => camera() && !choices().length ? 'Add a camera to this definition first.'
-    : !definitionEntities(ctx.catalog()).length ? 'Add an Entity node from the step library first.' : configHint(ctx, 'entity')
+  const hint = () => !definitionEntities(ctx.catalog()).length ? 'Add an Entity node from the step library first.' : configHint(ctx, 'entity')
   return (
-    <PickerField name="entity" label={configLabel(ctx, 'entity', 'Entity')} options={options()} value={current()} placeholder={camera() ? 'Choose a camera' : 'Choose an entity'}
+    <PickerField name="entity" label={configLabel(ctx, 'entity', 'Entity')} options={options()} value={current()} placeholder="Choose an entity"
       hint={hint()} invalid={missing()} disabled={!options().length} errors={ctx.errorsFor('entity')}
       onSelect={key => {
         const result = chooseEntity(ctx.graph(), ctx.node().id, key, ctx.catalog())
@@ -166,7 +159,6 @@ const SettingSection: Component<{ ctx: StepPickerContext }> = props => <SettingP
 export const stepPickers: Record<string, { keys: string[]; Section: Component<{ ctx: StepPickerContext }> }> = {
   set_entity_state: { keys: ['entity'], Section: EntitySection },
   set_entity_available: { keys: ['entity'], Section: EntitySection },
-  show_frame: { keys: ['entity'], Section: EntitySection },
   setting: { keys: ['key'], Section: SettingSection },
   // An Entity node: its whole entity but its name (the header's) and its state values (its inputs).
   entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: EntityNodeSection },

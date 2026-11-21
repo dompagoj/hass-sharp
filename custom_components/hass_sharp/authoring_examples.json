@@ -1403,7 +1403,7 @@
     },
     {
       "title": "Camera with a box",
-      "description": "A camera that shows the front door's picture with a box and a caption drawn on it. When a frame is needed, on the camera's Entity node, runs Take a picture, and Show frame shows that picture after Draw rectangle and Draw text; nothing runs while nobody is watching.",
+      "description": "A camera that shows the front door's picture with a box and a caption drawn on it, read left to right: an Entity gives camera.front_door to Camera frame, Draw rectangle and Draw text draw on its picture, and the result goes into the Image of the camera's Entity node. Nothing runs while nobody is watching; while someone is, it makes frames as fast as the front door's camera gives them.",
       "definition": {
         "name": "Camera with a box",
         "settings": [],
@@ -1414,15 +1414,10 @@
             "name": "Camera with a box",
             "nodes": [
               {
-                "id": "boxed",
-                "kind": "entity",
+                "id": "front",
+                "kind": "ha_entity",
                 "config": {
-                  "key": "boxed",
-                  "domain": "camera",
-                  "name": "Front door with a box",
-                  "options": {
-                    "frame_interval": 2
-                  }
+                  "entity": "camera.front_door"
                 },
                 "position": {
                   "x": 60,
@@ -1431,16 +1426,14 @@
               },
               {
                 "id": "picture",
-                "kind": "camera_snapshot",
+                "kind": "camera_frame",
                 "config": {
                   "entity": {
-                    "kind": "literal",
-                    "type": "entity_id:camera",
-                    "value": "camera.front_door"
+                    "kind": "unset"
                   }
                 },
                 "position": {
-                  "x": 360,
+                  "x": 300,
                   "y": 100
                 }
               },
@@ -1475,8 +1468,8 @@
                   }
                 },
                 "position": {
-                  "x": 360,
-                  "y": 280
+                  "x": 540,
+                  "y": 100
                 }
               },
               {
@@ -1506,37 +1499,32 @@
                   }
                 },
                 "position": {
-                  "x": 660,
-                  "y": 280
+                  "x": 780,
+                  "y": 100
                 }
               },
               {
-                "id": "show",
-                "kind": "show_frame",
+                "id": "boxed",
+                "kind": "entity",
                 "config": {
-                  "entity": "boxed",
-                  "image": {
-                    "kind": "unset"
-                  }
+                  "key": "boxed",
+                  "domain": "camera",
+                  "name": "Front door with a box"
                 },
                 "position": {
-                  "x": 660,
+                  "x": 1020,
                   "y": 100
                 }
               }
             ],
             "edges": [
               {
-                "id": "boxed:frame:picture",
-                "source": "boxed",
+                "id": "front.entity:picture.entity",
+                "kind": "data",
+                "source": "front",
                 "target": "picture",
-                "port": "frame"
-              },
-              {
-                "id": "picture:next:show",
-                "source": "picture",
-                "target": "show",
-                "port": "next"
+                "sourcePort": "entity",
+                "targetPort": "entity"
               },
               {
                 "id": "picture.image:box.image",
@@ -1555,10 +1543,10 @@
                 "targetPort": "image"
               },
               {
-                "id": "caption.image:show.image",
+                "id": "caption.image:boxed.image",
                 "kind": "data",
                 "source": "caption",
-                "target": "show",
+                "target": "boxed",
                 "sourcePort": "image",
                 "targetPort": "image"
               }

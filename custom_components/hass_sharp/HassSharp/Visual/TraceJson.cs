@@ -135,13 +135,17 @@ static class TraceJson
 
     /// <summary>
     /// A picture as a trace and a log show it: "Image · 12 KB · 2 drawings", the size of the JPEG it came as (rounded
-    /// up; a blank picture's is 0) and how many drawings it carries. Never its bytes; nothing is decoded or encoded.
+    /// up; a blank picture's is 0) and how many drawings it carries; a frame of a camera's live feed, which came as raw
+    /// pixels and not as a JPEG, by its size: "Image · 1920×1080 live frame · 2 drawings". Never its bytes; nothing is
+    /// decoded or encoded, so a frame already given back reads as well.
     /// </summary>
     internal static string ImageText(SharpImage image)
     {
-        var kilobytes = ((long)image.SourceBytes + 1023) / 1024;
         var drawings = image.Drawings;
-        return $"Image · {kilobytes.ToString(CultureInfo.InvariantCulture)} KB · {drawings.ToString(CultureInfo.InvariantCulture)} drawing{(drawings == 1 ? "" : "s")}";
+        var source = image.IsFrame
+            ? $"{image.Width.ToString(CultureInfo.InvariantCulture)}×{image.Height.ToString(CultureInfo.InvariantCulture)} live frame"
+            : $"{(((long)image.SourceBytes + 1023) / 1024).ToString(CultureInfo.InvariantCulture)} KB";
+        return $"Image · {source} · {drawings.ToString(CultureInfo.InvariantCulture)} drawing{(drawings == 1 ? "" : "s")}";
     }
 
     static readonly Dictionary<Type, string> aliases = new()

@@ -101,9 +101,10 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
   const hasDataCycle = origins.some(o => o.kind === 'dataCycle')
   // An entity graph's Entity nodes: what a state value reads, and which flows a step reading a command's value runs in,
   // are worked out again for each wire (`entityScopes`), so none of those problems is carried over. Nor is a node's
-  // request for its other state values, which connectData never refuses for.
+  // request for its other state values, which connectData never refuses for, nor a camera's word that its Image is not
+  // connected, which a wire into it settles.
   const hubs = graphDocument(graph) === 'entity' && [...analysis.nodes.values()].some(n => Object.hasOwn(catalog.nodes, n.kind) && isHub(catalog.nodes[n.kind]))
-  const reworked = new Set(['entity.partialState', 'scope.stateSource', 'scope.flow'])
+  const reworked = new Set(['entity.partialState', 'scope.stateSource', 'scope.frameSource', 'scope.flow', 'camera.no_frame'])
   // The scope problems the graph has, by step input and message.
   const oldScope = new Set(diagnostics.filter(d => d.code === 'scope.data').map(d => JSON.stringify([d.nodeId, d.inputId, d.message])))
   const adjacency = new Map<string, string[]>()

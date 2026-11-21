@@ -135,14 +135,26 @@ public static class VisualNodeCatalog
     /// </summary>
     internal static bool Structural(JsonNode? typeOrInput) => Flag(typeOrInput, "structural");
     /// <summary>
-    /// The node's data inputs (<see cref="DataInputs"/> under <paramref name="catalog"/>) without the structural ones: an
-    /// Entity node's or a Set state's state values. A class node has none: its pins are its settings, and its code gives its
+    /// The node's data inputs (<see cref="DataInputs"/> under <paramref name="catalog"/>) without the structural ones and
+    /// the pictures it shows (<see cref="PictureInput"/>): an Entity node's or a Set state's state values. A class node has none: its pins are its settings, and its code gives its
     /// state. Mirrored by <c>stateInputs</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, JsonObject catalog) => StateInputs(node, VisualCatalogSnapshot.BuiltIn.WithRoot(catalog));
     /// <summary>The node's state values (<see cref="StateInputs(JsonObject, JsonObject)"/>) under the catalog of <paramref name="snapshot"/>.</summary>
     internal static IEnumerable<KeyValuePair<string, JsonNode?>> StateInputs(JsonObject node, VisualCatalogSnapshot snapshot) =>
-        IsClassNode(Spec(node, snapshot)) ? [] : DataInputs(node, null, snapshot).Where(p => !Structural(p.Value)).ToList();
+        IsClassNode(Spec(node, snapshot)) ? [] : DataInputs(node, null, snapshot).Where(p => !Structural(p.Value) && !PictureInput(p.Value)).ToList();
+    /// <summary>
+    /// Whether an input is a picture an Entity node shows (<c>"picture": true</c>, a camera's Image, from its type's
+    /// <c>picture</c> row): no state value, it is read in the node's frame flow alone. Mirrored by <c>pictureInput</c> in
+    /// <c>contract.ts</c>.
+    /// </summary>
+    internal static bool PictureInput(JsonNode? input) => Flag(input, "picture");
+    /// <summary>
+    /// The pictures an Entity node shows (<see cref="PictureInput"/>): a camera's Image, which its frame flow reads each
+    /// time a frame is needed; none for any other node. Mirrored by <c>pictureInputs</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static IEnumerable<KeyValuePair<string, JsonNode?>> PictureInputs(JsonObject node, VisualCatalogSnapshot snapshot) =>
+        DataInputs(node, null, snapshot).Where(p => PictureInput(p.Value)).ToList();
     /// <summary>
     /// The entity an Entity node declares, as a definition lists one (the shape <see cref="SharpDomains.Create"/> reads):
     /// a copy of its settings without its run history and state values, and without a name that is blank once trimmed
@@ -331,15 +343,14 @@ public static class VisualNodeCatalog
     /// </summary>
     internal static JsonObject? DeclaredDomain(JsonObject node, JsonObject catalog) => DomainRow(catalog, Text(node["config"], "domain"));
     /// <summary>
-    /// An Entity node's execution pins: <c>command:&lt;command&gt;</c> per command of its type, in the row's order, then
-    /// <c>frame</c> when the row has <c>frame</c> (a camera); none for an unknown type. Mirrored by <c>declaredExecution</c>
-    /// in <c>contract.ts</c>.
+    /// An Entity node's execution pins: <c>command:&lt;command&gt;</c> per command of its type, in the row's order; none for
+    /// an unknown type. A camera has no pin for its frames: its Image input says what it shows (<see cref="PictureInputs"/>).
+    /// Mirrored by <c>declaredExecution</c> in <c>contract.ts</c>.
     /// </summary>
     static IEnumerable<string> DeclaredExecution(JsonObject node, JsonObject catalog)
     {
         if (DeclaredDomain(node, catalog) is not { } row) yield break;
         foreach (var (command, _) in row["commands"] as JsonObject ?? []) yield return "command:" + command;
-        if (row["frame"] is JsonObject) yield return "frame";
     }
     /// <summary>The type of the definition's setting with this key, when it is one a setting can have; null otherwise.</summary>
     internal static string? SettingType(JsonObject catalog, string key) =>
@@ -390,11 +401,18 @@ public static class VisualNodeCatalog
         types.All(t => t is JsonValue v && v.TryGetValue<string>(out var type) && (type == "entity_id" || type.StartsWith("entity_id:", StringComparison.Ordinal)));
     /// <summary>
     /// Whether a wire from this node into an entity id input still lets an Entity node's state follow the entity: a Constant of an
-    /// entity id type, whose chosen entity <see cref="StateDependencies.Of"/> counts. Mirrored by <c>followedSource</c> in
-    /// <c>contract.ts</c>.
+    /// entity id type, or an Entity (<c>ha_entity</c>), whose chosen entity <see cref="StateDependencies.Of"/> counts. Mirrored
+    /// by <c>followedSource</c> in <c>contract.ts</c>.
     /// </summary>
     internal static bool FollowedSource(JsonObject node, VisualCatalogSnapshot? snapshot) =>
-        Text(node, "kind") == "constant" && TakesOnlyEntityIds(DataInputs(node, null, snapshot)["value"]);
+        Text(node, "kind") == "ha_entity" || Text(node, "kind") == "constant" && TakesOnlyEntityIds(DataInputs(node, null, snapshot)["value"]);
+    /// <summary>
+    /// The domain of an entity id as an Entity (<c>ha_entity</c>) takes one: <c>camera</c> for <c>camera.front_door</c>; null for a
+    /// text that is not an entity id (the pattern of the catalog's <c>entity_id</c>). Mirrored by <c>entityIdDomain</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static string? EntityIdDomain(string id) => VisualTypes.Matches(id, EntityIdPattern) ? id[..id.IndexOf('.')] : null;
+    /// <summary>An entity id: a domain, a dot and an object id, each of lowercase letters, digits and underscores.</summary>
+    internal const string EntityIdPattern = "^[a-z0-9_]+\\.[a-z0-9_]+$";
     /// <summary>
     /// The graph's value wires as the validators accept them: with an id, of kind <c>data</c> and no execution port, both
     /// ports named, and both ends among <paramref name="nodes"/> (<see cref="GraphNodes"/>).
@@ -437,7 +455,8 @@ public static class VisualNodeCatalog
     /// <c>assignableFrom</c> the union of every node's (in node order). The order of the nodes never changes what is
     /// accepted. An entity graph's <c>definition</c> is carried too, its <c>entities</c> those its nodes declare, each with
     /// the key of its device (<see cref="DerivedEntities"/>), and its <c>devices</c> those of its Device nodes
-    /// (<see cref="DerivedDevices"/>), whatever the graph's own lists. The catalog itself when there are none, and for a graph past the catalog's limits:
+    /// (<see cref="DerivedDevices"/>), whatever the graph's own lists; the type of each Entity's (<c>ha_entity</c>) output is its
+    /// entity's (<see cref="ResolveEntities"/>). The catalog itself when there are none, and for a graph past the catalog's limits:
     /// the validator answers that graph with <c>graph.limit</c> alone, and nothing is merged or resolved for it, whoever asks.
     /// </summary>
     internal static JsonObject WithGraphTypes(JsonObject catalog, JsonObject graph)
@@ -462,9 +481,12 @@ public static class VisualNodeCatalog
                 }
         var selecting = SelectingNodes(catalog, graph);
         var definition = graph["definition"] as JsonObject;
-        if (added.Count == 0 && selecting.Count == 0 && definition == null) return catalog;
+        var picked = GraphNodes(graph).Values.Any(n => Text(n, "kind") == "ha_entity");
+        if (added.Count == 0 && selecting.Count == 0 && definition == null && !picked) return catalog;
         var merged = (JsonObject)catalog.DeepClone();
         foreach (var (id, entry) in added.ToArray()) { added.Remove(id); merged["types"]![id] = entry; }
+        // An Entity's type before the Select property nodes that may read it, which keep it (ResolveOutputs).
+        if (picked) { merged.Remove("resolvedOutputs"); ResolveEntities(merged, graph); }
         if (selecting.Count > 0) ResolveOutputs(merged, graph);
         if (definition != null)
         {
@@ -475,6 +497,20 @@ public static class VisualNodeCatalog
             ResolveSettings(merged, graph);
         }
         return merged;
+    }
+    /// <summary>
+    /// The graph's Entity nodes (<c>ha_entity</c>): the output of each has the type of an entity id of its entity's domain
+    /// (<c>entity_id:camera</c> for <c>camera.front_door</c>), under <c>resolvedOutputs</c>; one whose entity is not an
+    /// entity id (<see cref="EntityIdDomain"/>) has none (an empty type). Mirrored by <c>resolveEntities</c> in <c>contract.ts</c>.
+    /// </summary>
+    static void ResolveEntities(JsonObject catalog, JsonObject graph)
+    {
+        foreach (var node in GraphNodes(graph).Values)
+            if (Text(node, "kind") == "ha_entity" && catalog["nodes"]?["ha_entity"] is JsonObject && EntityIdDomain(Text(node["config"], "entity")) is { } domain)
+            {
+                if (catalog["resolvedOutputs"] is not JsonObject resolved) catalog["resolvedOutputs"] = resolved = new JsonObject();
+                ((resolved[Text(node, "id")] ??= new JsonObject()) as JsonObject)!["entity"] = "entity_id:" + domain;
+            }
     }
     /// <summary>
     /// An entity graph's Setting nodes: the value of each has the type of the definition's setting it names, under
@@ -526,11 +562,12 @@ public static class VisualNodeCatalog
     /// node is resolved after it: each waits for the ones it reads, and is resolved once none is left (in the order the
     /// graph lists the ready ones), so no call goes one level deeper per node, however long the chain. A node on a cycle
     /// of such nodes, or reading one, is never ready and has none; so has an output whose input, property or source type
-    /// is missing. Mirrored by <c>resolveOutputs</c> in <c>contract.ts</c>.
+    /// is missing. The types already resolved (an Entity's, <see cref="ResolveEntities"/>) are kept, so that a property of
+    /// an Entity's entity can be selected. Mirrored by <c>resolveOutputs</c> in <c>contract.ts</c>.
     /// </summary>
     internal static void ResolveOutputs(JsonObject catalog, JsonObject graph)
     {
-        var resolved = new JsonObject(); catalog["resolvedOutputs"] = resolved;
+        if (catalog["resolvedOutputs"] is not JsonObject resolved) catalog["resolvedOutputs"] = resolved = new JsonObject();
         var nodes = GraphNodes(graph);
         var incoming = new Dictionary<(string, string), JsonObject>();
         foreach (var edge in ValueWires(graph, nodes)) incoming.TryAdd((Text(edge, "target"), Text(edge, "targetPort")), edge);
@@ -769,6 +806,16 @@ public static class VisualNodeCatalog
             {
                 var port = Input(TypeIds(value?["types"]), false, null);
                 if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
+                ports[key] = port;
+            }
+        // An Entity node's pictures (a camera's Image), after its state values, none required, each marked picture: they are
+        // read in its frame flow, never in its state's (PictureInput). A Set state sets no picture.
+        if (dynamic == "declared" && stateRow?["picture"] is JsonObject pictures)
+            foreach (var (key, value) in pictures)
+            {
+                var port = Input(TypeIds(value?["types"]), false, Text(value, "description") is { Length: > 0 } description ? description : null);
+                if (Text(value, "label") is { Length: > 0 } label) port["label"] = label;
+                port["picture"] = true;
                 ports[key] = port;
             }
         return ports;

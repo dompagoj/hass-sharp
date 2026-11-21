@@ -120,7 +120,9 @@ public sealed class VisualScope
     /// inner one first reads it, from the outer scope's own value, and the outer scope does not run (nor change its
     /// values) until its inner scopes have ended; each inner scope changes only its own copies.
     /// </summary>
-    internal VisualScope Clone(CancellationToken token)=>new(){CancellationToken=token,LastError=(Exception?)new VisualSnapshot().Copy(LastError),LastErrorStep=LastErrorStep,Frame=Frame,outer=this};
+    internal VisualScope Clone(CancellationToken token)=>new(){CancellationToken=token,LastError=(Exception?)new VisualSnapshot().Copy(LastError),LastErrorStep=LastErrorStep,Frame=Frame,outer=this,Copied=Copied};
+    /// <summary>Told of each picture this scope copies from the one around it (<see cref="TryGetOutput"/>), which the run gives back when it ends (<see cref="VisualRuntime.Copied"/>).</summary>
+    internal Action<SharpImage>? Copied;
     /// <summary>
     /// The value of a step output on this path: this scope's own, else the outer scope's (which takes its own copy
     /// first, so all of a scope's copies come from one identity map), copied into this scope.
@@ -131,6 +133,7 @@ public sealed class VisualScope
             if(outer==null || !outer.TryGetOutput(key,out var around)){value=null;return false;}
             try {value=Outputs[key]=(copies??=new VisualSnapshot()).Copy(around);}
             catch(Exception error)when(error is not VisualCopyException and not OperationCanceledException){throw new VisualCopyException(error);}
+            if(value is SharpImage image)Copied?.Invoke(image);
             return true;
         }
     }
@@ -157,6 +160,8 @@ public sealed class VisualRuntime
     /// <summary>What values of the automation's own types are written to and read from JSON with (see <see cref="JsonOptions"/>).</summary>
     readonly JsonSerializerOptions serializer;
     readonly Dictionary<string,string[]> pureInputs=[];
+    // The value nodes each camera's Entity node reads for the pictures it shows (its Image), which only its frame flow works out.
+    readonly Dictionary<string,string[]> pictureInputs=[];
     readonly Dictionary<(string,string),string?> absentTriggerOutputs=[];
     readonly CancellationToken external;
     readonly CancellationTokenSource lifetime;
@@ -169,13 +174,30 @@ public sealed class VisualRuntime
     // How an entity id becomes the handle a node asks for: a generated automation passes its own, so the handle classes are its own.
     readonly Func<string,HassSharp.Entities.Entity> entities;
     readonly System.Collections.Concurrent.ConcurrentQueue<Exception> stopFailures = new();
+    /// <summary>
+    /// The pictures this run made: each Camera frame's, each drawing step's copy, and each copy of a picture taken into a
+    /// loop, a parallel branch or a node method's flow. A live feed's frame is a reference to a pooled buffer, which goes
+    /// back to the pool once every image of it is given back (<see cref="SharpImage.Release"/>): the run gives each of them
+    /// back once when it ends (<see cref="ReleaseImages"/>), as nothing of the run reads them afterwards. A camera that shows
+    /// one keeps its own copy (<see cref="SharpCamera.Show"/>).
+    /// </summary>
+    readonly HashSet<SharpImage> madeImages=new(ReferenceEqualityComparer.Instance);
+    /// <summary>
+    /// Of <see cref="madeImages"/>, the ones handed to node code (a library's or a Custom C# step's, a compiled conversion),
+    /// which may keep them past the run: never given back, so no buffer is used again under them; the garbage collector
+    /// takes them instead.
+    /// </summary>
+    readonly HashSet<SharpImage> keptImages=new(ReferenceEqualityComparer.Instance);
+    readonly Lock imageGate=new();
+    /// <summary>The nodes whose code is the automation's own (<see cref="custom"/>), by id: a picture they read is kept (<see cref="keptImages"/>).</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string,bool> nodeCode=new(StringComparer.Ordinal);
     public VisualRuntime(string graphJson,string catalogJson,Dictionary<string,Type> types,JsonElement trigger,CancellationToken cancellation,Func<string,VisualScope,VisualRuntime,Task> custom,HashSet<string>? compiledConversions=null,Dictionary<string,string>? comparisonTypes=null,JsonSerializerOptions? json=null,Func<string,HassSharp.Entities.Entity>? entities=null) {
         serializer=json??JsonOptions();this.entities=entities??(id=>new HassSharp.Entities.Entity(id));
         this.comparisonTypes=comparisonTypes??[];
         this.compiledConversions=compiledConversions??[];
         var graph=JsonNode.Parse(graphJson)!.AsObject();catalog=JsonNode.Parse(catalogJson)!.AsObject();this.types=types;this.custom=custom;this.trigger=trigger;external=cancellation;lifetime=new CancellationTokenSource();externalRegistration=cancellation.Register(()=>{externalCleanup=lifetime.CancelAsync();});
         nodes=graph["nodes"]!.AsArray().OfType<JsonObject>().ToDictionary(n=>Text(n,"id"));
-        var sources=new Dictionary<string,List<string>>();
+        var sources=new Dictionary<string,List<(string Port,string Source)>>();
         foreach(var e in graph["edges"]!.AsArray().OfType<JsonObject>()) {
             if(Text(e,"kind")=="data") {
                 // A wire into a structural input (an Entity node's Device pin) says what belongs to what and carries no value:
@@ -184,17 +206,19 @@ public sealed class VisualRuntime
                 // Nor is a wire into a declaration (a C# entity's or C# device's setting): a declaration is never walked or worked out.
                 if(nodes.ContainsKey(Text(e,"target"))&&Declared(Text(e,"target")))continue;
                 data[(Text(e,"target"),Text(e,"targetPort"))]=(Text(e,"source"),Text(e,"sourcePort"));
-                if(!sources.TryGetValue(Text(e,"target"),out var list))sources[Text(e,"target")]=list=[];list.Add(Text(e,"source"));
+                if(!sources.TryGetValue(Text(e,"target"),out var list))sources[Text(e,"target")]=list=[];list.Add((Text(e,"targetPort"),Text(e,"source")));
             }
             else {var port=Text(e,"port","next");if(Text(nodes[Text(e,"source")],"kind")=="condition" && port=="next")port="true";flow[(Text(e,"source"),port)]=Text(e,"target");}
         }
         // Each step's value nodes, through chains of value nodes, each after the ones it reads. A declaration (a Device node)
-        // is no step: it has none, and is never walked (see Walk).
-        foreach(var id in nodes.Keys.Where(id=>!Pure(id)&&!Declared(id))) {
-            var order=new List<string>();var seen=new HashSet<string>(StringComparer.Ordinal);
-            void Visit(string node){foreach(var source in sources.GetValueOrDefault(node)??[])if(Pure(source)&&seen.Add(source)){Visit(source);order.Add(source);}}
-            Visit(id);if(order.Count>0)pureInputs[id]=order.ToArray();
-        }
+        // is no step: it has none, and is never walked (see Walk). An Entity node's pictures (a camera's Image) have theirs
+        // apart: its frame flow works them out, and its state's never does.
+        foreach(var id in nodes.Keys.Where(id=>!Pure(id)&&!Declared(id)))
+            foreach(var pictures in new[]{false,true}) {
+                var order=new List<string>();var seen=new HashSet<string>(StringComparer.Ordinal);
+                void Visit(string node,bool own){foreach(var (port,source) in sources.GetValueOrDefault(node)??[])if((!own||Picture(id,port)==pictures)&&Pure(source)&&seen.Add(source)){Visit(source,false);order.Add(source);}}
+                Visit(id,true);if(order.Count>0)(pictures?pictureInputs:pureInputs)[id]=order.ToArray();
+            }
         FollowSettings();
     }
     /// <summary>
@@ -358,6 +382,8 @@ public sealed class VisualRuntime
     bool Pure(string id)=>VisualNodeCatalog.IsPure(nodes[id],Spec(id));
     /// <summary>Whether the node is a declaration (a Device node): neither a step nor a value, it is never walked or worked out.</summary>
     bool Declared(string id)=>VisualNodeCatalog.Declaration(Spec(id) as JsonObject);
+    /// <summary>Whether the input <paramref name="port"/> of the node is a picture an Entity node shows (<see cref="VisualNodeCatalog.PictureInput"/>, a camera's Image).</summary>
+    bool Picture(string id,string port)=>Text(Spec(id),"dynamicInputs")=="declared"&&VisualNodeCatalog.PictureInput(InputSpecs(id)?[port]);
     // A Custom C# node's pins are its signature's; a Set state's or Entity node's its entity's (see EntityInputs); every other node's are its kind's.
     JsonNode? InputSpecs(string id)=>VisualNodeCatalog.CustomSignature(nodes[id],Spec(id)) is {} signature?signature["inputs"]:Text(Spec(id),"dynamicInputs") is "entity" or "declared"?EntityInputs(id):Spec(id)?["inputs"];
     readonly Dictionary<string,JsonObject> entityInputs=[];
@@ -413,10 +439,28 @@ public sealed class VisualRuntime
     public async Task RunAsync(string root,string? port=null) {
         startPort=port;
         trace=VisualTrace.Create(root,nodes.Keys,TraceInputType,TraceOutputType,port:port);
-        try {await Walk(root,new VisualScope{CancellationToken=lifetime.Token},0);external.ThrowIfCancellationRequested();}
+        try {await Walk(root,new VisualScope{CancellationToken=lifetime.Token,Copied=image=>Copied(image)},0);external.ThrowIfCancellationRequested();}
         catch(OperationCanceledException) when(Volatile.Read(ref stopped)!=0 && !external.IsCancellationRequested) {if(InvocationContext.Current is {} run)run.Stopped=true;}
-        finally {trace?.Complete();externalRegistration.Dispose();try{await externalCleanup;}catch when(external.IsCancellationRequested){}lifetime.Dispose();}
+        // The pictures are given back once the trace has written them (it reads only their sizes and drawings, which stay).
+        finally {trace?.Complete();ReleaseImages();externalRegistration.Dispose();try{await externalCleanup;}catch when(external.IsCancellationRequested){}lifetime.Dispose();}
         if(!stopFailures.IsEmpty)throw new AggregateException("Stop cleanup failed after all branches drained.",stopFailures);
+    }
+    /// <summary>A picture the run made (<see cref="madeImages"/>), given back when it ends; returned as it is.</summary>
+    SharpImage Made(SharpImage image) {lock(imageGate)madeImages.Add(image);return image;}
+    /// <summary>A copy the run took of a value, a picture of which it gives back when it ends (<see cref="Made"/>); returned as it is.</summary>
+    internal object? Copied(object? copy) {if(copy is SharpImage image)Made(image);return copy;}
+    /// <summary>Runs the automation's own code for the node <paramref name="id"/>, which keeps the pictures it reads (<see cref="Read"/>).</summary>
+    Task NodeCode(string id,VisualScope scope) {nodeCode.TryAdd(id,true);return custom(id,scope,this);}
+    /// <summary>A value the node <paramref name="node"/> reads: when that node's code is the automation's own (<see cref="NodeCode"/>), a picture it reads is kept (<see cref="keptImages"/>).</summary>
+    T Handed<T>(string node,T value) {if(value is SharpImage image&&nodeCode.ContainsKey(node))lock(imageGate)keptImages.Add(image);return value;}
+    /// <summary>
+    /// Gives back each picture the run made once (<see cref="madeImages"/>), except those handed to node code
+    /// (<see cref="keptImages"/>). What is still to be encoded of one then fails, so only once nothing of the run reads them.
+    /// </summary>
+    void ReleaseImages() {
+        SharpImage[] done;
+        lock(imageGate) {done=[.. madeImages.Where(image=>!keptImages.Contains(image))];madeImages.Clear();}
+        foreach(var image in done)image.Release();
     }
     // Values are traced as the node sees them: after conversion, with the wire they came from.
     public T Input<T>(VisualScope scope,string node,string port) {
@@ -424,7 +468,7 @@ public sealed class VisualRuntime
         // A secret the pin cannot take is not quoted (a conversion's messages, and the failures under them, quote it).
         var value=Guarded(()=>(T)Coerce(given,typeof(T),$"{node}.{port}",false,()=>Title(node)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(node)?[port],port),serializer,entities)!,
             _=>SecretInput(node,port,given),()=>Hidden(node,port));
-        if(scope.Trace!=null)Traced(scope,node,port,value is HassSharp.Entities.Entity handle?handle.EntityId:value);return value;
+        if(scope.Trace!=null)Traced(scope,node,port,value is HassSharp.Entities.Entity handle?handle.EntityId:value);return Handed(node,value);
     }
     /// <summary>What a node method's <see cref="NodeContext"/> parameter gets: this run, as <paramref name="scope"/> sees it.</summary>
     public NodeContext Context(VisualScope scope,string node)=>new(this,scope,node,InvocationContext.Current?.RunId??"",trigger);
@@ -444,7 +488,7 @@ public sealed class VisualRuntime
         await Walk(Next(owner,port),scope,depth+1);
         return scope;
     }
-    public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return value;}
+    public object? Input(VisualScope scope,string node,string port) {var value=Read(scope,node,port);if(scope.Trace!=null)Traced(scope,node,port,value);return Handed(node,value);}
     // A value from a secret output is written as ***, with the wire it came from (see Secret).
     void Traced(VisualScope scope,string node,string port,object? value) {
         if(!data.TryGetValue((node,port),out var source)){trace!.Input(scope.Trace!,node,port,value,null);return;}
@@ -507,8 +551,8 @@ public sealed class VisualRuntime
         if(port.Split(':') is [var group and ("carry" or "export"),var name])
             return (cfg?[group=="carry"?"carry":"exports"] as JsonArray??[]).OfType<JsonObject>().FirstOrDefault(d=>Text(d,"name")==name) is {} declaration?Text(declaration,"type"):null;
         // A Select property node's output has the chosen property's type, resolved for the graph under resolvedOutputs.
-        // So does a Setting's, which has its setting's type.
-        var declared=VisualNodeCatalog.PropertyOf(OutputSpecs(node)?[port])!=""||kind=="setting"?Text(catalog["resolvedOutputs"]?[node],port):Text(OutputSpecs(node)?[port],"type");
+        // So does a Setting's, which has its setting's type, and an Entity's, which has its entity's domain's.
+        var declared=VisualNodeCatalog.PropertyOf(OutputSpecs(node)?[port])!=""||kind is "setting" or "ha_entity"?Text(catalog["resolvedOutputs"]?[node],port):Text(OutputSpecs(node)?[port],"type");
         if(declared.StartsWith('$'))declared=Text(cfg,declared[1..]);
         return declared==""?null:declared;
     }
@@ -656,7 +700,10 @@ public sealed class VisualRuntime
                     try {if(pureInputs.TryGetValue(id,out var inputs))await Prepare(id,inputs,scope);ev=Begin();state=EntityValues(scope,id,out hidden);}
                     catch(Exception error) when(error is not OperationCanceledException || !Cancelled(scope)) {MarkUnavailable(definition!,EntityKey(id),id);throw;}
                 }
-                // An Entity node's command or frame flow does not work out its state values.
+                // A camera's frame flow works out the pictures it shows, and no state value: a picture that cannot be made fails
+                // the frame, and the camera answers with its last good one.
+                else if(kind=="entity" && startPort==FrameFlow) {if(pictureInputs.TryGetValue(id,out var pictures))await Prepare(id,pictures,scope);ev=Begin();}
+                // An Entity node's command flow does not work out its state values.
                 else if(kind=="entity")ev=Begin();
                 else {
                     if(pureInputs.TryGetValue(id,out var pure))await Prepare(id,pure,scope);
@@ -678,10 +725,6 @@ public sealed class VisualRuntime
                         // A name taken from a secret address would put part of it in the path: the file is called "file" then.
                         var fileName=Text(cfg,"name") is {Length:>0} name?name:SecretInput(id,"url",address)?"file":null;
                         Output(scope,id,await Waiting(scope,definition!.Files.Download(address,checksum,fileName,scope.CancellationToken)),"path");break;
-                    // A picture of a Home Assistant camera, asked for under the definition's id, so that one of its own cameras
-                    // (which would wait for itself) is refused at once; Home Assistant's failure is the step's.
-                    case "camera_snapshot":var camera=Input<string>(scope,id,"entity");
-                        Output(scope,id,await Waiting(scope,HassCameras.SnapshotAsync(definition!.DefinitionId,camera,scope.CancellationToken)),"image");break;
                     // A secret is not written to the log: the line is *** (true or false worked out from one is written).
                     case "log":var said=Get("value");PyInterop.Log(Text(cfg,"level","Info") switch{"Debug"=>10,"Warn"=>30,"Error"=>40,_=>20},SecretInput(id,"value",said)?TraceJson.Redacted:LogText(said));break;
                     case "stop":Interlocked.Exchange(ref stopped,1);try{await lifetime.CancelAsync();}catch(Exception error){stopFailures.Enqueue(error);}throw new OperationCanceledException(lifetime.Token);
@@ -690,17 +733,15 @@ public sealed class VisualRuntime
                     case "condition_result":scope.Condition=Input<bool>(scope,id,"value");if(ev!=null)trace!.End(ev,"ok",null,null);return;
                     // When started only starts its flow.
                     case "entity_setup":break;
-                    // An Entity node starts the flow of its run's pin: its state, which it sets; a command's or its frame's steps.
+                    // An Entity node starts the flow of its run's pin: its state, which it sets; a command's steps; its frame, which it shows.
                     case "entity":
                         if(EntityFlow(id,scope,definition!,state,hidden) is {} pin){port=pin;next=Next(id,pin);}
                         else next=null;
                         break;
                     case "set_entity_state":var values=EntityValues(scope,id,out var secret);ThrowIfCancelled(scope);definition!.SetState(Text(cfg,"entity"),values,secret);break;
                     case "set_entity_available":var available=Input<bool>(scope,id,"available");ThrowIfCancelled(scope);definition!.SetAvailable(Text(cfg,"entity"),available);break;
-                    // The definition keeps a copy of the picture as its camera's current frame.
-                    case "show_frame":var frame=Input<SharpImage>(scope,id,"image");ThrowIfCancelled(scope);definition!.ShowFrame(Text(cfg,"entity"),frame);break;
                     case "loop_result":scope.Updates=(cfg["values"] as JsonObject??[]).ToDictionary(p=>p.Key,p=>Get(p.Key));foreach(var edge in data.Where(p=>p.Key.Item1==id))scope.Updates[edge.Key.Item2]=Get(edge.Key.Item2);if(ev!=null)trace!.End(ev,"ok",null,null);return;
-                    default:await Waiting(scope,custom(id,scope,this));break;
+                    default:await Waiting(scope,NodeCode(id,scope));break;
                 }
                 external.ThrowIfCancellationRequested();
                 if(Volatile.Read(ref stopped)!=0)throw new OperationCanceledException(lifetime.Token);
@@ -760,7 +801,7 @@ public sealed class VisualRuntime
                 var op=Text(cfg,"operator","eq");
                 Output(scope,id,op is not ("eq" or "ne")&&(a==null||b==null)?false:Guarded(()=>Compare(a,b,op),_=>SecretInput(id,"left",givenLeft)||SecretInput(id,"right",givenRight),()=>Hidden(id,SecretInput(id,"left",givenLeft)?"left":"right")));break;
             case "constant":case "convert":
-                if(compiledConversions.Contains(id)){await custom(id,scope,this);break;}
+                if(compiledConversions.Contains(id)){await NodeCode(id,scope);break;}
                 var convertible=Get("value");
                 Output(scope,id,Guarded(()=>ConvertTo(convertible,Text(cfg,"type"),id+".value",pin:()=>Title(id)+" · "+VisualGraphValidator.Words.PortLabel(InputSpecs(id)?["value"],"value")),_=>SecretInput(id,"value",convertible),()=>Hidden(id,"value")));break;
             case "entity_field":
@@ -798,17 +839,34 @@ public sealed class VisualRuntime
             // Exactly that state, as Home Assistant stores it: an entity it does not have has none.
             case "entity_is":var checkedEntity=Input<string>(scope,id,"entity");var wanted=Input<string>(scope,id,"state");Output(scope,id,HomeAssistantState(checkedEntity)?.State is {} has&&string.Equals(has,wanted,StringComparison.Ordinal));break;
             case "entity_current":Output(scope,id,EntityOf(id,"entity",Input<string>(scope,id,"entity")));break;
+            // One of Home Assistant's entities, by its id, of the type of its domain (resolvedOutputs): Home Assistant is not asked.
+            case "ha_entity":
+                var chosen=Text(cfg,"entity");
+                var picked=Text(catalog["resolvedOutputs"]?[id],"entity") is {Length:>0} entityType?ConvertTo(chosen,entityType,id+".entity",false):chosen;
+                scope.SetOutput((id,"entity"),picked);
+                if(scope.Trace!=null)trace!.Output(scope.Trace,id,"entity",picked);
+                break;
+            // A picture of a Home Assistant camera, asked for under the definition's id, so that one of its own cameras
+            // (which would wait for itself) is refused at once, each time a step or a camera reads it; Home Assistant's
+            // failure fails what reads it (Prepare words it).
+            // Its size, at most Width at most × Height at most (one alone keeps the aspect ratio), else the camera's own.
+            case "camera_frame":var camera=Input<string>(scope,id,"entity");var size=HassCameras.Size(Whole(cfg,"maxWidth",0),Whole(cfg,"maxHeight",0));
+                Output(scope,id,Made(await Waiting(scope,HassCameras.SnapshotAsync(Definition().DefinitionId,camera,scope.CancellationToken,size))),"image");break;
+            // A frame of a video, by its address or a file's path, as Camera frame takes one of a camera (HassCameras.VideoFrameAsync):
+            // a file loops unless Loop is off, and a source refused or a video that gives no frame fails what reads it.
+            case "video_frame":var video=Text(cfg,"source");var fitted=HassCameras.Size(Whole(cfg,"maxWidth",0),Whole(cfg,"maxHeight",0));
+                Output(scope,id,Made(await Waiting(scope,HassCameras.VideoFrameAsync(video,Flag(cfg,"loop",true),scope.CancellationToken,fitted))),"image");break;
             // A drawing goes on a copy of the picture wired in, which other steps may read too (and which this node reads
             // again each time a step uses it); drawing only adds to the copy's list, so nothing is decoded or encoded here.
             // The picture's own limits (a line 1 to 50 pixels, a text of at most 200 characters, ...) fail in its words.
             case "image_draw_rect":
-                var framed=Input<SharpImage>(scope,id,"image").Copy();
+                var framed=Made(Input<SharpImage>(scope,id,"image").Copy());
                 Output(scope,id,framed.DrawRect(Pixels(scope,id,"x"),Pixels(scope,id,"y"),Pixels(scope,id,"width"),Pixels(scope,id,"height"),Colour(cfg,"Red"),Whole(cfg,"thickness",2)),"image");break;
             case "image_draw_text":
-                var captioned=Input<SharpImage>(scope,id,"image").Copy();var caption=Input<string>(scope,id,"text");
+                var captioned=Made(Input<SharpImage>(scope,id,"image").Copy());var caption=Input<string>(scope,id,"text");
                 Output(scope,id,captioned.DrawText(caption,Pixels(scope,id,"x"),Pixels(scope,id,"y"),Colour(cfg,"White"),Whole(cfg,"size",16),Flag(cfg,"background",true)),"image");break;
             // A value node from a library (or any other kind) is compiled.
-            default:await custom(id,scope,this);break;
+            default:await NodeCode(id,scope);break;
         }
     }
     /// <summary>
@@ -864,9 +922,11 @@ public sealed class VisualRuntime
     /// <summary>The definition of the run in progress, which an entity node acts on; only a run of an entity definition's graph has one.</summary>
     static IDefinitionRuntime Definition()=>InvocationContext.Current?.Definition??throw new InvalidOperationException("This node only works in an entity definition");
     /// <summary>The kinds that act on the definition of the run in progress (see <see cref="Definition"/>).</summary>
-    static readonly HashSet<string> EntityKinds=new(["entity","entity_setup","set_entity_state","set_entity_available","setting","download_file","camera_snapshot","show_frame"],StringComparer.Ordinal);
+    static readonly HashSet<string> EntityKinds=new(["entity","entity_setup","set_entity_state","set_entity_available","setting","download_file"],StringComparer.Ordinal);
     /// <summary>The port of an Entity node's state flow, which has no pin.</summary>
     const string StateFlow="state";
+    /// <summary>The port of a camera's frame flow, which has no pin (<see cref="DefinitionGraph.FrameFlow"/>).</summary>
+    const string FrameFlow=DefinitionGraph.FrameFlow;
     /// <summary>The key of the entity a node acts on: an Entity node's own, else the one its <c>entity</c> names.</summary>
     string EntityKey(string id)=>Text(nodes[id]["config"],Text(nodes[id],"kind")=="entity"?"key":"entity");
     /// <summary>
@@ -876,12 +936,18 @@ public sealed class VisualRuntime
     /// values from its data, read from the run's trigger as a trigger's outputs are (<see cref="TriggerOutput"/>): a value
     /// the command was not given, and the host could fill neither from the entity's state nor from its row's default, is
     /// absent, and a step reading it fails in words (<see cref="AbsentCommandValue"/>). Gives the pin, whose steps run
-    /// next; for its frame, the pin alone.
+    /// next. For its frame, hands each picture it shows that is wired (a camera's Image, worked out just before) to
+    /// <paramref name="definition"/> as its camera's frame (a run already cancelled hands none), and gives null.
     /// </summary>
     string? EntityFlow(string id,VisualScope scope,IDefinitionRuntime definition,Dictionary<string,object?>? state,HashSet<string>? hidden) {
         var port=startPort??throw new InvalidOperationException($"{Title(id)} runs only as the start of one of its flows");
         if(port==StateFlow) {
             ThrowIfCancelled(scope);definition.SetState(EntityKey(id),state!,hidden!);definition.SetAvailable(EntityKey(id),true);
+            return null;
+        }
+        if(port==FrameFlow) {
+            foreach(var (picture,_) in InputSpecs(id) as JsonObject??[])
+                if(Picture(id,picture)&&data.ContainsKey((id,picture))) {var image=Input<SharpImage>(scope,id,picture);ThrowIfCancelled(scope);definition.ShowFrame(EntityKey(id),image);}
             return null;
         }
         if(port.StartsWith("command:",StringComparison.Ordinal)) {
@@ -1211,7 +1277,7 @@ public sealed class VisualRuntime
         if(kind=="repeat") {var n=Input<double>(parent,id,"count");if(!double.IsFinite(n)||n<0||n!=Math.Truncate(n)||n>max)throw new InvalidOperationException($"{Pin(id,"count")} must be a whole number from 0 to {max} (Maximum iterations), not {(SecretInput(id,"count",n)?HiddenValue(id,"count"):Convert.ToString(n,CultureInfo.InvariantCulture))}");count=(int)n;}
         if(kind=="foreach") {
             var source=Input(parent,id,"items");var copy=new VisualSnapshot();
-            items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(copy.Copy).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"{Pin(id,"items")} needs a list")};
+            items=source switch{Array a when a.Rank==1=>a.Cast<object?>().Select(item=>Copied(copy.Copy(item))).ToArray(),JsonArray j=>j.Select(v=>v==null?null:(object?)JsonSerializer.SerializeToElement(v)).ToArray(),JsonElement j when j.ValueKind==JsonValueKind.Array=>j.EnumerateArray().Select(v=>(object?)v.Clone()).ToArray(),_=>throw new InvalidOperationException($"{Pin(id,"items")} needs a list")};
             if(items.Length>max)throw new InvalidOperationException($"{Pin(id,"items")} has {items.Length} items, more than Maximum iterations ({max})");
             for(var i=0;i<items.Length;i++){
                 var item=i+1;
@@ -1221,7 +1287,7 @@ public sealed class VisualRuntime
             }
             count=items.Length;
         }
-        void Carried(VisualScope scope) {var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=copy.Copy(pair.Value);}
+        void Carried(VisualScope scope) {var copy=new VisualSnapshot();foreach(var pair in state.Where(p=>p.Key.StartsWith("carry:")))scope.Outputs[(id,pair.Key)]=Copied(copy.Copy(pair.Value));}
         string Part(int iteration,string part)=>id+"#"+iteration.ToString(CultureInfo.InvariantCulture)+":"+part;
         async Task<bool> Condition(int iteration) {var condition=await RunScope(id,"condition",parent,depth,Part(iteration,"condition"),Carried);return condition.Condition??throw new InvalidOperationException($"Loop {id}: condition path did not return condition_result.");}
         for(var iteration=0;;iteration++) {
@@ -1230,13 +1296,13 @@ public sealed class VisualRuntime
             if(kind=="while"&&!await Condition(iteration))break;
             if(iteration>=max)throw new InvalidOperationException($"{Title(id)} stopped at Maximum iterations ({max})");
             var current=iteration;
-            var body=await RunScope(id,"body",parent,depth,Part(iteration,"body"),scope=>{Carried(scope);if(items!=null){scope.Outputs[(id,"item")]=new VisualSnapshot().Copy(items[current]);scope.Outputs[(id,"index")]=(double)current;}});
+            var body=await RunScope(id,"body",parent,depth,Part(iteration,"body"),scope=>{Carried(scope);if(items!=null){scope.Outputs[(id,"item")]=Copied(new VisualSnapshot().Copy(items[current]));scope.Outputs[(id,"index")]=(double)current;}});
             if(declarations.Count>0&&body.Updates==null)throw new InvalidOperationException($"Loop {id}: body did not return loop_result for declared carry/exports.");
             if(body.Updates!=null) {
                 var updates=new Dictionary<string,object?>();var copy=new VisualSnapshot();
                 foreach(var pair in body.Updates) {
                     // A kept or exported value worked out from a secret is secret (see FollowSettings), and not quoted.
-                    updates[pair.Key]=Guarded(()=>copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key))),_=>Secret((id,pair.Key),pair.Value),()=>HiddenAt(Declared(pair.Key)(),Because((id,pair.Key))));
+                    updates[pair.Key]=Guarded(()=>Copied(copy.Copy(ConvertTo(pair.Value,declarations[pair.Key],id+"."+pair.Key,false,Declared(pair.Key)))),_=>Secret((id,pair.Key),pair.Value),()=>HiddenAt(Declared(pair.Key)(),Because((id,pair.Key))));
                 }
                 foreach(var pair in updates)state[pair.Key]=pair.Value;
             }
@@ -1283,7 +1349,7 @@ public sealed class VisualFlows
     async Task Started(Task go,string port,int index,(string Port,object? Value)[] values) {
         await go;
         await runtime.RunScope(node,port,scope,scope.Depth,node+"#"+index.ToString(CultureInfo.InvariantCulture)+":"+port,
-            inner=>{var copy=new VisualSnapshot();foreach(var (output,value) in values)runtime.Output(inner,node,copy.Copy(value),output);},lifetime.Token);
+            inner=>{var copy=new VisualSnapshot();foreach(var (output,value) in values)runtime.Output(inner,node,runtime.Copied(copy.Copy(value)),output);},lifetime.Token);
     }
     /// <summary>
     /// Called when the step's method has returned (or thrown): later calls fail, and calls still running are cancelled

@@ -1575,3 +1575,23 @@ it('names a value node no step read "Not used" to a screen reader, as its card s
   // A step that did not run is still not reached.
   expect(el.querySelector('[data-id="say"]')!.getAttribute('aria-label')).toMatch(/\. Run: Not reached$/)
 })
+
+it('draws a Camera frame\'s mode under its summary, with what the modes are in its tooltip, and the camera\'s Image pin on the left', () => {
+  const el = host()
+  let graph = add(empty('Porch'), 'entity', 'porch', { key: 'porch', domain: 'camera', name: 'Porch' })
+  graph = add(add(graph, 'ha_entity', 'door', { entity: 'camera.front_door' }), 'camera_frame', 'snap')
+  graph = contract.connectData(contract.connectData(graph, 'door', 'entity', 'snap', 'entity'), 'snap', 'image', 'porch', 'image')
+  dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />, el)
+  const mode = el.querySelector<HTMLElement>('[data-id="snap"] .hs-card__mode')!
+  expect(mode.textContent).toBe('Live · raw frames')
+  expect(mode.classList).toContain('hs-card__mode--live')
+  expect(mode.title).toContain('one shared ffmpeg feed of the source camera')
+  expect(el.querySelector('[data-id="door"] .hs-card__mode')).toBeNull()
+  // The Entity is titled by its entity, with its domain under it.
+  expect(el.querySelector('[data-id="door"] .hs-card__title')?.textContent).toBe('camera.front_door')
+  expect(el.querySelector('[data-id="door"] .hs-card__summary')?.textContent).toBe('Home Assistant entity · camera')
+  // The camera's Image is an input row, connected, on the left.
+  const image = el.querySelector<HTMLElement>('[data-id="porch"] [data-input-id="image"]')!
+  expect(image).not.toBeNull()
+  expect(image.querySelector('.hs-source-chip')?.textContent).toBe('Camera frame · Frame')
+})

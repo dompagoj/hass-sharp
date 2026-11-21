@@ -111,14 +111,14 @@ static class EntityGraphTests
             (nameof(ACommandsDataIsCheckedAsAClassChecksIt), ACommandsDataIsCheckedAsAClassChecksIt),
             (nameof(APasswordTextsRefusedValueIsNotQuoted), APasswordTextsRefusedValueIsNotQuoted),
             (nameof(ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot), ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot),
-            (nameof(APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture), APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture),
+            (nameof(ALibrarysSharpImageIsAPictureAndGoesIntoNoOtherLibraryPin), ALibrarysSharpImageIsAPictureAndGoesIntoNoOtherLibraryPin),
             (nameof(AGraphCameraMakesItsFrameOnlyWhenOneIsNeeded), AGraphCameraMakesItsFrameOnlyWhenOneIsNeeded),
             (nameof(AFrameFlowWhoseSourceFailsGivesTheLastGoodFrame), AFrameFlowWhoseSourceFailsGivesTheLastGoodFrame),
-            (nameof(AFrameFlowWithoutShowFrameKeepsTheFrame), AFrameFlowWithoutShowFrameKeepsTheFrame),
-            (nameof(APushedFrameIsAnsweredWithoutRunningAnything), APushedFrameIsAnsweredWithoutRunningAnything),
+            (nameof(ACameraWithNothingInItsImageMakesNoFrame), ACameraWithNothingInItsImageMakesNoFrame),
+            (nameof(TakeAPictureIsAValueAnyStepCanRead), TakeAPictureIsAValueAnyStepCanRead),
             (nameof(AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers), AFrameFlowPastItsLimitIsCancelledAndTheCameraRecovers),
             (nameof(ARevisionSavedWhileAFrameFlowRunsServesFrames), ARevisionSavedWhileAFrameFlowRunsServesFrames),
-            (nameof(APushedFrameStaysAcrossASave), APushedFrameStaysAcrossASave),
+            (nameof(TheLastGoodFrameStaysAcrossASave), TheLastGoodFrameStaysAcrossASave),
             (nameof(AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure), AFrameFlowCancelledAsHomeAssistantStopsIsNoFailure),
             (nameof(ACSharpEntityRunsBesideAHub), ACSharpEntityRunsBesideAHub),
             (nameof(ACSharpEntityTakesItsCommands), ACSharpEntityTakesItsCommands),
@@ -2800,27 +2800,27 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A definition's Take a picture asks Home Assistant under the definition's own id (so Home Assistant can refuse a
-    /// picture of the definition's own camera), and its drawing steps draw on what it gave; an automation cannot take
-    /// one: the three steps are refused in its save.
+    /// A definition's Camera frame asks Home Assistant under the definition's own id (so Home Assistant can refuse a
+    /// picture of the definition's own camera), as a value a step reads, and its drawing nodes draw on what it gave; an
+    /// automation cannot take one: the three nodes are refused in its save.
     /// </summary>
     static async Task ADefinitionTakesPicturesUnderItsOwnIdAndAnAutomationCannot()
     {
         await using var rig = await Rig.Start("picture");
         var picture = SharpImage.Blank(16, 16, SharpColor.Blue).ToJpeg();
         rig.Home.AnswerPictures = (_, camera, ok, fail) => { if (camera == "camera.porch") ok(picture); else fail("Camera is off"); };
-        JsonObject[] Steps() => [N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") }),
+        JsonObject[] Steps() => [N("snap", "camera_frame", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") }),
             N("rect", "image_draw_rect", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1), ["width"] = Lit("number", 8), ["height"] = Lit("number", 8) }),
             N("label", "image_draw_text", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = Lit("string", "Porch"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1) }),
             N("say", "log", new { value = Unset })];
-        JsonObject[] Wires() => [Next("snap", "say"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "say", "value", "image")];
-        var graph = Graph("Porch", [Entity("seen", "seen", "sensor"), N("setup", "entity_setup"), .. Steps(), SetState("set", "seen", new JsonObject { ["value"] = Lit("string", "taken") })], [Next("setup", "snap"), .. Wires(), Next("say", "set")]);
+        JsonObject[] Wires() => [Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "say", "value", "image")];
+        var graph = Graph("Porch", [Entity("seen", "seen", "sensor"), N("setup", "entity_setup"), .. Steps(), SetState("set", "seen", new JsonObject { ["value"] = Lit("string", "taken") })], [Next("setup", "say"), .. Wires(), Next("say", "set")]);
         await rig.Save("porch", Definition("Porch", graph));
         await rig.Until("porch:seen", s => Is(s, "value", "taken"), "the When started flow takes the picture");
         Check(rig.Home.Pictures().SequenceEqual([("porch", "camera.porch")]), "the picture is asked for under the definition's id: " + string.Join(", ", rig.Home.Pictures()));
         Check(rig.Home.Logs().Contains("Image · 1 KB · 2 drawings"), "the drawings are on the picture: " + Lines(rig.Home.Logs()));
 
-        var automation = Graph("Pictures", [N("t", "trigger", new { type = "manual" }), .. Steps()], [Next("t", "snap"), .. Wires()]);
+        var automation = Graph("Pictures", [N("t", "trigger", new { type = "manual" }), .. Steps()], [Next("t", "say"), .. Wires()]);
         var refused = JsonNode.Parse(await rig.Api.VisualRequest(JsonSerializer.Serialize(new { operation = "save", id = "pictures", expectedRevision = 0, graph = automation })))!;
         var problems = refused["error"]?["detail"]?["diagnostics"]?.AsArray().Where(d => d!["code"]?.GetValue<string>() == "node.document").Select(d => d!["nodeId"]!.GetValue<string>()).Order(StringComparer.Ordinal).ToArray() ?? [];
         Check(!refused["ok"]!.GetValue<bool>() && problems.SequenceEqual(["label", "rect", "snap"]), "an automation cannot take a picture or draw on one: " + refused.ToJsonString());
@@ -2828,11 +2828,13 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A picture goes into no node library pin, not even one of its own class (<c>SharpImage</c>), what that implements or
-    /// <c>object</c>, and a library's <c>SharpImage</c> is no picture for a drawing step: the type is the catalog's own,
-    /// decided by its entry alone, as the editor decides it. A library's SharpImage still goes into its own SharpImage pins.
+    /// A node library's <c>SharpImage</c> pin is the catalog's picture (<c>image</c>), as the editor has it from the
+    /// library's catalog: a picture goes into it, and a library's <c>SharpImage</c> is a picture for a drawing step (and a
+    /// camera's Image, the pull form of a camera of code's pixels). A picture goes into no other library pin, not what
+    /// <c>SharpImage</c> implements nor <c>object</c>: the type is the catalog's own, decided by its entry alone. A
+    /// library's SharpImage still goes into its own SharpImage pins.
     /// </summary>
-    static Task APictureGoesIntoNoLibraryPinAndNoLibraryValueIsAPicture()
+    static Task ALibrarysSharpImageIsAPictureAndGoesIntoNoOtherLibraryPin()
     {
         const string source = """
             public static class Pictures
@@ -2849,13 +2851,15 @@ static class EntityGraphTests
         JsonObject Library(string method, string id) => VisualGraphContract.CreateNode(snapshot.Methods.Values.Single(m => m.Method.Name == method).Kind, id, snapshot);
         JsonObject Picture(JsonObject step, params JsonObject[] wires)
         {
-            var graph = Graph("Pictures", [N("setup", "entity_setup"), N("snap", "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") }), step],
-                [Next("setup", "snap"), Next("snap", step["id"]!.GetValue<string>()), .. wires]);
+            // A Camera frame only when a wire reads it: a value nothing reads is warned of.
+            JsonObject[] snap = wires.Any(w => w["source"]!.GetValue<string>() == "snap") ? [N("snap", "camera_frame", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") })] : [];
+            var graph = Graph("Pictures", [N("setup", "entity_setup"), .. snap, step], [Next("setup", step["id"]!.GetValue<string>()), .. wires]);
             graph["definition"] = new JsonObject { ["settings"] = new JsonArray() };
             return graph;
         }
         string[] Problems(JsonObject graph) => [.. VisualGraphValidator.Validate(graph, snapshot).Select(d => $"{d.NodeId}.{d.InputId}: {d.Message}")];
-        foreach (var (method, port) in new[] { ("KeepPicture", "picture"), ("KeepSnapshot", "value"), ("KeepAnything", "value") })
+        Check(Problems(Picture(Library("KeepPicture", "keep"), Data("snap", "keep", "picture", "image"))).Length == 0, "a picture goes into a library's SharpImage pin");
+        foreach (var (method, port) in new[] { ("KeepSnapshot", "value"), ("KeepAnything", "value") })
         {
             var problems = Problems(Picture(Library(method, "keep"), Data("snap", "keep", port, "image")));
             Check(problems.Length == 1 && problems[0].StartsWith($"keep.{port}: ", StringComparison.Ordinal) && problems[0].EndsWith(", not Image", StringComparison.Ordinal),
@@ -2868,7 +2872,7 @@ static class EntityGraphTests
         made["edges"]!.AsArray().Add(Next("make", "say"));
         made["edges"]!.AsArray().Add(Data("rect", "say", "value", "image"));
         var drawn = Problems(made);
-        Check(drawn.Length == 1 && drawn[0].StartsWith("rect.image: Image accepts Image, not ", StringComparison.Ordinal), "a library's SharpImage is no picture for Draw rectangle: " + string.Join(" | ", drawn));
+        Check(drawn.Length == 0, "a library's SharpImage is a picture for Draw rectangle: " + string.Join(" | ", drawn));
         var own = Picture(Library("MakePicture", "make"), Data("make", "keep", "picture", "result"));
         own["nodes"]!.AsArray().Add(Library("KeepPicture", "keep"));
         own["edges"]!.AsArray().Add(Next("make", "keep"));
@@ -2880,10 +2884,13 @@ static class EntityGraphTests
 
     /// <summary>The picture <c>camera.front</c> gives: 40 by 30, white, or black for a second one.</summary>
     static byte[] Front(bool black = false) => SharpImage.Blank(40, 30, black ? SharpColor.Black : SharpColor.White).ToJpeg();
-    static JsonObject Snap(string id) => N(id, "camera_snapshot", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.front") });
+    static JsonObject Snap(string id) => N(id, "camera_frame", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.front") });
+    /// <summary>An Entity of Home Assistant's <c>camera.front</c>, whose output goes into a Camera frame.</summary>
+    static JsonObject Front(string id) => N(id, "ha_entity", new JsonObject { ["entity"] = "camera.front" });
+    /// <summary>A Camera frame of the camera an Entity wired into it gives.</summary>
+    static JsonObject Taken(string id) => N(id, "camera_frame", new JsonObject { ["entity"] = JsonSerializer.SerializeToNode(Unset) });
     static JsonObject Rect(string id) => N(id, "image_draw_rect", new JsonObject
         { ["image"] = JsonSerializer.SerializeToNode(Unset), ["x"] = Lit("number", 2), ["y"] = Lit("number", 2), ["width"] = Lit("number", 20), ["height"] = Lit("number", 10) });
-    static JsonObject ShowFrame(string id, string entity = "annotated") => N(id, "show_frame", new JsonObject { ["entity"] = entity, ["image"] = JsonSerializer.SerializeToNode(Unset) });
     /// <summary>The camera <c>annotated</c>'s Entity node; its frame flow's history as the catalog has it unless <paramref name="trackHistory"/> is given.</summary>
     static JsonObject Camera(bool? trackHistory = null)
     {
@@ -2892,14 +2899,14 @@ static class EntityGraphTests
         return camera;
     }
     /// <summary>
-    /// The phase's acceptance graph: Annotated's When a frame is needed → Take a picture (camera.front) → Draw rectangle →
-    /// Draw text → Show frame ▸ Annotated; its history as the catalog has it unless <paramref name="trackHistory"/> is given.
+    /// The phase's acceptance graph, values alone, read left to right: Entity (camera.front) → Camera frame → Draw
+    /// rectangle → Draw text → Annotated's Image; its history as the catalog has it unless <paramref name="trackHistory"/> is given.
     /// </summary>
     static JsonObject Annotated(bool? trackHistory = null) => Definition("Annotated", Graph("Annotated",
-        [Camera(trackHistory), Snap("snap"), Rect("rect"),
+        [Front("front"), Taken("snap"), Rect("rect"),
          N("label", "image_draw_text", new JsonObject { ["image"] = JsonSerializer.SerializeToNode(Unset), ["text"] = Lit("string", "Front door"), ["x"] = Lit("number", 1), ["y"] = Lit("number", 1) }),
-         ShowFrame("show")],
-        Pin("annotated", "frame", "snap"), Next("snap", "show"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "show", "image", "image")));
+         Camera(trackHistory)],
+        Data("front", "snap", "entity", "entity"), Data("snap", "rect", "image", "image"), Data("rect", "label", "image", "image"), Data("label", "annotated", "image", "image")));
     static Task<byte[]> Frame(Rig rig, string uniqueId = "annotated:annotated") => rig.Api.CameraImage(uniqueId);
     static bool Same(byte[] a, byte[] b) => a.AsSpan().SequenceEqual(b);
     static (DefinitionHost Host, SharpCamera Camera) Annotating(Rig rig, string uniqueId = "annotated:annotated") =>
@@ -2908,8 +2915,8 @@ static class EntityGraphTests
 
     /// <summary>
     /// The acceptance graph: nothing runs while nobody watches; five requests at once run the flow once and get one JPEG
-    /// drawn on the picture taken; its runs are not recorded unless its history is on, and then its trace shows the
-    /// picture as a short text, never its bytes.
+    /// drawn on the picture taken of the camera the Entity gives; its runs are not recorded unless its history is on, and
+    /// then its trace shows the picture the camera's Image was given as a short text, never its bytes.
     /// </summary>
     static async Task AGraphCameraMakesItsFrameOnlyWhenOneIsNeeded()
     {
@@ -2940,7 +2947,10 @@ static class EntityGraphTests
             && runs[0]["triggerNodeId"]!.GetValue<string>() == "annotated" && runs[0]["hasTrace"]!.GetValue<bool>(), "the frame made is recorded: " + Lines(runs.Select(r => r.ToJsonString())));
         Check(runs[0]["trigger"]!.ToJsonString().Contains("annotated", StringComparison.Ordinal), "the run's trigger names the camera: " + runs[0]["trigger"]!.ToJsonString());
         var text = rig.Api.GetRunTrace(runs[0]["runId"]!.GetValue<string>());
-        var shown = JsonNode.Parse(text)!["trace"]!["events"]!.AsArray().Single(e => e!["node"]!.GetValue<string>() == "show")!["inputs"]!["image"]!;
+        var events = JsonNode.Parse(text)!["trace"]!["events"]!.AsArray();
+        Check(JsonNode.Parse(text)!["trace"]!["rootPort"]?.GetValue<string>() == "frame" && events.Select(e => e!["node"]!.GetValue<string>()).SequenceEqual(["front", "snap", "rect", "label", "annotated"]),
+            "the frame run works out its values in order, then shows the picture: " + string.Join(",", events.Select(e => e!["node"])));
+        var shown = events.Single(e => e!["node"]!.GetValue<string>() == "annotated")!["inputs"]!["image"]!;
         Check(shown["v"]?.GetValue<string>() == $"Image · {(front.Length + 1023) / 1024} KB · 2 drawings", "the trace shows the picture as a short text: " + shown.ToJsonString());
         Check(!text.Contains(Convert.ToBase64String(front)[..40], StringComparison.Ordinal) && !text.Contains(Convert.ToBase64String(traced)[..40], StringComparison.Ordinal)
             && !text.Contains("[255,216", StringComparison.Ordinal), "the trace has no picture bytes");
@@ -2978,42 +2988,44 @@ static class EntityGraphTests
             "the recovery is logged once: " + Lines(rig.Home.Logs()));
     }
 
-    /// <summary>A frame flow that shows no frame leaves the frame as it was: the one When started showed.</summary>
-    static async Task AFrameFlowWithoutShowFrameKeepsTheFrame()
+    /// <summary>
+    /// A camera with nothing connected to its Image has no frame flow: its save warns of it, a request answers that it has
+    /// shown no frame, and nothing runs, not even a Camera frame another flow reads.
+    /// </summary>
+    static async Task ACameraWithNothingInItsImageMakesNoFrame()
     {
-        await using var rig = await Rig.Start("frame-kept", ("camera.front", "idle"));
+        await using var rig = await Rig.Start("frame-none", ("camera.front", "idle"));
         var front = Front();
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
-        var graph = Graph("Kept", [Camera(), N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), N("say", "log", new { value = Lit("string", "asked") })],
-            Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"), Pin("annotated", "frame", "say"));
-        var saved = await rig.Save("annotated", Definition("Annotated", graph));
-        Check(saved["diagnostics"] == null, "a Show frame in another flow is enough: " + saved.ToJsonString());
+        var saved = await rig.Save("annotated", Definition("Annotated", Graph("Unwired", [Camera(), Snap("snap"), N("seen", "trigger", new { type = "manual" }), N("say", "log", new { value = Unset })],
+            Next("seen", "say"), Data("snap", "say", "value", "image"))));
+        var warned = saved["diagnostics"]?.AsArray().Select(d => d!["code"]?.GetValue<string>() + " " + d["inputId"]?.GetValue<string>() + " " + d["message"]?.GetValue<string>()).ToArray() ?? [];
+        Check(saved["active"]!.GetValue<bool>() && warned.SequenceEqual(["camera.no_frame image Annotated never shows a frame: Image is not connected"]), "the camera runs, warned that it shows no frame: " + saved.ToJsonString());
         await rig.Started("annotated");
-        Check(Same(await Frame(rig), front), "the frame When started showed is the answer");
-        Check(rig.Home.Logs().Count(line => line == "asked") == 1 && rig.Home.Pictures().Length == 1, "the frame flow ran, and took no picture: " + Lines(rig.Home.Logs()));
+        var none = await Throws<InvalidOperationException>(() => Frame(rig), "a request to a camera with nothing in its Image");
+        Check(none.Message == "Annotated has not shown a frame yet" && rig.Home.Pictures().Length == 0, $"the request runs nothing ({rig.Home.Pictures().Length} pictures): " + none.Message);
     }
 
     /// <summary>
-    /// With nothing on the camera's frame pin, a request is answered with the frame shown last, by any flow, and runs nothing:
-    /// When started shows the first, a trigger's flow a later one.
+    /// Camera frame is a value: a step of any flow that reads it takes the picture as it runs, each time it runs, and the
+    /// picture is no camera's frame for that.
     /// </summary>
-    static async Task APushedFrameIsAnsweredWithoutRunningAnything()
+    static async Task TakeAPictureIsAValueAnyStepCanRead()
     {
-        await using var rig = await Rig.Start("frame-pushed", ("binary_sensor.motion", "off"), ("camera.front", "idle"));
+        await using var rig = await Rig.Start("frame-value", ("camera.front", "idle"));
         var front = Front();
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
-        var graph = Graph("Pushed",
-            [Camera(), N("setup", "entity_setup"), Snap("snap"), ShowFrame("show"), N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("again"), Rect("mark"), ShowFrame("marked")],
-            Next("setup", "snap"), Next("snap", "show"), Data("snap", "show", "image", "image"),
-            Next("seen", "again"), Next("again", "marked"), Data("again", "mark", "image", "image"), Data("mark", "marked", "image", "image"));
+        var graph = Graph("Value", [Camera(), Front("front"), Taken("snap"), Rect("rect"), N("setup", "entity_setup"), N("say", "log", new { value = Unset }), N("again", "log", new { value = Unset })],
+            Data("front", "snap", "entity", "entity"), Data("snap", "rect", "image", "image"), Data("rect", "annotated", "image", "image"), Next("setup", "say"), Next("say", "again"),
+            Data("snap", "say", "value", "image"), Data("rect", "again", "value", "image"));
         var saved = await rig.Save("annotated", Definition("Annotated", graph));
-        Check(saved["active"]!.GetValue<bool>() && saved["diagnostics"] == null, "the camera runs: " + saved.ToJsonString());
+        Check(saved["active"]!.GetValue<bool>() && saved["diagnostics"] == null, "the camera runs, with nothing to warn of: " + saved.ToJsonString());
         await rig.Started("annotated");
-        for (var i = 0; i < 3; i++) Check(Same(await Frame(rig), front), $"request {i + 1} gets the frame When started showed");
-        Check(rig.Home.Pictures().Length == 1, $"the requests ran nothing: {rig.Home.Pictures().Length} pictures");
-        await rig.Change("binary_sensor.motion", "on");
-        var marked = await Frame(rig);
-        Check(marked is [0xFF, 0xD8, ..] && !Same(marked, front) && rig.Home.Pictures().Length == 2, "the trigger's flow shows a frame of its own, which the next request gets");
+        await EntityTestHome.Until(() => rig.Home.Logs().Count(line => line.StartsWith("Image · ", StringComparison.Ordinal)) == 2, "When started's two steps read the picture");
+        Check(rig.Home.Pictures().SequenceEqual([("annotated", "camera.front"), ("annotated", "camera.front")]), "each step that reads it takes its own picture: " + string.Join(", ", rig.Home.Pictures()));
+        Check(rig.Home.Logs().Contains("Image · 1 KB · 1 drawing"), "the second reads it drawn on: " + Lines(rig.Home.Logs()));
+        var frame = await Frame(rig);
+        Check(frame is [0xFF, 0xD8, ..] && !Same(frame, front) && rig.Home.Pictures().Length == 3, "the camera's frame is its Image's own, taken when it was needed");
     }
 
     /// <summary>
@@ -3084,26 +3096,22 @@ static class EntityGraphTests
     }
 
     /// <summary>
-    /// A camera whose frames a trigger's flow shows (Take a picture → Show frame) keeps its picture across a save: the
-    /// request right after it gets the frame the replaced revision showed, before the trigger fires again.
+    /// A camera keeps its last good frame across a save: when the new revision cannot take its picture, the request right
+    /// after the save gets the frame the replaced revision made.
     /// </summary>
-    static async Task APushedFrameStaysAcrossASave()
+    static async Task TheLastGoodFrameStaysAcrossASave()
     {
-        await using var rig = await Rig.Start("frame-pushed-saved", ("binary_sensor.motion", "off"), ("camera.front", "idle"));
+        await using var rig = await Rig.Start("frame-kept-saved", ("camera.front", "idle"));
         var front = Front();
         rig.Home.AnswerPictures = (_, _, ok, _) => ok(front);
-        var graph = Graph("Pushed", [Camera(), N("seen", "trigger", new { type = "entity", entity = "binary_sensor.motion" }), Snap("snap"), Rect("mark"), ShowFrame("show")],
-            Next("seen", "snap"), Next("snap", "show"), Data("snap", "mark", "image", "image"), Data("mark", "show", "image", "image"));
-        var saved = await rig.Save("annotated", Definition("Annotated", graph));
+        var saved = await rig.Save("annotated", Annotated());
         await rig.Started("annotated");
-        await rig.Change("binary_sensor.motion", "on");
-        await EntityTestHome.Until(() => rig.Home.Pictures().Length == 1, "the trigger's flow takes its picture");
         var shown = await Frame(rig);
-        var replaced = await rig.Save("annotated", Definition("Annotated", graph), saved["document"]!["revision"]!.GetValue<long>());
+        rig.Home.AnswerPictures = (_, _, _, fail) => fail("Camera camera.front is off");
+        var replaced = await rig.Save("annotated", Annotated(), saved["document"]!["revision"]!.GetValue<long>());
         Check(replaced["active"]!.GetValue<bool>(), "the new revision runs: " + replaced.ToJsonString());
         await rig.Started("annotated");
-        Check(Same(await Frame(rig), shown) && rig.Home.Pictures().Length == 1, "the request right after the save gets the frame the replaced revision showed, and nothing runs");
-        Check(Problems(rig).Length == 0, "nothing fails: " + Lines(Problems(rig)));
+        Check(Same(await Frame(rig), shown) && rig.Home.Pictures().Length == 2, "the request right after the save gets the frame the replaced revision made");
     }
 
     /// <summary>

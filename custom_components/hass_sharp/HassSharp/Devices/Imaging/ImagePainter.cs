@@ -41,6 +41,31 @@ internal static unsafe class ImagePainter
     internal static void Fill(Span<byte> rgb, int width, int height, SharpColor color) =>
         FillBox(rgb, width, height, 0, 0, width, height, color);
 
+    /// <summary>
+    /// Shrinks a picture into a smaller one, each pixel the average of the pixels of the source it covers (a box filter):
+    /// <paramref name="to"/> is <paramref name="toWidth"/> × <paramref name="toHeight"/>, at most the source's size on each side.
+    /// </summary>
+    internal static void Shrink(ReadOnlySpan<byte> from, int width, int height, Span<byte> to, int toWidth, int toHeight)
+    {
+        for (var y = 0; y < toHeight; y++)
+        {
+            int top = (int)((long)y * height / toHeight), bottom = Math.Max(top + 1, (int)((long)(y + 1) * height / toHeight));
+            for (var x = 0; x < toWidth; x++)
+            {
+                int left = (int)((long)x * width / toWidth), right = Math.Max(left + 1, (int)((long)(x + 1) * width / toWidth));
+                int r = 0, g = 0, b = 0;
+                for (var sy = top; sy < bottom; sy++)
+                {
+                    var row = from.Slice((sy * width + left) * 3, (right - left) * 3);
+                    for (var i = 0; i < row.Length; i += 3) { r += row[i]; g += row[i + 1]; b += row[i + 2]; }
+                }
+                var count = (bottom - top) * (right - left);
+                var at = (y * toWidth + x) * 3;
+                (to[at], to[at + 1], to[at + 2]) = ((byte)((r + count / 2) / count), (byte)((g + count / 2) / count), (byte)((b + count / 2) / count));
+            }
+        }
+    }
+
     /// <summary>The outline of a rectangle, its line <paramref name="thickness"/> wide inside its edges.</summary>
     internal static void Rect(Span<byte> rgb, int width, int height, int x, int y, int w, int h, SharpColor color, int thickness)
     {

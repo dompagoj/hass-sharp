@@ -13,7 +13,8 @@ namespace HassSharp;
 /// answer for <see cref="GoodWithin"/> after that time; after that, and when there has never been one, the request fails
 /// (<see cref="Picture"/>). Each frame is encoded once, on a pool thread, whoever asks. A new revision of the definition
 /// takes over the current and the good frame of the camera it replaces (<see cref="Handed"/>, <see cref="TakeOver"/>),
-/// and nothing else. Thread-safe.
+/// and nothing else. A frame of a camera's live feed (<see cref="PixelFrame"/>) is given back to its pool once encoded, or
+/// once replaced unencoded, so that the feed's buffers go round; each picture shown is the camera's own for that. Thread-safe.
 /// </summary>
 internal sealed class CameraFrames
 {
@@ -45,23 +46,75 @@ internal sealed class CameraFrames
     internal sealed record Handover(Kept? Current, Kept? Good);
 
     // A frame and its JPEG, encoded once on first request; with the time it was last made or confirmed (under the gate).
+    // The picture is the camera's own. A live feed's frame (SharpImage.IsFrame) holds a pooled buffer, given back as soon
+    // as nothing needs its pixels: once the JPEG was made or could not be, or once the frame is no longer the current one
+    // and its encoding never started (Retire); a frame being encoded gives it back when that ends. From then on the frame
+    // is its JPEG. A request starts the encoding under the camera's lock (Picture), so a frame it found current is never
+    // given back before it is encoded.
     sealed class Frame
     {
+        readonly Lock held = new();
+        readonly SharpImage image;
         readonly Lazy<Task<byte[]>> jpeg;
+        // Under held: whether the encoding started, and whether the frame was retired before it did.
+        bool started, retired;
 
         public Frame(SharpImage image, long confirmed, byte[]? encoded = null)
         {
-            Image = image;
+            this.image = image;
             Confirmed = confirmed;
-            jpeg = encoded != null ? new(Task.FromResult(encoded)) : new(() => Task.Run(image.ToJpeg), LazyThreadSafetyMode.ExecutionAndPublication);
+            jpeg = encoded != null ? new(Task.FromResult(encoded)) : new(Begin, LazyThreadSafetyMode.ExecutionAndPublication);
+            // Its JPEG is known: the pixels are not needed.
+            if (encoded != null) image.Release();
         }
 
-        public SharpImage Image { get; }
         public long Confirmed;
         public Task<byte[]> Jpeg => jpeg.Value;
         // The JPEG once it was made, without making it.
         public byte[]? Made => jpeg.IsValueCreated && jpeg.Value.IsCompletedSuccessfully ? jpeg.Value.Result : null;
-        public Kept Kept() => new(Image, Made, Confirmed);
+
+        Task<byte[]> Begin()
+        {
+            lock (held)
+            {
+                if (retired) return Task.FromException<byte[]>(new InvalidOperationException("the frame was replaced before it was encoded"));
+                started = true;
+            }
+            return Task.Run(Encode);
+        }
+
+        byte[] Encode()
+        {
+            try { return image.ToJpeg(); }
+            finally
+            {
+                lock (held) image.Release();
+            }
+        }
+
+        /// <summary>No longer the current frame: its pixels are given back, unless it is being encoded, which gives them back as it ends.</summary>
+        public void Retire()
+        {
+            lock (held)
+            {
+                if (retired) return;
+                retired = true;
+                if (started) return;
+            }
+            image.Release();
+        }
+
+        // What the camera of the next revision takes over: a picture of its own (its JPEG, once a frame's was made), or
+        // none when a frame's pixels are gone without a JPEG.
+        public Kept? Kept()
+        {
+            var made = Made;
+            lock (held)
+            {
+                try { return new(image.IsFrame && made != null ? SharpImage.Load(made) : image.Copy(), made, Confirmed); }
+                catch (Exception) { return null; }
+            }
+        }
     }
 
     /// <summary>The making of one frame: how it ended for the requests (<paramref name="Done"/>), and the code making it
@@ -93,7 +146,11 @@ internal sealed class CameraFrames
     public void Show(SharpImage image)
     {
         var frame = new Frame(image, Stopwatch.GetTimestamp());
-        lock (gate) current = frame;
+        lock (gate)
+        {
+            current?.Retire();
+            current = frame;
+        }
     }
 
     /// <summary>A frame was made of none: the current frame is still the picture, as good as if shown again now.</summary>
@@ -151,18 +208,25 @@ internal sealed class CameraFrames
     public async Task<(byte[] Jpeg, bool Current)> Picture(string called, Outcome? outcome, TimeSpan goodFor, Func<Exception, string> failed)
     {
         Frame? frame;
-        long since;
-        lock (gate) (frame, since) = (current, current?.Confirmed ?? 0);
-        // The good frame is the current one or one before it: when the current one is too old, so is it.
-        if (outcome is { Failure: { } why } && (frame == null || Stopwatch.GetElapsedTime(since) > goodFor))
+        bool stale;
+        Task<byte[]>? encoding = null;
+        lock (gate)
         {
-            var message = $"{called} could not make a frame: {why}";
+            frame = current;
+            // The good frame is the current one or one before it: when the current one is too old, so is it.
+            stale = outcome is { Failure: not null } && (frame == null || Stopwatch.GetElapsedTime(frame.Confirmed) > goodFor);
+            // Begun while it is surely the current frame, whose pixels are then kept until it is encoded (Frame).
+            if (!stale) encoding = frame?.Jpeg;
+        }
+        if (stale)
+        {
+            var message = $"{called} could not make a frame: {outcome!.Failure}";
             throw outcome.TimedOut ? new TimeoutException(message) : new InvalidOperationException(message);
         }
-        if (frame == null) throw new InvalidOperationException($"{called} has not shown a frame yet");
+        if (frame == null || encoding == null) throw new InvalidOperationException($"{called} has not shown a frame yet");
         try
         {
-            var jpeg = await frame.Jpeg;
+            var jpeg = await encoding;
             lock (gate)
                 // A frame encoded late, after a newer one was, is not the good one.
                 if (good == null || good == frame || Newer(frame)) good = frame;
@@ -183,7 +247,12 @@ internal sealed class CameraFrames
     // Under the gate: whether the frame was shown after the good one (frames are shown one after the other, so the later one was confirmed later).
     bool Newer(Frame frame) => frame.Confirmed >= good!.Confirmed;
 
-    /// <summary>What the camera of the same key in the revision replacing this one takes over: the current and the last good frame, with their times.</summary>
+    /// <summary>
+    /// What the camera of the same key in the revision replacing this one takes over: the current and the last good frame,
+    /// with their times, each a picture of its own (the bytes shared), as a picture is for one flow at a time and a request
+    /// to this revision may still be encoding its own. A live feed's frame is handed as its JPEG once that was made; one
+    /// whose pixels were given back without one is not handed.
+    /// </summary>
     public Handover Handed()
     {
         lock (gate) return new(current?.Kept(), good == null ? null : good == current ? null : good.Kept());
@@ -191,21 +260,29 @@ internal sealed class CameraFrames
 
     /// <summary>
     /// The camera of the revision this one replaced handed over its frames: they become this camera's, unless it has
-    /// shown one of its own meanwhile (as the revision prepared). The frames are made anew here, of copies of the pictures,
-    /// so nothing of the replaced revision is kept; none is fresh for <see cref="Share"/>, which only an attempt of this camera is.
+    /// shown one of its own meanwhile (as the revision prepared), when the pictures handed are given back. The frames are
+    /// made anew here, of the pictures handed, so nothing of the replaced revision is kept; none is fresh for
+    /// <see cref="Share"/>, which only an attempt of this camera is.
     /// </summary>
     public void TakeOver(Handover handed)
     {
-        if (handed.Current is not { } kept) return;
-        // Copies (the bytes shared), as a picture is for one flow at a time: a request to the replaced revision may still
-        // be encoding its own.
-        var taken = new Frame(kept.Image.Copy(), kept.Confirmed, kept.Jpeg);
+        if (handed.Current is not { } kept)
+        {
+            handed.Good?.Image.Release();
+            return;
+        }
+        var taken = new Frame(kept.Image, kept.Confirmed, kept.Jpeg);
         // The current frame was the good one when its JPEG was made and no other is handed.
-        var earlier = handed.Good is { } was ? new Frame(was.Image.Copy(), was.Confirmed, was.Jpeg) : kept.Jpeg != null ? taken : null;
+        var earlier = handed.Good is { } was ? new Frame(was.Image, was.Confirmed, was.Jpeg) : kept.Jpeg != null ? taken : null;
         lock (gate)
         {
-            if (current != null) return;
-            (current, good) = (taken, earlier);
+            if (current == null)
+            {
+                (current, good) = (taken, earlier);
+                return;
+            }
         }
+        taken.Retire();
+        earlier?.Retire();
     }
 }

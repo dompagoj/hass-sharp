@@ -748,14 +748,14 @@ static class EntityGraphGeneratorTests
     /// <summary>
     /// An Entity node's flows, each an action named by node and port (<see cref="VisualNodeCatalog.FlowMethod"/>): its state is
     /// worked out at startup and again, restarting, when an entity its values read changes (<see cref="StateDependencies.Of"/>),
-    /// a command flow is queued and a camera's frame flow runs one at a time; none is run by hand.
+    /// a command flow is queued and a camera's frame flow, there when its Image is wired, runs one at a time; none is run by hand.
     /// </summary>
     static async Task AnEntityNodesFlowsBecomeActions()
     {
         var graph = Entity(
             [Hub("cam", "door_cam", "camera"), Hub("lamp", "lamp", "light"), Is("e", "binary_sensor.door"),
-             N("on", "log", new { value = Lit("string", "on") }), N("frame", "log", new { value = Lit("string", "frame") })],
-            [D("e", "lamp", "is_on"), Flow("lamp", "command:turn_on", "on"), Flow("cam", "frame", "frame")]);
+             N("on", "log", new { value = Lit("string", "on") }), N("frame", "camera_frame", new JsonObject { ["entity"] = Lit("entity_id:camera", "camera.porch") })],
+            [D("e", "lamp", "is_on"), Flow("lamp", "command:turn_on", "on"), D("frame", "cam", "image", "image")]);
         Same(StateDependencies.Of(graph, "lamp", BuiltIn), ["binary_sensor.door"], "the lamp's state depends on the entity its value reads");
         var preview = Preview(graph, "the lamp and the camera");
         // The nodes in id order, each node's flows in its order: state, then each command wired, then the frame.
@@ -796,14 +796,17 @@ static class EntityGraphGeneratorTests
     /// <summary>
     /// The SHA-256 of the source each graph example of <c>authoring_examples.json</c> that is an entity definition without
     /// a C# entity or C# device saves with, by title: recorded from the generator before it learned of C# nodes (at
-    /// e6bd24a), so a graph without one keeps its bytes. The pin file holds automations only.
+    /// e6bd24a), so a graph without one keeps its bytes, and recorded again when a camera's frame became its Image (the
+    /// source embeds every entity domain, and the camera's lost its frame pin and gained its picture row and interval of
+    /// 1/30 s; "Camera with a box" is also a new graph, recorded again when Camera frame gained its size and the Home
+    /// Assistant entity its label, which its source embeds). The pin file holds automations only.
     /// </summary>
     static readonly Dictionary<string, string> EntityGraphSources = new(StringComparer.Ordinal)
     {
-        ["Motion in either room"] = "bd8341c638497af1e045978b467e83706a63e00c61828122fc1d87e04237fccd",
-        ["Plug over HTTP"] = "4f824fa994a411b3c447d41586d5cd125c8ccc023d341dc941093ebe62532a31",
-        ["Camera with a box"] = "3f2a7c03781bf1c90a0d56659c8aac3f04843bc7d644f08b9b189e361d6b3ede",
-        ["File at setup"] = "1acb308a280850e87e1446621754b0051be0a1cb3b8ca465bad18de4c8616be5",
+        ["Motion in either room"] = "ef3e9fee446f2c36a4db723ef414bc912d76a34b2d0f59a98ba29f85c2db97ea",
+        ["Plug over HTTP"] = "b91867b7b01310f4e8f9e9846b2db9dbac610ad2968cb30058f12c754cfea902",
+        ["Camera with a box"] = "d128729494bb96f1da49d0ed4b0031ecc625a4d2c0c81fcdbc54c2c1fe926b62",
+        ["File at setup"] = "95c826924fc7522c56d7cbf37c1848c6129b395cbc4f161e75fbf955deafeee5",
     };
 
     /// <summary>
@@ -836,9 +839,10 @@ static class EntityGraphGeneratorTests
     /// <summary>
     /// The source a Device node whose config is not in the catalog's order (its name before its key, its suggested area
     /// and Part of before its model) gives its graph, as it was before C# nodes: recorded from the generator that copied
-    /// a Device node's whole config as it has it.
+    /// a Device node's whole config as it has it, and again when a camera's frame became its Image (the source embeds
+    /// every entity domain).
     /// </summary>
-    const string DeviceOutOfOrderSource = "b97c7505c8c4561208e46e38034cff9f25509f7858ef86bfd72cf19264428862";
+    const string DeviceOutOfOrderSource = "902efa7356b9d92af61b7c57c5bccd6769e072f993658e5c38f1f052767302b8";
 
     /// <summary>
     /// A Device node's device keeps its config's order: the derived entry lists its members as the config has them, and

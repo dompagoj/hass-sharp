@@ -109,7 +109,10 @@ static class EntityNodeTests
         var outputs = VisualNodeCatalog.DataOutputs(light);
         Check(string.Join(",", outputs.Select(p => p.Key)) == "command:turn_on:brightness", "a command's values are outputs");
         Check(outputs["command:turn_on:brightness"]!["pointer"]!.GetValue<string>() == "/data/brightness" && outputs["command:turn_on:brightness"]!["group"]!.GetValue<string>() == "command:turn_on", "an output points into its command's data and is grouped under it");
-        Check(string.Join(",", VisualNodeCatalog.ExecutionPorts(Hub("c", "cam", "camera"))) == "frame", "a camera has the frame pin");
+        var camera = Hub("c", "cam", "camera");
+        Check(VisualNodeCatalog.ExecutionPorts(camera).Length == 0 && string.Join(",", VisualNodeCatalog.DataInputs(camera).Select(p => p.Key)) == "device,image"
+            && !VisualNodeCatalog.StateInputs(camera, VisualNodeCatalog.Root).Any() && string.Join(",", VisualNodeCatalog.PictureInputs(camera, VisualCatalogSnapshot.BuiltIn).Select(p => p.Key)) == "image",
+            "a camera has no execution pin, and its Image input is its picture, not a state value");
         Check(VisualNodeCatalog.ExecutionPorts(Hub("s", "t", "sensor")).Length == 0 && VisualNodeCatalog.DataOutputs(Hub("s", "t", "sensor")).Count == 0, "a sensor has inputs only");
         var unknown = Hub("u", "u", "nothing");
         Check(string.Join(",", VisualNodeCatalog.DataInputs(unknown).Select(p => p.Key)) == "device" && !VisualNodeCatalog.StateInputs(unknown, VisualNodeCatalog.Root).Any() && VisualNodeCatalog.ExecutionPorts(unknown).Length == 0, "an unknown type has no pins but Device");
@@ -151,11 +154,16 @@ static class EntityNodeTests
         Check(VisualNodeCatalog.FlowMethod(hub, "state").StartsWith(VisualNodeCatalog.EffectiveTriggerMethod(hub) + "_", StringComparison.Ordinal), "a flow's method starts with its node's");
     }
 
-    /// <summary>State, When commanded and When a frame is needed are not kinds any more, and their problems are gone with them.</summary>
+    /// <summary>
+    /// State, When commanded, When a frame is needed and Show frame are not kinds any more, and their problems are gone
+    /// with them; the kind When a frame is needed had, camera_frame, is now Camera frame, a value.
+    /// </summary>
     static void TheOldStepsAreNotKinds()
     {
-        foreach (var kind in new[] { "entity_state", "entity_command", "camera_frame" })
+        foreach (var kind in new[] { "entity_state", "entity_command", "show_frame" })
             Check(VisualNodeCatalog.GetNode(kind) == null, kind + " is not in the catalog");
+        Check(VisualNodeCatalog.GetNode("camera_frame") is { } frame && frame["pure"]?.GetValue<bool>() == true && frame["label"]?.GetValue<string>() == "Camera frame" && frame["execution"] == null,
+            "camera_frame is Camera frame, a value with no execution pins");
         foreach (var code in new[] { "state.duplicate", "command.duplicate", "camera.duplicate" })
             Check(!VisualGraphValidator.Codes.Contains(code), code + " is not a problem any more");
     }

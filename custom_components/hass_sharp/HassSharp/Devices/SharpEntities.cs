@@ -235,7 +235,7 @@ internal static class SharpDomains
             d => new SharpCamera(d.Key, d.Name)
             {
                 Icon = d.Icon, DeviceClass = d.DeviceClass, Category = d.Category, EnabledByDefault = d.EnabledByDefault,
-                FrameInterval = d.Number("frame_interval") ?? 1,
+                FrameInterval = d.Number("frame_interval") ?? SharpCamera.ShortestInterval,
             },
             new Dictionary<string, GraphState>(StringComparer.Ordinal)),
     };

@@ -120,7 +120,7 @@ public class SharpNumber : SharpEntity
     /// <summary>Whether the number lies within the range (never NaN).</summary>
     internal bool Within(double number) => number >= Min && number <= Max;
     /// <summary>What the number takes, in a message.</summary>
-    internal string Range => $"a number from {CommandData.Shown(Min)} to {CommandData.Shown(Max)}";
+    internal string Range => $"a number from {CommandData.Bound(Min, lowest: true)} to {CommandData.Bound(Max, lowest: false)}";
 
     internal override string Domain => HassDomains.Number;
     internal override bool RestoresByDefault => true;
@@ -606,4 +606,24 @@ internal static class CommandData
 
     /// <summary>A number in a message, such as <c>22.5</c>.</summary>
     internal static string Shown(double number) => number.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// An end of a range in a message (<c>from … to …</c>): the number as <see cref="Shown(double)"/> writes it, unless it is
+    /// a long fraction, of more than six significant digits, such as 1/30. That is shown to three decimals (two significant
+    /// digits for a number below 0.01), rounded into the range — the lowest end up, the highest down — so that each number
+    /// from one shown end to the other is taken: 1/30 as a lowest end is <c>0.034</c>. The frontend's
+    /// <c>definitionEdits.ts</c> <c>bound</c> writes it so too.
+    /// </summary>
+    /// <param name="number">The end.</param>
+    /// <param name="lowest">Whether it is the lowest end, rounded up; otherwise the highest, rounded down.</param>
+    internal static string Bound(double number, bool lowest)
+    {
+        var shown = Shown(number);
+        // The significant digits of the shortest text that reads back as the number, not counting an exponent's.
+        var significant = shown.Split('E')[0].Where(char.IsAsciiDigit).SkipWhile(digit => digit == '0').Count();
+        if (!double.IsFinite(number) || number == 0 || significant <= 6) return shown;
+        var scale = Math.Pow(10, Math.Clamp(1 - (int)Math.Floor(Math.Log10(Math.Abs(number))), 3, 15));
+        return Shown((lowest ? Math.Ceiling(number * scale) : Math.Floor(number * scale)) / scale);
+    }
+
 }

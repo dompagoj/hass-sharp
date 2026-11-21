@@ -64,7 +64,7 @@ export function EntityNodeSection(props: { ctx: StepPickerContext }) {
   const recordable = () => {
     const type = row()
     if (!type) return []
-    const has = { state: Object.keys(type.state ?? {}).length > 0, commands: Object.keys(type.commands ?? {}).length > 0, frame: record(type.frame) }
+    const has = { state: Object.keys(type.state ?? {}).length > 0, commands: Object.keys(type.commands ?? {}).length > 0, frame: record(type.picture) && Object.keys(type.picture).length > 0 }
     return flows.filter(flow => has[flow.flow])
   }
   const history = () => (record(config().history) ? config().history as Record<string, unknown> : {})

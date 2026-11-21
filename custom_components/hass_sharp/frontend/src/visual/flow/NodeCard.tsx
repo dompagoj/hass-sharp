@@ -413,6 +413,10 @@ export function NodeCard(props: NodeProps) {
               <span class="hs-card__summary" title={current().summary}>
                 {current().summary}
               </span>
+              {/* A Camera frame says whether it gives live raw frames or a snapshot, as its wiring decides. */}
+              <Show when={current().frameMode}>
+                {mode => <span class="hs-card__mode" classList={{ 'hs-card__mode--live': mode().live.length > 0 }} title={mode().description}>{mode().label}</span>}
+              </Show>
             </div>
             <Show when={trace()}>
               {/* Status icon and word, never colour alone; the card's accessible name carries the same text. */}

@@ -62,8 +62,10 @@ definition envelope"), `storage` (the file could not be read or written) and
   `^[a-z][a-z0-9_]{0,39}$` and is unique; `domain` is one of the ten in the node
   catalog's `entityDomains`, which also gives each domain's state values (the
   node's inputs), commands (its execution outputs `command:<command>`, with their
-  values as data outputs `command:<command>:<value>`; a camera has `frame`) and
-  `options`; `entityCategory` is `config` or `diagnostic`. An entity on no device
+  values as data outputs `command:<command>:<value>`), pictures (`picture`: a
+  camera's `image` input, the picture it shows, which a value wire from Camera
+  frame or a Draw step gives and which reads no step, `scope.frameSource`; one with
+  no wire is the warning `camera.no_frame`) and `options`; `entityCategory` is `config` or `diagnostic`. An entity on no device
   needs a `name`; a name that is blank once trimmed is no name (the entity has
   none). A graph with no Entity node, C# entity node or C# device node (whose code
   makes its entities) is refused with `definition.entitiesRequired`, "Add an Entity
@@ -299,7 +301,8 @@ A definition's runs are read with the run history commands of
 `{type:"hass_sharp/run_history",automationId,offset?,limit?,status?}`, then
 `{type:"hass_sharp/run_trace",runId}`. Besides an automation's causes, a run's
 `cause` can be `Command` (an Entity node's command), `Setup` (When started) or
-`Frame` (When a frame is needed); an Entity node's state run is `Entity`. An Entity
+`Frame` (a camera making a frame from its `image` input, named `{Name}: When a frame
+is needed`, its trace's `rootPort` `frame`); an Entity node's state run is `Entity`. An Entity
 node's `config.history` (`{state, commands, frame}`, each true or false and no
 other member; an Entity node with `trackHistory` is refused) says whether its runs are
 recorded: its commands' unless `commands` is false, its state's and its frame's only

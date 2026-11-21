@@ -95,7 +95,7 @@
     "node.singleton z",
     "command.unhandled lamp command:turn_on",
     "command.unhandled lamp command:turn_off",
-    "camera.no_frame cam frame",
+    "camera.no_frame cam image",
     "definition.duplicateEntity d key",
     "definition.duplicateEntity c key"
   ]

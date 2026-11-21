@@ -18,7 +18,8 @@ internal static class StateDependencies
     /// library or Custom C# value node alike; a chosen entity is a literal of non-empty text in it. An input that is
     /// connected adds none: the entity it is given is read as it is. The validators warn on such a reader with
     /// <c>state.dynamicSource</c>, unless the wire comes from a Constant of an entity id type
-    /// (<see cref="VisualNodeCatalog.FollowedSource"/>), whose own chosen entity is counted here. The walk stops at a step,
+    /// (<see cref="VisualNodeCatalog.FollowedSource"/>), whose own chosen entity is counted here, or from an Entity
+    /// (<c>ha_entity</c>), whose entity id, when it is one, is counted too. The walk stops at a step,
     /// so neither what a step reads nor what is upstream of it is a dependency. A structural wire (a Device wire) carries no
     /// value: it is not walked, and a structural input is no reader's. Empty for an unknown node or a graph of
     /// the wrong shape; meaningful for a valid graph only.
@@ -31,6 +32,9 @@ internal static class StateDependencies
         foreach (var node in VisualNodeCatalog.ValueUpstream(graph, stateNodeId, snapshot))
         {
             var id = VisualNodeCatalog.Text(node, "id");
+            // An Entity's entity is chosen on it, and is followed through its wires (VisualNodeCatalog.FollowedSource).
+            if (VisualNodeCatalog.Text(node, "kind") == "ha_entity" && VisualNodeCatalog.Text(node["config"], "entity") is var picked && VisualNodeCatalog.EntityIdDomain(picked) != null)
+                found.Add(picked);
             foreach (var (port, input) in VisualNodeCatalog.DataInputs(node, null, snapshot))
                 if (!VisualNodeCatalog.Structural(input) && !connected.Contains((id, port)) && VisualNodeCatalog.TakesOnlyEntityIds(input) && VisualNodeCatalog.InputValue(node, port, snapshot) is JsonObject operand &&
                     VisualNodeCatalog.Text(operand, "kind") == "literal" && operand["value"] is JsonValue value && value.TryGetValue<string>(out var entity) && entity.Length > 0)

@@ -1,4 +1,4 @@
-import { classSignature, customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityIdDomain, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -244,7 +244,7 @@ function kindText(ctx: Context): string | undefined {
     case 'array_create': { const n = Array.isArray(config.items) ? config.items.length : 0; return n ? `${n} item${n === 1 ? '' : 's'}` : undefined }
     case 'condition_result': { const value = operandText(ctx, 'value'); return value ? `Return ${value}` : undefined }
     case 'loop_result': return 'Finish this iteration'
-    case 'set_entity_state': case 'set_entity_available': case 'show_frame': {
+    case 'set_entity_state': case 'set_entity_available': {
       const entity = definitionEntityName(ctx)
       return entity ? `${entityStepWords[node.kind]} ▸ ${entity}` : undefined
     }
@@ -286,11 +286,48 @@ function kindText(ctx: Context): string | undefined {
       try { file = decodeURIComponent(last) } catch { /* not a name */ }
       return file ? `Download ${file}` : undefined
     }
-    case 'camera_snapshot': { const camera = homeEntity(ctx); return camera ? `Take a picture · ${camera}` : undefined }
+    // The camera typed in, by its name; a connected one by what its source chip names, an Entity by its entity's name.
+    case 'camera_frame': { const camera = wiredSource(ctx, 'entity') ?? homeEntity(ctx); return camera ? `Camera frame · ${camera}` : undefined }
+    // A video by its file's name, or its address's host (and port), never its user, password, path or query.
+    case 'video_frame': { const video = videoName(config.source); return video ? `Video frame · ${video}` : undefined }
+    // One of Home Assistant's entities: its domain (its name is its title).
+    case 'ha_entity': { const domain = entityIdDomain(config.entity); return domain ? `Home Assistant entity · ${domain}` : undefined }
     // The colour chosen, else the step's own default.
     case 'image_draw_rect': return `Draw rectangle · ${text(config.color) || 'Red'}`
     case 'image_draw_text': return `Draw text · ${text(config.color) || 'White'}`
   }
+}
+/**
+ * How a Video frame's summary names its source: a file's name (the last part of its path), or an address's host and port
+ * without its user and password; undefined for a blank source or one that is neither.
+ */
+function videoName(source: unknown): string | undefined {
+  if (typeof source !== 'string' || !source.trim()) return undefined
+  if (source.startsWith('/')) return source.split('/').filter(Boolean).at(-1)
+  const scheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.exec(source)
+  if (!scheme) return undefined
+  const authority = source.slice(scheme[0].length).split(/[/?#]/)[0]
+  const host = authority.slice(authority.lastIndexOf('@') + 1)
+  return host || undefined
+}
+/**
+ * The node a value is connected to the step's input from, by its title: an Entity of one of Home Assistant's entities
+ * by that entity's name (`homeEntityTitle`); undefined when nothing is connected or the source is not in the graph.
+ */
+function wiredSource(ctx: Context, port: string): string | undefined {
+  const edge = ctx.graph?.edges.find(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === port)
+  const source = edge ? ctx.graph!.nodes.find(n => n?.id === edge.source) : undefined
+  if (!source) return
+  if (source.kind === 'ha_entity') return homeEntityTitle(source, ctx.registry)
+  return text(source.label) || (Object.hasOwn(ctx.catalog.nodes, source.kind) ? ctx.catalog.nodes[source.kind].label : source.kind)
+}
+/**
+ * The title of an Entity of one of Home Assistant's entities (`ha_entity`): the name Home Assistant gives its entity, else
+ * the entity's id, else undefined when none is chosen.
+ */
+export function homeEntityTitle(node: GraphNode, registry?: SummaryNames): string | undefined {
+  const id = text(node.config.entity)
+  return id ? knownEntityName(id, registry) ?? id : undefined
 }
 /** Whether a value is connected to the step's input. */
 const wired = (ctx: Context, port: string) => !!ctx.graph?.edges.some(e => e?.kind === 'data' && e.target === ctx.node.id && e.targetPort === port)
@@ -303,7 +340,7 @@ function typedAddress(ctx: Context): URL | undefined {
     return url.protocol === 'http:' || url.protocol === 'https:' ? url : undefined
   } catch { return undefined }
 }
-const entityStepWords: Record<string, string> = { set_entity_state: 'Set state', set_entity_available: 'Set available', show_frame: 'Show frame' }
+const entityStepWords: Record<string, string> = { set_entity_state: 'Set state', set_entity_available: 'Set available' }
 /** The definition's entity the step names, by its name, else its key (also a key the definition no longer has). */
 function definitionEntityName(ctx: Context): string | undefined {
   const key = text(ctx.node.config.entity)

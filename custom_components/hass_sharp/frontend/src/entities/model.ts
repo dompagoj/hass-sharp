@@ -343,9 +343,9 @@ export function definitionId(name: string, taken: string[]): string {
 
 /**
  * The steps whose `entity` is one of the definition's entities by its key (catalog `documents: ['entity']`); a trigger's
- * `entity` is a Home Assistant entity id.
+ * `entity`, and an Entity's (`ha_entity`), is a Home Assistant entity id.
  */
-export const definitionEntityKinds: readonly string[] = ['set_entity_state', 'set_entity_available', 'show_frame']
+export const definitionEntityKinds: readonly string[] = ['set_entity_state', 'set_entity_available']
 
 /**
  * Renames the entity the Entity node or C# entity `nodeId` declares, and every step whose `entity` names an Entity node's
