@@ -22,10 +22,11 @@ static class CameraFeedTests
     // many before it exits; 0 for no end), stall (the frame after which it hangs), resize (k:w:h, a new stream header
     // before frame k), limited (limited range), chunk (writes of at most this many bytes), pids (a file it adds its process
     // id to, and its child's), child (starts a child process that sleeps), fail (says so on stderr and exits), args (a file
-    // it adds its arguments to, one line a run). A video's file holds such a stream source as its text. -stream_loop makes
-    // frames endless, and -frames:v 1 makes it one frame. A -vf
-    // scale=w='min(iw,W)':h='min(ih,H)':… fits the size in W × H (either side may be its own, iw or ih), never larger.
-    // Frame i has every Y byte 20 + i % 200 and grey chroma.
+    // it adds its arguments to, one line a run), still (a file of one YUV 4:2:0 frame shown while it exists and has a
+    // frame's size). A video's file holds such a stream source as its text. -stream_loop makes frames endless, and
+    // -frames:v 1 makes it one frame. A -vf scale=w='min(iw,W)':h='min(ih,H)':… fits the size in W × H (either side may be
+    // its own, iw or ih), never larger.
+    // Frame i has every Y byte 20 + i % 200 and grey chroma, unless the still file is read whole for it.
     internal const string FakeFfmpeg = """
         #!/usr/bin/env python3
         import os, re, subprocess, sys, time
@@ -79,7 +80,16 @@ static class CameraFeedTests
                     w, h = map(int, resize.split(':')[1:])
                     header()
                 cw, ch = (w + 1) // 2, (h + 1) // 2
-                write(b'FRAME\n' + bytes([20 + i % 200]) * (w * h) + bytes([128]) * (2 * cw * ch))
+                size, picture = w * h + 2 * cw * ch, None
+                if cfg.get('still'):
+                    try:
+                        with open(cfg['still'], 'rb') as file:
+                            picture = file.read(size + 1)
+                    except OSError:
+                        pass
+                if picture is None or len(picture) != size:
+                    picture = bytes([20 + i % 200]) * (w * h) + bytes([128]) * (2 * cw * ch)
+                write(b'FRAME\n' + picture)
                 i += 1
                 time.sleep(1 / fps)
         except BrokenPipeError:
@@ -165,6 +175,7 @@ static class CameraFeedTests
             await Sized();
             await Resized();
             await Held();
+            await StillFrames();
             await Restarted();
             await Stalled();
             await Fallback();
@@ -491,6 +502,56 @@ static class CameraFeedTests
         Check(Frame(held)!.Data == data && data.Take(Frame(held)!.Length).All(b => b == luma || b == 128) && data[0] == luma && !PixelFrame.InPool(data), "a frame held is never used again for a later one");
         held.Release();
         Console.WriteLine("PASS camera feed: a frame held keeps its buffer while 20 more frames come and go");
+    }
+
+    // A still picture: a file of one frame, written whole (still.tmp moved over still), is each frame while it exists
+    // and has a frame's size; otherwise the frames are grey.
+    static async Task StillFrames()
+    {
+        var still = Path.Combine(directory, "still");
+        const int size = 64 * 48 + 2 * 32 * 24;
+        void Put(int length)
+        {
+            var temporary = still + ".tmp";
+            File.WriteAllBytes(temporary, Enumerable.Repeat((byte)7, length).ToArray());
+            File.Move(temporary, still, overwrite: true);
+        }
+        static bool Picture(PixelFrame frame) => frame.Data.AsSpan(0, frame.Length).IndexOfAnyExcept((byte)7) < 0;
+        static bool Grey(PixelFrame frame) =>
+            frame.Data[0] is >= 20 and < 220 && frame.Data.AsSpan(0, frame.LumaLength).IndexOfAnyExcept(frame.Data[0]) < 0
+            && frame.Data.AsSpan(frame.LumaLength, frame.Length - frame.LumaLength).IndexOfAnyExcept((byte)128) < 0;
+        // Frames until one is what is expected (those already on their way may still be the last ones), then five more
+        // that are too.
+        async Task Shows(Func<PixelFrame, bool> expected, string what)
+        {
+            var clock = Stopwatch.StartNew();
+            var seen = false;
+            while (!seen && clock.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                var image = await Live("a", "camera.picture");
+                seen = image.IsFrame && Frame(image) is { } frame && (frame.Width, frame.Height) == (64, 48) && expected(frame);
+                image.Release();
+            }
+            Check(seen, what);
+            for (var i = 0; i < 5; i++)
+            {
+                var image = await Live("a", "camera.picture");
+                var frame = Frame(image);
+                Check(image.IsFrame && frame is not null && expected(frame), what + ", frame after frame");
+                image.Release();
+            }
+        }
+        Source("camera.picture", $"fake://w=64,h=48,fps=50,still={still}");
+        await Shows(Grey, "without the file, the frames are grey");
+        Put(size);
+        await Shows(Picture, "a file of a frame's size is each frame");
+        File.Delete(still);
+        await Shows(Grey, "once the file is deleted, the frames are grey again");
+        Put(size);
+        await Shows(Picture, "a file written again is each frame again");
+        Put(size - 1);
+        await Shows(Grey, "a file one byte short gives grey frames");
+        Console.WriteLine("PASS camera feed: the fake ffmpeg shows a still picture from a file of one frame while it exists and has a frame's size, and grey frames otherwise");
     }
 
     static async Task Restarted()
