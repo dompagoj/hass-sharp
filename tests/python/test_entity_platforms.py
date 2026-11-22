@@ -703,21 +703,50 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         await self.sync(self.dated('timestamp', 'date'))
         await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T21:32:28+00:00'}),
                         snapshot('plug1:date', values={'value': '2026-11-22'}))
-        for _ in range(2):
-            await self.push(snapshot('plug1:timestamp', values={'value': 'soon'}),
-                            snapshot('plug1:date', values={'value': 'tomorrow'}))
-        # The bridge's refused-write path: one error per entity, and each keeps the state it had.
+        # Text that is no date at all, then text of a date that cannot be (which Home Assistant's parser raises on).
+        for timestamp, day in (('soon', 'tomorrow'), ('2026-02-30T10:00:00+00:00', '2026-02-30T10:00:00')):
+            for _ in range(2):
+                await self.push(snapshot('plug1:timestamp', values={'value': timestamp}),
+                                snapshot('plug1:date', values={'value': day}))
+        # The bridge's refused-write path: once per entity and message, each Home Assistant's, and each entity keeps
+        # the state it had.
         failures = [r for r in self.records.records if r.name == self.const.logger.name]
-        self.assertEqual(['Cannot write the entity state'] * 2,
-                         [r.getMessage().split(' {')[0] for r in failures])
+        self.assertEqual(['Cannot write the entity state'] * 4, [r.getMessage().split(' {')[0] for r in failures])
         self.assertIn('timestamp device class but provides state soon', str(failures[0].exc_info[1]))
         self.assertIn('date device class but provides state tomorrow', str(failures[1].exc_info[1]))
+        self.assertIn('timestamp device class but provides state 2026-02-30T10:00:00+00:00', failures[2].getMessage())
+        self.assertIn('date device class but provides state 2026-02-30T10:00:00', failures[3].getMessage())
         self.records.records = [r for r in self.records.records if r not in failures]
         self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
         self.assertEqual('2026-11-22', self.state('sensor.plug_one_date').state)
         # The next value that reads as one is shown.
         await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-23T08:00:00+00:00'}))
         self.assertEqual('2026-11-23T08:00:00+00:00', self.state('sensor.plug_one_timestamp').state)
+
+    async def test_a_first_state_of_an_impossible_date_is_refused_as_any_first_state_is(self):
+        # Pushed before the sync adds them: the add writes it as each entity's first state. The sensor keeps the text,
+        # so the parser's own error (day 30 must be in range...) never escapes: Home Assistant refuses the add, as it
+        # refuses any first state it cannot show (text for a sensor with a unit too), and the sync says so.
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-02-30T10:00:00+00:00'}),
+                        snapshot('plug1:date', values={'value': '2026-02-30T10:00:00'}))
+        answer = await self.answer(self.bridge.begin_sync, self.dated('timestamp', 'date'))
+        self.assertEqual(('error', 'Home Assistant did not add plug1:timestamp, plug1:date; its log says why'), answer)
+        refused = [r for r in self.records.records if r.levelno >= logging.WARNING
+                   and r.name not in ('asyncio', 'homeassistant.loader')]
+        self.assertEqual(['Error adding entity sensor.plug_one_timestamp for domain sensor with platform hass_sharp',
+                          'Error adding entity sensor.plug_one_date for domain sensor with platform hass_sharp',
+                          "Cannot sync a definition's entities: Home Assistant did not add plug1:timestamp, "
+                          'plug1:date; its log says why'], [r.getMessage() for r in refused])
+        self.assertIn('timestamp device class but provides state 2026-02-30T10:00:00+00:00', str(refused[0].exc_info[1]))
+        self.assertIn('date device class but provides state 2026-02-30T10:00:00', str(refused[1].exc_info[1]))
+        self.records.records = [r for r in self.records.records if r not in refused]
+        # With dates that can be, the next sync adds them.
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T21:32:28+00:00'}),
+                        snapshot('plug1:date', values={'value': '2026-11-22'}))
+        await self.sync(self.dated('timestamp', 'date'))
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
+        self.assertEqual('2026-11-22', self.state('sensor.plug_one_date').state)
+        self.assertEqual([], self.write_failures())
 
     async def test_a_sensor_of_another_device_class_keeps_its_text(self):
         await self.sync(definition(description('note', 'sensor', 'Note',

@@ -29,13 +29,19 @@ class HassSharpSensor(HassSharpEntity, SensorEntity):
     def _native(self, value):
         """The value as Home Assistant takes it: of a timestamp or date sensor, the ISO 8601 text .NET sends as an aware
         datetime (one without an offset is in Home Assistant's time zone) or a date (of a date and time, its date as
-        written). Text that reads as neither is kept, which Home Assistant refuses as the bridge writes the state."""
+        written). Text that reads as neither, an impossible date such as 2026-02-30 too, is kept, which Home Assistant
+        refuses as the bridge writes the state: raising here would fail the sync that adds the entity."""
         if not isinstance(value, str) or self._attr_device_class not in ("timestamp", "date"):
             return value
         if self._attr_device_class == "date" and (day := dt_util.parse_date(value)) is not None:
             return day
-        # Home Assistant's parser, not datetime.fromisoformat: it takes the seven digits of the second .NET writes.
-        if (moment := dt_util.parse_datetime(value)) is None:
+        # Home Assistant's parser, not datetime.fromisoformat: it takes the seven digits of the second .NET writes. It
+        # raises on well-formed text of a day or time that cannot be.
+        try:
+            moment = dt_util.parse_datetime(value)
+        except ValueError:
+            return value
+        if moment is None:
             return value
         if self._attr_device_class == "date":
             return moment.date()
