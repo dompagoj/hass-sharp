@@ -213,8 +213,9 @@ Two node library files, imported together:
     `SharpVideo.Open(Camera, new VideoOptions { MaxWidth = 1280 })` and runs `Every(Check every)`: next frame →
     faces (input 640) and people (input 416) → draw → show on `camera` → update the entities; `Stop()` disposes the
     video and the detector.
-  - A missed frame or a failing check is logged once per new reason (as `Every` does) and leaves the entities as they
-    were.
+  - A missed frame or a failing check is logged once per new reason (as `Every` does); the counts go unavailable
+    until a check works again, and each seen entity still turns off once its hold time has passed, so a camera that
+    drops out never leaves Person seen stuck on.
   - The device's camera is a `SharpCamera` subclass in the same file, added by the device.
 
 ### 6. Manifest (`hass_sharp.toml` at a repo's root)
