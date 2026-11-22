@@ -12,12 +12,16 @@ Draw text → Draw rectangle → camera entity. The custom-entities design named
     seen, People, and when each was last seen.
   - A **Detect faces** library node that takes a `SharpImage` and returns it with each face's box and five landmarks
     drawn, for graph cameras (Camera frame → Detect faces → Image).
-  - Both run on one native library (Rust + tract, YuNet for faces, YOLOX-nano for people) that is built in this repo,
-    committed under `nodes/vision/`, and downloaded when a definition sets up. It is never shipped in the
-    integration (the release is capped at 100 MiB).
+  - Both run on one native library (Rust + tract, YuNet for faces, YOLOX-nano for people) that lives in its own
+    repository, `https://github.com/dompagoj/hass-sharp-vision`, is published there as GitHub release assets, and is
+    downloaded when a definition sets up. It is never shipped in the integration (the release is capped at 100 MiB)
+    and never committed to any git history.
+  - The node code (`Vision.cs`, `PeopleDetector.cs`), an example definition and the manifest live in
+    hass-sharp-vision too, published as any third-party author would publish node libraries. HassSharp keeps the
+    platform features any author can use: `[NodeSetup]`, `DrawCircle` and "Add external".
 - **B. "Add external".** Paste a GitHub repository URL. HassSharp reads `hass_sharp.toml` at the repo's root, which
   lists the repo's node libraries and entity definitions, and a dialog lets you pick what to import. The vision
-  libraries live in this repo and are the first thing imported this way.
+  libraries in hass-sharp-vision are the first thing imported this way.
 
 Then the Detect faces node is wired into `testcamera`, and a People detector is set up on the local instance (port
 5001).
@@ -52,10 +56,18 @@ for user code; tracking or updating imports; hosts other than GitHub; native cod
 - Packaging: a **People detector device** for entities **and** a **Detect faces node** for graph pictures.
 - Inference: **our own Rust library on tract** (Sonos's pure-Rust ONNX engine), specific to these two models, not a
   generic runtime.
-- Native binaries are **built and committed in this repo**, not published as GitHub releases. Builds run in Docker
-  (no Zig, nothing installed on the host).
+- Native binaries are **GitHub Release assets of hass-sharp-vision**, built by that repository's own CI from its
+  tagged source; never committed to any git history. Builds run in Docker (no Zig, nothing installed on the host).
 - Import is a **one-time copy**: no origin tracking, no update action.
-- **No pushes** during the work. The live import from this repo's URL waits until the owner has merged to main.
+- **No pushes** to either repository, and no tag or release, without the owner's go. The live import from
+  hass-sharp-vision's URL waits for that go, not for a hass-sharp merge.
+- hass-sharp-vision is **MIT**, the same holder as HassSharp ("Copyright (c) 2026 Domagoj Zivanovic").
+- **2026-11-22, changed by the owner:** the vision work moves to its own repository, `dompagoj/hass-sharp-vision`
+  (the Rust crate with its history, `Vision.cs`, `PeopleDetector.cs`, the example definition and `hass_sharp.toml`),
+  and its binaries become that repository's release assets. Until then they were to be built and committed under
+  `nodes/vision/native/bin/` in this repo, but every rebuild would have added about 50–85 MiB to hass-sharp's git
+  history. The full list is `.superpowers/sdd/2026-11-22-vision/split-decisions.md`. The same day the owner dropped
+  NNEF conversion and `panic = "abort"` from the size work.
 
 ## Approaches considered
 
@@ -122,7 +134,7 @@ Builds:
 
 ## Design
 
-### 1. Native library (`nodes/vision/native/`, crate `hs_vision`)
+### 1. Native library (hass-sharp-vision `native/`, crate `hs_vision`)
 
 A Rust `cdylib` with both models embedded (`include_bytes!`), so setup is one download and a model can't drift from
 its decoder. C ABI, version 1:
@@ -145,22 +157,23 @@ its decoder. C ABI, version 1:
   embedding; nothing in version 1 has to change for it.
 
 **Size.** Two models plus tract. The build aims for under 8 MiB per platform (opt-level `s`/`z`, LTO,
-`codegen-units = 1`, strip; tract features trimmed; optionally both models converted offline to tract's NNEF so the
-ONNX parser isn't linked). The builder reports the size reached; correctness wins over size.
+`codegen-units = 1`, strip; tract features trimmed). The builder reports the size reached; correctness wins over size.
 
-### 2. Native hosting: committed in the repo
+### 2. Native hosting: release assets of hass-sharp-vision
 
-- Binaries at `nodes/vision/native/bin/libhs_vision-<rid>.so` with `SHA256SUMS`, plain git (no LFS: raw URLs would
-  serve LFS pointers). RIDs: `linux-musl-arm64`, `linux-musl-x64`, `linux-arm64`, `linux-x64`; `linux-musl-arm` /
-  `linux-arm` if they build cleanly.
-- `nodes/vision/native/build.sh` builds every RID in Docker: `rust:alpine` for musl, an older-glibc Debian image
-  (bullseye, glibc 2.31) for gnu; x64 under emulation. Sources stream in with tar; it strips and rewrites
-  `SHA256SUMS`.
-- CI: a new job in `.github/workflows/tests.yaml` runs `cargo test` and a build check. It never commits binaries.
+- Binaries are `libhs_vision-<rid>.so` assets of a GitHub release of hass-sharp-vision, with `SHA256SUMS` beside
+  them; none is ever committed. RIDs: `linux-musl-arm64`, `linux-musl-x64`, `linux-arm64`, `linux-x64`;
+  `linux-musl-arm` / `linux-arm` if they build cleanly.
+- `native/build.sh` builds every RID in Docker: `rust:alpine` for musl, an older-glibc Debian image (bullseye, glibc
+  2.31) for gnu; a RID of another architecture than the host's under emulation. Sources stream in with tar; it
+  strips, writes the `.so` files into an ignored directory and writes their `SHA256SUMS` there.
+- The release is built by hass-sharp-vision's own CI from a `v<version>` tag, with the built-in `GITHUB_TOKEN` (no
+  cross-repository secret), and attaches the `.so` files and `SHA256SUMS` (and the licence texts the binaries need).
+  A rebuild is a new version tag, never a re-upload under an old one. `native/SHA256SUMS` is committed (it is small)
+  and equals the release's.
 - Downloads come from
-  `https://raw.githubusercontent.com/dompagoj/hass-sharp/<commit-sha>/nodes/vision/native/bin/libhs_vision-<rid>.so`,
-  pinned to the commit that added the binaries plus each file's SHA-256. Binary commit first, then a commit pinning
-  its sha in the C# code. Binaries are rebuilt only when the Rust code changes.
+  `https://github.com/dompagoj/hass-sharp-vision/releases/download/v<version>/libhs_vision-<rid>.so`, pinned by the
+  version in the URL and each file's SHA-256 in `Vision.cs`. Binaries are rebuilt only when the Rust code changes.
 
 ### 3. Library node setup hook: `[NodeSetup]`
 
@@ -180,7 +193,7 @@ ONNX parser isn't linked). The builder reports the size reached; correctness win
 `DrawCircle(x, y, radius, color, filled = false, thickness = 2)`, documented in `docs/custom-entities.md` "Cameras in
 C#".
 
-### 5. The vision library files (`nodes/vision/`)
+### 5. The vision library files (hass-sharp-vision `nodes/`)
 
 Two node library files, imported together:
 
@@ -220,22 +233,24 @@ Two node library files, imported together:
 
 ### 6. Manifest (`hass_sharp.toml` at a repo's root)
 
+The format is HassSharp's; this is hass-sharp-vision's own manifest, at its root:
+
 ```toml
 [[library]]
 id = "vision"                                     # stored under this id when free
 name = "Vision.cs"                                # library file name in the panel
-path = "nodes/vision/Vision.cs"
+path = "nodes/Vision.cs"
 description = "Face and person detection on a native library (YuNet and YOLOX-nano on tract), and the Detect faces node"
 
 [[library]]
 id = "people_detector"
 name = "PeopleDetector.cs"
-path = "nodes/vision/PeopleDetector.cs"
+path = "nodes/PeopleDetector.cs"
 description = "People detector: a device that watches a camera and reports faces and people seen"
 
 [[entity]]
 name = "Front door people"
-path = "nodes/vision/front_door_people.json"      # a DefinitionBody: name, settings, logic
+path = "nodes/front_door_people.json"             # a DefinitionBody: name, settings, logic
 description = "A People detector on camera.front_door"
 ```
 
@@ -247,7 +262,7 @@ id actually used.
 GitHub only. Accept `https://github.com/<owner>/<repo>` with an optional `/tree/<ref>`. Resolve the ref to a commit
 sha with `GET https://api.github.com/repos/{owner}/{repo}/commits/{ref}` (`HEAD` when none), then fetch only
 `hass_sharp.toml` and the files it lists from `https://raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>`. No git
-process and no tarball (the repo carries native binaries). Parse with `tomllib`. Cap each file (2 MiB) and the item
+process and no tarball (a repo can carry far more than the files listed, such as models and test photos). Parse with `tomllib`. Cap each file (2 MiB) and the item
 count, reject absolute paths, `..`, and anything but `.cs` / `.json`.
 
 ### 8. API
@@ -267,6 +282,38 @@ An **Add external** button beside "Add file" in the node libraries view and besi
 entities list, opening one dialog: URL → Inspect → checkbox list grouped Node libraries / Entity definitions, with
 descriptions, links to the files on GitHub at that sha, and the Overwrite / Add as new / Skip choice → Import → a
 notice of what was imported. The dialog says plainly that imported C# runs with full access to Home Assistant.
+
+### 10. Two repositories
+
+- **hass-sharp** (this repo) keeps the platform: `DrawCircle`, `[NodeSetup]` and its host side, "Add external" and
+  the `hass_sharp.toml` format, their docs, and any generic test-helper change (such as the fake ffmpeg's `still=`).
+- **hass-sharp-vision** (`https://github.com/dompagoj/hass-sharp-vision`, MIT) holds the rest, as a third-party
+  author would publish it:
+
+  ```
+  LICENSE  README.md  hass_sharp.toml  .gitignore
+  native/                 the hs_vision crate (Cargo.toml, src, model, tests, NOTICE, build.sh, SHA256SUMS, licence texts)
+  nodes/                  Vision.cs, PeopleDetector.cs, front_door_people.json
+  tests/                  the C# test project and the Python pin check
+  .github/workflows/      ci.yaml, release.yaml
+  ```
+
+  The crate's history comes along: its commits on hass-sharp's branch (they touch only `nodes/vision/native/` and
+  one `.gitignore` line) are carried with `git subtree split --prefix=nodes/vision/native`, and the branch then drops
+  them (asked of the owner first, with a backup tag). The README replaces the vision part of HassSharp's docs.
+- **Its CI** runs `cargo test`, a Docker build check and the pin check on every push; a C# job runs the node code's
+  tests against a hass-sharp checkout at a ref pinned in the workflow, and stays switched off until that ref (one with
+  `[NodeSetup]`) is on GitHub. **Its release workflow** runs on `v*` tags: it builds every RID, refuses a tag that
+  already has a release, and attaches the `.so` files and `SHA256SUMS`.
+- **Its C# tests.** HassSharp has no kit for third-party authors yet, so hass-sharp-vision has a C# test project that
+  builds against a hass-sharp checkout named by an MSBuild property (`HassSharpRoot`: the developer's checkout
+  locally, `actions/checkout` of `dompagoj/hass-sharp` in CI) and links hass-sharp's runtime-test sources for their
+  helpers.
+
+## Follow-up in hass-sharp (not this round)
+
+A **test kit for library authors**, so a repository like hass-sharp-vision can test its node libraries and devices
+against a released HassSharp without a checkout or linked test sources.
 
 ## Next project (not this round): face recognition and device UI
 
@@ -293,17 +340,21 @@ surfaced in the catalog; dialog layout; test fixtures (small, licence-clean).
 
 ## Verification
 
-- Runtime suite: `DrawCircle` pixels; `[NodeSetup]` runs once per definition before runs, `Own` disposes on stop,
-  refused in automations, counts against the setup clock but not download time, failure fails the start; the vision
-  library end to end against a locally built `.so` (skipped when absent): Detect faces on the fixture, a People
-  detector on a video fixture setting its entities and holding "seen" for its time; library `import` is atomic.
-- `cargo test` in `nodes/vision/native/`: decode/NMS on fixture tensors for both models, ABI checks, faces and people
-  on the fixture photos.
+- hass-sharp runtime suite: `DrawCircle` pixels; `[NodeSetup]` runs once per definition before runs, `Own` disposes
+  on stop, refused in automations, counts against the setup clock but not download time, failure fails the start;
+  library `import` is atomic.
+- hass-sharp-vision C# tests (against a hass-sharp checkout): the vision library end to end against a locally built
+  library (skipped when absent, required in CI): Detect faces on the fixture, a People detector on a video fixture
+  setting its entities and holding "seen" for its time; the repository's manifest imports.
+- `cargo test` in hass-sharp-vision `native/`: decode/NMS on fixture tensors for both models, ABI checks, faces and
+  people on the fixture photos. A pin check: `Vision.cs`'s table equals `native/SHA256SUMS`, and the release's.
 - Editor tests for catalog/diagnostic changes.
 - Python: `external` inspect/import against a faked GitHub.
 - Packaging tests: release package unchanged in shape.
 - Frontend: the dialog flow.
-- Live, local instance only: before merge, paste the libraries with the URL pointed at a host-served copy; wire
-  `testcamera` frame → Detect faces → Draw text → Draw rectangle → entity, and add a People detector on the dummy
-  camera (or a Video frame of the fixtures); confirm one download, live boxes, the entities turning on and off with
-  the hold time, and no re-download after a reload. After the owner merges: Add external with this repo's URL.
+- Live, local instance only: before a release exists, paste the libraries with the URL pointed at a host-served copy
+  of the built `.so`; wire `testcamera` frame → Detect faces → Draw text → Draw rectangle → entity, and add a People
+  detector on the dummy camera (or a Video frame of the fixtures); confirm one download, live boxes, the entities
+  turning on and off with the hold time, and no re-download after a reload. Once the owner has given the go to push
+  and release hass-sharp-vision: Add external with `https://github.com/dompagoj/hass-sharp-vision` on the local
+  instance running this branch, downloading from the release; no hass-sharp merge is waited for.
