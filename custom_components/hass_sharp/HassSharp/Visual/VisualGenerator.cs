@@ -547,6 +547,16 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 foreach(var node in classes){var id=Text(node,"id");Section(id,$"{Q(id)} => new {snapshot.Custom[id].TypeExpression}(),");}
                 Add("_ => null,");Add("};");Add("}");
             }
+            // The [NodeSetup] of each library class whose nodes the graph uses, which the host runs as the definition starts;
+            // only a graph with one has it, so every other graph's source stays as it was. Each entry is the first such node's.
+            var setups=nodes.Select(n=>(Node:n,Setup:MethodOf(n)?.Setup)).Where(p=>p.Setup!=null).DistinctBy(p=>p.Setup!.InvocationType)
+                .OrderBy(p=>p.Setup!.InvocationType,StringComparer.Ordinal).ToArray();
+            if(setups.Length>0) {
+                Add("public static class SharpNodeSetups {");
+                Add("public static readonly (string Class, global::System.Func<global::HassSharp.NodeSetupContext, global::System.Threading.Tasks.Task> Setup)[] All = [");
+                foreach(var (node,setup) in setups)Section(Text(node,"id"),$"({Q(setup!.Class)}, {setup.InvocationType}.{setup.MethodName}),");
+                Add("];");Add("}");
+            }
             var source=string.Join('\n',lines)+"\n";
             var tree=CSharpSyntaxTree.ParseText(source,new CSharpParseOptions(LanguageVersion.Latest));
             var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings)};

@@ -33,3 +33,12 @@ public sealed class PortAttribute(string label) : Attribute
     /// </summary>
     public bool FlowControl { get; set; }
 }
+
+/// <summary>
+/// Runs once when an entity definition whose graph uses any <c>[Node]</c> of the class starts, before its When started
+/// flow: the place for one-time work the class's nodes share, such as downloading a model. The method is
+/// <c>public static Task Setup(NodeSetupContext context)</c>, one per class, in a node library. A node of such a class
+/// works only in an entity definition's graph.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false, Inherited = false)]
+public sealed class NodeSetupAttribute : Attribute;

@@ -122,6 +122,16 @@ public class NodeLibraryLanguageServicesTests
         Assert.Contains("SharpDevice",names); Assert.Contains("SharpSwitch",names); Assert.Contains("SharpSensor",names);
     }
     [Fact]
+    public async Task Completion_offers_the_setup_context_inside_a_NodeSetup_method()
+    {
+        // A library class's [NodeSetup] method reaches the definition's files, its log, the runtime it runs on, its stopping
+        // and what it owns through its NodeSetupContext.
+        const string source="public static class Probe\n{\n    [NodeSetup] public static Task Setup(NodeSetupContext context) { context. return Task.CompletedTask; }\n}";
+        var position=source.IndexOf("context.")+"context.".Length;
+        var names=(await Request("completion",[new("main",source,1)],"main",position)).AsArray().Select(i=>i!["displayText"]!.GetValue<string>()).ToArray();
+        foreach (var name in new[]{"Files","Log","RuntimeIdentifier","Stopping","Own"}) Assert.Contains(name,names);
+    }
+    [Fact]
     public async Task Concurrent_unsaved_snapshots_are_isolated_and_include_generated_symbols()
     {
         const string source="public class Main { void Run() { Other. } }";

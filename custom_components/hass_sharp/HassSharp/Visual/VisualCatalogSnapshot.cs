@@ -28,7 +28,17 @@ public sealed record NodeMethodDescriptor(string Kind, string SourceId, string I
 {
     public ImmutableArray<NodeOutputDescriptor> Outputs { get; init; } = ResultType == null ? [] : [new("result", null)];
     public bool Pure { get; init; }
+    /// <summary>
+    /// The <see cref="NodeSetupAttribute"/> method of the method's own containing type (not a base type's); null when it
+    /// has none, and for every Custom C# node.
+    /// </summary>
+    public NodeSetupDescriptor? Setup { get; init; }
 }
+/// <summary>A node library class's <see cref="NodeSetupAttribute"/> method.</summary>
+/// <param name="Class">The class's name as messages give it: <c>FaceDetection</c>, a nested class <c>Outer.Inner</c>.</param>
+/// <param name="InvocationType">The class as generated code names it, as <see cref="NodeMethodDescriptor.InvocationType"/> is written.</param>
+/// <param name="MethodName">The method's name as generated code calls it.</param>
+public sealed record NodeSetupDescriptor(string Class, string InvocationType, string MethodName);
 public sealed record NodeTypeDescriptor(string Id, string TypeExpression, ITypeSymbol Symbol);
 /// <summary>
 /// The code of one node that holds C#, compiled together with the libraries in a namespace of its own: a Custom C#

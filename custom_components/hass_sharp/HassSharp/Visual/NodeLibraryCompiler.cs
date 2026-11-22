@@ -85,6 +85,14 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal const string EntityResultMessage = "A node returns an entity, or nothing at all: remove the ? from this entity type";
     /// <summary>At a pin whose type holds an entity type within it: a wire carries one entity id.</summary>
     internal const string EntityNestedMessage = "An entity cannot be inside a list or another type on a pin; take or return one entity";
+    /// <summary>At a [NodeSetup] method of any other shape.</summary>
+    internal const string SetupSignatureMessage = "A setup method is public static Task Setup(NodeSetupContext context): public, static, returning Task and taking one NodeSetupContext";
+    /// <summary>At a class's second [NodeSetup] method.</summary>
+    internal const string SetupSecondMessage = "A class has at most one [NodeSetup] method; this is its second";
+    /// <summary>A warning at a [NodeSetup] method in a class without nodes: no graph can use the class, so it never runs.</summary>
+    internal const string SetupWithoutNodesMessage = "[NodeSetup] runs for the [Node] methods of its class, and this class has none";
+    /// <summary>At a [NodeSetup] method in a C# node's code: only a library's class is set up.</summary>
+    internal const string SetupLibraryOnlyMessage = "[NodeSetup] works in a node library only; move this class into one";
 
     public NodeLibraryPreview Preview(IEnumerable<NodeLibrarySource> librarySources, CancellationToken cancellationToken = default) => Preview(librarySources, null, cancellationToken);
     /// <summary>
@@ -151,6 +159,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var nodeAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeAttribute");
         var portAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.PortAttribute");
         var nodeContext = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeContext");
+        var setupAttribute = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeSetupAttribute");
+        var setupContext = frameworkAssembly.GetTypeByMetadataName("HassSharp.NodeSetupContext");
         var entityBase = frameworkAssembly.GetTypeByMetadataName("HassSharp.Entities.Entity");
         // An entity handle on a pin is the entity id it wraps (see EntityPins).
         var entityPin = EntityPins(frameworkAssembly);
@@ -252,6 +262,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         // arrives: a custom node lists every type it uses beyond them, so its pins validate against the static catalog too.
         var builtIn = new Dictionary<string, ITypeSymbol>(typeSymbols, StringComparer.Ordinal);
         var refined = (string id) => root["types"]![id]?["refines"] != null;
+        // Each library class's [NodeSetup] method, by its class: found before the [Node] methods are described, whose
+        // descriptors carry it.
+        var setups = new Dictionary<INamedTypeSymbol, NodeSetupDescriptor>(SymbolEqualityComparer.Default);
 
         // The pins of one [Node] method, as the catalog describes a library node; null (reported) when it cannot be one.
         (string Title, string Description, string Category, bool Pure, JsonObject Inputs, JsonObject Outputs, NodeMethodDescriptor Method, JsonObject? Flows)? Describe(
@@ -370,7 +383,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 input[p.Name] = rule;
             }
             var descriptor = new NodeMethodDescriptor(kind, sourceId, TypeIdentity(method.ContainingType), Escape(method.Name), result == null ? null : PinType(result), awaitResult, parameters, method)
-                { Outputs = outputPorts, Pure = pure };
+                { Outputs = outputPorts, Pure = pure, Setup = kind.StartsWith("library:", StringComparison.Ordinal) ? setups.GetValueOrDefault(method.ContainingType) : null };
             return (title, DocText(doc?.Element("summary")), attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom", pure, input, outputs, descriptor, flowSpec);
         }
         IEnumerable<(MethodDeclarationSyntax Declaration, IMethodSymbol Method, AttributeData Attribute)> NodeMethods(SyntaxTree tree)
@@ -379,6 +392,24 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             foreach (var declaration in tree.GetRoot(cancellationToken).DescendantNodes().OfType<MethodDeclarationSyntax>())
                 if (model.GetDeclaredSymbol(declaration, cancellationToken) is IMethodSymbol method && method.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, nodeAttribute)) is { } attribute)
                     yield return (declaration, method, attribute);
+        }
+        // The [NodeSetup] methods, in one pass over every library's and C# node's code: one per library class, of one
+        // shape, in a class with nodes; none in a C# node's code, whose class no definition sets up.
+        var setupClasses = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
+        foreach (var tree in trees.Keys.Concat(customTrees.Keys))
+        {
+            var model = Model(tree);
+            foreach (var declaration in tree.GetRoot(cancellationToken).DescendantNodes().OfType<MethodDeclarationSyntax>())
+            {
+                if (model.GetDeclaredSymbol(declaration, cancellationToken) is not IMethodSymbol method || !method.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, setupAttribute))) continue;
+                var at = declaration.Identifier.GetLocation();
+                if (customTrees.ContainsKey(tree)) { Report(at, SetupLibraryOnlyMessage); continue; }
+                var type = method.ContainingType;
+                if (!setupClasses.Add(type)) { Report(at, SetupSecondMessage); continue; }
+                if (!ValidSetup(method, setupContext)) { Report(at, SetupSignatureMessage); continue; }
+                if (!type.GetMembers().Any(NodeMethod)) Report(at, SetupWithoutNodesMessage, 2);
+                setups[type] = new(type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat), TypeIdentity(type), Escape(method.Name));
+            }
         }
         var methods = new List<NodeMethodDescriptor>();
         foreach (var (tree, source) in trees)
@@ -398,6 +429,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 if (described.Pure) spec["pure"] = true;
                 else if (described.Flows is { } flowSpec) foreach (var (key, value) in flowSpec) spec[key] = value!.DeepClone();
                 else spec["execution"] = new JsonArray("next", "error");
+                // A node of a class with a setup works only in an entity definition, which runs the setup as it starts.
+                if (described.Method.Setup != null) spec["documents"] = new JsonArray("entity");
                 root["nodes"]![kind] = spec;
                 methods.Add(described.Method);
             }
@@ -704,6 +737,12 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             if (type.DeclaredAccessibility != Accessibility.Public || type.IsGenericType) return false;
         return true;
     }
+    /// <summary>
+    /// Whether a [NodeSetup] method has its shape: <c>public static Task Setup(NodeSetupContext context)</c>, not generic,
+    /// its one parameter neither ref, out nor params, in classes a node method may be in.
+    /// </summary>
+    static bool ValidSetup(IMethodSymbol method, INamedTypeSymbol? context) =>
+        ValidMethod(method) && IsTask(method.ReturnType) && method.Parameters is [{ RefKind: RefKind.None, IsParams: false } parameter] && SymbolEqualityComparer.Default.Equals(parameter.Type, context);
     static XElement? Documentation(ISymbol symbol, CancellationToken cancellationToken)
     {
         try { return XElement.Parse(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
