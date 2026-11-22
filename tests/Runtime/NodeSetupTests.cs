@@ -54,7 +54,10 @@ static class NodeSetupTests
             (nameof(OwnDisposesOnStop), OwnDisposesOnStop),
             (nameof(OwnAfterStopDisposesAtOnce), OwnAfterStopDisposesAtOnce),
             (nameof(SetupClockExcludesDownloadTime), SetupClockExcludesDownloadTime),
-            (nameof(FailureFailsTheStart), FailureFailsTheStart) })
+            (nameof(FailureFailsTheStart), FailureFailsTheStart),
+            (nameof(DisposesInReverseThroughAFailure), DisposesInReverseThroughAFailure),
+            (nameof(NodeSetupsOfReadsAll), () => { NodeSetupsOfReadsAll(); return Task.CompletedTask; }),
+            (nameof(AContextThatCannotBeMadeNamesTheClass), AContextThatCannotBeMadeNamesTheClass) })
             try { await test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"Node setup: {failures.Count} failing:\n" + string.Join("\n", failures));
@@ -183,7 +186,8 @@ static class NodeSetupTests
 
     /// <summary>
     /// Probe's library: its setup counts itself, logs <c>probe set up on {runtime}</c>, owns a <c>Closer</c> (which logs
-    /// <c>probe closed</c> when disposed) and then runs <paramref name="then"/>; its pure node <c>Count()</c> is how many
+    /// <c>probe closed</c> when disposed, or the line it is given) and then runs <paramref name="then"/>; a <c>Refusing</c>
+    /// logs <c>second disposing</c> and throws <c>second refused</c> when disposed; its pure node <c>Count()</c> is how many
     /// setups ran in this load context (each definition compiles the library into its own assembly).
     /// </summary>
     static string HostLibrary(string then = "") => """
@@ -202,9 +206,17 @@ static class NodeSetupTests
             /// <summary>How many setups ran.</summary>
             [Node("Probe", Pure = true)] public static int Count() => System.Threading.Volatile.Read(ref setups);
         }
-        public sealed class Closer(NodeSetupContext context) : System.IDisposable
+        public sealed class Closer(NodeSetupContext context, string said = "probe closed") : System.IDisposable
         {
-            public void Dispose() => context.Log("probe closed");
+            public void Dispose() => context.Log(said);
+        }
+        public sealed class Refusing(NodeSetupContext context) : System.IDisposable
+        {
+            public void Dispose()
+            {
+                context.Log("second disposing");
+                throw new System.InvalidOperationException("second refused");
+            }
         }
         """;
 
@@ -328,19 +340,30 @@ static class NodeSetupTests
                 _ = Task.Run(async () =>
                 {
                     try { await Task.Delay(System.Threading.Timeout.Infinite, context.Stopping); } catch (System.OperationCanceledException) { }
-                    await Task.Delay(100);
-                    try { context.Own(new Closer(context)); context.Log("late own kept"); }
-                    catch (System.Exception refused) { context.Log("late own refused: " + refused.GetType().Name); }
+                    // Until the stop has released what the setups own: an Own before that is kept, and disposed with the rest.
+                    for (var attempt = 1; attempt <= 1000; attempt++)
+                    {
+                        try { context.Own(new Closer(context, "late closed " + attempt)); }
+                        catch (System.Exception refused) { context.Log("late own refused: " + refused.GetType().Name + " at " + attempt); return; }
+                        await Task.Delay(5);
+                    }
+                    context.Log("late own kept");
                 });
         """), async rig =>
     {
         Check((await rig.Save("late", Counted("Late")))["active"]!.GetValue<bool>(), "the definition runs");
         Check(!(await rig.Entity(new { operation = "set_enabled", id = "late", enabled = false }))["active"]!.GetValue<bool>(), "turned off");
-        await EntityTestHome.Until(() => rig.Count("Late: late own refused: ObjectDisposedException") == 1, "an Own after the stop is refused");
+        const string refused = "Late: late own refused: ObjectDisposedException at ";
+        string? Refused() => rig.Home.Logs(PyLogLevel.Info).FirstOrDefault(l => l.StartsWith(refused, StringComparison.Ordinal));
+        await EntityTestHome.Until(() => Refused() != null || rig.Count("Late: late own kept") > 0, "an Own after the stop is refused");
+        var last = Refused() is { } line && int.TryParse(line[refused.Length..], out var at) ? at : 0;
+        Check(last > 0, "an Own after the stop is refused: " + rig.Lines());
+        // Every late object is disposed: those kept before the stop released them with the rest, the refused one at once,
+        // before Own threw.
+        await EntityTestHome.Until(() => rig.Home.Logs(PyLogLevel.Info).Count(l => l.StartsWith("Late: late closed ", StringComparison.Ordinal)) == last, $"the {last} late objects are disposed");
         var info = rig.Home.Logs(PyLogLevel.Info);
-        // The one owned in the setup, then the late one, disposed before Own throws.
-        Check(rig.Count("Late: probe closed") == 2 && Array.LastIndexOf(info, "Late: probe closed") < Array.IndexOf(info, "Late: late own refused: ObjectDisposedException")
-            && rig.Count("Late: late own kept") == 0, "the late object is disposed at once: " + rig.Lines());
+        Check(rig.Count("Late: probe closed") == 1 && Array.IndexOf(info, $"Late: late closed {last}") is >= 0 and var closed && closed < Array.IndexOf(info, refused + last),
+            "the refused object is disposed at once: " + rig.Lines());
         Console.WriteLine("PASS node setup: an Own after the definition stopped disposes its object at once and throws ObjectDisposedException");
     });
 
@@ -370,11 +393,15 @@ static class NodeSetupTests
                 """), async rig =>
             {
                 DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(1);
+                var saving = rig.Save("slow", Counted("Slow"));
+                // Timed from the setup's start, not the compile before it.
+                var compiling = System.Diagnostics.Stopwatch.StartNew();
+                while (rig.Count(SetUpLine("Slow")) == 0 && !saving.IsCompleted && compiling.Elapsed < TimeSpan.FromSeconds(60)) await Task.Delay(5);
                 var clock = System.Diagnostics.Stopwatch.StartNew();
-                var saved = await rig.Save("slow", Counted("Slow"));
+                var saved = await saving;
                 Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Slow: Probe: its [NodeSetup] did not finish within 1 s",
                     "a setup past the limit fails the start: " + saved.ToJsonString());
-                Check(clock.Elapsed < TimeSpan.FromSeconds(2.5), $"the setup failed after {clock.Elapsed.TotalMilliseconds} ms");
+                Check(clock.Elapsed < TimeSpan.FromSeconds(2.5), $"the setup failed {clock.Elapsed.TotalMilliseconds} ms after it started");
                 Check(rig.Home.Syncs("slow").Length == 0, "a definition whose setup ran out of time synced");
             });
 
@@ -416,4 +443,73 @@ static class NodeSetupTests
         await EntityTestHome.Until(() => rig.Count("Failing: probe closed") == 1, "what the failed setup owned is disposed");
         Console.WriteLine("PASS node setup: a setup that throws fails the start with its class and message, syncs nothing, reads failed, and what it owned is disposed");
     });
+    static Task DisposesInReverseThroughAFailure() => WithRig(HostLibrary("""
+                context.Own(new Closer(context, "first closed"));
+                context.Own(new Refusing(context));
+        """), async rig =>
+    {
+        Check((await rig.Save("two", Counted("Two")))["active"]!.GetValue<bool>(), "the definition runs");
+        Check(!(await rig.Entity(new { operation = "set_enabled", id = "two", enabled = false }))["active"]!.GetValue<bool>(), "turned off");
+        await EntityTestHome.Until(() => rig.Count("Two: probe closed") == 1, "what the setup owned first is disposed");
+        const string warned = "Two: disposing what a node setup owns failed: second refused";
+        var all = rig.Home.Logs();
+        int At(string line) => Array.IndexOf(all, line);
+        // Last owned first: the one that throws, then the one before it, then the setup's first.
+        Check(rig.Home.Logs(PyLogLevel.Warn).Count(l => l == warned) == 1
+            && At("Two: second disposing") >= 0 && At("Two: second disposing") < At(warned) && At(warned) < At("Two: first closed") && At("Two: first closed") < At("Two: probe closed"),
+            "disposed in reverse, past the one that throws: " + rig.Lines());
+        Console.WriteLine("PASS node setup: what a setup owns is disposed last first, and one whose Dispose throws is warned of and the rest are still disposed");
+    });
+
+    /// <summary>An assembly of <paramref name="source"/>, loaded.</summary>
+    static System.Reflection.Assembly Assembled(string source)
+    {
+        var compilation = Microsoft.CodeAnalysis.CSharp.CSharpCompilation.Create("NodeSetups" + Guid.NewGuid().ToString("N"),
+            [Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(source)], NodeLibraryCompiler.FrameworkReferences(),
+            new Microsoft.CodeAnalysis.CSharp.CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary));
+        using var image = new MemoryStream();
+        var emitted = compilation.Emit(image);
+        Check(emitted.Success, "the assembly compiles: " + string.Join(" | ", emitted.Diagnostics));
+        return System.Reflection.Assembly.Load(image.ToArray());
+    }
+
+    static void NodeSetupsOfReadsAll()
+    {
+        Check(HassSharpManager.NodeSetupsOf(Assembled("public static class Other { }")).Count == 0, "an assembly without SharpNodeSetups has no setups");
+        var read = HassSharpManager.NodeSetupsOf(Assembled("""
+            public static class SharpNodeSetups
+            {
+                public static readonly (string Class, System.Func<HassSharp.NodeSetupContext, System.Threading.Tasks.Task> Setup)[] All =
+                    [("B", _ => System.Threading.Tasks.Task.CompletedTask), ("A", _ => System.Threading.Tasks.Task.CompletedTask)];
+            }
+            """));
+        Check(read.Select(setup => setup.Class).SequenceEqual(["B", "A"]) && read.All(setup => setup.Run != null), "the setups are All's, in order: " + string.Join(", ", read));
+        foreach (var (source, message) in new[] {
+            ("public static class SharpNodeSetups { }", "The compiled definition's SharpNodeSetups has no public static field All"),
+            ("public static class SharpNodeSetups { public static readonly string[] All = []; }", "The compiled definition's SharpNodeSetups.All is a System.String[], not an array of (string Class, Func<NodeSetupContext, Task> Setup)"),
+            ("public static class SharpNodeSetups { public static readonly (string, System.Func<HassSharp.NodeSetupContext, System.Threading.Tasks.Task>)[]? All = null; }", "The compiled definition's SharpNodeSetups.All is null") })
+        {
+            try
+            {
+                HassSharpManager.NodeSetupsOf(Assembled(source));
+                throw new Exception("a SharpNodeSetups without a readable All was taken for none: " + source);
+            }
+            catch (InvalidOperationException refused) { Check(refused.Message == message, "the refusal: " + refused.Message); }
+        }
+        Console.WriteLine("PASS node setup: the setups of a compiled definition are its SharpNodeSetups.All, none without it; a SharpNodeSetups without a readable All is an error");
+    }
+    /// <summary>On a manager without a directory for downloads the setup's context cannot be made: that fails the start naming the class, as the setup's own failure would.</summary>
+    static async Task AContextThatCannotBeMadeNamesTheClass()
+    {
+        await using var home = new EntityTestHome("node-setup-context");
+        var manager = new UserScriptManager { Pump = new EntityStatePump(TimeSpan.FromMilliseconds(5)) };
+        var compiled = EntityHostTests.Compiled("bare", "Bare", EntityHostTests.Device("tool", "Meter"), () => new ToolIdle());
+        var ran = false;
+        compiled.Definition = compiled.Definition! with { NodeSetups = [new("Probe", _ => { ran = true; return Task.CompletedTask; })] };
+        Exception? failure = null;
+        await manager.LoadUserScripts([compiled], (_, error) => failure = error);
+        Check(failure?.Message == "Bare: Probe: Downloads have no directory here" && !ran, "the start fails naming the class: " + failure);
+        await manager.UnloadUserScriptsAsync();
+        Console.WriteLine("PASS node setup: a setup's context that cannot be made fails the start naming the class");
+    }
 }

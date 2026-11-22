@@ -114,13 +114,21 @@ public partial class HassSharpManager
 
     /// <summary>
     /// The <c>[NodeSetup]</c> of each node library class a compiled graph uses: its assembly's <c>SharpNodeSetups.All</c>,
-    /// in order; none when the assembly has none, as a graph without such nodes does.
+    /// in order; none when the assembly has no <c>SharpNodeSetups</c>, as a graph without such nodes does.
     /// </summary>
-    internal static IReadOnlyList<NodeClassSetup> NodeSetupsOf(System.Reflection.Assembly assembly) =>
-        assembly.GetType("SharpNodeSetups")?.GetField("All", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null)
-            is ValueTuple<string, Func<NodeSetupContext, Task>>[] all
-            ? [.. all.Select(entry => new NodeClassSetup(entry.Item1, entry.Item2))]
-            : [];
+    /// <exception cref="InvalidOperationException">Its <c>SharpNodeSetups</c> has no <c>All</c>, or one that is not an array of setups.</exception>
+    internal static IReadOnlyList<NodeClassSetup> NodeSetupsOf(System.Reflection.Assembly assembly)
+    {
+        if (assembly.GetType("SharpNodeSetups") is not { } type) return [];
+        var field = type.GetField("All", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("The compiled definition's SharpNodeSetups has no public static field All");
+        var value = field.GetValue(null);
+        if (value is ValueTuple<string, Func<NodeSetupContext, Task>>[] all)
+            return [.. all.Select(entry => new NodeClassSetup(entry.Item1, entry.Item2))];
+        throw new InvalidOperationException(value == null
+            ? "The compiled definition's SharpNodeSetups.All is null"
+            : $"The compiled definition's SharpNodeSetups.All is a {field.FieldType}, not an array of (string Class, Func<NodeSetupContext, Task> Setup)");
+    }
 
     /// <summary>
     /// The devices a graph's Device nodes declare, as its host hands them to Home Assistant, worked out from the graph again

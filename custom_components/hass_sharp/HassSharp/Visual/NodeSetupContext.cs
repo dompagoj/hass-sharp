@@ -37,7 +37,11 @@ public sealed class NodeSetupContext
     /// <summary>Cancelled when the definition stops, also while its setup still runs.</summary>
     public CancellationToken Stopping { get; }
 
-    /// <summary>Disposes <paramref name="disposable"/> when the definition stops, and returns it.</summary>
+    /// <summary>
+    /// Disposes <paramref name="disposable"/> when the definition stops, last owned first, and returns it. Once the
+    /// definition has stopped, disposes it at once and throws <see cref="ObjectDisposedException"/>.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The definition has stopped: it keeps nothing more.</exception>
     public T Own<T>(T disposable) where T : IDisposable
     {
         ArgumentNullException.ThrowIfNull(disposable);

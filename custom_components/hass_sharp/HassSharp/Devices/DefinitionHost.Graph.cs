@@ -134,11 +134,9 @@ internal sealed partial class DefinitionHost
     /// </summary>
     async Task RunNodeSetups()
     {
+        // The context is made within the step, so that a failure to make it (no directory for downloads) names the class too.
         foreach (var setup in definition.NodeSetups)
-        {
-            var context = new NodeSetupContext(Files, Log, Stopping, Own);
-            await RunSetUp(() => setup.Run(context), $"{definition.Name}: {setup.Class}", "its [NodeSetup]");
-        }
+            await RunSetUp(() => setup.Run(new NodeSetupContext(Files, Log, Stopping, Own)), $"{definition.Name}: {setup.Class}", "its [NodeSetup]");
     }
 
     /// <summary>One C# node of a graph as its host set it up: what its node says, the class it made, and that class's entities.</summary>
