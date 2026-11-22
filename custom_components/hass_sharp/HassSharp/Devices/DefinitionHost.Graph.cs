@@ -43,14 +43,16 @@ internal sealed partial class DefinitionHost
     readonly HashSet<(string Entity, string State)> own = [];
 
     /// <summary>
-    /// Prepares the definition: creates the entities its Entity nodes describe, then sets up its C# nodes' classes
-    /// (<see cref="SetUpComponents"/>) and checks that every entity has a unique id of its own, then runs its When started flow, if it
-    /// has one, within <see cref="SetupTimeout"/>; the states that flow sets are the entities' first. A flow that does not
-    /// succeed, or end at a Stop step, fails the prepare with its error. When this revision replaces one that runs, each
-    /// entity no state flow works out starts with the state, and availability, its namesake of the same domain has there
-    /// (<see cref="Carry"/>), less each value it refuses; one that gets nothing from there takes the state values it last
-    /// showed (<see cref="EntityStateStore"/>), less each it refuses. The When started flow may still set another. Each
-    /// frame flow is what a request for its camera's picture runs first (<see cref="RunFrame"/>).
+    /// Prepares the definition: creates the entities its Entity nodes describe, then runs the <c>[NodeSetup]</c> of each
+    /// node library class its graph uses (<see cref="RunNodeSetups"/>), then sets up its C# nodes' classes
+    /// (<see cref="SetUpComponents"/>), both on one clock within <see cref="SetupTimeout"/>, and checks that every entity
+    /// has a unique id of its own, then runs its When started flow, if it has one, within <see cref="SetupTimeout"/>; the
+    /// states that flow sets are the entities' first. A flow that does not succeed, or end at a Stop step, fails the
+    /// prepare with its error. When this revision replaces one that runs, each entity no state flow works out starts with
+    /// the state, and availability, its namesake of the same domain has there (<see cref="Carry"/>), less each value it
+    /// refuses; one that gets nothing from there takes the state values it last showed (<see cref="EntityStateStore"/>),
+    /// less each it refuses. The When started flow may still set another. Each frame flow is what a request for its
+    /// camera's picture runs first (<see cref="RunFrame"/>).
     /// </summary>
     async Task<SharpEntity[]> PrepareGraph()
     {
@@ -58,11 +60,17 @@ internal sealed partial class DefinitionHost
         var hubs = definition.Entities.OfType<JsonObject>().Select(entity => SharpDomains.Create(VisualNodeCatalog.Text(entity, "domain"), entity)).ToArray();
         CheckKeys(hubs);
         var all = hubs;
-        if (definition.Components.Count > 0)
+        if (definition.NodeSetups.Count > 0 || definition.Components.Count > 0)
         {
-            all = [.. hubs, .. await SetUpComponents()];
+            try
+            {
+                await RunNodeSetups();
+                if (definition.Components.Count > 0) all = [.. hubs, .. await SetUpComponents()];
+            }
+            // Also after a step that failed or ran out of time: a download it left running no longer stops a clock.
+            finally { setupClock = null; }
             // One unique id each, over the Entity nodes' entities and the C# nodes' together.
-            CheckKeys(all);
+            if (definition.Components.Count > 0) CheckKeys(all);
         }
         // Read before the lock: the running revision's lock is taken alone, never inside this one.
         var carried = Replaced();
@@ -116,6 +124,23 @@ internal sealed partial class DefinitionHost
         return all;
     }
 
+    /// <summary>
+    /// Runs the <c>[NodeSetup]</c> of each node library class the graph uses, in order, each once, on the clock its C#
+    /// nodes' set-up shares (<see cref="RunSetUp"/>; the caller ends it). Each gets the definition's files, log and
+    /// stopping, and keeps what it owns until the definition stops (<see cref="Own"/>). One that throws fails the start
+    /// with <c>{definition}: {class}: {message}</c>, one past the limit with
+    /// <c>{definition}: {class}: its [NodeSetup] did not finish within {n} s</c>; what it owned so far is disposed when
+    /// the failed host is stopped.
+    /// </summary>
+    async Task RunNodeSetups()
+    {
+        foreach (var setup in definition.NodeSetups)
+        {
+            var context = new NodeSetupContext(Files, Log, Stopping, Own);
+            await RunSetUp(() => setup.Run(context), $"{definition.Name}: {setup.Class}", "its [NodeSetup]");
+        }
+    }
+
     /// <summary>One C# node of a graph as its host set it up: what its node says, the class it made, and that class's entities.</summary>
     sealed record Part(DefinitionComponent Node, SharpComponent Root, SharpEntity[] Entities);
 
@@ -148,27 +173,22 @@ internal sealed partial class DefinitionHost
     /// (<see cref="SetUpComponent"/>): creates its class (<see cref="CompiledDefinition.Create"/>), applies its settings,
     /// gives a C# entity its node's key and, when its code names it none, its class's title if it stands alone (none on a
     /// device, whose name Home Assistant then shows), restores, sets up and seals. Every constructor and <c>Setup()</c> of
-    /// them runs within <see cref="SetupTimeout"/> on one clock. A failure fails the definition's start, naming the node:
-    /// nothing of it is registered.
+    /// them runs within <see cref="SetupTimeout"/> on one clock, which the node setups before them share (the caller ends
+    /// it). A failure fails the definition's start, naming the node: nothing of it is registered.
     /// </summary>
     /// <returns>Their entities, in node order.</returns>
     async Task<SharpEntity[]> SetUpComponents()
     {
         List<Part> made = [];
-        try
+        foreach (var node in definition.Components)
         {
-            foreach (var node in definition.Components)
-            {
-                var who = $"{definition.Name}: {Called(node)}";
-                var root = await CreateNode(node, who);
-                nodes[root] = node;
-                var standalone = node.Device == null;
-                var all = await SetUpComponent(root, who, node.Settings, node.Unset, entity => entity.Adopt(node.Key, standalone ? node.Title : null));
-                made.Add(new(node, root, all));
-            }
+            var who = $"{definition.Name}: {Called(node)}";
+            var root = await CreateNode(node, who);
+            nodes[root] = node;
+            var standalone = node.Device == null;
+            var all = await SetUpComponent(root, who, node.Settings, node.Unset, entity => entity.Adopt(node.Key, standalone ? node.Title : null));
+            made.Add(new(node, root, all));
         }
-        // Also after a Setup() that failed or ran out of time: a download it left running no longer stops a clock.
-        finally { setupClock = null; }
         parts = [.. made];
         return [.. made.SelectMany(part => part.Entities)];
     }

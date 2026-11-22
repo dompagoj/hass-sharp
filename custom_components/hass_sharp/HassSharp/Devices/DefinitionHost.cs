@@ -39,15 +39,27 @@ public sealed record CompiledDefinition(string Id, string Name, IReadOnlyList<De
     /// The host calls it for each component as it sets the graph up.
     /// </summary>
     internal Func<string, object?>? Create { get; init; }
+    /// <summary>
+    /// The <c>[NodeSetup]</c> of each node library class whose nodes its graph uses, in the order the compiled graph's
+    /// <c>SharpNodeSetups.All</c> gives them; none for a graph without such nodes. The host runs each once as it prepares,
+    /// before the C# nodes.
+    /// </summary>
+    internal IReadOnlyList<NodeClassSetup> NodeSetups { get; init; } = [];
 }
+
+/// <summary>A node library class's <c>[NodeSetup]</c>, as a definition's host runs it.</summary>
+/// <param name="Class">The class's name, which the setup's failures start with after the definition's.</param>
+/// <param name="Run">The setup method.</param>
+internal sealed record NodeClassSetup(string Class, Func<NodeSetupContext, Task> Run);
 
 /// <summary>
 /// Runs one entity definition inside its script: creates the entities its Entity nodes describe, which its graph's runs
 /// set the states of through it (<see cref="IDefinitionRuntime"/>), and runs the graph's When started flow as it prepares
 /// and an Entity node's command flow for each command; beside them it creates each C# entity and C# device node's class,
-/// applies its settings and sets it up. It tells Home Assistant which entities exist, starts and stops them, and carries
-/// their states, timers, tracks and commands. It owns the definition's HTTP client and downloads, which it ends
-/// once the definition has stopped. It answers Home Assistant's requests for its cameras' pictures, making their frames
+/// applies its settings and sets it up, after the <c>[NodeSetup]</c> of each node library class its graph uses. It tells
+/// Home Assistant which entities exist, starts and stops them, and carries their states, timers, tracks and commands. It
+/// owns the definition's HTTP client and downloads, and what its node setups own (<see cref="Own"/>), which it ends once
+/// the definition has stopped. It answers Home Assistant's requests for its cameras' pictures, making their frames
 /// (<see cref="CameraImage"/>).
 /// </summary>
 internal sealed partial class DefinitionHost(UserScript script, CompiledDefinition definition) : IComponentHost, IDefinitionRuntime
@@ -56,8 +68,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     static readonly IDisposable Nothing = new Handle(() => { });
 
     /// <summary>
-    /// How long the constructors and <c>Setup()</c>s of a definition's C# nodes may take together (the <c>Setup()</c> of
-    /// each entity a C# device adds among them), and, on a clock of its own, its When started flow; settable for tests.
+    /// How long the <c>[NodeSetup]</c>s of a definition's node library classes and the constructors and <c>Setup()</c>s of
+    /// its C# nodes may take together (the <c>Setup()</c> of each entity a C# device adds among them), and, on a clock of
+    /// its own, its When started flow; settable for tests.
     /// </summary>
     internal static TimeSpan SetupTimeout { get; set; } = TimeSpan.FromSeconds(60);
     /// <summary>How long preparing waits for Home Assistant to register the entities; settable for tests.</summary>
@@ -66,8 +79,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     internal static TimeSpan StartWarning { get; set; } = TimeSpan.FromSeconds(10);
 
     // Guards the status, the start and stop, the timer and track lists, the commands, track callbacks and frames running,
-    // the entities whose publish failed, the HTTP client and the downloads, and a graph's entities, their states, those
-    // awaiting their first, the failing state flows and the frame flows. Never taken while a camera's own lock is wanted:
+    // the entities whose publish failed, the HTTP client and the downloads, what node setups own, and a graph's entities,
+    // their states, those awaiting their first, the failing state flows and the frame flows. Never taken while a camera's own lock is wanted:
     // CameraFrames calls in here under its lock (Make), not the other way round.
     readonly Lock gate = new();
     readonly List<Repeating> timers = [];
@@ -89,13 +102,16 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     HttpClient? http;
     SharpFiles? files;
     bool released;
+    // What the graph's node setups own, in the order they gave it (Own); disposed in reverse once released.
+    readonly List<IDisposable> owned = [];
     // Stopped because a new revision replaces this one: its cameras still answer their good frame until it has left.
     volatile bool replacing;
     /// <summary>Test seam: awaited by a request for a camera's picture once it has found the definition running, before it shares a frame.</summary>
     internal Func<Task>? FrameChecked;
     /// <summary>Test seam: runs as the definition stops, once its status says so and before its stop cancels what it runs.</summary>
     internal Action? StopMarked;
-    // The clock of the Setup()s or the When started flow while the definition prepares, which a download's receiving stops; null after.
+    // The clock of the node setups and Setup()s, or of the When started flow, while the definition prepares, which a
+    // download's receiving stops; null after.
     volatile SetupClock? setupClock;
     // Why the When started flow last failed, as FlowFailed words it (the step's sentence, with its cause), for its start's error.
     volatile string? setupFailure;
@@ -145,9 +161,27 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     }
 
     /// <summary>
-    /// Creates the entities its Entity nodes describe, creates each C# entity and C# device node's class, applies its
-    /// settings and runs its <c>Setup()</c> (every C# node's creation and <c>Setup()</c> within one
-    /// <see cref="SetupTimeout"/>), checks the entity
+    /// Keeps <paramref name="disposable"/>, which a node setup owns, until the definition stops, when it is disposed with
+    /// the others in reverse order. Once the definition has stopped, disposes it at once and throws.
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    internal void Own(IDisposable disposable)
+    {
+        lock (gate)
+            if (!released)
+            {
+                owned.Add(disposable);
+                return;
+            }
+        try { disposable.Dispose(); }
+        catch (Exception failure) { Report("disposing what a node setup owns failed", failure, PyLogLevel.Warn); }
+        throw new ObjectDisposedException(null, $"{definition.Name} has stopped: it keeps nothing more");
+    }
+
+    /// <summary>
+    /// Creates the entities its Entity nodes describe, runs the <c>[NodeSetup]</c> of each node library class its graph
+    /// uses, creates each C# entity and C# device node's class, applies its settings and runs its <c>Setup()</c> (every
+    /// node setup, C# node's creation and <c>Setup()</c> within one <see cref="SetupTimeout"/>), checks the entity
     /// keys, and runs its When started flow within a <see cref="SetupTimeout"/> of its own. Last, registers the entities
     /// with Home Assistant, waiting for it no longer than <see cref="SyncTimeout"/>. A failure leaves Home Assistant
     /// untouched. Cancelled with <paramref name="lifetime"/>.
@@ -205,25 +239,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         // before the device's; one added in a Setup() as it is added, so that whatever that Setup() then sets wins.
         foreach (var entity in Collect()) RestoreComponent(entity);
         if (owner != null) owner.Added = RestoreComponent;
-        // One bound for every Setup() together: a device that does not answer must not hold up the definitions after it.
-        // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
-        // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
-        // cancelled. One that ignores Stopping cannot be stopped, and keeps its component (and so this host) until it
-        // returns. The time a download receives is not counted (see SetupClock).
-        var clock = setupClock ??= new SetupClock();
-        async Task SetUp(SharpComponent component)
-        {
-            var setup = Task.Factory.StartNew(async () => await component.Setup(), CancellationToken.None,
-                TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default).Unwrap();
-            bool ended;
-            try { ended = await Within(setup, clock); }
-            // Its message is user code, read once here. A cancellation is the host's stop only while the host is stopping;
-            // one of its own (an HttpClient time-out) is a failure like any other.
-            catch (Exception failure) when (!(failure is OperationCanceledException && Stopping.IsCancellationRequested))
-            { throw new InvalidOperationException($"{who}: {Text(failure)}", failure); }
-            if (!ended)
-                throw new TimeoutException($"{who}: Setup() did not finish within {Seconds(SetupTimeout)} s");
-        }
+        Task SetUp(SharpComponent component) => RunSetUp(component.Setup, who, "Setup()");
         if (owner != null)
         {
             owner.Host = this;
@@ -244,6 +260,32 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             owner.Added = null;
         }
         return Collect();
+    }
+
+    /// <summary>
+    /// Runs one step of the definition's set-up, a node setup or a <c>Setup()</c>, within <see cref="SetupTimeout"/> on
+    /// the clock the set-up shares (the first makes it; the caller ends it). What it throws fails after
+    /// <paramref name="who"/> (<c>{who}: {message}</c>), and one that does not end in time
+    /// <c>{who}: {what} did not finish within {n} s</c>.
+    /// </summary>
+    async Task RunSetUp(Func<Task> work, string who, string what)
+    {
+        // One bound for every step together: a device that does not answer must not hold up the definitions after it.
+        // Each starts on a thread of its own, so one that blocks it (a raw connect, a Wait()) is bounded like one that
+        // awaits and takes no thread from the pool for good; the async lambda makes a null task fail rather than look
+        // cancelled. One that ignores Stopping cannot be stopped, and keeps what it holds (and so this host) until it
+        // returns. The time a download receives is not counted (see SetupClock).
+        var clock = setupClock ??= new SetupClock();
+        var setup = Task.Factory.StartNew(async () => await work(), CancellationToken.None,
+            TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach, TaskScheduler.Default).Unwrap();
+        bool ended;
+        try { ended = await Within(setup, clock); }
+        // Its message is user code, read once here. A cancellation is the host's stop only while the host is stopping;
+        // one of its own (an HttpClient time-out) is a failure like any other.
+        catch (Exception failure) when (!(failure is OperationCanceledException && Stopping.IsCancellationRequested))
+        { throw new InvalidOperationException($"{who}: {Text(failure)}", failure); }
+        if (!ended)
+            throw new TimeoutException($"{who}: {what} did not finish within {Seconds(SetupTimeout)} s");
     }
 
     /// <summary>
@@ -484,6 +526,16 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             catch (Exception failure) { Report("disposing the HTTP client failed", failure, PyLogLevel.Warn); }
             try { downloads?.Close(); }
             catch (Exception failure) { Report("ending the downloads failed", failure, PyLogLevel.Warn); }
+            // What the node setups own, last given first disposed; an Own from now on disposes its object at once.
+            IDisposable[] kept;
+            lock (gate)
+            {
+                kept = [.. owned];
+                owned.Clear();
+            }
+            for (var i = kept.Length - 1; i >= 0; i--)
+                try { kept[i].Dispose(); }
+                catch (Exception failure) { Report("disposing what a node setup owns failed", failure, PyLogLevel.Warn); }
             lock (gate)
             {
                 running.Clear();

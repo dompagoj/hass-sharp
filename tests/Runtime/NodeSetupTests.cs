@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using HassSharp;
@@ -8,7 +10,9 @@ using static VisualExecutionTests;
 /// that it is in a library (not in a C# node's code), and warns at one in a class without nodes. Each <c>[Node]</c> of
 /// such a class works only in an entity definition's graph, so an automation refuses it, and a library save that would
 /// put one in an automation using it is refused. A definition using one is generated with its class's setup in
-/// <c>SharpNodeSetups</c>; every other graph's source is as it was.
+/// <c>SharpNodeSetups</c>; every other graph's source is as it was. Its host runs each such setup once as the definition
+/// prepares, before its C# nodes and its When started flow and on their set-up clock, and disposes what the setup owns
+/// when the definition stops; a setup that throws or runs out of time fails the start, naming its class.
 /// </summary>
 static class NodeSetupTests
 {
@@ -45,11 +49,16 @@ static class NodeSetupTests
             (nameof(CompilerChecksTheSetup), () => { CompilerChecksTheSetup(); return Task.CompletedTask; }),
             (nameof(RefusedInAnAutomation), () => { RefusedInAnAutomation(); return Task.CompletedTask; }),
             (nameof(AddingASetupToAClassAnAutomationUsesIsRefused), AddingASetupToAClassAnAutomationUsesIsRefused),
-            (nameof(OnlyAGraphWithASetupClassGetsSharpNodeSetups), () => { OnlyAGraphWithASetupClassGetsSharpNodeSetups(); return Task.CompletedTask; }) })
+            (nameof(OnlyAGraphWithASetupClassGetsSharpNodeSetups), () => { OnlyAGraphWithASetupClassGetsSharpNodeSetups(); return Task.CompletedTask; }),
+            (nameof(RunsOncePerDefinitionBeforeWhenStarted), RunsOncePerDefinitionBeforeWhenStarted),
+            (nameof(OwnDisposesOnStop), OwnDisposesOnStop),
+            (nameof(OwnAfterStopDisposesAtOnce), OwnAfterStopDisposesAtOnce),
+            (nameof(SetupClockExcludesDownloadTime), SetupClockExcludesDownloadTime),
+            (nameof(FailureFailsTheStart), FailureFailsTheStart) })
             try { await test(); }
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"Node setup: {failures.Count} failing:\n" + string.Join("\n", failures));
-        Console.WriteLine("PASS node setup: the compiler checks [NodeSetup], its class's nodes work only in entity definitions, and a definition using one is generated with its setup");
+        Console.WriteLine("PASS node setup: the compiler checks [NodeSetup], its class's nodes work only in entity definitions, a definition using one is generated with its setup, and its host runs it and disposes what it owns");
     }
 
     static void CompilerChecksTheSetup()
@@ -170,4 +179,241 @@ static class NodeSetupTests
         Check(plain.Valid && !plain.Source.Contains("SharpNodeSetups", StringComparison.Ordinal), "a definition using only Plain has no SharpNodeSetups: " + JsonSerializer.Serialize(plain.Diagnostics));
         Console.WriteLine("PASS node setup: only a definition using a node of a class with a setup gets SharpNodeSetups, each entry its first node's");
     }
+    // --- Through the host: a definition runs its setups as it prepares and disposes what they own when it stops. ---
+
+    /// <summary>
+    /// Probe's library: its setup counts itself, logs <c>probe set up on {runtime}</c>, owns a <c>Closer</c> (which logs
+    /// <c>probe closed</c> when disposed) and then runs <paramref name="then"/>; its pure node <c>Count()</c> is how many
+    /// setups ran in this load context (each definition compiles the library into its own assembly).
+    /// </summary>
+    static string HostLibrary(string then = "") => """
+        public static class Probe
+        {
+            static int setups;
+            [NodeSetup] public static async Task Setup(NodeSetupContext context)
+            {
+                System.Threading.Interlocked.Increment(ref setups);
+                context.Log("probe set up on " + context.RuntimeIdentifier);
+                context.Own(new Closer(context));
+                await Task.Yield();
+        """ + then + """
+
+            }
+            /// <summary>How many setups ran.</summary>
+            [Node("Probe", Pure = true)] public static int Count() => System.Threading.Volatile.Read(ref setups);
+        }
+        public sealed class Closer(NodeSetupContext context) : System.IDisposable
+        {
+            public void Dispose() => context.Log("probe closed");
+        }
+        """;
+
+    static JsonObject Next(string source, string target) { var wire = E(source, target); wire["id"] = $"{source}:next:{target}"; return wire; }
+    static JsonObject Data(string source, string target, string targetPort, string sourcePort = "value") { var wire = D(source, target, targetPort, sourcePort); wire["id"] = $"{source}.{sourcePort}:{target}.{targetPort}"; return wire; }
+    static JsonObject SetState(string id, string entity) => N(id, "set_entity_state", new JsonObject { ["entity"] = entity });
+
+    /// <summary>
+    /// A definition whose When started flow sets sensor <c>count</c> from one Probe and sensor <c>again</c> from another,
+    /// then logs <c>When started ran</c>; with <paramref name="more"/>, such as a C# entity, beside them.
+    /// </summary>
+    static JsonObject Counted(string name, params JsonObject[] more)
+    {
+        JsonObject[] nodes =
+        [
+            Hub("entity_count", "count", "sensor"), Hub("entity_again", "again", "sensor"), N("setup", "entity_setup"),
+            N("probe", Kind("Probe"), new { arguments = new { } }), N("probe_again", Kind("Probe"), new { arguments = new { } }),
+            SetState("set", "count"), SetState("set_again", "again"), N("log", "log", new JsonObject { ["value"] = Lit("string", "When started ran") }),
+            .. more,
+        ];
+        JsonObject[] edges =
+        [
+            Next("setup", "set"), Next("set", "set_again"), Next("set_again", "log"),
+            Data("probe", "set", "value", "result"), Data("probe_again", "set_again", "value", "result"),
+        ];
+        return new()
+        {
+            ["name"] = name, ["settings"] = new JsonArray(),
+            ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = new JsonObject { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray(edges) } },
+        };
+    }
+
+    sealed class Rig(EntityTestHome home, HassSharpManager api)
+    {
+        public EntityTestHome Home => home;
+        public HassSharpManager Api => api;
+        public async Task<JsonObject> Request(Func<string, Task<string>> request, object body)
+        {
+            var answer = JsonNode.Parse(await request(JsonSerializer.Serialize(body)))!;
+            Check(answer["ok"]!.GetValue<bool>(), "the request failed: " + answer.ToJsonString());
+            return answer["result"]!.AsObject();
+        }
+        public Task<JsonObject> Entity(object body) => Request(api.EntityRequest, body);
+        public async Task Library(string source) =>
+            Check((await Request(api.NodeLibraryRequest, new { operation = "save", id = "probe", name = "Probe", expectedRevision = 0, source }))["saved"]!.GetValue<bool>(), "the library saves");
+        public Task<JsonObject> Save(string id, JsonObject definition, long revision = 0) => Entity(new { operation = "save", id, expectedRevision = revision, definition });
+        public int Count(string line) => home.Logs(PyLogLevel.Info).Count(l => l == line);
+        public string Lines() => string.Join(" | ", home.Logs());
+    }
+
+    /// <summary>Runs <paramref name="test"/> on a manager of a home of its own whose library is <paramref name="library"/>; unloads it after, unless the test did.</summary>
+    static async Task WithRig(string library, Func<Rig, Task> test)
+    {
+        await using var home = new EntityTestHome("node-setup-host");
+        var api = new HassSharpManager(home.Root);
+        try
+        {
+            await api.Init();
+            var rig = new Rig(home, api);
+            await rig.Library(library);
+            await test(rig);
+        }
+        finally { await api.UnloadAsync(); }
+    }
+
+    static string SetUpLine(string name) => $"{name}: probe set up on {RuntimeInformation.RuntimeIdentifier}";
+
+    static Task RunsOncePerDefinitionBeforeWhenStarted() => WithRig(HostLibrary(), async rig =>
+    {
+        var saved = await rig.Save("counts", Counted("Counts"));
+        Check(saved["active"]!.GetValue<bool>() && saved["document"]!["status"]!.GetValue<string>() == "running", "the definition runs: " + saved.ToJsonString());
+        string? Value(string uniqueId) => rig.Home.Snapshots().LastOrDefault(s => s["uniqueId"]!.GetValue<string>() == uniqueId && s["available"]!.GetValue<bool>())?["values"]?["value"]?.ToJsonString();
+        await EntityTestHome.Until(() => Value("counts:count") != null && Value("counts:again") != null, "the When started flow sets both sensors");
+        Check(Value("counts:count") == "1" && Value("counts:again") == "1", $"two Probe nodes, one setup: count {Value("counts:count")}, again {Value("counts:again")}");
+        var info = rig.Home.Logs(PyLogLevel.Info);
+        var setUp = Array.IndexOf(info, SetUpLine("Counts"));
+        Check(rig.Count(SetUpLine("Counts")) == 1 && setUp >= 0 && setUp < Array.IndexOf(info, "When started ran"),
+            "the setup logs once, before the When started flow's Log: " + string.Join(" | ", info));
+
+        // Another definition using it runs it again, for itself.
+        Check((await rig.Save("again", Counted("Again")))["active"]!.GetValue<bool>(), "the second definition runs");
+        await EntityTestHome.Until(() => Value("again:count") != null, "the second definition sets its sensor");
+        Check(Value("again:count") == "1" && rig.Count(SetUpLine("Again")) == 1 && rig.Count(SetUpLine("Counts")) == 1
+            && rig.Home.Logs(PyLogLevel.Info).Count(l => l.Contains(": probe set up on ", StringComparison.Ordinal)) == 2,
+            "one setup per definition: " + rig.Lines());
+        Console.WriteLine("PASS node setup: a definition runs the setup of a class its graph uses twice once, before its When started flow; another definition runs its own");
+    });
+
+    static async Task OwnDisposesOnStop()
+    {
+        await using var home = new EntityTestHome("node-setup-own");
+        var api = new HassSharpManager(home.Root);
+        var unloaded = false;
+        try
+        {
+            await api.Init();
+            var rig = new Rig(home, api);
+            await rig.Library(HostLibrary());
+            const string closed = "Owning: probe closed";
+            Check((await rig.Save("owning", Counted("Owning")))["active"]!.GetValue<bool>(), "the definition runs");
+            Check(rig.Count(closed) == 0, "nothing is disposed while it runs: " + rig.Lines());
+            // Saved again: the replaced revision disposes what its setup owned, and the new one sets up its own.
+            Check((await rig.Save("owning", Counted("Owning"), 1))["active"]!.GetValue<bool>(), "the new revision runs");
+            await EntityTestHome.Until(() => rig.Count(closed) == 1, "the replaced revision disposes what it owned");
+            Check(rig.Count(SetUpLine("Owning")) == 2, "the new revision set up: " + rig.Lines());
+            // Turned off.
+            Check(!(await rig.Entity(new { operation = "set_enabled", id = "owning", enabled = false }))["active"]!.GetValue<bool>(), "turned off");
+            await EntityTestHome.Until(() => rig.Count(closed) == 2, "turning it off disposes what it owned");
+            // On again, then unloaded while it runs.
+            Check((await rig.Entity(new { operation = "set_enabled", id = "owning", enabled = true }))["active"]!.GetValue<bool>(), "turned on again");
+            Check(rig.Count(SetUpLine("Owning")) == 3 && rig.Count(closed) == 2, "turned on, it sets up again: " + rig.Lines());
+            unloaded = true;
+            await api.UnloadAsync();
+            Check(rig.Count(closed) == 3, "unloading disposes what it owned: " + rig.Lines());
+        }
+        finally { if (!unloaded) await api.UnloadAsync(); }
+        Console.WriteLine("PASS node setup: what a setup owns is disposed once when its revision is replaced, turned off or unloaded");
+    }
+
+    static Task OwnAfterStopDisposesAtOnce() => WithRig(HostLibrary("""
+                _ = Task.Run(async () =>
+                {
+                    try { await Task.Delay(System.Threading.Timeout.Infinite, context.Stopping); } catch (System.OperationCanceledException) { }
+                    await Task.Delay(100);
+                    try { context.Own(new Closer(context)); context.Log("late own kept"); }
+                    catch (System.Exception refused) { context.Log("late own refused: " + refused.GetType().Name); }
+                });
+        """), async rig =>
+    {
+        Check((await rig.Save("late", Counted("Late")))["active"]!.GetValue<bool>(), "the definition runs");
+        Check(!(await rig.Entity(new { operation = "set_enabled", id = "late", enabled = false }))["active"]!.GetValue<bool>(), "turned off");
+        await EntityTestHome.Until(() => rig.Count("Late: late own refused: ObjectDisposedException") == 1, "an Own after the stop is refused");
+        var info = rig.Home.Logs(PyLogLevel.Info);
+        // The one owned in the setup, then the late one, disposed before Own throws.
+        Check(rig.Count("Late: probe closed") == 2 && Array.LastIndexOf(info, "Late: probe closed") < Array.IndexOf(info, "Late: late own refused: ObjectDisposedException")
+            && rig.Count("Late: late own kept") == 0, "the late object is disposed at once: " + rig.Lines());
+        Console.WriteLine("PASS node setup: an Own after the definition stopped disposes its object at once and throws ObjectDisposedException");
+    });
+
+    static async Task SetupClockExcludesDownloadTime()
+    {
+        await using var server = LoopbackServer.Start();
+        try
+        {
+            // About 1.6 s of receiving, past the 1 s limit, which the clock does not count.
+            var model = new byte[6_000];
+            new Random(11).NextBytes(model);
+            server.Respond("/model.onnx", new() { Body = model, Pieces = 9, Pause = TimeSpan.FromMilliseconds(200) });
+            var download = $"""
+                        await context.Files.Download("{server.Url("/model.onnx")}", "{Convert.ToHexStringLower(SHA256.HashData(model))}", cancellationToken: context.Stopping);
+                """;
+            await WithRig(HostLibrary(download), async rig =>
+            {
+                DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(1);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var saved = await rig.Save("fetch", Counted("Fetch"));
+                Check(saved["active"]!.GetValue<bool>() && saved["document"]!["status"]!.GetValue<string>() == "running", "a setup downloading longer than the limit runs: " + saved.ToJsonString());
+                Check(clock.Elapsed > TimeSpan.FromMilliseconds(1500), $"the setup downloaded for {clock.Elapsed.TotalMilliseconds} ms");
+            });
+
+            await WithRig(HostLibrary("""
+                        await Task.Delay(3000, context.Stopping);
+                """), async rig =>
+            {
+                DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(1);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var saved = await rig.Save("slow", Counted("Slow"));
+                Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Slow: Probe: its [NodeSetup] did not finish within 1 s",
+                    "a setup past the limit fails the start: " + saved.ToJsonString());
+                Check(clock.Elapsed < TimeSpan.FromSeconds(2.5), $"the setup failed after {clock.Elapsed.TotalMilliseconds} ms");
+                Check(rig.Home.Syncs("slow").Length == 0, "a definition whose setup ran out of time synced");
+            });
+
+            // 600 ms of the setup and 600 ms of a C# entity's Setup(): one clock.
+            const string waiting = """
+                public class Waiting : SharpSensor
+                {
+                    protected override async Task Setup() => await Task.Delay(600, Stopping);
+                }
+                """;
+            var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", waiting, "csharp_entity")]).Snapshot.Custom["c"];
+            Check(descriptor.Valid, "the C# entity's code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+            var entity = EntityNodeTests.CSharpEntity("waiting", "waiting", new() { ["source"] = waiting, ["signature"] = descriptor.Signature!.DeepClone(), ["arguments"] = new JsonObject() });
+            var title = descriptor.Signature!["title"]!.GetValue<string>();
+            await WithRig(HostLibrary("""
+                        await Task.Delay(600, context.Stopping);
+                """), async rig =>
+            {
+                DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(1);
+                var saved = await rig.Save("shared", Counted("Shared", entity));
+                Check(!saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == $"Shared: {title}: Setup() did not finish within 1 s",
+                    "the setup and the C# entity's Setup() share one clock: " + saved.ToJsonString());
+            });
+        }
+        finally { DefinitionHost.SetupTimeout = TimeSpan.FromSeconds(60); }
+        Console.WriteLine("PASS node setup: a setup runs on the C# nodes' set-up clock, which a download's receiving stops; past it, the start fails naming the class or the C# node");
+    }
+
+    static Task FailureFailsTheStart() => WithRig(HostLibrary("""
+                throw new System.InvalidOperationException("no model");
+        """), async rig =>
+    {
+        var saved = await rig.Save("failing", Counted("Failing"));
+        Check(saved["saved"]!.GetValue<bool>() && !saved["active"]!.GetValue<bool>() && saved["activationError"]?.GetValue<string>() == "Failing: Probe: no model",
+            "a setup that throws fails the start: " + saved.ToJsonString());
+        Check(rig.Home.Syncs("failing").Length == 0, "a failing setup synced");
+        var read = await rig.Entity(new { operation = "read", id = "failing" });
+        Check(read["status"]!.GetValue<string>() == "failed", "the definition reads failed: " + read.ToJsonString());
+        await EntityTestHome.Until(() => rig.Count("Failing: probe closed") == 1, "what the failed setup owned is disposed");
+        Console.WriteLine("PASS node setup: a setup that throws fails the start with its class and message, syncs nothing, reads failed, and what it owned is disposed");
+    });
 }

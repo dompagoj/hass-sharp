@@ -97,6 +97,7 @@ public partial class HassSharpManager
         {
             Entities = DefinitionGraph.Entities(graph, snapshot), Devices = GraphDevices(graph, snapshot), Roots = roots,
             Components = components, Create = components.Count > 0 ? NodeClasses(script.Assembly) : null,
+            NodeSetups = NodeSetupsOf(script.Assembly),
         };
         return script;
     }
@@ -110,6 +111,16 @@ public partial class HassSharpManager
         var create = assembly.GetType("SharpNodes")?.GetMethod("Create", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, [typeof(string)]);
         return nodeId => create?.Invoke(null, System.Reflection.BindingFlags.DoNotWrapExceptions, null, [nodeId], null);
     }
+
+    /// <summary>
+    /// The <c>[NodeSetup]</c> of each node library class a compiled graph uses: its assembly's <c>SharpNodeSetups.All</c>,
+    /// in order; none when the assembly has none, as a graph without such nodes does.
+    /// </summary>
+    internal static IReadOnlyList<NodeClassSetup> NodeSetupsOf(System.Reflection.Assembly assembly) =>
+        assembly.GetType("SharpNodeSetups")?.GetField("All", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null)
+            is ValueTuple<string, Func<NodeSetupContext, Task>>[] all
+            ? [.. all.Select(entry => new NodeClassSetup(entry.Item1, entry.Item2))]
+            : [];
 
     /// <summary>
     /// The devices a graph's Device nodes declare, as its host hands them to Home Assistant, worked out from the graph again
