@@ -203,11 +203,20 @@ static class SharpEntityTests
         Published(new DateTimeOffset(2026, 11, 17, 1, 0, 0, TimeSpan.FromHours(1)));
         var offset = sensor.Snapshot("plug:power", true)["values"]!["value"]!.GetValue<string>();
         Check(offset == "2026-11-17T01:00:00.0000000+01:00", "an offset date is ISO 8601: " + offset);
+        // A day alone, as a date sensor takes it, whatever the culture (its own text is the culture's short date).
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("en-US");
+        try
+        {
+            var day = Published(new DateOnly(2026, 11, 17));
+            Check(day == """{"value":"2026-11-17"}""", "a day is ISO 8601: " + day);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = culture; }
         Check(Published(true) == """{"value":true}""", "a bool stays a bool");
         Check(Published("idle") == """{"value":"idle"}""", "text stays text");
         Check(Published(null) == """{"value":null}""", "null");
         Check(Published(new Version(1, 2)) == """{"value":"1.2"}""", "any other object is its text");
-        Check(host.Published.Count == 11, $"each set publishes once, published {host.Published.Count}");
+        Check(host.Published.Count == 12, $"each set publishes once, published {host.Published.Count}");
         Console.WriteLine("PASS sharp entities: sensor values keep numbers, write dates as ISO 8601 and drop NaN and infinities");
     }
 

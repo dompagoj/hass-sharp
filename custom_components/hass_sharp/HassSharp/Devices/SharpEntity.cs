@@ -241,6 +241,7 @@ public abstract partial class SharpEntity : SharpComponent
         ushort number => number,
         DateTime time => time.ToString("O", CultureInfo.InvariantCulture),
         DateTimeOffset time => time.ToString("O", CultureInfo.InvariantCulture),
+        DateOnly day => day.ToString("O", CultureInfo.InvariantCulture),
         _ => value.ToString(),
     };
 

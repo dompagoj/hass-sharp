@@ -649,6 +649,97 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         await self.push(snapshot('plug1:level', values={'value': 'medium'}))
         self.assertEqual('medium', self.state('sensor.plug_one_level').state)
 
+    @staticmethod
+    def dated(*classes, name=None):
+        """Sensors of the device classes given, keyed and named after them: .NET sends their values as ISO 8601 text."""
+        return definition(*(description(device_class, 'sensor', name or device_class.title(), deviceClass=device_class,
+                                        options={'unit': None, 'stateClass': None, 'options': None})
+                            for device_class in classes))
+
+    async def test_a_timestamp_sensor_takes_iso_8601_text_from_dotnet(self):
+        from datetime import datetime, timedelta, timezone
+        await self.sync(self.dated('timestamp'))
+        # As DateTimeOffset.ToString("O") writes it: seven digits of the second, which Python's own parsing may refuse.
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T21:32:28.3491861+00:00'}))
+        self.assertEqual([], self.write_failures())
+        live = self.bridge._live['plug1:timestamp']
+        self.assertEqual(datetime(2026, 11, 22, 21, 32, 28, 349186, tzinfo=timezone.utc), live.native_value)
+        self.assertEqual(timedelta(0), live.native_value.utcoffset())
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
+        # Another offset is kept on the value, and the state is the same instant in UTC, as Home Assistant writes it.
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T22:32:28.0000000+01:00'}))
+        self.assertEqual(timedelta(hours=1), live.native_value.utcoffset())
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
+        # DateTime.UtcNow's "O" ends in Z; a DateTime of no kind has no offset, and is a time in Home Assistant's zone.
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T21:32:28.1234567Z'}))
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
+        await self.hass.config.async_set_time_zone('Europe/Zagreb')
+        self.addAsyncCleanup(self.hass.config.async_set_time_zone, 'UTC')
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T22:32:28.0000000'}))
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
+        # A value already a datetime is kept as it is, and none is unknown.
+        live.apply_values({'value': datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)})
+        self.assertEqual(datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc), live.native_value)
+        await self.push(snapshot('plug1:timestamp', values={'value': None}))
+        self.assertIsNone(live.native_value)
+        self.assertEqual('unknown', self.state('sensor.plug_one_timestamp').state)
+        self.assertEqual([], self.write_failures())
+
+    async def test_a_date_sensor_takes_iso_8601_text_from_dotnet(self):
+        from datetime import date
+        await self.sync(self.dated('date'))
+        live = self.bridge._live['plug1:date']
+        # As DateOnly.ToString("O") writes it, and the date of a date and time as written, such as DateTime.Today's.
+        for text in ('2026-11-22', '2026-11-22T00:00:00.0000000+01:00', '2026-11-22T23:30:00.0000000'):
+            await self.push(snapshot('plug1:date', values={'value': text}))
+            self.assertEqual(date(2026, 11, 22), live.native_value, text)
+            self.assertIs(date, type(live.native_value), text)
+            self.assertEqual('2026-11-22', self.state('sensor.plug_one_date').state, text)
+        await self.push(snapshot('plug1:date', values={'value': None}))
+        self.assertEqual('unknown', self.state('sensor.plug_one_date').state)
+        self.assertEqual([], self.write_failures())
+
+    async def test_text_that_reads_as_no_date_is_refused_by_home_assistant_once(self):
+        await self.sync(self.dated('timestamp', 'date'))
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T21:32:28+00:00'}),
+                        snapshot('plug1:date', values={'value': '2026-11-22'}))
+        for _ in range(2):
+            await self.push(snapshot('plug1:timestamp', values={'value': 'soon'}),
+                            snapshot('plug1:date', values={'value': 'tomorrow'}))
+        # The bridge's refused-write path: one error per entity, and each keeps the state it had.
+        failures = [r for r in self.records.records if r.name == self.const.logger.name]
+        self.assertEqual(['Cannot write the entity state'] * 2,
+                         [r.getMessage().split(' {')[0] for r in failures])
+        self.assertIn('timestamp device class but provides state soon', str(failures[0].exc_info[1]))
+        self.assertIn('date device class but provides state tomorrow', str(failures[1].exc_info[1]))
+        self.records.records = [r for r in self.records.records if r not in failures]
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_timestamp').state)
+        self.assertEqual('2026-11-22', self.state('sensor.plug_one_date').state)
+        # The next value that reads as one is shown.
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-23T08:00:00+00:00'}))
+        self.assertEqual('2026-11-23T08:00:00+00:00', self.state('sensor.plug_one_timestamp').state)
+
+    async def test_a_sensor_of_another_device_class_keeps_its_text(self):
+        await self.sync(definition(description('note', 'sensor', 'Note',
+                                               options={'unit': None, 'stateClass': None, 'options': None})))
+        live = self.bridge._live['plug1:note']
+        await self.push(snapshot('plug1:note', values={'value': '2026-11-22T21:32:28.3491861+00:00'}))
+        self.assertEqual('2026-11-22T21:32:28.3491861+00:00', live.native_value)
+        self.assertEqual('2026-11-22T21:32:28.3491861+00:00', self.state('sensor.plug_one_note').state)
+        await self.push(snapshot('plug1:note', values={'value': 7}))
+        self.assertEqual(7, live.native_value)
+        self.assertEqual([], self.write_failures())
+
+    async def test_a_sync_of_a_live_timestamp_sensor_keeps_its_value(self):
+        await self.sync(self.dated('timestamp'))
+        await self.push(snapshot('plug1:timestamp', values={'value': '2026-11-22T21:32:28.3491861+00:00'}))
+        # Synced again under another name, the sync's re-check finds the value still shown, and keeps it.
+        await self.sync(self.dated('timestamp', name='Last seen'))
+        self.assertEqual([], self.write_failures())
+        state = self.state('sensor.plug_one_timestamp')
+        self.assertEqual(('2026-11-22T21:32:28+00:00', 'Plug one Last seen'),
+                         (state.state, state.attributes['friendly_name']))
+
     async def test_a_sync_whose_write_fails_leaves_the_entity_as_it_was(self):
         await self.sync(controls())
         await self.push(snapshot('plug1:message', values={'value': 'hello'}))
