@@ -685,6 +685,34 @@ class EntityPlatformsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual('unknown', self.state('sensor.plug_one_timestamp').state)
         self.assertEqual([], self.write_failures())
 
+    async def test_an_uptime_sensor_takes_iso_8601_text_as_a_timestamp_sensor_does(self):
+        from datetime import datetime, timezone
+        # Home Assistant wants an aware datetime of an uptime sensor too, the time its device last started.
+        await self.sync(self.dated('uptime'))
+        await self.push(snapshot('plug1:uptime', values={'value': '2026-11-22T21:32:28.3491861+00:00'}))
+        self.assertEqual([], self.write_failures())
+        live = self.bridge._live['plug1:uptime']
+        self.assertEqual(datetime(2026, 11, 22, 21, 32, 28, 349186, tzinfo=timezone.utc), live.native_value)
+        self.assertEqual('2026-11-22T21:32:28+00:00', self.state('sensor.plug_one_uptime').state)
+        # A restart an hour later is shown; one that differs by less than a minute keeps the time shown.
+        await self.push(snapshot('plug1:uptime', values={'value': '2026-11-22T23:32:28.0000000+01:00'}))
+        self.assertEqual('2026-11-22T22:32:28+00:00', self.state('sensor.plug_one_uptime').state)
+        await self.push(snapshot('plug1:uptime', values={'value': '2026-11-22T22:32:40.0000000Z'}))
+        self.assertEqual('2026-11-22T22:32:28+00:00', self.state('sensor.plug_one_uptime').state)
+        # One without an offset is a time in Home Assistant's zone.
+        await self.hass.config.async_set_time_zone('Europe/Zagreb')
+        self.addAsyncCleanup(self.hass.config.async_set_time_zone, 'UTC')
+        await self.push(snapshot('plug1:uptime', values={'value': '2026-11-23T08:00:00.0000000'}))
+        self.assertEqual('2026-11-23T07:00:00+00:00', self.state('sensor.plug_one_uptime').state)
+        self.assertEqual([], self.write_failures())
+        # Text that reads as no date is Home Assistant's to refuse, and the sensor keeps the state it had.
+        await self.push(snapshot('plug1:uptime', values={'value': 'soon'}))
+        failures = [r for r in self.records.records if r.name == self.const.logger.name]
+        self.assertEqual(['Cannot write the entity state'], [r.getMessage().split(' {')[0] for r in failures])
+        self.assertIn('uptime device class but provides state soon', str(failures[0].exc_info[1]))
+        self.records.records = [r for r in self.records.records if r not in failures]
+        self.assertEqual('2026-11-23T07:00:00+00:00', self.state('sensor.plug_one_uptime').state)
+
     async def test_a_date_sensor_takes_iso_8601_text_from_dotnet(self):
         from datetime import date
         await self.sync(self.dated('date'))

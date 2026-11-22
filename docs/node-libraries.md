@@ -584,17 +584,18 @@ work that the class's nodes share, such as downloading a model and opening it. I
 runs once when an entity definition whose graph uses any `[Node]` of the class
 starts, before its When started flow, and again each time the definition starts:
 after a restart, when the definition is saved or turned on again, and after a
-library save, which recompiles every definition. Each definition compiles the libraries into an assembly of its
-own, so it has its own copy of the class's statics, and a setup sets up the copy of
-its definition.
+library save, which recompiles every definition. Each definition compiles the
+libraries into an assembly of its own, so it has its own copy of the class's
+statics, and a setup sets up the copy of its definition.
 
 The setups share the 60 seconds that the definition's C# nodes have for their
 constructors and `Setup()`s, and run before them; the time a download receives is
 not counted. A setup that throws keeps the definition from starting, and the
-definition says why, naming the class: "`{definition}: {class}: {message}`"; so does
-one whose context cannot be made, such as on a host with no directory for
-downloads. One that takes longer fails with "`{definition}: {class}: its
-[NodeSetup] did not finish within 60 s`". What it owned until then is disposed.
+definition says why, naming the class: "`{definition}: {class}: {message}`". A setup
+whose context cannot be made, such as on a host with no directory for downloads,
+does not run, and the definition fails in the same way. One that takes longer fails
+with "`{definition}: {class}: its [NodeSetup] did not finish within 60 s`". What it
+owned until then is disposed.
 
 A node of such a class works only in an entity definition's graph: the editor leaves
 it out of an automation's list of steps, an automation that has one is refused
@@ -617,10 +618,15 @@ without `[Node]` methods is a warning, since it never runs.
 - **`Stopping`**: cancelled when the definition stops, also while the setup still
   runs. Pass it to each download and request.
 - **`Own(disposable)`**: keeps an object until the definition stops, and returns it.
-  After the definition's last `Stop()`, what the setups own is disposed, the last
-  owned first; one whose `Dispose()` throws is logged as a warning and the rest are
-  still disposed. Once the definition has stopped, `Own` disposes the object at once
-  and throws `ObjectDisposedException`.
+  When the definition has stopped, what the setups own is disposed, the last owned
+  first; one whose `Dispose()` throws is logged as a warning and the rest are still
+  disposed. Stopping waits at most 10 seconds in all for the start, the nodes and
+  frames still running, and the `Stop()`s, and disposes what is owned also when they
+  have not finished by then: `Dispose()` can run while a node, a frame or a `Stop()`
+  still uses the object. Make `Dispose()` wait for a call in progress and a later call fail, as
+  hass-sharp-vision's detector does: each call and `Dispose()` take one lock, and a
+  call after `Dispose()` throws `ObjectDisposedException`. Once the definition has
+  stopped, `Own` disposes the object at once and throws `ObjectDisposedException`.
 
 This class downloads a table once, maps it into memory for as long as the
 definition runs, and reads it in a value node:

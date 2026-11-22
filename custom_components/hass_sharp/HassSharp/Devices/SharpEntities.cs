@@ -245,9 +245,10 @@ internal static class SharpDomains
         new((_, value) => value is null or bool ? null : "is neither true nor false", (entity, value) => keep(entity, (bool?)value), entity => read(entity));
 
     // A sensor's reading as Home Assistant takes it. With options: one of them as text (an enum sensor), or unknown.
-    // With a unit, a state class or a device class other than date, timestamp or enum: a number, or text that reads as
-    // a finite number in the invariant culture, kept as given; other text Home Assistant refuses as it writes the
-    // state. Otherwise: any number or text. Unknown is always taken, and a number that is not finite shows as unknown.
+    // With a unit, a state class or a device class other than date, timestamp, uptime or enum: a number, or text that
+    // reads as a finite number in the invariant culture, kept as given; other text Home Assistant refuses as it writes
+    // the state. Otherwise: any number or text. Unknown is always taken, and a number that is not finite shows as
+    // unknown.
     static string? SensorRefuses(SharpEntity entity, object? value)
     {
         var sensor = (SharpSensor)entity;
@@ -256,7 +257,7 @@ internal static class SharpDomains
         if (sensor.Options is { } options)
             return value is string option && options.Contains(option, StringComparer.Ordinal) ? null : $"is not one of its options: {string.Join(", ", options)}";
         var numeric = sensor.Unit != null ? "a unit" : sensor.StateClass != null ? "a state class"
-            : sensor.DeviceClass is { } deviceClass and not ("date" or "timestamp" or "enum") ? $"the device class {deviceClass}" : null;
+            : sensor.DeviceClass is { } deviceClass and not ("date" or "timestamp" or "uptime" or "enum") ? $"the device class {deviceClass}" : null;
         if (value is string text && numeric != null
             && !(double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) && double.IsFinite(number)))
             return $"is text, and a sensor with {numeric} needs a number";

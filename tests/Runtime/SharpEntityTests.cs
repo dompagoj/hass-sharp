@@ -616,11 +616,11 @@ static class SharpEntityTests
         Check(Read(cover, "position") is 40.0 && Read(cover, "is_closed") is false, "a graph's cover keeps its state");
         Check(Refused(Create("cover", "{}"), "position", 40.0) == "is given, and a cover without a position has none", "a cover without a position takes none");
         Check(Create("cover", """{"positionable":"yes"}""", ""","icon":"mdi:blinds" """) is SharpCover { Positionable: false, Icon: "mdi:blinds", Name: "E" }, "an option of another type is read as absent, and the description fields as for any entity");
-        // A sensor's device class, unless it is a date, a timestamp or an enum, makes Home Assistant read its state as a number.
+        // A sensor's device class, unless it is a date, a timestamp, an uptime or an enum, makes Home Assistant read its state as a number.
         var power = Create("sensor", "{}", ""","deviceClass":"power" """);
         Check(Refused(power, "value", "high") == "is text, and a sensor with the device class power needs a number" && Refused(power, "value", "12.5") == null && Refused(power, "value", 3.0) == null,
             "a sensor of a numeric device class takes a number or numeric text");
-        foreach (var deviceClass in new[] { "date", "timestamp", "enum" })
+        foreach (var deviceClass in new[] { "date", "timestamp", "uptime", "enum" })
             Check(Refused(Create("sensor", "{}", $$""","deviceClass":"{{deviceClass}}" """), "value", "2026-11-18") == null, $"a sensor of the device class {deviceClass} takes text");
         Check(Refused(Create("sensor", """{"options":["a","b"]}""", ""","deviceClass":"power" """), "value", "a") == null, "a sensor with options takes one of them whatever its device class");
         Console.WriteLine("PASS sharp entities: each new domain's graph row reads its options and takes, keeps and reads the values its class does; a numeric device class needs a number");

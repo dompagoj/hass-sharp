@@ -151,15 +151,19 @@ an entity is the Entity node's: choosing it in the **Problems** tab selects the 
 and puts the cursor in the field it is about.
 
 A sensor with options takes only one of them. With a unit, a state class or a device
-class other than date, timestamp and enum, it takes a number or a text that reads as
-one. Otherwise it takes any number or text. A value an entity does not take fails
-the step that gives it (see [The Entity node](#the-entity-node)). A sensor with the
-device class timestamp shows text that reads as an ISO 8601 date and time, such as
-`2026-11-22T21:32:28+00:00` (a `DateTimeOffset` or `DateTime` in C#); one without an
-offset is a time in Home Assistant's time zone. A sensor with the device class date
+class other than date, timestamp, uptime and enum, it takes a number or a text that
+reads as one. Otherwise it takes any number or text. A value an entity does not take
+fails the step that gives it (see [The Entity node](#the-entity-node)). A sensor with
+the device class timestamp or uptime shows text that reads as an ISO 8601 date and
+time, such as `2026-11-22T21:32:28+00:00` (a `DateTimeOffset` or `DateTime` in C#);
+one without an offset is a time in Home Assistant's time zone. An uptime sensor gives
+the time its device last started, and Home Assistant keeps the time it shows when a
+new one differs from it by less than a minute. A sensor with the device class date
 shows text that reads as a date, such as `2026-11-22` (a `DateOnly` in C#), or the
-date of a date and time as written. Home Assistant refuses other text for either:
-the sensor keeps the state it had, and the log says why once.
+date of a date and time as written. Home Assistant refuses other text for these.
+A refused first value fails the definition's sync, with "Home Assistant did not add
+{unique id}; its log says why", and the definition does not start; a refused later
+value leaves the sensor with the state it had, and the log says why once.
 
 ## The Entity node
 

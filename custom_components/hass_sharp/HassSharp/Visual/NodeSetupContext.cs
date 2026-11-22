@@ -41,6 +41,13 @@ public sealed class NodeSetupContext
     /// Disposes <paramref name="disposable"/> when the definition stops, last owned first, and returns it. Once the
     /// definition has stopped, disposes it at once and throws <see cref="ObjectDisposedException"/>.
     /// </summary>
+    /// <remarks>
+    /// Stopping waits at most 10 s in all for the start, the nodes and frames still running and the <c>Stop()</c>s, and
+    /// disposes what is owned also when they have not finished by then, so <c>Dispose()</c> can run while one of them
+    /// still uses the object. Make <c>Dispose()</c> wait for a call in progress and a later call fail, as
+    /// hass-sharp-vision's detector does: each call and <c>Dispose()</c> take one lock, and a call after it throws
+    /// <see cref="ObjectDisposedException"/>.
+    /// </remarks>
     /// <exception cref="ObjectDisposedException">The definition has stopped: it keeps nothing more.</exception>
     public T Own<T>(T disposable) where T : IDisposable
     {
