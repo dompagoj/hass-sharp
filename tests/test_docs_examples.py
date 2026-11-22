@@ -259,6 +259,23 @@ class DocsExamplesTests(unittest.TestCase):
         block = fenced_block_after(GUIDE.read_text(encoding="utf-8"), "<!-- compiled: Doubled -->", "csharp")
         self.assertIn("public class Doubled : SharpSensor", block)
 
+    def test_the_node_setup_example_is_compiled_and_set_up(self):
+        # The class the node libraries guide shows under "Setting up a node class" is the one the runtime suite compiles
+        # (NodeSetupTests.TheGuidesClass): a [NodeSetup] of its shape that downloads a file and owns what it opens.
+        guide = ROOT / "docs/node-libraries.md"
+        block = fenced_block_after(guide.read_text(encoding="utf-8"), "<!-- compiled: Table -->", "csharp")
+        self.assertIn("[NodeSetup]\n    public static async Task Setup(NodeSetupContext context)", block)
+        self.assertIn("context.Files.Download(", block)
+        self.assertIn("context.Own(", block)
+        self.assertIn('[Node("Table byte"', block)
+        self.assertIn('"<!-- compiled: Table -->"', (ROOT / "tests/Runtime/NodeSetupTests.cs").read_text(encoding="utf-8"))
+        # Its five members, as NodeSetupContext has them, are each written out.
+        text = guide.read_text(encoding="utf-8")
+        section = text[text.index("## Setting up a node class"):text.index("## Entity classes")]
+        for member in ("**`Files`**", "**`Log(message, level)`**", "**`RuntimeIdentifier`**", "**`Stopping`**", "**`Own(disposable)`**"):
+            with self.subTest(member=member):
+                self.assertIn(member, section)
+
     def test_every_in_page_link_resolves_to_a_heading(self):
         # A link to #part, in its own document or another one, names a heading there, as GitHub makes its anchor.
         def anchors(path):

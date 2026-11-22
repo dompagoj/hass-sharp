@@ -576,6 +576,92 @@ code, until the graph is fixed and saved; otherwise it is not running.
 Deleting a type or method that is still in use is rejected with dependency
 diagnostics.
 
+## Setting up a node class
+
+A class of a node library may have one method marked `[NodeSetup]`, of the shape
+`public static Task Setup(NodeSetupContext context)`. It is the place for one-time
+work that the class's nodes share, such as downloading a model and opening it. It
+runs once when an entity definition whose graph uses any `[Node]` of the class
+starts, before its When started flow, and again each time the definition starts:
+after a restart, when the definition is saved or turned on again, and after a
+library save, which recompiles every definition. Each definition compiles the libraries into an assembly of its
+own, so it has its own copy of the class's statics, and a setup sets up the copy of
+its definition.
+
+The setups share the 60 seconds that the definition's C# nodes have for their
+constructors and `Setup()`s, and run before them; the time a download receives is
+not counted. A setup that throws keeps the definition from starting, and the
+definition says why, naming the class: "`{definition}: {class}: {message}`"; so does
+one whose context cannot be made, such as on a host with no directory for
+downloads. One that takes longer fails with "`{definition}: {class}: its
+[NodeSetup] did not finish within 60 s`". What it owned until then is disposed.
+
+A node of such a class works only in an entity definition's graph: the editor leaves
+it out of an automation's list of steps, an automation that has one is refused
+with code `node.document` ("`{step} only works in the graph of an entity
+definition; delete it from this automation`"), and so is a library save that would
+add a setup to a class an automation uses. The compiler refuses a setup of any other
+shape, a second setup in one class, and a setup in a C# node's code ("`[NodeSetup]
+works in a node library only; move this class into one`"); a setup in a class
+without `[Node]` methods is a warning, since it never runs.
+
+`NodeSetupContext` gives the setup what it reaches of its definition:
+
+- **`Files`**: the definition's files. `Files.Download(url, sha256, name,
+  cancellationToken)` downloads a file once and keeps it by its checksum, as it does
+  for a C# node (see [Http and Files](custom-entities.md#http-and-files)).
+- **`Log(message, level)`**: writes a line to the definition's log, under its name;
+  `PyLogLevel.Info` when no level is given.
+- **`RuntimeIdentifier`**: the process's runtime identifier, such as
+  `linux-musl-arm64`: which native library to load.
+- **`Stopping`**: cancelled when the definition stops, also while the setup still
+  runs. Pass it to each download and request.
+- **`Own(disposable)`**: keeps an object until the definition stops, and returns it.
+  After the definition's last `Stop()`, what the setups own is disposed, the last
+  owned first; one whose `Dispose()` throws is logged as a warning and the rest are
+  still disposed. Once the definition has stopped, `Own` disposes the object at once
+  and throws `ObjectDisposedException`.
+
+This class downloads a table once, maps it into memory for as long as the
+definition runs, and reads it in a value node:
+
+<!-- compiled: Table -->
+```csharp
+using System.IO;
+using System.IO.MemoryMappedFiles;
+
+public static class Table
+{
+    // The file, and its SHA-256 as sha256sum gives it: put the file's own in place of the zeros.
+    const string Url = "https://example.com/table.bin";
+    const string Sha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    // This definition's view of the table: each definition has its own copy of the class.
+    static MemoryMappedViewAccessor? view;
+
+    /// <summary>Downloads the table once and maps it until the definition stops.</summary>
+    [NodeSetup]
+    public static async Task Setup(NodeSetupContext context)
+    {
+        var path = await context.Files.Download(Url, Sha256, cancellationToken: context.Stopping);
+        var file = context.Own(MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read));
+        view = context.Own(file.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read));
+        context.Log($"Table ready on {context.RuntimeIdentifier}");
+    }
+
+    /// <summary>The byte of the table at an offset.</summary>
+    [Node("Table byte", Category = "Examples", Pure = true)]
+    public static int Byte(long offset) =>
+        (view ?? throw new InvalidOperationException("Table byte works in an entity definition, once it has started")).ReadByte(offset);
+}
+```
+
+The view is owned last, so it is disposed before the file it reads. A complete
+example is `nodes/Vision.cs` in
+[hass-sharp-vision](https://github.com/dompagoj/hass-sharp-vision): its setup
+downloads a native library for the process's runtime identifier and owns the
+detector it opens.
+
 ## Entity classes
 
 A node library can hold classes for [entity definitions](custom-entities.md),

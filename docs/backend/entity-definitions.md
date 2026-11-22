@@ -254,10 +254,16 @@ answer's `diagnostics` are the preview's warnings.
 A graph's C# entity and C# device nodes run beside its Entity nodes: each node's
 class is created, its settings applied (a typed value, or the saved value of the
 Setting wired to it), its entities' last states restored and its `Setup()` run, all
-of them within one set-up time, before Home Assistant is told of any entity. Setting up creates the graph's own entities, then every C# node with its
-`Setup()`, then runs the When started flow. There are two clocks: creating every C#
-node and running its `Setup()` share the definition's set-up time (`SetupTimeout`,
-60 seconds), and the When started flow has a set-up time of its own after them. Once
+of them within one set-up time, before Home Assistant is told of any entity. Setting
+up creates the graph's own entities, then runs the `[NodeSetup]` of each node library
+class whose nodes the graph uses (see
+[Setting up a node class](../node-libraries.md#setting-up-a-node-class)), then
+creates every C# node with its `Setup()`, then runs the When started flow. There are
+two clocks: the node classes' setups, creating every C# node and running its
+`Setup()` share the definition's set-up time (`SetupTimeout`, 60 seconds, not
+counting the time a download receives), and the When started flow has a set-up time
+of its own after them. A node class's setup that throws fails the start with
+"`{Definition}: {Class}: {reason}`". Once
 the entities are registered, starting runs the `Start()` of the graph's own
 entities, then each C# node's in node order, a C# device's before its entities';
 stopping goes in the same order of groups, each group's entities before its device. A C# entity's key is its node's, and it is called what its
@@ -266,7 +272,8 @@ Home Assistant then shows). A C# device is its own device, with its node's key, 
 and Part of and what its class's device page shows. Its commands reach its class. A
 new revision makes new instances, which restore their states; the old one stops after
 the new one is set up and registered and before it starts. Every C# node's
-constructor and `Setup()` together have the set-up time. One that cannot be created
+constructor and `Setup()`, with the node classes' setups before them, together have
+the set-up time. One that cannot be created
 fails the start with "`{Definition}: {Name} could not be created: {reason}`" (a
 constructor that does not finish in time: "`its constructor did not finish within
 {n} s`"); a `[Setting]` setter or a `Setup()` that throws, or a `Setup()` that does

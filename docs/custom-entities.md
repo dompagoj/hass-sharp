@@ -825,7 +825,9 @@ underscores, and cannot change once saved.
 - **`Setup()`** runs once before the entities are registered, with the settings
   applied: the place to check the settings or fetch what is needed. Creating every
   C# node of the definition and running their `Setup()`s have 60 seconds together,
-  not counting the time a download receives. A constructor or a `Setup()` that throws
+  shared with the `[NodeSetup]` methods of the node library classes its graph uses,
+  which run first (see [Setting up a node class](node-libraries.md#setting-up-a-node-class)),
+  and not counting the time a download receives. A constructor or a `Setup()` that throws
   or takes longer keeps the definition from starting, and the definition says why,
   naming the node: "Plug in C#: Smart plug: The plug's address must start with
   http:// or https://…". The When started steps run after every `Setup()`, with 60
@@ -937,11 +939,17 @@ which returns the picture to show, or null to keep the one shown. `Frame()` has 
 seconds; C# code cannot be cancelled, so one that takes longer is left to finish
 and what it gives is not shown, and no second one starts meanwhile. A `SharpImage`
 comes from `SharpImage.Load(jpeg)` or `SharpImage.Blank(width, height, color)`,
-takes `DrawRect(x, y, width, height, color, thickness)` and `DrawText(text, x, y,
-color, size, background)`, each of which returns the same image, and gives its
-bytes with `ToJpeg()`. Colours are `SharpColor.Red` (the default), `Green`, `Blue`,
-`Yellow`, `Orange`, `White`, `Black` or `SharpColor.FromRgb(r, g, b)`. A picture is
-for one flow at a time: hand another thread a `Copy()`.
+takes `DrawRect(x, y, width, height, color, thickness)`, `DrawText(text, x, y,
+color, size, background)` and `DrawCircle(x, y, radius, color, filled, thickness)`,
+each of which returns the same image, and gives its bytes with `ToJpeg()`. A
+circle's `x` and `y` are its centre and its radius is 1 to 4096 pixels; it is an
+outline unless `filled` is true, and its line, like a rectangle's, is 1 to 50
+pixels thick (2 when not given) and drawn inwards from its edge. Colours are
+`SharpColor.Red` (the default), `Green`, `Blue`, `Yellow`, `Orange`, `White`,
+`Black` or `SharpColor.FromRgb(r, g, b)`. A picture is for one flow at a time: hand
+another thread a `Copy()`. Face and person detection for cameras is the People
+detector and Detect faces of
+[hass-sharp-vision](https://github.com/dompagoj/hass-sharp-vision).
 
 A picture can be made of pixels, from any source code can reach: a capture API, a
 decoder, a model's output. **`SharpImage.FromRgb(width, height, pixels, stride)`**,

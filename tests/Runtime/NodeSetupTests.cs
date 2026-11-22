@@ -47,6 +47,7 @@ static class NodeSetupTests
         var failures = new List<string>();
         foreach (var (name, test) in new (string, Func<Task>)[] {
             (nameof(CompilerChecksTheSetup), () => { CompilerChecksTheSetup(); return Task.CompletedTask; }),
+            (nameof(TheGuidesClass), () => { TheGuidesClass(); return Task.CompletedTask; }),
             (nameof(RefusedInAnAutomation), () => { RefusedInAnAutomation(); return Task.CompletedTask; }),
             (nameof(AddingASetupToAClassAnAutomationUsesIsRefused), AddingASetupToAClassAnAutomationUsesIsRefused),
             (nameof(OnlyAGraphWithASetupClassGetsSharpNodeSetups), () => { OnlyAGraphWithASetupClassGetsSharpNodeSetups(); return Task.CompletedTask; }),
@@ -116,6 +117,26 @@ static class NodeSetupTests
                 $"{id}: a setup in a C# node's code is refused: " + Listed(custom.Diagnostics));
         }
         Console.WriteLine("PASS node setup: a [NodeSetup] is public static Task Setup(NodeSetupContext), one per class, in a class with nodes, in a node library; its class's nodes are for entity definitions");
+    }
+
+    // The class the node libraries guide shows under "Setting up a node class", read from its block marked
+    // <!-- compiled: Table -->: it compiles as a node library with no diagnostic, warning included, and its node Table byte
+    // is set up by Table's setup.
+    static void TheGuidesClass()
+    {
+        var lines = File.ReadAllLines("docs/node-libraries.md");
+        var marker = Array.IndexOf(lines, "<!-- compiled: Table -->");
+        Check(marker >= 0, "the guide marks no block <!-- compiled: Table -->");
+        var opening = Array.FindIndex(lines, marker + 1, l => l.StartsWith("```", StringComparison.Ordinal));
+        Check(opening == marker + 1 && lines[opening] == "```csharp", "the marker is not right before a csharp block: " + (opening >= 0 ? lines[opening] : "none"));
+        var closing = Array.IndexOf(lines, "```", opening + 1);
+        var source = string.Join("\n", lines[(opening + 1)..closing]);
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([new NodeLibrarySource("table", source, 1)], []);
+        Check(preview.Valid && preview.Diagnostics.IsEmpty, "the guide's class compiles without a diagnostic: " + Listed(preview.Diagnostics));
+        var kind = "library:table:" + Uri.EscapeDataString("global::NodeLib.Table.Byte");
+        Check(preview.Snapshot.Methods.TryGetValue(kind, out var method) && method.Setup == new NodeSetupDescriptor("Table", "global::NodeLib.Table", "Setup"),
+            "the guide's node Table byte is set up by Table's setup: " + string.Join(", ", preview.Snapshot.Methods.Keys));
+        Console.WriteLine("PASS node setup: the class the node libraries guide shows compiles without a diagnostic, and its setup sets up its node");
     }
 
     /// <summary>A pure Probe of <paramref name="type"/> into a Log, run by a manual trigger.</summary>

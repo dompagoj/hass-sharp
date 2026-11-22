@@ -20,6 +20,8 @@ dotnet test custom_components/hass_sharp/HassSharp.Editor.Tests
 (cd custom_components/hass_sharp/frontend && bun run test)
 ```
 
+hass-sharp-vision's C# tests compile every file of `tests/Runtime/` against a hass-sharp checkout, under this project's test assembly name `HassSharp.RuntimeTests`, until HassSharp has a test kit for library authors; renaming a helper there, or the `InternalsVisibleTo` in `custom_components/hass_sharp/HassSharp/RuntimeTestAccess.cs`, breaks them.
+
 The runtime suite's image tests need libjpeg-turbo: `brew install jpeg-turbo` on macOS, `libturbojpeg0` on Debian and current Ubuntu, and `libturbojpeg` on Ubuntu 24.04 and earlier.
 
 After publishing, `python tests/packaging/entity_bridge_smoke.py custom_components/hass_sharp [DOTNET_ROOT]`
