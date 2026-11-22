@@ -3,8 +3,9 @@ using static StbTrueTypeSharp.StbTrueType;
 namespace HassSharp;
 
 /// <summary>
-/// Draws on RGB pixels (three bytes each, rows packed): rectangle outlines, and text in DejaVu Sans with a translucent
-/// box behind it. Whatever falls outside the picture is clipped; coordinates are taken as 64-bit so that none overflows.
+/// Draws on RGB pixels (three bytes each, rows packed): rectangle outlines, circles filled or outlined, and text in
+/// DejaVu Sans with a translucent box behind it. Whatever falls outside the picture is clipped; coordinates are taken as
+/// 64-bit so that none overflows.
 /// Text is rasterised by StbTrueTypeSharp from the embedded font only: a font file it cannot read can crash the
 /// process, so it never sees any other.
 /// </summary>
@@ -75,6 +76,38 @@ internal static unsafe class ImagePainter
         FillBox(rgb, width, height, left, Math.Max(top, bottom - thickness), right, bottom, color);
         FillBox(rgb, width, height, left, top + thickness, Math.Min(right, left + thickness), bottom - thickness, color);
         FillBox(rgb, width, height, Math.Max(left, right - thickness), top + thickness, right, bottom - thickness, color);
+    }
+
+    /// <summary>
+    /// A circle about <paramref name="x"/>, <paramref name="y"/>: the pixels no farther than <paramref name="radius"/> from
+    /// its centre, and for an outline only those farther than <c>radius - thickness</c> too, so that the line is drawn
+    /// inwards and a line as wide as the radius is a disc. Painted a row at a time, over the rows the picture has of it.
+    /// </summary>
+    internal static void Circle(Span<byte> rgb, int width, int height, int x, int y, int radius, SharpColor color, bool filled, int thickness)
+    {
+        if (radius <= 0) return;
+        long cx = x, cy = y, outer = (long)radius * radius;
+        long inner = filled || thickness >= radius ? -1 : (long)(radius - thickness) * (radius - thickness);
+        long top = Math.Max(cy - radius, 0), bottom = Math.Min(cy + radius, height - 1L);
+        for (var row = top; row <= bottom; row++)
+        {
+            var dy = (row - cy) * (row - cy);
+            // How far from the centre the row is painted; for an outline, how far it is left as it was inside the line.
+            var reach = FloorSqrt(outer - dy);
+            if (inner < dy) { FillBox(rgb, width, height, cx - reach, row, cx + reach + 1, row + 1, color); continue; }
+            var hole = FloorSqrt(inner - dy);
+            FillBox(rgb, width, height, cx - reach, row, cx - hole, row + 1, color);
+            FillBox(rgb, width, height, cx + hole + 1, row, cx + reach + 1, row + 1, color);
+        }
+    }
+
+    // The largest whole number whose square is at most n, of 0 ≤ n.
+    static long FloorSqrt(long n)
+    {
+        var root = (long)Math.Sqrt(n);
+        while (root * root > n) root--;
+        while ((root + 1) * (root + 1) <= n) root++;
+        return root;
     }
 
     /// <summary>

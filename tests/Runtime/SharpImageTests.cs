@@ -2,7 +2,7 @@ using HassSharp;
 
 /// <summary>
 /// <see cref="SharpImage"/>: a JPEG and a list of drawings, decoded and encoded by the system's libjpeg-turbo. A picture
-/// with nothing drawn comes back as the bytes it was loaded from; rectangles and text land where they were asked for and
+/// with nothing drawn comes back as the bytes it was loaded from; rectangles, circles and text land where they were asked for and
 /// are clipped at the edges; a copy draws without touching the original; every limit is refused by a message naming
 /// it; a damaged or truncated picture gives the usable part or a plain error, and the next picture works; a picture
 /// whose header is too large is refused before its pixels are; a frame allocates little; threads draw at once; without
@@ -32,6 +32,8 @@ static class SharpImageTests
         Blank();
         Rectangle();
         Clipping();
+        Circle();
+        CircleClipping();
         Text();
         ControlCharacters();
         CopyLeavesTheOriginal();
@@ -159,6 +161,51 @@ static class SharpImageTests
         Console.WriteLine("PASS sharp image: rectangles and text half or wholly outside the picture, at negative or extreme coordinates, are clipped without an error");
     }
 
+    static void Circle()
+    {
+        var black = SharpImage.Blank(128, 96).ToJpeg();
+        var image = SharpImage.Load(black);
+        Check(ReferenceEquals(image.DrawCircle(64, 48, 20, SharpColor.Blue, filled: true), image) && image.Drawings == 1, "DrawCircle adds a drawing and returns the image");
+        var disc = Decode(image.ToJpeg());
+        Check(disc.Near(64, 48, SharpColor.Blue) && disc.Near(81, 48, SharpColor.Blue) && disc.Near(64, 31, SharpColor.Blue), "a filled circle is blue at its centre and near its edge");
+        Check(disc.Near(90, 48, SharpColor.Black, 24) && disc.Near(64, 75, SharpColor.Black, 24), "outside a filled circle stays black");
+
+        var ring = Decode(SharpImage.Load(black).DrawCircle(64, 48, 20, SharpColor.Red, thickness: 4).ToJpeg());
+        Check(ring.Near(82, 48, SharpColor.Red), "an outline is drawn on the circle, inside its edge");
+        Check(ring.Near(64, 48, SharpColor.Black, 24) && ring.Near(72, 48, SharpColor.Black, 24), "inside an outline stays black");
+
+        var plain = Decode(SharpImage.Load(black).DrawCircle(64, 48, 20).ToJpeg());
+        Check(SharpImage.Load(black).DrawCircle(64, 48, 20).ToJpeg().AsSpan().SequenceEqual(SharpImage.Load(black).DrawCircle(64, 48, 20, SharpColor.Red, filled: false, thickness: 2).ToJpeg()), "a circle is red, not filled and 2 pixels thick by default");
+        var line = plain.At(83, 48);
+        Check(line.R > 150 && line.G < 60 && line.B < 60 && plain.Near(64, 48, SharpColor.Black, 24), $"the default circle's line is red and its centre black: {line}");
+
+        static byte[] Painted(bool filled, int thickness)
+        {
+            var rgb = new byte[32 * 32 * 3];
+            ImagePainter.Circle(rgb, 32, 32, 16, 16, 5, SharpColor.White, filled, thickness);
+            return rgb;
+        }
+        static bool Lit(byte[] rgb, int x, int y) => rgb[(y * 32 + x) * 3] == 255;
+        var thin = Painted(false, 1);
+        Check(Lit(thin, 21, 16) && Lit(thin, 16, 11) && !Lit(thin, 22, 16) && !Lit(thin, 20, 16) && !Lit(thin, 16, 16), "an outline 1 thick paints d² ≤ r² and d² > (r − 1)² only");
+        Check(Painted(false, 5).AsSpan().SequenceEqual(Painted(true, 1)) && Painted(false, 50).AsSpan().SequenceEqual(Painted(true, 2)) && Lit(Painted(true, 1), 16, 16), "an outline as thick as the radius or more is a disc");
+        Console.WriteLine("PASS sharp image: a circle is drawn filled or as an outline drawn inwards, in its colour (red and not filled by default), and returns the image; a line as thick as the radius is a disc");
+    }
+
+    static void CircleClipping()
+    {
+        var image = SharpImage.Load(SharpImage.Blank(64, 48).ToJpeg())
+            .DrawCircle(-10, -10, 30, filled: true)
+            .DrawCircle(int.MaxValue, int.MaxValue, 4096)
+            .DrawCircle(int.MinValue, int.MinValue, 4096)
+            .DrawCircle(200, 200, 5);
+        var pixels = Decode(image.ToJpeg());
+        Check(pixels.Width == 64 && pixels.Height == 48, "clipping a circle keeps the size");
+        Check(pixels.Near(5, 5, SharpColor.Red), "the part of a circle inside the picture is drawn");
+        Check(pixels.Near(40, 40, SharpColor.Black, 24), "outside the circles stays black");
+        Console.WriteLine("PASS sharp image: circles half or wholly outside the picture, at extreme coordinates, are clipped without an error");
+    }
+
     static void Text()
     {
         foreach (var background in new[] { false, true })
@@ -281,12 +328,18 @@ static class SharpImageTests
         Refused(() => image.DrawText(new string('x', 201), 0, 0), "200 characters", "a text of 201 characters");
         Refused(() => image.DrawText(null!, 0, 0), "text", "no text");
         image.DrawText(new string('x', 200), 0, 0).DrawText("", 0, 0);
-        Check(image.Drawings == 6, "a refused drawing is not added");
+        Refused(() => image.DrawCircle(10, 10, 0), "1 to 4096", "a circle of radius 0");
+        Refused(() => image.DrawCircle(10, 10, 4097), "1 to 4096", "a circle of radius 4097");
+        Refused(() => image.DrawCircle(10, 10, 5, thickness: 0), "1 to 50 pixels thick", "a circle's line 0 thick");
+        Refused(() => image.DrawCircle(10, 10, 5, thickness: 51), "1 to 50 pixels thick", "a circle's line 51 thick");
+        image.DrawCircle(10, 10, 1, thickness: 1).DrawCircle(10, 10, 4096, thickness: 50);
+        Check(image.Drawings == 8, "a refused drawing is not added");
         while (image.Drawings < 500) image.DrawRect(1, 1, 2, 2);
         Refused(() => image.DrawRect(1, 1, 2, 2), "500 drawings", "the 501st drawing");
         Refused(() => image.DrawText("x", 1, 1), "500 drawings", "the 501st drawing, a text");
+        Refused(() => image.DrawCircle(1, 1, 2), "500 drawings", "the 501st drawing, a circle");
         Check(image.ToJpeg()[0] == 0xFF, "500 drawings are drawn");
-        Console.WriteLine("PASS sharp image: not a JPEG, over 20 MiB, a blank side outside 1–8192 or over 40 megapixels, a line outside 1–50, a text size outside 8–200, a text over 200 characters and a 501st drawing are each refused by a message naming the limit");
+        Console.WriteLine("PASS sharp image: not a JPEG, over 20 MiB, a blank side outside 1–8192 or over 40 megapixels, a line outside 1–50, a text size outside 8–200, a text over 200 characters, a circle's radius outside 1–4096 or line outside 1–50 and a 501st drawing are each refused by a message naming the limit");
     }
 
     static void Truncated()
@@ -602,7 +655,7 @@ static class SharpImageTests
             public static class Pictures
             {
                 [Node("Mark")]
-                public static SharpImage Mark(SharpImage image) => image.DrawRect(1, 1, 20, 20, SharpColor.Red).DrawText("here", 2, 2, SharpColor.FromRgb(1, 2, 3));
+                public static SharpImage Mark(SharpImage image) => image.DrawRect(1, 1, 20, 20, SharpColor.Red).DrawText("here", 2, 2, SharpColor.FromRgb(1, 2, 3)).DrawCircle(5, 5, 3, SharpColor.Blue, filled: true);
             }
             """, 1)]);
         Check(pictures.Valid, "user code can use SharpImage: " + string.Join("; ", pictures.Diagnostics.Select(d => d.Message)));

@@ -3,13 +3,13 @@ using System.Buffers;
 namespace HassSharp;
 
 /// <summary>
-/// A picture and the rectangles and text to draw on it: a JPEG, a blank picture, or a frame of pixels in a pooled buffer
-/// (<see cref="PixelFrame"/>, whose size is the frame's) — a frame of a live feed or of a video (<see cref="SharpVideo"/>),
+/// A picture and the rectangles, circles and text to draw on it: a JPEG, a blank picture, or a frame of pixels in a pooled
+/// buffer (<see cref="PixelFrame"/>, whose size is the frame's) — a frame of a live feed or of a video (<see cref="SharpVideo"/>),
 /// or one made of pixels in code (<see cref="FromRgb"/>, <see cref="FromYuv420"/>, <see cref="Writer"/> and the others),
-/// kept in the layout it came in. <see cref="CopyPixels"/> reads any picture's pixels. <see cref="Load"/> keeps the bytes; <see cref="DrawRect"/>
-/// and <see cref="DrawText"/> add to a list and return the same image; <see cref="ToJpeg"/> decodes the picture, draws
-/// the list on it in order and encodes it once — and gives back the bytes it was loaded from when nothing was drawn, so a
-/// picture passed on unchanged needs no codec. Decoding and encoding need the system's libjpeg-turbo library
+/// kept in the layout it came in. <see cref="CopyPixels"/> reads any picture's pixels. <see cref="Load"/> keeps the bytes;
+/// <see cref="DrawRect"/>, <see cref="DrawCircle"/> and <see cref="DrawText"/> add to a list and return the same image;
+/// <see cref="ToJpeg"/> decodes the picture, draws the list on it in order and encodes it once — and gives back the bytes
+/// it was loaded from when nothing was drawn, so a picture passed on unchanged needs no codec. Decoding and encoding need the system's libjpeg-turbo library
 /// (<c>libturbojpeg</c>). A picture is at most 20 MiB and 40 megapixels and carries at most 500 drawings. Drawing outside
 /// the picture is clipped, never an error. A picture is for one flow at a time: it is not thread-safe, so hand another
 /// flow or thread a <see cref="Copy"/>. A frame is encoded straight from its pixels when nothing is drawn on it (from its
@@ -28,6 +28,7 @@ public sealed class SharpImage : IVisualSnapshot, IDisposable
     const int MaxTextLength = 200;
     const int MinTextSize = 8, MaxTextSize = 200;
     const int MinThickness = 1, MaxThickness = 50;
+    const int MinRadius = 1, MaxRadius = 4096;
     const int Quality = 80;
     // The pixel buffers of the pictures decoded, kept for the next: two of each size up to 16 MiB (a picture of up to
     // about 5.6 megapixels), whichever thread asks, so that a pool thread does not keep one of its own for good; and one
@@ -52,6 +53,7 @@ public sealed class SharpImage : IVisualSnapshot, IDisposable
 
     abstract record Drawing;
     sealed record Rectangle(int X, int Y, int Width, int Height, SharpColor Color, int Thickness) : Drawing;
+    sealed record Circle(int X, int Y, int Radius, SharpColor Color, bool Filled, int Thickness) : Drawing;
     sealed record Label(string Text, int X, int Y, SharpColor Color, int Size, bool Background) : Drawing;
 
     const string Released = "The pixels of this picture were given back (it was disposed), so they can no longer be read";
@@ -315,6 +317,21 @@ public sealed class SharpImage : IVisualSnapshot, IDisposable
         return Add(new Label(text, x, y, color ?? SharpColor.Red, size, background));
     }
 
+    /// <summary>Adds a circle, filled or its outline; returns this image.</summary>
+    /// <param name="x">Its centre, in pixels from the left of the picture.</param>
+    /// <param name="y">Its centre, in pixels from the top of the picture.</param>
+    /// <param name="radius">Its radius, 1–4096 pixels.</param>
+    /// <param name="color">Its colour; red when not given.</param>
+    /// <param name="filled">Whether it is a disc; otherwise only its outline is drawn.</param>
+    /// <param name="thickness">How wide its outline is, 1–50 pixels, drawn inside its edge; one as wide as the radius is a disc.</param>
+    /// <exception cref="ArgumentException">The radius is outside 1–4096, the thickness is outside 1–50, or the image already carries 500 drawings.</exception>
+    public SharpImage DrawCircle(int x, int y, int radius, SharpColor? color = null, bool filled = false, int thickness = 2)
+    {
+        if (radius is < MinRadius or > MaxRadius) throw new ArgumentException("A circle's radius is 1 to 4096 pixels");
+        if (thickness is < MinThickness or > MaxThickness) throw new ArgumentException("A circle's line is 1 to 50 pixels thick");
+        return Add(new Circle(x, y, radius, color ?? SharpColor.Red, filled, thickness));
+    }
+
     SharpImage Add(Drawing drawing)
     {
         if (drawings.Count >= MaxDrawings) throw new ArgumentException("An image carries at most 500 drawings");
@@ -424,6 +441,7 @@ public sealed class SharpImage : IVisualSnapshot, IDisposable
             switch (drawing)
             {
                 case Rectangle r: ImagePainter.Rect(rgb, width, height, r.X, r.Y, r.Width, r.Height, r.Color, r.Thickness); break;
+                case Circle c: ImagePainter.Circle(rgb, width, height, c.X, c.Y, c.Radius, c.Color, c.Filled, c.Thickness); break;
                 case Label l: ImagePainter.Text(rgb, width, height, l.Text, l.X, l.Y, l.Color, l.Size, l.Background); break;
             }
     }
