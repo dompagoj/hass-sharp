@@ -1,220 +1,308 @@
-# Face detection node and "Add external" import
+# Face and person detection, and "Add external" import
 
 ## Intent
 
 Custom entities and the graph camera work: the local `testcamera` definition runs front-door camera → Camera frame →
 Draw text → Draw rectangle → camera entity. The custom-entities design named in-process inference as the next step
-(`2026-11-17-custom-entities-design.md`). The owner wants two things, built in this order:
+(`2026-11-17-custom-entities-design.md`). The owner wants, built in this order:
 
-- **A. A face detection library node.** It takes a `SharpImage` and returns a `SharpImage` with each face's box and
-  five landmarks drawn. When its definition sets up, it downloads its native face-detection library. That library is
-  built in this repo and committed under `nodes/`, never shipped in the integration (the release is capped at
-  100 MiB).
+- **A. Vision: face and person detection.**
+  - A **People detector** device (a C# device class in a node library) that watches a camera on an interval, even
+    when nobody is looking at it, and gives Home Assistant entities: an annotated camera, Face seen, Faces, Person
+    seen, People, and when each was last seen.
+  - A **Detect faces** library node that takes a `SharpImage` and returns it with each face's box and five landmarks
+    drawn, for graph cameras (Camera frame → Detect faces → Image).
+  - Both run on one native library (Rust + tract, YuNet for faces, YOLOX-nano for people) that is built in this repo,
+    committed under `nodes/vision/`, and downloaded when a definition sets up. It is never shipped in the
+    integration (the release is capped at 100 MiB).
 - **B. "Add external".** Paste a GitHub repository URL. HassSharp reads `hass_sharp.toml` at the repo's root, which
-  lists the repo's node libraries and entity definitions, and a dialog lets you pick what to import. The face node
-  lives in this repo and is the first thing imported this way.
+  lists the repo's node libraries and entity definitions, and a dialog lets you pick what to import. The vision
+  libraries live in this repo and are the first thing imported this way.
 
-Then the imported node is wired into `testcamera` on the local instance (port 5001).
+Then the Detect faces node is wired into `testcamera`, and a People detector is set up on the local instance (port
+5001).
 
 ## Goals
 
-- A camera definition can place **Detect faces** between Camera frame and the camera's Image and see boxes plus eyes,
-  nose tip and mouth corners at live frame rates.
-- Library nodes can do one-time work when their definition starts (download, load native code) and clean it up
-  when it stops.
-- Any public GitHub repo with a `hass_sharp.toml` can offer node libraries and entity definitions for import from the
-  panel.
+- A definition can add a People detector for a camera and get, without anyone watching the camera, whether a face or
+  a person is in view, how many, and when one was last seen, as Home Assistant entities automations can use.
+- A graph camera can place Detect faces between Camera frame and its Image and see boxes plus eyes, nose tip and
+  mouth corners at live frame rates.
+- Library nodes can do one-time work when their definition starts (download, load native code) and clean it up when
+  it stops (`[NodeSetup]`).
+- Any public GitHub repo with a `hass_sharp.toml` can offer node libraries and entity definitions for import.
 
-## Non-goals
+## Non-goals (this round)
 
-Dense face mesh; face *recognition* (who it is); GPU; a generic inference runtime or inference API in HassSharp;
-NuGet packages for user code; tracking or updating imports; hosts other than GitHub; native inference code in the
-integration release; `[NodeSetup]` in automations.
+Face *recognition* (who it is), a people database, custom UI for devices in the panel, person data in automations
+(all the next project, below); dense face mesh; GPU; a generic inference runtime or API in HassSharp; NuGet packages
+for user code; tracking or updating imports; hosts other than GitHub; native code in the integration release;
+`[NodeSetup]` in automations; a Detect people node; finding people smaller than ~20 px in the network input.
 
 ## Anti-goals
 
 - An import that half-applies (some libraries saved, others not).
-- A library save that leaks a native detector each time it recompiles.
-- A face node that can silently run a different model than its decoder expects.
+- A library save or definition restart that leaks a native detector.
+- A detector that can silently run a different model than its decoder expects.
+- Face seen / Person seen flickering off between two checks while someone stands there.
 
 ## Decisions (owner's)
 
-- Output: face box + 5 key points. Not a dense mesh.
-- Inference: **our own Rust library on tract** (Sonos's pure-Rust ONNX engine), specific to this node, not a generic
-  runtime. Model: **YuNet** `face_detection_yunet_2023mar.onnx` (OpenCV zoo, MIT).
-- Native binaries are **built and committed in this repo**, not published as GitHub releases.
+- Faces: box + 5 key points (YuNet). People: boxes (YOLOX-nano), so someone seen from behind or the side counts.
+- Packaging: a **People detector device** for entities **and** a **Detect faces node** for graph pictures.
+- Inference: **our own Rust library on tract** (Sonos's pure-Rust ONNX engine), specific to these two models, not a
+  generic runtime.
+- Native binaries are **built and committed in this repo**, not published as GitHub releases. Builds run in Docker
+  (no Zig, nothing installed on the host).
 - Import is a **one-time copy**: no origin tracking, no update action.
 - **No pushes** during the work. The live import from this repo's URL waits until the owner has merged to main.
 
-## Approaches considered (inference)
+## Approaches considered
 
-- **Rust + tract, face-specific (chosen).** Pure Rust, builds for musl in minutes in Docker, we own a tiny C ABI.
-  The spike passed (below).
-- libfacedetection (YuNet's own C++ library, weights compiled in): equally specific; was the fallback.
-- ONNX Runtime built for musl: its edge is running any model, which we don't need; the musl build is the riskiest
-  and slowest. Dropped.
-- Pure C# forward pass: bespoke network code, slower. Dropped.
+Inference:
+- **Rust + tract, model-specific (chosen).** Pure Rust, builds for musl in minutes in Docker, a tiny C ABI we own.
+  Both spikes passed (below).
+- libfacedetection (YuNet's C++ library): faces only. ONNX Runtime built for musl: its edge is any model, which we
+  don't need, and its musl build is the riskiest. Pure C# networks: bespoke and slower. All dropped.
+
+Packaging (owner chose both A and B):
+- A. Node between Camera frame and the camera: composable with any picture, but runs only while a camera's frame is
+  being made, so it cannot drive "seen" entities on its own.
+- B. C# device: runs its own loop on an interval with existing `Setup`/`Every`/`Stop`, and carries entities.
+- C. Graph-only (node returning image + count, entities built with an interval trigger): more wiring per camera.
+
+Person model (spike 2): YOLOX-nano (chosen: fastest, no false positive at 0.45, one output tensor, any input that is
+a multiple of 32 including non-square); YOLOX-tiny (more accurate, 3× slower, 20 MB); NanoDet-Plus-m (missed a person
+at 416); PP-PicoDet-S (fire hydrant as a person at 0.48). Ultralytics YOLOv5/v8/11 (AGPL), YOLO-NAS (non-commercial)
+and YOLOv7 (GPL) were excluded by licence.
 
 ## Spike results (2026-11-22, throwaway, `tract-onnx` 0.23.10)
 
-- YuNet loads and runs once shape facts from the file are ignored:
-  `tract_onnx::onnx().with_ignore_output_shapes(true).with_ignore_value_info(true)`. Without that, fixing any input
-  size other than 640×640 fails in shape inference. Any size that is a multiple of 32 works.
-- Input 1×3×H×W, **BGR** float 0–255, no mean/scale, zero-padded bottom/right to a multiple of 32 (OpenCV
-  `FaceDetectorYN`). Outputs selected by name: `cls_8/16/32`, `obj_8/16/32`, `bbox_8/16/32`, `kps_8/16/32`.
-  Decode: score = sqrt(clamp(cls)·clamp(obj)), threshold, priors per stride, 5 landmarks, greedy NMS IoU 0.3.
-- Faces: 8/8 on a 1080×720 group photo at 640×480 (including near-profile and partly hidden faces), 7/8 at 320×240;
-  no false positives; identical results natively and in the `hass` container.
-- Single-thread inference, median / p90 ms: Mac 4.2 / 4.7 (320×240), 16.4 / 18.6 (640×480); `hass` container (Alpine
-  aarch64 musl) 7.6 / 8.5 and 29.0 / 31.7. Decode + NMS ≈ 0.02 ms. Load ≈ 40 ms.
-- Size: a musl `cdylib` with the model embedded is 17 MiB stripped (model 232 KB; the rest is tract-onnx).
-- Build: `rust:alpine` (native arm64) needs no extra packages. A musl `cdylib` needs
-  `RUSTFLAGS="-C target-feature=-crt-static"` and then depends on `libgcc_s.so.1` (present in the HA image).
-- Docker here is colima, which shares only `$HOME`: bind mounts of `/tmp` paths come up empty. `docker cp` from macOS
-  needs `COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata` to avoid the provenance xattr error.
-- Model: `https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx`,
-  232,589 bytes, SHA-256 `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4`.
+Both models:
+- Load with `tract_onnx::onnx().with_ignore_output_shapes(true).with_ignore_value_info(true)`, then fix the input
+  fact; without the flags, any size other than the file's stored one fails in shape inference. Any size that is a
+  multiple of 32 works, non-square too.
+- tract 0.23 API: `into_runnable()` returns an `Arc`; outputs via `TValue.try_as_plain_ram()?.as_slice::<f32>()`;
+  `select_outputs_by_name`.
+- Identical detections natively (M2 Pro) and in the `hass` container (Alpine 3.24 aarch64 musl, colima, ~1.7×
+  slower).
+
+YuNet (`face_detection_yunet_2023mar.onnx`):
+- Input 1×3×H×W **BGR** float 0–255, no mean/scale, zero-padded bottom/right. Outputs by name `cls_8/16/32`,
+  `obj_8/16/32`, `bbox_8/16/32`, `kps_8/16/32`. Score = sqrt(clamp(cls)·clamp(obj)); OpenCV `FaceDetectorYN` decode;
+  NMS IoU 0.3.
+- 8/8 faces on a 1080×720 group photo at 640×480, 7/8 at 320×240; no false positives.
+- Single thread, median / p90 ms: Mac 4.2 / 4.7 (320×240), 16.4 / 18.6 (640×480); container 7.6 / 8.5 and
+  29.0 / 31.7.
+- `https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx`, 232,589
+  bytes, SHA-256 `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4`, MIT (Shiqi Yu).
+
+YOLOX-nano (`yolox_nano.onnx`):
+- Input 1×3×H×W **BGR** float 0–255, no mean/std, letterboxed top-left with pad value **114**. One output
+  `[1, N, 85]`: per anchor `(dx, dy, lw, lh, obj, 80 class scores)`; strides 8/16/32, grid index with no +0.5 offset:
+  `cx = (dx + gx)·s`, `w = exp(lw)·s`; score = obj · cls[0] (person). Threshold 0.45, NMS IoU 0.45.
+- People seen from behind: 4/4 on a street photo; 8/8 on the group photo at 416×256; none smaller than ~15–20 px in
+  the network input.
+- Single thread, inference + decode, median / p90 ms, container: 22.0 / 23.0 (320), 35.0 / 36.0 (416),
+  21.4 / 22.3 (416×256), 85.8 / 91.1 (640). Mac roughly 1.7× faster. Load + optimise 140–200 ms.
+- `https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_nano.onnx`, 3,659,407 bytes,
+  SHA-256 `c789161ed43c8269fcd4e67c67eeeb4e80c622da2eb296a20bc6007bd18a0b7d`, Apache-2.0 (Megvii), COCO-trained.
+
+Builds:
+- `rust:alpine` (native arm64) needs no extra packages; cold build ~6.5–7.7 min under colima. A musl `cdylib` needs
+  `RUSTFLAGS="-C target-feature=-crt-static"` and then depends on `libgcc_s.so.1` (present in the HA image). A
+  stripped musl `cdylib` with tract-onnx was 17 MiB (the models are not most of it).
+- Colima shares only `$HOME`: bind mounts of `/tmp` paths come up empty; sources go in as a tar stream. `docker cp`
+  or tar from macOS needs `COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata`.
+- Docker here runs `linux/amd64` containers under emulation (`uname -m` → `x86_64`), so x64 RIDs build locally.
+- Resizing a 1–2 MP frame with the `image` crate's Triangle filter costs 4–16 ms, close to inference; the real
+  path resizes itself (box filter) or reads frames already scaled (`VideoOptions.MaxWidth`).
+- Test photos: `Smiling_Bangladeshi_men.jpg` (Wikimedia Commons, Steve Evans, CC BY 2.0) and "Pedestrians Walking
+  South on Eighth Avenue Near West 31st Street, New York City.jpg" (Wikimedia Commons, CC0).
 
 ## Design
 
-### 1. Native library (`nodes/face_detection/native/`)
+### 1. Native library (`nodes/vision/native/`, crate `hs_vision`)
 
-A Rust `cdylib` named `hs_face`, model embedded with `include_bytes!` so setup is one download and the model can't
-drift from the decoder. C ABI:
+A Rust `cdylib` with both models embedded (`include_bytes!`), so setup is one download and a model can't drift from
+its decoder. C ABI, version 1:
 
-- `hs_face_abi_version() -> u32`, checked by the C# side.
-- `hs_face_open() -> *mut Detector` (null on failure; `hs_face_last_error() -> *const c_char`, thread-local).
-- `hs_face_detect(det, rgb: *const u8, width: i32, height: i32, stride: i32, input_size: i32, min_score: f32,
-  out: *mut Face, max_faces: i32) -> i32`: count, or −1 with last error. Converts RGB→BGR, letterboxes to an input
-  whose long side is `input_size` (multiple of 32, aspect kept, padded), runs tract, decodes, NMS IoU 0.3, maps back
-  to the input's pixels. One runnable plan per input shape, cached in the detector.
+- `hs_vision_abi_version() -> u32`, checked by the C# side.
+- `hs_vision_open() -> *mut Detector` (null on failure; `hs_vision_last_error() -> *const c_char`, thread-local).
+  Parses YuNet at open; YOLOX on its first use, so a face-only user never pays for it.
+- `hs_vision_faces(det, rgb: *const u8, width, height, stride, input_size, min_score: f32, out: *mut Face,
+  max_faces) -> i32` — faces written, best first, or −1 with last error. The picture is letterboxed so its long side
+  is `input_size` (multiple of 32), padded with 0.
+- `hs_vision_people(det, rgb, width, height, stride, input_size, min_score: f32, out: *mut Person, max_people) ->
+  i32` — the same for people, padded with 114.
 - `#[repr(C)] struct Face { x, y, w, h, score: f32, landmarks: [f32; 10] }` (right eye, left eye, nose tip, right
-  mouth corner, left mouth corner).
-- `hs_face_close(det)`.
-- A `Detector` serialises its own runs; panics never cross the ABI (`catch_unwind` → error).
+  mouth corner, left mouth corner); `#[repr(C)] struct Person { x, y, w, h, score: f32 }`; all in the input
+  picture's pixels.
+- `hs_vision_close(det)`.
+- One runnable plan per (model, padded shape), a few kept. A `Detector` serialises its own runs; panics never cross
+  the ABI.
+- Room to grow: face recognition (next project) adds an export that takes a face's landmarks and returns its
+  embedding; nothing in version 1 has to change for it.
 
-**Size.** The spike's 17 MiB × 4–5 platforms would add ~85 MB of history per rebuild. The real build aims for under
-8 MiB: `opt-level = "s"` or `"z"`, `panic = "abort"` (then `catch_unwind` is moot — errors are returned, not
-panicked), LTO, `codegen-units = 1`, strip, and converting the model offline to tract's NNEF format so only
-`tract-nnef` (no ONNX/protobuf parser) is linked. The builder reports the size reached; if NNEF conversion breaks
-correctness, ONNX stays.
+**Size.** Two models plus tract. The build aims for under 8 MiB per platform (opt-level `s`/`z`, LTO,
+`codegen-units = 1`, strip; tract features trimmed; optionally both models converted offline to tract's NNEF so the
+ONNX parser isn't linked). The builder reports the size reached; correctness wins over size.
 
 ### 2. Native hosting: committed in the repo
 
-- Binaries at `nodes/face_detection/native/bin/libhs_face-<rid>.so` with `SHA256SUMS`, plain git (no LFS: raw URLs
-  would serve LFS pointers). RIDs: `linux-musl-arm64`, `linux-musl-x64`, `linux-arm64`, `linux-x64`;
-  `linux-musl-arm` / `linux-arm` if they build cleanly.
-- `nodes/face_detection/native/build.sh` builds every RID **in Docker** (no Zig, nothing installed on the host):
-  `rust:alpine` for musl, an older-glibc Debian image (bullseye, glibc 2.31) for gnu; x64 under Docker's emulation
-  on an arm64 host. It streams sources in with tar (colima mounts), strips, and rewrites `SHA256SUMS`.
-- CI: a new job in `.github/workflows/tests.yaml` runs `cargo test` and a build check. It does not commit binaries.
-- The node downloads from
-  `https://raw.githubusercontent.com/<owner>/<repo>/<commit-sha>/nodes/face_detection/native/bin/libhs_face-<rid>.so`,
+- Binaries at `nodes/vision/native/bin/libhs_vision-<rid>.so` with `SHA256SUMS`, plain git (no LFS: raw URLs would
+  serve LFS pointers). RIDs: `linux-musl-arm64`, `linux-musl-x64`, `linux-arm64`, `linux-x64`; `linux-musl-arm` /
+  `linux-arm` if they build cleanly.
+- `nodes/vision/native/build.sh` builds every RID in Docker: `rust:alpine` for musl, an older-glibc Debian image
+  (bullseye, glibc 2.31) for gnu; x64 under emulation. Sources stream in with tar; it strips and rewrites
+  `SHA256SUMS`.
+- CI: a new job in `.github/workflows/tests.yaml` runs `cargo test` and a build check. It never commits binaries.
+- Downloads come from
+  `https://raw.githubusercontent.com/dompagoj/hass-sharp/<commit-sha>/nodes/vision/native/bin/libhs_vision-<rid>.so`,
   pinned to the commit that added the binaries plus each file's SHA-256. Binary commit first, then a commit pinning
-  its sha in `FaceDetection.cs`.
-- Binaries are rebuilt only when the Rust code changes.
+  its sha in the C# code. Binaries are rebuilt only when the Rust code changes.
 
 ### 3. Library node setup hook: `[NodeSetup]`
 
-- A public static `Task Setup(NodeSetupContext ctx)` marked `[NodeSetup]` on a node class runs once when a
+- A public static `Task Setup(NodeSetupContext context)` marked `[NodeSetup]` on a node class runs once when a
   **definition** whose graph uses any `[Node]` of that class starts: in the definition's setup phase, on the same
-  `SetupClock` as C# nodes' `Setup()` (download time not counted; `Devices/DefinitionHost.cs`,
-  `DefinitionHost.Graph.cs`), before the When started flow. A failure fails the definition's start, naming the class.
-- **Definitions only.** Automations have no setup clock, and activation runs under `_visualGate`, so a download there
-  would stall every request. Using such a node in an automation is a validation error ("only in a custom entity
-  definition").
-- `NodeSetupContext`: `Files` (the definition's `SharpFiles`), `Log`, `RuntimeIdentifier`
-  (`RuntimeInformation.RuntimeIdentifier`), `Stopping`, and `Own(IDisposable)` — owned objects are disposed when the
-  definition stops, so the native detector is closed on every restart and recompile.
+  `SetupClock` as C# nodes' `Setup()` (download time not counted), before the C# nodes and the When started flow. A
+  failure fails the definition's start, naming the class.
+- **Definitions only.** Automations have no setup clock, and activation runs under `_visualGate`. A node of such a
+  class is entity-only (`documents: ["entity"]`), so automations refuse it with the existing `node.document` message.
+- `NodeSetupContext`: `Files`, `Log`, `RuntimeIdentifier`, `Stopping`, and `Own(IDisposable)` — owned objects are
+  disposed when the definition stops.
 - State lives in the class's statics; each graph has its own collectible load context, so setup runs per definition
-  and resets on recompile; downloads are cached by checksum, so re-setup is instant.
-- The compiler/validator learn the attribute: at most one per class, signature checked, diagnostics like the other
-  node attributes.
+  and resets on recompile; downloads are cached by checksum.
 
 ### 4. `SharpImage.DrawCircle`
 
-`DrawCircle(x, y, radius, color, filled)` — a `Drawing` record, a `Render` case and an `ImagePainter` function;
-documented in `docs/custom-entities.md` "Cameras in C#". No public resize (the native library resizes).
+`DrawCircle(x, y, radius, color, filled = false, thickness = 2)`, documented in `docs/custom-entities.md` "Cameras in
+C#".
 
-### 5. The face node (`nodes/face_detection/FaceDetection.cs`)
+### 5. The vision library files (`nodes/vision/`)
 
-- `[NodeSetup]`: if `RuntimeIdentifier` has no pinned asset, fail with a clear message naming the platform. Else
-  `Files.Download` the library, `NativeLibrary.Load` it, resolve exports as `delegate* unmanaged` (pattern:
-  `Devices/Imaging/TurboJpeg.cs`), check `hs_face_abi_version`, `hs_face_open`, `Own` a handle that calls
-  `hs_face_close`.
-- `[Node("Detect faces", Category = "Vision", Pure = true)]`
-  `SharpImage DetectFaces(SharpImage image, double minScore = 0.7, int inputSize = 320)`: `CopyPixels` as RGB into a
-  pooled buffer, call `hs_face_detect` under a `System.Threading.Lock`, then on a `Copy()` of the input draw a
-  rectangle per face, a filled circle per landmark (distinct colours) and the score as text.
-- If setup has not succeeded, the node throws a clear error.
+Two node library files, imported together:
+
+- **`Vision.cs`**
+  - `public sealed class VisionDetector : IDisposable` — wraps one native `Detector`: `Faces(SharpImage, inputSize,
+    minScore)` and `People(SharpImage, inputSize, minScore)` return `IReadOnlyList<DetectedFace>` /
+    `IReadOnlyList<DetectedPerson>` (records in input pixels), under a `System.Threading.Lock`; after `Dispose`,
+    calls throw.
+  - `public static class Vision` — `Task<VisionDetector> OpenAsync(SharpFiles files, string runtimeIdentifier,
+    CancellationToken cancellation)`: unsupported platform → clear error naming it; else downloads the pinned
+    `libhs_vision-<rid>.so`, loads it once per process (`NativeLibrary.Load`, never freed), resolves the exports as
+    `delegate* unmanaged` (pattern: `Devices/Imaging/TurboJpeg.cs`), checks the ABI version, opens a detector.
+    `DrawFaces(SharpImage, faces)` and `DrawPeople(SharpImage, people)` draw on a picture within its 500-drawing
+    limit. The pinned URL and SHA-256 table live here.
+  - `public static class FaceDetection` — `[NodeSetup] Setup` opens a detector with `context.Files` and `Own`s it;
+    `[Node("Detect faces", Category = "Vision", Pure = true)] SharpImage DetectFaces(SharpImage image, double
+    minScore = 0.7, int inputSize = 320)` draws on a `Copy()`.
+- **`PeopleDetector.cs`**
+  - `public abstract class PeopleDetector : SharpDevice`, used by deriving from it in a C# device node
+    (`public class FrontDoor : PeopleDetector { }`).
+  - Settings: **Camera** (`CameraEntity`, required); **Check every** (seconds, default 0.5, 0.1–60); **Stay on for**
+    (seconds a "seen" entity stays on after the last detection, default 10, 0–3600); **Face score** (default 0.7);
+    **Person score** (default 0.45).
+  - Entities:
+    - `camera` — the newest analysed frame with people's boxes, faces' boxes and landmarks drawn
+    - `face_seen` / `person_seen` — binary sensors, device class `occupancy`
+    - `faces` / `people` — sensors, the counts in the newest analysed frame, state class `measurement`
+    - `last_face_seen` / `last_person_seen` — sensors, device class `timestamp`
+  - Life cycle: `Setup()` opens its own detector with `Vision.OpenAsync(Files, …)`; `Start()` opens
+    `SharpVideo.Open(Camera, new VideoOptions { MaxWidth = 1280 })` and runs `Every(Check every)`: next frame →
+    faces (input 640) and people (input 416) → draw → show on `camera` → update the entities; `Stop()` disposes the
+    video and the detector.
+  - A missed frame or a failing check is logged once per new reason (as `Every` does) and leaves the entities as they
+    were.
+  - The device's camera is a `SharpCamera` subclass in the same file, added by the device.
 
 ### 6. Manifest (`hass_sharp.toml` at a repo's root)
 
 ```toml
 [[library]]
-name = "FaceDetection.cs"                          # library file name in the panel
-path = "nodes/face_detection/FaceDetection.cs"
-description = "Detect faces: box + 5 landmarks (YuNet on tract)"
+id = "vision"                                     # stored under this id when free
+name = "Vision.cs"                                # library file name in the panel
+path = "nodes/vision/Vision.cs"
+description = "Face and person detection on a native library (YuNet and YOLOX-nano on tract), and the Detect faces node"
+
+[[library]]
+id = "people_detector"
+name = "PeopleDetector.cs"
+path = "nodes/vision/PeopleDetector.cs"
+description = "People detector: a device that watches a camera and reports faces and people seen"
 
 [[entity]]
-name = "Face camera"
-path = "nodes/face_detection/face_camera.json"     # a DefinitionBody: name, settings, logic
-description = "Camera that marks faces"
+name = "Front door people"
+path = "nodes/vision/front_door_people.json"      # a DefinitionBody: name, settings, logic
+description = "A People detector on camera.front_door"
 ```
 
-This repo gets a root `hass_sharp.toml` with the face library and an example face-camera definition (camera entity →
-Camera frame → Detect faces → camera entity).
+Library node kinds name their library's id, so import rewrites the `library:` kinds in imported definitions to the
+id actually used.
 
 ### 7. Fetching
 
 GitHub only. Accept `https://github.com/<owner>/<repo>` with an optional `/tree/<ref>`. Resolve the ref to a commit
-sha with `GET https://api.github.com/repos/{owner}/{repo}/commits/{ref}` (default branch when none), then fetch only
-`hass_sharp.toml` and the files it lists from `https://raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>`, in an
-executor. No git process and no tarball (the repo carries native binaries). Parse with `tomllib`. Cap each file
-(2 MiB), reject absolute paths, `..`, and anything but `.cs` / `.json`.
+sha with `GET https://api.github.com/repos/{owner}/{repo}/commits/{ref}` (`HEAD` when none), then fetch only
+`hass_sharp.toml` and the files it lists from `https://raw.githubusercontent.com/<owner>/<repo>/<sha>/<path>`. No git
+process and no tarball (the repo carries native binaries). Parse with `tomllib`. Cap each file (2 MiB) and the item
+count, reject absolute paths, `..`, and anything but `.cs` / `.json`.
 
 ### 8. API
 
-- Websocket route `hass_sharp/external` (admin, `envelope_command` pattern in `websocket.py`):
-  - `inspect {url}` → `{owner, repo, sha, items: [{kind: "library"|"entity", name, description, path,
-    existing: [{id, revision, name}]}]}`.
-  - `import {owner, repo, sha, picks: [{kind, path, mode: "overwrite"|"new", target?: id}]}` re-fetches that sha, so
-    what you picked is what you get.
-- Libraries offer **Overwrite** or **Skip** only when one with that name exists — all library files share the
-  `NodeLib` namespace, so a second copy would never compile. When several share the name, the dialog asks which to
-  overwrite. Entities offer Overwrite / Add as new / Skip.
-- Libraries are saved through a new C# `import` operation in `NodeLibraryApi.cs`: several library documents in one
-  preview + one commit, with the same validation and errors as `save`. Atomic.
-- Entities, after libraries, through the existing entity `save`: new ones with `expectedRevision: 0` and
-  `enabled: false` (as Duplicate does), id by the `definitionId()` rule; overwrite with the existing revision.
-- "Existing" matches by library file name and by definition name.
+- Websocket route `hass_sharp/external` (admin): `inspect {url}` → owner, repo, sha and items (kind, id, name,
+  description, path, existing matches, any problem with the file); `import {owner, repo, sha, picks}` re-fetches that
+  sha.
+- Libraries offer **Overwrite** or **Skip** when one with that name exists — all library files share the `NodeLib`
+  namespace. Entities offer Overwrite / Add as new / Skip.
+- Libraries are saved through a new C# `import` operation: several documents in one preview + one commit. Atomic.
+- Entities, after libraries, through the existing entity `save`: new ones turned off (`enabled: false`), overwrites
+  with the revision inspect saw, keeping setting values whose key and type still match.
 
 ### 9. UI
 
 An **Add external** button beside "Add file" in the node libraries view and beside "New entity definition" in the
-entities list, opening one shared dialog (`components/Dialog.tsx`, `preventClose` while fetching): URL → Inspect →
-checkbox list grouped Node libraries / Entity definitions, each with description, a link to the file on GitHub at
-that sha, and the Overwrite / Add as new / Skip choice when it exists → Import → a notice of what was imported. The
-dialog says plainly that imported C# runs with full access to Home Assistant.
+entities list, opening one dialog: URL → Inspect → checkbox list grouped Node libraries / Entity definitions, with
+descriptions, links to the files on GitHub at that sha, and the Overwrite / Add as new / Skip choice → Import → a
+notice of what was imported. The dialog says plainly that imported C# runs with full access to Home Assistant.
+
+## Next project (not this round): face recognition and device UI
+
+Recorded so this round does not paint it into a corner.
+
+- **Recognition.** OpenCV's SFace (Apache-2.0) turns a face, straightened with YuNet's five landmarks, into an
+  embedding. Faces whose embeddings are close are the same person. It runs in tract like the detectors and becomes
+  one more export of `hs_vision`. InsightFace/ArcFace weights are non-commercial and are avoided.
+- **People database.** The People detector keeps known people (first name, last name, and more) with several face
+  samples each, and a queue of unknown faces with their crops. Local only, in `.storage`; deleting a person deletes
+  their samples. A face database is biometric data: a camera covering the street may fall outside the household
+  exemption of EU data-protection rules.
+- **Device UI in the panel**, where Problems, generated C# and Runs are: for the People detector, the unknown faces,
+  each with its picture and a small form (who is this, or dismiss), and the known people. How a device describes its
+  UI (declarative, rendered by the panel, or its own components) is that project's main design question.
+- **Person data in automations.** For example a "Person recognized" trigger whose data carries the person, typed so
+  steps can read `FirstName`, plus entities such as a "Last recognized" sensor.
+- A person seen from behind is detected but never identified: "seen" and "who" stay separate signals.
 
 ## Left to the builder
 
-tract version; exact build flags reaching the size target; resize filter; landmark colours and sizes; how
-`[NodeSetup]` is surfaced in the catalog; dialog layout; test fixture images (license-clean, small).
+tract version; build flags reaching the size target; resize filter; drawing colours and sizes; how `[NodeSetup]` is
+surfaced in the catalog; dialog layout; test fixtures (small, licence-clean).
 
 ## Verification
 
 - Runtime suite: `DrawCircle` pixels; `[NodeSetup]` runs once per definition before runs, `Own` disposes on stop,
-  refused in automations, counts against the setup clock but not download time, failure fails the start; face node
-  end to end on a fixture image against a locally built `.so` (skipped when absent); library `import` is atomic.
-- `cargo test` in `nodes/face_detection/native/`: decode/NMS on fixture tensors, ABI null/size checks, faces on the
-  fixture photo.
+  refused in automations, counts against the setup clock but not download time, failure fails the start; the vision
+  library end to end against a locally built `.so` (skipped when absent): Detect faces on the fixture, a People
+  detector on a video fixture setting its entities and holding "seen" for its time; library `import` is atomic.
+- `cargo test` in `nodes/vision/native/`: decode/NMS on fixture tensors for both models, ABI checks, faces and people
+  on the fixture photos.
 - Editor tests for catalog/diagnostic changes.
-- Python: `external` inspect/import against a faked GitHub (URL forms, ref → sha, traversal, extensions, size caps,
-  bad TOML, missing files, existing items, library overwrite-only).
+- Python: `external` inspect/import against a faked GitHub.
 - Packaging tests: release package unchanged in shape.
-- Frontend: dialog flow (inspect → pick → import, overwrite vs new, errors).
-- Live, local instance only: before merge, paste `FaceDetection.cs` with the URL pointed at a host-served copy
-  (`python3 -m http.server`, reached as `host.docker.internal`); wire `testcamera` frame → Detect faces → Draw text →
-  Draw rectangle → entity; confirm one download in the logs, boxes + 5 points at a sustained frame rate, no
-  re-download after reloading the integration. After the owner merges: Add external with this repo's URL.
+- Frontend: the dialog flow.
+- Live, local instance only: before merge, paste the libraries with the URL pointed at a host-served copy; wire
+  `testcamera` frame → Detect faces → Draw text → Draw rectangle → entity, and add a People detector on the dummy
+  camera (or a Video frame of the fixtures); confirm one download, live boxes, the entities turning on and off with
+  the hold time, and no re-download after a reload. After the owner merges: Add external with this repo's URL.
