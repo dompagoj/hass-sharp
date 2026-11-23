@@ -11,11 +11,14 @@ vi.mock('monaco-vim', () => ({ initVimMode: () => ({ dispose() {} }) }))
 let dispose: () => void
 let host: HTMLDivElement
 let requests: any[]
+/** Answers `hass_sharp/external`'s requests, which are recorded in `requests` too. */
+let external: (request: any) => unknown = () => { throw new Error('No external answer') }
 const documents = () => [{ version: 1, id: 'shared', name: 'Shared.cs', source: rich.source, revision: 1 }, { version: 1, id: 'helper', name: 'Helper.cs', source: 'public class Helper {}', revision: 1 }]
 function mount(invalid = false, response?: (request: any, result: any) => any) {
   requests = []
   const callWS = async (message: any) => {
     const r = message.request; requests.push(r)
+    if (message.type === 'hass_sharp/external') return external(r)
     const result = r.operation === 'list' ? { documents: documents(), generation: 'g1' }
       : r.operation === 'catalog' ? { catalog: rich.catalog, generation: 'g1', saved: true, valid: true, diagnostics: [] }
       : r.operation === 'save' ? { saved: true, document: { ...documents()[0], id: r.id, name: r.name, source: r.source, revision: 2 }, generation: 'g2', catalog: rich.catalog, automations: [] }
@@ -347,4 +350,36 @@ it('names the entity definitions without links where the page has no router', as
   expect(section.textContent).toContain('Lamp: Saved; activation failed: Lamp could not start')
   expect(section.querySelector('a')).toBeNull()
   expect(host.innerHTML).not.toContain('hasValue')
+})
+
+it('imports from a GitHub repository with Add external, and marks a draft whose file the import overwrote', async () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567'
+  let overwritten = false
+  external = r => ({ version: 1, ok: true, result: r.operation === 'inspect'
+    ? { owner: 'o', repo: 'r', ref: null, sha, items: [{ kind: 'library', name: 'Shared.cs', description: 'Shared nodes.', path: 'Shared.cs', existing: [{ id: 'shared', revision: 1, name: 'Shared.cs' }], problem: null }] }
+    : (overwritten = true, { owner: 'o', repo: 'r', sha, items: [{ kind: 'library', name: 'Shared.cs', path: 'Shared.cs', outcome: 'overwritten', id: 'shared', enabled: null, message: null }],
+      libraries: { saved: true, documents: [], generation: 'g2', catalog: rich.catalog, automations: [] } }) })
+  // Once imported, the list has the overwritten file at its next revision.
+  mount(false, (r, result) => r.operation === 'list' && overwritten
+    ? { ...result, generation: 'g2', documents: result.documents.map((d: any) => d.id === 'shared' ? { ...d, revision: 2, source: 'public class Imported {}' } : d) } : result)
+  await vi.advanceTimersByTimeAsync(900)
+  editors[0].change('draft main'); await vi.advanceTimersByTimeAsync(900)
+  button('Add external').click(); await vi.advanceTimersByTimeAsync(0)
+  const dialog = [...host.querySelectorAll('dialog')].find(d => d.open)!
+  expect(dialog.querySelector('h2')?.textContent).toBe('Add external')
+  const url = [...dialog.querySelectorAll('label')].find(l => l.textContent === 'Repository URL')!.control as HTMLInputElement
+  url.value = 'https://github.com/o/r'; url.dispatchEvent(new Event('input', { bubbles: true }))
+  button('Inspect').click(); await vi.advanceTimersByTimeAsync(0)
+  const box = [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(b => b.labels?.[0]?.textContent?.trim() === 'Shared.cs')!
+  expect(box.checked).toBe(false)
+  box.click(); await vi.advanceTimersByTimeAsync(0)
+  const lists = requests.filter(r => r.operation === 'list').length
+  button('Import').click(); await vi.advanceTimersByTimeAsync(900)
+  expect(requests.find(r => r.operation === 'import')?.picks).toEqual([{ kind: 'library', path: 'Shared.cs', mode: 'overwrite', target: 'shared', expectedRevision: 1 }])
+  expect(dialog.textContent).toContain('Shared.cs: overwritten')
+  expect(requests.filter(r => r.operation === 'list').length).toBeGreaterThan(lists)
+  // As after a save made elsewhere: the draft is kept, and its file is marked.
+  const file = [...host.querySelectorAll('[aria-label="Library files"] button')].find(b => b.querySelector('span')?.textContent === 'Shared.cs')!
+  expect(file.querySelector('[aria-label="Revision conflict"]')).not.toBeNull()
+  expect(editors[0].getModel().getValue()).toBe('draft main')
 })

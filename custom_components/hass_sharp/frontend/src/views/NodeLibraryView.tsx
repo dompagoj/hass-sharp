@@ -7,6 +7,7 @@ import { Editor } from '../components/Editor/Editor'
 import { libraryApi, type LibraryDefinition, type LibraryRange } from '../visual/library-api'
 import { createLibrarySession } from '../visual/library-session'
 import { LibraryPreview } from '../visual/LibraryPreview'
+import { AddExternalDialog } from '../external/AddExternalDialog'
 import { errorWarningCounts, plural } from '../utils'
 
 export const NodeLibraryView = () => {
@@ -46,6 +47,7 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
   const session = createLibrarySession(libraryApi(hass))
   const [fullScreen, setFullScreen] = createSignal(false)
   const [newFile, setNewFile] = createSignal(false)
+  const [external, setExternal] = createSignal(false)
   const [newName, setNewName] = createSignal('Nodes.cs')
   const [confirm, setConfirm] = createSignal<'delete' | 'reload'>()
   let navigateRange: ((range: LibraryRange) => void) | undefined
@@ -109,7 +111,7 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
     <div class="hs-library-layout">
       <aside class="hs-library-files" aria-label="Library files"><h2>Files</h2><ul><For each={session.files()}>{file => <li><button type="button" classList={{ 'hs-library-file--selected': file.id === session.selectedId() }} aria-current={file.id === session.selectedId() ? 'page' : undefined} onClick={() => session.select(file.id)}>
         <span>{file.name}</span><Show when={session.dirtyFile(file)}><span class="hs-library-dirty" aria-label="Unsaved changes">●</span></Show><Show when={file.conflict}><span aria-label="Revision conflict">!</span></Show>
-      </button></li>}</For></ul><Button onClick={() => { setNewName('Nodes.cs'); setNewFile(true) }}><Icon name="plus" />Add file</Button><Show when={session.dirty()}><Button onClick={download}>Download drafts</Button></Show></aside>
+      </button></li>}</For></ul><Button onClick={() => { setNewName('Nodes.cs'); setNewFile(true) }}><Icon name="plus" />Add file</Button><Button onClick={() => setExternal(true)}>Add external</Button><Show when={session.dirty()}><Button onClick={download}>Download drafts</Button></Show></aside>
       <main class="hs-library-source"><Show when={session.selected()} fallback={<div class="hs-empty-state"><h2>Create your first node library</h2><p>Add a file to define types, helpers and reusable nodes.</p><Button onClick={() => session.create()}>Create Nodes.cs</Button></div>}>
         <div class="hs-library-file-toolbar"><label>File name<input class="hs-input" aria-label="Library file name" value={session.selected()!.name} maxLength={120} onInput={e => session.rename(e.currentTarget.value)} /></label>
           <span class="hs-muted">{session.selected()!.revision ? `Revision ${session.selected()!.revision}` : 'New file'}{session.dirtyFile(session.selected()!) ? ' · Unsaved' : ' · Saved'}</span>
@@ -135,6 +137,8 @@ const LibraryWorkspace = (props: LibraryWorkspaceProps) => {
       }}</For></ul>
     </section>
     <p class="hs-muted hs-library-persistence">Saving checks every saved visual automation and entity definition, and rebuilds each at its next revision. Those that are on run the rebuilt version. Running invocations keep their prepared source snapshot. Unsaved files are used together for previews; save each file to publish it.</p>
+    {/* An import is a save made elsewhere: the list is read again, and a draft of a file it overwrote is kept and marked. */}
+    <AddExternalDialog open={external()} onClose={() => setExternal(false)} onImported={() => void session.refresh()} />
     <Dialog open={newFile()} title="Add library file" onClose={() => setNewFile(false)} footer={<><Button onClick={() => setNewFile(false)}>Cancel</Button><Button variant="primary" disabled={!newName().trim() || /[\/\\\0\r\n]/.test(newName())} onClick={() => { session.create(newName()); setNewFile(false) }}>Create file</Button></>}><label>File name<input class="hs-input" autofocus value={newName()} maxLength={120} onInput={e => setNewName(e.currentTarget.value)} /></label></Dialog>
     <Dialog open={!!confirm()} title={confirm() === 'delete' ? 'Delete library file?' : 'Reload library file?'} onClose={() => setConfirm(undefined)} footer={<><Button onClick={() => setConfirm(undefined)}>Keep editing</Button><Button variant="danger" onClick={() => { const action = confirm(); setConfirm(undefined); if (action === 'delete') void session.remove(); else if (session.selectedId()) void session.reload(session.selectedId()!) }}>{confirm() === 'delete' ? 'Delete file' : 'Discard draft and reload'}</Button></>}><p>{session.selected()?.name}: {confirm() === 'delete' ? 'Delete this file and discard its draft. Saved automations and entity definitions that use it must still compile without it, or it is not deleted.' : 'Discard this file’s draft and load the current saved revision. Other files keep their unsaved changes.'}</p></Dialog>
   </section>

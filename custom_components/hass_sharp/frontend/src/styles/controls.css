@@ -38,6 +38,17 @@
 .hs-app .hs-dialog-body p + p { margin-top: 8px; }
 .hs-app .hs-dialog-footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--hs-line); }
 .hs-app .hs-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Add external: the warning, the repository, its items in groups, and the result. */
+.hs-app .hs-external { display: flex; flex-direction: column; gap: 16px; }
+.hs-app .hs-external .hs-notice { margin: 0; }
+.hs-app .hs-external__warning { color: var(--hs-warning); background: color-mix(in srgb, var(--hs-warning) 8%, var(--hs-surface)); }
+.hs-app .hs-external__group h3 { font-size: 14px; margin-bottom: 8px; }
+.hs-app .hs-external__items, .hs-app .hs-external__result { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-external__item { display: grid; gap: 6px; min-width: 0; padding: 12px; border: 1px solid var(--hs-line); border-radius: 10px; }
+.hs-app .hs-external__item p { margin: 0; }
+.hs-app .hs-external__item a { justify-self: start; }
+.hs-app .hs-external__pick { display: flex; align-items: center; gap: 10px; min-height: 32px; font-weight: 650; overflow-wrap: anywhere; }
+.hs-app .hs-external__pick input { width: 18px; height: 18px; flex: none; margin: 0; accent-color: var(--hs-action); }
 .hs-app .hs-tabs { display: flex; gap: 24px; }
 .hs-app .hs-tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--hs-muted); padding: 12px 0; font-weight: 650; min-height: 44px; }
 .hs-app .hs-tabs button[aria-selected="true"] { border-color: var(--hs-accent); color: var(--hs-accent); }

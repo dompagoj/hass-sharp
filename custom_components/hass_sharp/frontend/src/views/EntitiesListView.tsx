@@ -12,6 +12,7 @@ import { DefinitionCard, definitionPollInterval, definitionsSummary, noteStartin
 import { DeleteDefinitionDialog } from '../entities/DeleteDefinition'
 import { liveState } from '../entities/liveState'
 import type { HomeDefinition } from '../entities/model'
+import { AddExternalDialog } from '../external/AddExternalDialog'
 
 const byName = (a: HomeDefinition, b: HomeDefinition) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id)
 
@@ -85,6 +86,9 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
     navigate(`/entities/new?name=${encodeURIComponent(wanted)}`)
   }
 
+  // ---- Add external (administrators): what it imports is listed once the list is read again.
+  const [externalOpen, setExternalOpen] = createSignal(false)
+
   // ---- On/off: shown at once (on is "Starting" until the list is read again), put back with a message on failure.
   const [toggling, setToggling] = createSignal<ReadonlySet<string>>(new Set())
   const show = (id: string, change: (item: HomeDefinition) => HomeDefinition) =>
@@ -153,6 +157,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
           <Show when={home.isSuccess && definitionsSummary(items())}><p class="hs-muted hs-home-summary">{definitionsSummary(items())}</p></Show>
         </div>
         <div class="hs-home-heading__actions">
+          <Show when={admin()}><Button onClick={() => setExternalOpen(true)}>Add external</Button></Show>
           <Button variant="primary" class="hs-home-new" onClick={() => openNew()}><Icon name="plus" />New entity definition</Button>
         </div>
       </header>
@@ -235,6 +240,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
             hint="You can change it in the editor." onInput={event => setName(event.currentTarget.value)} />
         </form>
       </Dialog>
+      <AddExternalDialog open={externalOpen()} onClose={() => setExternalOpen(false)} onImported={() => void refresh()} />
       <DeleteDefinitionDialog open={!!deleteItem()} name={deleteItem()?.name ?? ''} deleting={deleting()}
         error={deleteError() && <>
           {deleteError()!.text}

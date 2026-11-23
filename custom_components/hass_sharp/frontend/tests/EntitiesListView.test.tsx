@@ -22,10 +22,10 @@ type Fixture = ReturnType<typeof visualFixture>
 type Subscription = { message: any; push(event: unknown): void; unsubscribe: ReturnType<typeof vi.fn> }
 
 /**
- * The list at `/entities` over a new in-memory backend. `hold` delays the replies to these operations until released;
+ * The list at `/entities` over a new in-memory backend. `external` answers `hass_sharp/external`. `hold` delays the replies to these operations until released;
  * `refuse` makes Home Assistant refuse every entity request with that `{code, message}`.
  */
-function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string } } = {}) {
+function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void; hold?: string[]; refuse?: { code: string; message: string }; external?: (request: any) => unknown } = {}) {
   const root = document.createElement('div'); root.className = 'hs-app'; document.body.append(root)
   const fixture = visualFixture()
   options.prepare?.(fixture)
@@ -33,6 +33,7 @@ function setup(options: { admin?: boolean; prepare?: (fixture: Fixture) => void;
   const release = () => held.splice(0).forEach(go => go())
   const control = { refuse: options.refuse }
   const callWS = async (message: any) => {
+    if (message.type === 'hass_sharp/external') return options.external!(message.request)
     if (message.type === 'hass_sharp/entities' && control.refuse) throw control.refuse
     if (options.hold?.includes(message.request?.operation)) await new Promise<void>(go => held.push(go))
     return fixture.callWS(message)
@@ -759,4 +760,31 @@ it('lays out for 360 px: one column of cards, entity rows that wrap', async () =
   expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i)
   for (const selector of ['.hs-home-grid', '.hs-home-card', '.hs-home-card__title', '.hs-ent-row', '.hs-ent-row__id'])
     expect(root.querySelector(selector), selector).not.toBeNull()
+})
+
+it('offers Add external to an administrator, and reads the list again after an import', async () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567'
+  const external = vi.fn((request: any) => ({ version: 1, ok: true, result: request.operation === 'inspect'
+    ? { owner: 'o', repo: 'r', ref: null, sha, items: [{ kind: 'entity', name: 'Front door people', description: '', path: 'nodes/front_door_people.json', existing: [], problem: null }] }
+    : { owner: 'o', repo: 'r', sha, libraries: null, items: [{ kind: 'entity', name: 'Front door people', path: 'nodes/front_door_people.json', outcome: 'imported', id: 'front_door_people', enabled: false, message: null }] } }))
+  const { root, fixture } = setup({ prepare: three, external })
+  await loaded(root)
+  const before = requests(fixture, 'list').length
+  button(root, 'Add external').click()
+  const dialog = [...root.querySelectorAll('dialog')].find(d => d.open)!
+  expect(dialog.querySelector('h2')?.textContent).toBe('Add external')
+  type([...dialog.querySelectorAll('label')].find(l => l.textContent === 'Repository URL')!.control as HTMLInputElement, 'https://github.com/o/r')
+  button(dialog, 'Inspect').click()
+  await vi.waitFor(() => expect(dialog.querySelector('section h3')?.textContent).toBe('Entity definitions'))
+  button(dialog, 'Import').click()
+  await vi.waitFor(() => expect(dialog.textContent).toContain('Front door people: imported, turned off'))
+  expect(external.mock.calls.map(([request]) => request.operation)).toEqual(['inspect', 'import'])
+  await vi.waitFor(() => expect(requests(fixture, 'list').length).toBeGreaterThan(before))
+  expect(requests(fixture, 'list').at(-1)).toMatchObject({ operation: 'list', view: 'home' })
+  dispose?.(); document.body.innerHTML = ''
+
+  const user = setup({ admin: false, prepare: three })
+  await loaded(user.root)
+  expect([...user.root.querySelectorAll('button')].some(b => b.textContent?.trim() === 'Add external')).toBe(false)
+  expect(button(user.root, 'New entity definition')).toBeDefined()
 })

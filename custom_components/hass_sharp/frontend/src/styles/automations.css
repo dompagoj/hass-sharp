@@ -88,6 +88,7 @@
 
 @media (max-width: 700px) {
   .hs-app .hs-home-heading { align-items: stretch; flex-direction: column; gap: 16px; }
+  .hs-app .hs-home-heading__actions { flex-wrap: wrap; }
   .hs-app .hs-home-heading__actions .hs-home-new { flex: 1; }
   .hs-app .hs-home-search { flex-basis: 100%; max-width: none; }
   .hs-app .hs-home-sort { flex-direction: row; align-items: center; margin-left: 0; }
