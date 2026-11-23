@@ -949,15 +949,17 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   const ports = Object.assign(Object.create(null), Object.fromEntries(Object.entries(spec?.inputs ?? {}).map(([key, value]) => [key, { ...value, ...(value.types.includes('$properties') ? { wireOnly: true } : {}), types: value.types.flatMap(t => t === '$any' ? valueTypes(catalog) : t === '$properties' ? withProperties(catalog) : [configuredType(t, node)]) }]))) as Record<string, InputSpec>
   if (node.kind === 'foreach' && ports.items) ports.items.types = ['array', ...Object.entries(catalog.types).filter(([, type]) => !type.nullable && type.elementType && isAssignable(type.elementType, text(node.config.itemType), catalog)).map(([id]) => id)]
   // Every type a value can have, for an object's field, an unknown service field and a list's item: none is structural.
-  const types = valueTypes(catalog)
+  // Worked out only for a node that has such a port.
+  let anyTypes: string[] | undefined
+  const types = () => (anyTypes ??= valueTypes(catalog))
   const dynamic = spec?.dynamicInputs
-  if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types, required: true, label: key, description: `Field ${key}` }
+  if (dynamic === 'fields' && record(node.config.fields)) for (const key of Object.keys(node.config.fields)) ports[`field:${key}`] = { types: types(), required: true, label: key, description: `Field ${key}` }
   if (dynamic === 'service') {
     // Ports are the keys of config.fields (D3); a known service only refines their types and the target's.
     const schema = serviceSchema(node, catalog)
     if (record(node.config.fields)) for (const key of Object.keys(node.config.fields)) {
       const field = schema && record(schema.fields) && Object.hasOwn(schema.fields, key) ? schema.fields[key] : undefined
-      ports[`field:${key}`] = record(field) ? serviceFieldInput(key, field, catalog) : { types, required: false, label: key }
+      ports[`field:${key}`] = record(field) ? serviceFieldInput(key, field, catalog) : { types: types(), required: false, label: key }
     }
     if (schema && ports.target) {
       const domains = serviceTargetDomains(schema)
@@ -967,7 +969,7 @@ export function dataInputs(node: GraphNode, loopOwner?: GraphNode, catalog: Visu
   if (dynamic === 'custom') Object.assign(ports, structuredClone(customSignature(node, catalog)?.inputs ?? {}))
   // A class node's settings follow its kind's own pins, in the class's order.
   if (dynamic === 'settings') for (const setting of classSignature(node, catalog)?.settings ?? []) ports[setting.key] = settingInput(setting)
-  if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types, required: true, label: `Item ${i + 1}`, description: `Item ${i + 1}` } })
+  if (dynamic === 'items' && Array.isArray(node.config.items)) node.config.items.forEach((_, i) => { ports[`item:${i}`] = { types: types(), required: true, label: `Item ${i + 1}`, description: `Item ${i + 1}` } })
   if (dynamic === 'loop' && loopOwner) for (const key of ['carry', 'exports'] as const) for (const item of declarations(loopOwner, key)) {
     if (typeof item.name !== 'string' || typeof item.type !== 'string') continue
     ports[`${key === 'carry' ? 'carry' : 'export'}:${item.name}`] = { types: [item.type], required: false, label: item.name, description: `New value for ${item.name}` }
@@ -2310,6 +2312,19 @@ function prefilled(kind: string, spec: NodeSpec, catalog: VisualCatalogSnapshot)
   const settings = Object.hasOwn(spec.config, 'key') ? definitionSettings(catalog) : []
   return settings.length === 1 ? { key: settings[0].key } : {}
 }
+/**
+ * The diagnostics an unchanged graph already has under a catalog, each as its full JSON, which connectData compares a
+ * wired graph's against. Kept per graph object and per catalog object, as the connection index is: a graph is an
+ * immutable snapshot, so every wire weighed on one validates it once (a hover's fallback, then the drop).
+ */
+const existingDiagnostics = new WeakMap<Graph, WeakMap<VisualCatalogSnapshot, ReadonlySet<string>>>()
+function diagnosticsBefore(graph: Graph, catalog: VisualCatalogSnapshot): ReadonlySet<string> {
+  let byCatalog = existingDiagnostics.get(graph)
+  if (!byCatalog) existingDiagnostics.set(graph, (byCatalog = new WeakMap()))
+  let known = byCatalog.get(catalog)
+  if (!known) byCatalog.set(catalog, (known = new Set(validateGraph(graph, catalog).map(e => JSON.stringify(e)))))
+  return known
+}
 /** Returns a new immutable graph; the caller records that graph as one undo entry. */
 export function connectData(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
   if (graph.version !== catalog.graphVersion) throw new Error(`Only graph version ${catalog.graphVersion} is supported`)
@@ -2320,7 +2335,7 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   for (let suffix = 2; next.edges.some(e => e.id === id); suffix++) id = `${base}#${suffix}`
   next.edges.push({ id, kind: 'data', source, target, sourcePort, targetPort })
   setInput(node, targetPort, { kind: 'unset' }, catalog)
-  const old = validateGraph(graph, catalog).map(e => JSON.stringify(e))
+  const old = diagnosticsBefore(graph, catalog)
   // A connection is refused only for a problem it causes: a new diagnostic (new by its full content, message
   // included), or any diagnostic on the input it fills or about the output it reads (one with no inputId: an input
   // of the same name as the output is another pin). A blocking diagnostic the graph already has is no reason. A cycle diagnostic names the
@@ -2338,7 +2353,7 @@ export function connectData(graph: Graph, source: string, sourcePort: string, ta
   // wire into its Device pin, and so in need of a name, is not the new wire's problem either: a wire the Device pin takes
   // comes from a Device node, so the entity is left with none only by one refused for its type, which is refused for that
   // alone (as the connection index says). Only that entity's name is passed over, and only for a wire into its Device pin.
-  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && !(e.code === 'entity.name' && e.nodeId === target && targetPort === 'device') && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.includes(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
+  const addedErrors = after.diagnostics.filter(e => !e.code?.startsWith('cycle.') && e.code !== 'pure.unused' && e.code !== 'device.empty' && !(e.code === 'entity.name' && e.nodeId === target && targetPort === 'device') && e.code !== 'state.dynamicSource' && e.code !== 'entity.partialState' && (!old.has(JSON.stringify(e)) && !(e.code?.startsWith('property.') && !(e.nodeId === target && e.inputId === targetPort)) ||
     (e.nodeId === target && (e.inputId === targetPort || e.portId === targetPort)) ||
     (e.nodeId === source && e.portId === sourcePort && e.inputId === undefined)))
   const messages = addedErrors.map(e => e.message)

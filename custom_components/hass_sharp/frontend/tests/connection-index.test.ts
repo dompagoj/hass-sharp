@@ -31,9 +31,9 @@ function patched(patch: Record<string, unknown>): VisualCatalogSnapshot {
  * had no type; this check copied that pre-check, so the two agreed on refusing a wire connectData accepts (live defect
  * D1). It now has none: only connectData says whether a wire fits.
  */
-function fullCheck(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot) {
+function fullCheck(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot,
+  types = contract.withGraphTypes(catalog, graph)) {
   const from = graph.nodes.find(n => n.id === source)!, to = graph.nodes.find(n => n.id === target)!
-  const types = contract.withGraphTypes(catalog, graph)
   if (!contract.dataOutputs(from, types)[sourcePort] || !nodeInputs(graph, to, types)[targetPort]) return 'Unknown data port'
   try { contract.connectData(graph, source, sourcePort, target, targetPort, catalog) } catch (error) { return (error as Error).message }
 }
@@ -64,7 +64,7 @@ function agree(name: string, value: unknown, catalog: VisualCatalogSnapshot, tot
   const types = contract.withGraphTypes(catalog, graph)
   for (const source of wellFormed) for (const sourcePort of Object.keys(contract.dataOutputs(source, types)))
     for (const target of wellFormed) for (const targetPort of Object.keys(nodeInputs(graph, target, types))) {
-      const expected = fullCheck(graph, source.id, sourcePort, target.id, targetPort, catalog)
+      const expected = fullCheck(graph, source.id, sourcePort, target.id, targetPort, catalog, types)
       const actual = dataConnectionError(graph, source.id, sourcePort, target.id, targetPort, catalog, { quick: true })
       const label = `${name}: ${source.id}.${sourcePort} -> ${target.id}.${targetPort}`
       expect(actual === undefined, `${label}\nfull: ${expected}\nquick: ${actual}`).toBe(expected === undefined)
