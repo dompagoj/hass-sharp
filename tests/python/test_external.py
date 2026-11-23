@@ -4,7 +4,6 @@ import importlib.util
 import json
 import os
 import pathlib
-import re
 import unittest
 from types import SimpleNamespace as NS
 from urllib.parse import unquote
@@ -22,10 +21,8 @@ LIMIT = 'GitHub refused the request: it allows 60 requests an hour without signi
 
 
 def spec_manifest() -> str:
-    """hass-sharp-vision's manifest, as the design's section 6 quotes it."""
-    text = (ROOT / 'docs/superpowers/specs/2026-11-22-face-detection-external-import-design.md').read_text()
-    section = text.split('### 6. Manifest', 1)[1]
-    return re.search(r'```toml\n(.*?)```', section, re.S).group(1)
+    """hass-sharp-vision's manifest, as tests/fixtures/hass_sharp.toml copies it (the docs quote the same text)."""
+    return (ROOT / 'tests/fixtures/hass_sharp.toml').read_text(encoding='utf-8')
 
 
 def error(test, code, call):
@@ -74,11 +71,14 @@ class Resolving(unittest.TestCase):
 
     def test_resolve_ref(self):
         sha = '0123456789abcdef0123456789abcdef01234567'
-        github, asked = self.github(('{"sha": "%s", "commit": {}}' % sha).encode())
+        # GitHub answers the bare sha for this media type (40 bytes), not the commit with every file's patch.
+        github, asked = self.github(sha.encode())
         self.assertEqual(run(github.resolve(x.Repo('o', 'r', 'feature/x'))), sha)
         self.assertEqual(run(github.resolve(x.Repo('o', 'r', None))), sha)
-        self.assertEqual(asked, [('https://api.github.com/repos/o/r/commits/feature/x', 'application/vnd.github+json'),
-                                 ('https://api.github.com/repos/o/r/commits/HEAD', 'application/vnd.github+json')])
+        self.assertEqual(asked, [('https://api.github.com/repos/o/r/commits/feature/x', 'application/vnd.github.sha'),
+                                 ('https://api.github.com/repos/o/r/commits/HEAD', 'application/vnd.github.sha')])
+        github, _ = self.github(f' {sha}\n'.encode())
+        self.assertEqual(run(github.resolve(x.Repo('o', 'r', None))), sha)
 
         for status in (404, 422):
             github, _ = self.github(x.HttpStatus(status))
@@ -94,7 +94,7 @@ class Resolving(unittest.TestCase):
             self.assertEqual(error(self, 'fetch', lambda: run(github.resolve(x.Repo('o', 'r', None)))), LIMIT)
         github, _ = self.github(x.HttpStatus(500))
         self.assertTrue(error(self, 'fetch', lambda: run(github.resolve(x.Repo('o', 'r', None)))).startswith('Could not reach GitHub: '))
-        for body in (b'{"sha": "abc"}', b'{"sha": "%s"}' % (b'A' * 40), b'[]', b'not json', b'{}'):
+        for body in (b'abc', b'A' * 40, b'{"sha": "%s"}' % sha.encode(), sha.encode() + b'0', b'', b'\xff' * 40):
             github, _ = self.github(body)
             self.assertTrue(error(self, 'fetch', lambda: run(github.resolve(x.Repo('o', 'r', None)))).startswith('Could not reach GitHub: '), body)
 
@@ -108,8 +108,14 @@ class Resolving(unittest.TestCase):
         with self.assertRaises(x.HttpStatus) as raised:
             run(github.file('o', 'r', SHA, 'nodes/Vision.cs'))
         self.assertEqual(raised.exception.status, 404)
-        github, _ = self.github(x.HttpStatus(429))
-        self.assertEqual(error(self, 'fetch', lambda: run(github.file('o', 'r', SHA, 'a.cs'))), LIMIT)
+        # The raw host's refusal is not the API's limit of 60 requests an hour.
+        for status in (403, 429):
+            github, _ = self.github(x.HttpStatus(status))
+            self.assertEqual(error(self, 'fetch', lambda: run(github.file('o', 'r', SHA, 'nodes/a.cs'))),
+                             'GitHub refused to send nodes/a.cs: try again later')
+        github, _ = self.github(x.HttpStatus(500))
+        self.assertEqual(error(self, 'fetch', lambda: run(github.file('o', 'r', SHA, 'a.cs'))),
+                         'Could not reach GitHub: it answered with HTTP status 500')
 
 
 class Manifest(unittest.TestCase):
@@ -438,7 +444,7 @@ class Repository:
                       'nodes/front_door_people.json': json.dumps(people_file()),
                       'nodes/faces.json': json.dumps({'name': 'Faces', 'logic': {'kind': 'graph', 'graph': FACES_GRAPH}}),
                       **(files or {})}
-        self.api = api if api is not None else json.dumps({'sha': REPO_SHA, 'commit': {}})
+        self.api = api if api is not None else REPO_SHA
         self.asked = []
         self.github = x.GitHub(self.fetch)
 
@@ -561,6 +567,9 @@ class Inspecting(unittest.TestCase):
             (Repository(files={'hass_sharp.toml': 'x' * (x.CAP + 1)}), 'fetch', 'hass_sharp.toml is larger than 2 MiB'),
             (Repository(files={'nodes/Vision.cs': x.ExternalError('fetch', 'Could not reach GitHub: it did not answer in time')}),
              'fetch', 'Could not reach GitHub: it did not answer in time'),
+            # The raw host refusing a file is not the API's limit, and it refuses the whole inspect.
+            (Repository(files={'hass_sharp.toml': x.HttpStatus(429)}), 'fetch', 'GitHub refused to send hass_sharp.toml: try again later'),
+            (Repository(files={'nodes/Vision.cs': x.HttpStatus(403)}), 'fetch', 'GitHub refused to send nodes/Vision.cs: try again later'),
         )
         for repo, code, message in cases:
             backend = Backend()
@@ -605,7 +614,9 @@ class Importing(unittest.TestCase):
             outcome('library', 'PeopleDetector.cs', 'nodes/PeopleDetector.cs', 'imported', 'people_detector'),
             outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'imported', 'front_door_people', False)])
         self.assertEqual((answer['owner'], answer['repo'], answer['sha']), ('o', 'r', REPO_SHA))
-        self.assertEqual(answer['libraries']['documents'][0]['id'], 'vision')
+        # Of .NET's answer only what the panel uses: the generation and where each file is stored.
+        self.assertEqual(answer['libraries'], {'generation': 'g2', 'documents': [
+            {'id': 'vision', 'name': 'Vision.cs', 'revision': 1}, {'id': 'people_detector', 'name': 'PeopleDetector.cs', 'revision': 1}]})
 
     def test_kinds_follow_the_library_actually_used(self):
         stored = [{'id': 'library-1234', 'name': 'Vision.cs', 'revision': 4}]
@@ -785,32 +796,84 @@ class Importing(unittest.TestCase):
         self.assertEqual(node['config']['arguments']['Camera'], {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'})
         self.assertEqual({k: v for k, v in node.items() if k != 'config'}, {'id': 'front_door', 'kind': 'csharp_device', 'position': {'x': 0, 'y': 0}})
 
-        imported = graph(device_node())
+        tuned = device_node('camera.porch', settings=[*device_node()['config']['signature']['settings'],
+                                                      {'key': 'CheckEvery', 'type': 'number'}, {'key': 'FaceScore', 'type': 'number'}],
+                            arguments={'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'},
+                                       'CheckEvery': {'kind': 'literal', 'type': 'number', 'value': 2.5},
+                                       'FaceScore': {'kind': 'literal', 'type': 'number', 'value': 0.8}})
+        file_settings = tuned['config']['signature']['settings']
+        imported = graph(device_node(settings=file_settings))
         before = copy.deepcopy(imported)
-        camera = lambda g: g['nodes'][0]['config']['arguments'].get('Camera', {}).get('value')
-        self.assertEqual(camera(x.keep_device_inputs(imported, graph(device_node('camera.porch')))), 'camera.porch')
+        arguments = lambda g: g['nodes'][0]['config'].get('arguments')
+        camera = lambda g: (arguments(g) or {}).get('Camera', {}).get('value')
+        # A value tuned in the stored node that the file does not set is kept, beside the camera.
+        self.assertEqual(arguments(x.keep_device_inputs(imported, graph(tuned))), tuned['config']['arguments'])
         self.assertEqual(imported, before)
-        # A setting of another type or domain, a node of another kind or id, or a setting the imported node does not have.
-        retyped = device_node('camera.porch', setting_type='string')
-        other_domain = device_node('camera.porch', settings=[{'key': 'Camera', 'type': 'entity', 'domain': 'image'}])
-        other_kind = device_node('camera.porch', kind='csharp_entity')
-        other_id = {**device_node('camera.porch'), 'id': 'back_door'}
-        for existing in (retyped, other_domain, other_kind, other_id):
-            self.assertEqual(camera(x.keep_device_inputs(imported, graph(existing))), 'camera.front_door', existing)
-        self.assertEqual(camera(x.keep_device_inputs(graph(device_node(settings=[])), graph(device_node('camera.porch')))), 'camera.front_door')
-        # An argument only the stored node has is not added.
-        both = device_node('camera.porch', settings=[device_node()['config']['signature']['settings'][0],
-                                                     {'key': 'Interval', 'type': 'integer'}],
-                           arguments={'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'},
-                                      'Interval': {'kind': 'literal', 'type': 'integer', 'value': 9}})
-        kept = x.keep_device_inputs(imported, graph(both))
-        self.assertEqual(kept['nodes'][0]['config']['arguments'],
-                         {'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'}})
+        # A file's node without a signature is taken to have the stored node's settings: the camera and the rest are kept.
+        unsigned = device_node()
+        del unsigned['config']['signature']
+        self.assertEqual(arguments(x.keep_device_inputs(graph(unsigned), graph(tuned))), tuned['config']['arguments'])
+        bare = device_node(arguments={})
+        del bare['config']['signature'], bare['config']['arguments']
+        self.assertEqual(arguments(x.keep_device_inputs(graph(bare), graph(tuned))), tuned['config']['arguments'])
+        # A setting of another type or domain in the file's signature than in the stored one's, or one the file's
+        # signature does not have, is the file's.
+        for settings in ([{**file_settings[0], 'type': 'string'}, *file_settings[1:]],
+                         [{**file_settings[0], 'domain': 'image'}, *file_settings[1:]],
+                         file_settings[1:]):
+            kept = x.keep_device_inputs(graph(device_node(settings=settings)), graph(tuned))
+            self.assertEqual(camera(kept), 'camera.front_door', settings)
+            self.assertEqual(arguments(kept)['CheckEvery']['value'], 2.5)
+        for existing in (device_node('camera.porch', setting_type='string'),
+                         device_node('camera.porch', settings=[{'key': 'Camera', 'type': 'entity', 'domain': 'image'}])):
+            self.assertEqual(camera(x.keep_device_inputs(graph(device_node()), graph(existing))), 'camera.front_door', existing)
+        # A pin the imported graph wires is filled by that edge, not by the stored value.
+        wired = graph(device_node(settings=file_settings, arguments={'Camera': {'kind': 'unset'}}), {'id': 'pick', 'kind': 'setting', 'config': {'key': 'camera'}})
+        wired['edges'] = [{'id': 'e', 'kind': 'data', 'source': 'pick', 'sourcePort': 'value', 'target': 'front_door', 'targetPort': 'Camera'}]
+        kept = x.keep_device_inputs(wired, graph(tuned))
+        self.assertEqual(arguments(kept)['Camera'], {'kind': 'unset'})
+        self.assertEqual(arguments(kept)['FaceScore']['value'], 0.8)
+        # A stored node of another kind or id keeps nothing.
+        for existing in ({**tuned, 'kind': 'csharp_entity'}, {**tuned, 'id': 'back_door'}):
+            self.assertEqual(arguments(x.keep_device_inputs(imported, graph(existing))), {'Camera': before['nodes'][0]['config']['arguments']['Camera']}, existing['id'])
+        # A stored argument other than a typed value (here one cleared) is kept only where the file sets it too.
+        cleared = {**tuned, 'config': {**tuned['config'], 'arguments': {'Camera': {'kind': 'unset'}, 'FaceScore': {'kind': 'unset'}}}}
+        self.assertEqual(arguments(x.keep_device_inputs(imported, graph(cleared))), {'Camera': {'kind': 'unset'}})
         # A C# entity's typed settings are kept alike; graphs of other shapes are taken as they come.
         entity = device_node(kind='csharp_entity')
         self.assertEqual(camera(x.keep_device_inputs(graph(entity), graph(device_node('camera.porch', kind='csharp_entity')))), 'camera.porch')
         self.assertEqual(x.keep_device_inputs(imported, {}), imported)
         self.assertEqual(x.keep_device_inputs({'nodes': [3, {'id': 'front_door'}]}, graph(device_node())), {'nodes': [3, {'id': 'front_door'}]})
+        self.assertEqual(x.keep_device_inputs(graph(bare), graph(device_node(arguments={}))), graph(bare))
+
+    def test_an_entity_that_raises_still_gets_its_line(self):
+        # An exception (not a refusal) after the libraries are stored: that entity fails, the next is still imported.
+        class Raising(Backend):
+            async def save_definition(self, request):
+                if request['id'] == 'front_door_people':
+                    self.calls.append(('save', copy.deepcopy(request)))
+                    raise RuntimeError('The .NET call was interrupted')
+                return await super().save_definition(request)
+        backend = Raising()
+        with self.assertLogs('custom_components.HassSharp.external', 'ERROR') as logged:
+            answer, _, backend = self.importing([pick('nodes/Vision.cs'), pick('nodes/front_door_people.json'), pick('nodes/faces.json')],
+                                                backend=backend)
+        self.assertEqual(answer['items'], [
+            outcome('library', 'Vision.cs', 'nodes/Vision.cs', 'imported', 'vision'),
+            outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'failed', message='Not imported: The .NET call was interrupted'),
+            outcome('entity', 'Faces at the door', 'nodes/faces.json', 'imported', 'faces_at_the_door', False)])
+        self.assertEqual(answer['libraries']['documents'], [{'id': 'vision', 'name': 'Vision.cs', 'revision': 1}])
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'import', 'save', 'save'])
+        self.assertIn('nodes/front_door_people.json', logged.output[0])
+
+        class Unreadable(Backend):
+            async def read_definition(self, id):
+                raise KeyError('logic')
+        listed = [{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3}]
+        with self.assertLogs('custom_components.HassSharp.external', 'ERROR'):
+            answer, _, _ = self.importing([pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)],
+                                          backend=Unreadable(definitions=listed))
+        self.assertEqual((answer['items'][0]['outcome'], answer['items'][0]['message']), ('failed', "Not imported: 'logic'"))
 
     def test_new_ids_avoid_taken_and_each_other(self):
         manifest = ('[[entity]]\nname = "Front door people"\npath = "a.json"\n'
@@ -837,7 +900,9 @@ class Route(unittest.IsolatedAsyncioTestCase):
             self.dotnet.append(('library', request))
             if request['operation'] == 'list':
                 return json.dumps(ok({'documents': self.libraries, 'generation': 'g1'}))
-            return json.dumps(ok({'saved': True, 'documents': [{**l, 'revision': 1} for l in request['libraries']]}))
+            return json.dumps(ok({'saved': True, 'documents': [{'version': 1, **l, 'revision': 1} for l in request['libraries']],
+                                  'generation': 'g2', 'catalog': {'nodes': {}}, 'automations': [{'id': 'porch'}], 'invalid': [],
+                                  'definitions': [], 'invalidDefinitions': []}))
 
         def entity_request(raw):
             request = json.loads(raw)
@@ -852,7 +917,7 @@ class Route(unittest.IsolatedAsyncioTestCase):
         files = {'hass_sharp.toml': spec_manifest(), 'nodes/Vision.cs': VISION, 'nodes/PeopleDetector.cs': PEOPLE,
                  'nodes/front_door_people.json': json.dumps(people_file())}
         self.session = FakeSession({**{RAW + path: FakeResponse(body.encode()) for path, body in files.items()},
-                                    API + 'HEAD': FakeResponse(json.dumps({'sha': REPO_SHA}).encode())})
+                                    API + 'HEAD': FakeResponse(REPO_SHA.encode())})
         self.hass = NS(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
 
         async def no_trigger_problems(hass, graph):
@@ -898,6 +963,8 @@ class Route(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(errors, [])
         [(_, answer)] = results
         self.assertEqual([(i['outcome'], i['id']) for i in answer['result']['items']], [('imported', 'vision'), ('imported', 'front_door_people')])
+        # Not the sources, the catalog or the rebuilt automations: what the panel uses.
+        self.assertEqual(answer['result']['libraries'], {'generation': 'g2', 'documents': [{'id': 'vision', 'name': 'Vision.cs', 'revision': 1}]})
         self.assertEqual([(side, request['operation']) for side, request in self.dotnet],
                          [('library', 'list'), ('entity', 'list'), ('library', 'import'), ('entity', 'preview'), ('entity', 'save')])
         self.assertEqual(self.dotnet[2][1]['libraries'], [{'id': 'vision', 'name': 'Vision.cs', 'source': VISION, 'expectedRevision': 0}])

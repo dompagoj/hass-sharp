@@ -6,6 +6,7 @@ The standard library only, so tests load this file by its path without Home Assi
 """
 import copy
 import json
+import logging
 import re
 import tomllib
 import unicodedata
@@ -36,6 +37,8 @@ _EXTENSIONS = {"library": ".cs", "entity": ".json"}
 _CONFLICT = "It changed after you inspected the repository; inspect it again"
 _NOT_ATTEMPTED = "Not imported, because the node libraries were not"
 _C_SHARP_NODES = frozenset({"csharp_entity", "csharp_device"})
+# Under the integration's logger (const.py), so its level setting reaches this module's messages.
+_LOGGER = logging.getLogger("custom_components.HassSharp.external")
 
 
 class ExternalError(Exception):
@@ -338,9 +341,11 @@ def aiohttp_fetch(session, timeout) -> Fetch:
     return fetch
 
 
-def _refusal(status: int) -> ExternalError:
+def _refusal(status: int, path: str | None = None) -> ExternalError:
+    """A refused request: the API's limit for requests without signing in, or, for a file (`path`), the raw host's
+    refusal, which is not that limit."""
     if status in (403, 429):
-        return ExternalError("fetch", _LIMIT)
+        return ExternalError("fetch", _LIMIT if path is None else f"GitHub refused to send {path}: try again later")
     return ExternalError("fetch", f"Could not reach GitHub: it answered with HTTP status {status}")
 
 
@@ -355,7 +360,8 @@ class GitHub:
         name = f"{repo.owner}/{repo.repo}"
         url = f"https://api.github.com/repos/{name}/commits/{quote(repo.ref or 'HEAD', safe='/')}"
         try:
-            data = await self._fetch(url, "application/vnd.github+json")
+            # The sha alone: the whole commit, with each changed file's patch, can be larger than CAP.
+            data = await self._fetch(url, "application/vnd.github.sha")
         except HttpStatus as ex:
             if ex.status in (404, 422):
                 raise ExternalError("not_found", f"GitHub has no public repository {name}" + (
@@ -364,10 +370,10 @@ class GitHub:
                 raise ExternalError("not_found", f"GitHub's repository {name} has no commits yet") from None
             raise _refusal(ex.status) from None
         try:
-            sha = json.loads(data).get("sha")
-        except (ValueError, AttributeError):
+            sha = data.decode("ascii").strip()
+        except UnicodeDecodeError:
             sha = None
-        if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+        if sha is None or not _SHA.fullmatch(sha):
             raise ExternalError("fetch", f"Could not reach GitHub: it answered without the commit of {name}")
         return sha
 
@@ -378,7 +384,7 @@ class GitHub:
         except HttpStatus as ex:
             if ex.status == 404:
                 raise
-            raise _refusal(ex.status) from None
+            raise _refusal(ex.status, path) from None
 
 
 class Backend(Protocol):
@@ -548,12 +554,24 @@ def _nodes(graph: object) -> list[dict]:
     return [n for n in nodes if isinstance(n, dict)] if isinstance(nodes, list) else []
 
 
+def _pins_wired(graph: dict) -> set[tuple[object, object]]:
+    """The (node id, pin) of each input a data edge of the graph fills."""
+    edges = graph.get("edges") if isinstance(graph, dict) else None
+    return {(e.get("target"), e.get("targetPort")) for e in edges if isinstance(e, dict) and e.get("kind") == "data"} \
+        if isinstance(edges, list) else set()
+
+
 def keep_device_inputs(imported: dict, existing: dict) -> dict:
-    """A copy of the imported graph in which each C# entity or device node keeps the typed arguments the stored graph's
-    node of the same id and kind has, for each setting both signatures give the same type and domain. An argument the
-    imported node does not have is not added: its pin may take a Setting step instead."""
+    """A copy of the imported graph in which each C# entity or device node keeps the values typed into the stored
+    graph's node of the same id and kind: each stored literal argument whose setting has the same type and domain in
+    the imported node's signature as in the stored one's, and whose pin no edge of the imported graph fills. A file's
+    node without a signature is taken to have the stored node's settings: the save works its pins out from its code
+    again (Ruling 14) and refuses an argument that does not fit them. A stored argument of another kind, such as a value
+    cleared, is kept only where the file's node sets that argument too, and only when both signatures give its setting
+    the same type and domain."""
     graph = copy.deepcopy(imported)
     stored = {n.get("id"): n for n in _nodes(existing)}
+    wired = _pins_wired(graph)
     for node in _nodes(graph):
         before = stored.get(node.get("id"))
         if node.get("kind") not in _C_SHARP_NODES or before is None or before.get("kind") != node.get("kind"):
@@ -561,15 +579,25 @@ def keep_device_inputs(imported: dict, existing: dict) -> dict:
         config, old = node.get("config"), before.get("config")
         if not isinstance(config, dict) or not isinstance(old, dict):
             continue
-        arguments, old_arguments = config.get("arguments"), old.get("arguments")
-        if not isinstance(arguments, dict) or not isinstance(old_arguments, dict):
+        old_arguments = old.get("arguments")
+        if not isinstance(old_arguments, dict):
             continue
-        settings, old_settings = _signature_settings(config), _signature_settings(old)
-        for key in arguments:
+        arguments = config.get("arguments", {})
+        if not isinstance(arguments, dict):
+            continue
+        old_settings = _signature_settings(old)
+        has_signature = isinstance(config.get("signature"), dict)
+        settings = _signature_settings(config) if has_signature else old_settings
+        for key, value in old_arguments.items():
             setting, old_setting = settings.get(key), old_settings.get(key)
-            if (setting is not None and old_setting is not None and key in old_arguments
-                    and (setting.get("type"), setting.get("domain")) == (old_setting.get("type"), old_setting.get("domain"))):
-                arguments[key] = copy.deepcopy(old_arguments[key])
+            if setting is None or old_setting is None or (node.get("id"), key) in wired:
+                continue
+            if (setting.get("type"), setting.get("domain")) != (old_setting.get("type"), old_setting.get("domain")):
+                continue
+            literal = isinstance(value, dict) and value.get("kind") == "literal"
+            if literal or (key in arguments and has_signature):
+                arguments[key] = copy.deepcopy(value)
+                config["arguments"] = arguments
     return graph
 
 
@@ -626,13 +654,28 @@ async def import_items(github: GitHub, backend: Backend, request: dict) -> dict:
             answer["items"] = ([_outcome(item, "failed", message=message) for item, _ in library_picks]
                                + [_outcome(item, "failed", message=_NOT_ATTEMPTED) for item, _ in entity_picks])
             return answer
-        answer["libraries"] = imported.get("result")
+        answer["libraries"] = _stored_libraries(imported.get("result"))
         answer["items"] = [_outcome(item, "overwritten" if pick["mode"] == "overwrite" else "imported", used[item])
                            for item, pick in library_picks]
     taken = {d["id"] for d in definitions} | set(unreadable)
     for item, pick in entity_picks:
-        answer["items"].append(await _import_entity(backend, item, pick, contents[item], kinds, taken))
+        try:
+            outcome = await _import_entity(backend, item, pick, contents[item], kinds, taken)
+        except Exception as ex:  # noqa: BLE001 - the libraries are stored: each item still gets its line
+            _LOGGER.exception("External import of %s failed", item.path)
+            outcome = _outcome(item, "failed", message=f"Not imported: {str(ex) or type(ex).__name__}")
+        answer["items"].append(outcome)
     return answer
+
+
+def _stored_libraries(result: object) -> dict | None:
+    """What the panel uses of a library import's answer: the generation and each file where it is now stored."""
+    if not isinstance(result, dict):
+        return None
+    documents = result.get("documents")
+    return {"generation": result.get("generation"), "documents": [
+        {"id": d.get("id"), "name": d.get("name"), "revision": d.get("revision")}
+        for d in documents if isinstance(d, dict)] if isinstance(documents, list) else []}
 
 
 async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, kinds: dict[str, str], taken: set[str]) -> dict:

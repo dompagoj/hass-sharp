@@ -280,11 +280,14 @@ class DocsExamplesTests(unittest.TestCase):
     def test_the_manifest_in_the_docs_parses(self):
         # The hass_sharp.toml the node libraries guide quotes is hass-sharp-vision's (the design's section 6): it parses
         # as external.py parses a repository's, to its two libraries and its definition, and each path is one it takes.
+        # tests/fixtures/hass_sharp.toml, which the integration's tests read, is the same text byte for byte; both copy
+        # hass-sharp-vision's hass_sharp.toml.
         spec = importlib.util.spec_from_file_location("hass_sharp_external_docs", INTEGRATION / "external.py")
         external = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(external)
         block = fenced_block_after((ROOT / "docs/node-libraries.md").read_text(encoding="utf-8"),
                                    "hass-sharp-vision's manifest, for example:", "toml")
+        self.assertEqual((ROOT / "tests/fixtures/hass_sharp.toml").read_bytes(), (block + "\n").encode("utf-8"))
         items = external.parse_manifest(block.encode("utf-8"))
         self.assertEqual(items, [
             external.Item("library", "Vision.cs", "nodes/Vision.cs",

@@ -1,0 +1,16 @@
+[[library]]
+id = "vision"                                     # stored under this id when free
+name = "Vision.cs"                                # library file name in the panel
+path = "nodes/Vision.cs"
+description = "Face and person detection on a native library (YuNet and YOLOX-nano on tract), and the Detect faces node"
+
+[[library]]
+id = "people_detector"
+name = "PeopleDetector.cs"
+path = "nodes/PeopleDetector.cs"
+description = "People detector: a device that watches a camera and reports faces and people seen"
+
+[[entity]]
+name = "Front door people"
+path = "nodes/front_door_people.json"             # a DefinitionBody: name, settings, logic
+description = "A People detector on camera.front_door"

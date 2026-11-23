@@ -1,6 +1,5 @@
 import type { HomeAssistant } from '../types'
 import { connectionLostMessage } from '../entities/api'
-import type { LibraryDocument, LibraryMutation } from '../visual/library-api'
 
 /** A node library file or a definition already stored under an item's name: what an overwrite of it would replace. */
 export interface ExternalExisting { id: string; revision: number; name: string }
@@ -35,13 +34,18 @@ export interface ExternalImportItem {
   enabled: boolean | null
   message: string | null
 }
-/** `import`'s answer; `libraries` is the library import's own answer, null when none was picked or it was refused. */
+/** A node library file as the import stored it: its id and its revision now. */
+export interface ExternalStoredLibrary { id: string; name: string; revision: number }
+/**
+ * `import`'s answer; `libraries` is what the library import stored, the generation it made and each file where it is
+ * now, null when no library was picked or the import was refused.
+ */
 export interface ExternalImportResult {
   owner: string
   repo: string
   sha: string
   items: ExternalImportItem[]
-  libraries: (Omit<LibraryMutation, 'document' | 'deleted'> & { documents: LibraryDocument[] }) | null
+  libraries: { generation: string; documents: ExternalStoredLibrary[] } | null
 }
 
 type Envelope<T> = { version: 1; ok: true; result: T } | { version: 1; ok: false; error: { code: string; detail: unknown } }

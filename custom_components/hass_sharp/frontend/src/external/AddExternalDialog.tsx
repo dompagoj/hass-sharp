@@ -36,8 +36,9 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 /**
  * Add external: a public GitHub repository's address is inspected (its hass_sharp.toml, at one commit), the node
  * libraries and entity definitions it lists are picked, and the picked ones are imported from that commit. The steps
- * are the address, the list and the result; a refused inspect or import says why and stays on its step. It cannot be
- * closed while a request is on its way.
+ * are the address, the list and the result; a refused inspect or import says why and stays on its step, and Back on
+ * the list or the result goes to the address again, as it was typed, to inspect it again. It cannot be closed while a
+ * request is on its way.
  */
 export const AddExternalDialog = (props: AddExternalDialogProps) => {
   const api = externalApi(useHass())
@@ -56,7 +57,7 @@ export const AddExternalDialog = (props: AddExternalDialogProps) => {
     setStep('url'); setUrl(''); setBusy(false); setError(undefined); setInspection(undefined); setChoices({}); setResult(undefined)
   }))
   const close = () => { if (!busy()) props.onClose() }
-  const footerButton = () => body.closest('dialog')?.querySelector<HTMLElement>('.hs-dialog-footer button')
+  const footerButton = (selector = 'button') => body.closest('dialog')?.querySelector<HTMLElement>(`.hs-dialog-footer ${selector}`)
   const picks = () => (inspection()?.items ?? []).flatMap(item => { const choice = choices()[key(item)]; return choice ? [pickOf(item, choice)] : [] })
   const choose = (item: ExternalItem, choice: Choice | undefined) =>
     setChoices(current => { const next = { ...current }; if (choice) next[key(item)] = choice; else delete next[key(item)]; return next })
@@ -92,12 +93,19 @@ export const AddExternalDialog = (props: AddExternalDialogProps) => {
       setResult(answer)
       setStep('result')
       props.onImported(answer)
-      focusSoon(footerButton, body)
+      focusSoon(() => footerButton('.hs-button--primary'), body)
     } catch (refused) {
       if (!disposed) setError(message(refused))
     } finally {
       if (!disposed) setBusy(false)
     }
+  }
+
+  /** To the address, kept as it was, from the list or the result: a library that changed since is inspected again. */
+  const back = () => {
+    if (busy()) return
+    setStep('url'); setError(undefined); setInspection(undefined); setChoices({}); setResult(undefined)
+    focusSoon(() => body.querySelector<HTMLElement>('input'), body)
   }
 
   /** The repository the list is from, at its ref (when the address named one) and commit. */
@@ -136,9 +144,10 @@ export const AddExternalDialog = (props: AddExternalDialogProps) => {
   }
 
   return <Dialog open={props.open} title="Add external" preventClose={busy()} onClose={close} footer={
-    step() === 'result' ? <Button variant="primary" onClick={close}>Close</Button>
+    step() === 'result' ? <><Button variant="ghost" onClick={back}>Back</Button><Button variant="primary" onClick={close}>Close</Button></>
       : <>
         <Button variant="ghost" disabled={busy()} onClick={close}>Cancel</Button>
+        <Show when={step() === 'list'}><Button variant="ghost" disabled={busy()} onClick={back}>Back</Button></Show>
         <Show when={step() === 'url'} fallback={<Button variant="primary" busy={busy()} disabled={!picks().length} onClick={() => void runImport()}>Import</Button>}>
           <Button variant="primary" busy={busy()} disabled={!url().trim()} onClick={() => void inspect()}>Inspect</Button>
         </Show>

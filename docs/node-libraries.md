@@ -602,9 +602,11 @@ Inspect asks GitHub's API once which commit the address names, then reads
 and imports is from that one commit, which it names beside the repository. Without
 signing in, GitHub's API answers 60 requests an hour from one network address, so
 Inspect can be refused for a while: "GitHub refused the request: it allows 60
-requests an hour without signing in; try again later". Import makes no API request:
-it reads `hass_sharp.toml` and the picked files again at the same commit, and when
-one cannot be read it writes nothing.
+requests an hour without signing in; try again later". The files come from GitHub's
+raw file host, which has no such limit but may refuse a file for a while too: "GitHub
+refused to send {path}: try again later". Import makes no API request: it reads
+`hass_sharp.toml` and the picked files again at the same commit, and when one cannot
+be read it writes nothing.
 
 The list has a group of **Node libraries** and one of **Entity definitions**. Each
 item has its description and a **View on GitHub** link to its file at that commit.
@@ -645,7 +647,10 @@ Each definition is then saved by itself, as a save in the editor is. One that is
 refused says why on its line and leaves the imported libraries, and the other
 definitions, in place: fix it in the editor, or import it again. The result has one
 line for each item, such as `Vision.cs: imported`, `PeopleDetector.cs: overwritten`,
-`Front door people: imported, turned off` or `{name}: not imported — {why}`. After
+`Front door people: imported, turned off` or `{name}: not imported — {why}`.
+**Back**, on the list or the result, goes to the address again, as you typed it: to
+inspect the repository again after "It changed after you inspected the repository",
+or to import from another one. After
 an import the **Node library** view reads its files again; a draft of a file the
 import overwrote is kept and marked as a revision conflict, as after a save made
 elsewhere.
@@ -656,9 +661,14 @@ Overwrite keeps what you filled in:
   its stored value, a secret too. A new setting, or one whose type changed, takes
   the file's.
 - A value typed into a C# node's setting, such as the Camera of hass-sharp-vision's
-  **Front door** device, is kept when the stored definition has a node of the same id
-  and kind, the file's node gives that setting a value too, and the setting has the
-  same type (and domain) in both. The node's other values are the file's.
+  **Front door** device or a Face score you tuned, is kept when the stored definition
+  has a node of the same id and kind, the setting has the same type (and domain) in
+  the file's node as in the stored one, and the file does not wire that setting to
+  another step. It is kept whether or not the file's node gives that setting a value.
+  A file's node that lists no settings (no `signature`) is taken to have the stored
+  node's; the import works the pins out from the code again, and a value that no
+  longer fits them is refused on the definition's line rather than dropped. A setting
+  whose type or domain changed, or that the file wires, takes the file's.
 
 An import is a one-time copy. Nothing keeps track of the repository or updates from
 it: to take a newer version, run **Add external** again and overwrite.
@@ -693,10 +703,10 @@ entity definitions API's `read` answers it (see
 [the document](backend/entity-definitions.md#the-document)): only its `settings` and
 `logic` are taken, and its other members are dropped. Importing works out the pins of
 each C# node again from its code, against the libraries just imported, so a file
-whose C# nodes lag a library it comes with still imports. A value typed into a C#
-node survives an Overwrite only for a setting the file's node gives a value, so give
-one to each setting a user picks, as **Front door people** gives its Camera
-`camera.front_door`.
+whose C# nodes lag a library it comes with still imports. A value a user typed into
+a C# node survives an Overwrite whether or not the file's node gives that setting a
+value; give one to each setting a new import needs, as **Front door people** gives
+its Camera `camera.front_door`.
 
 **Library ids.** A library node's kind carries its library's id,
 `library:<id>:<type>.<method>`, and a definition whose graph uses a library node,

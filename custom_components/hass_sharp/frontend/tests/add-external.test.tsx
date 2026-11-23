@@ -111,7 +111,7 @@ it('inspects, picks and imports', async () => {
   expect(onImported).toHaveBeenCalledTimes(1)
   expect(onImported.mock.calls[0][0].items).toHaveLength(3)
   expect(dialog().querySelector('[role="note"]')?.textContent).toBe(warning)
-  expect(dialog().querySelector('.hs-dialog-footer')!.textContent).toBe('Close')
+  expect(dialog().querySelector('.hs-dialog-footer')!.textContent).toBe('BackClose')
   await vi.waitFor(() => expect(document.activeElement).toBe(button('Close')))
   button('Close').click()
   await vi.waitFor(() => expect(document.querySelector('dialog')?.open ?? false).toBe(false))
@@ -255,6 +255,41 @@ it('a refused import shows its sentence and keeps the picks', async () => {
   expect(onImported).not.toHaveBeenCalled()
   button('Cancel').click()
   expect(open()).toBe(false)
+})
+
+it('goes back to the address from the list and from the result, keeping it', async () => {
+  const conflict = 'It changed after you inspected the repository; inspect it again'
+  let import_!: (answer: unknown) => void
+  const { requests } = mount(request => request.operation === 'inspect' ? ok(vision()) : new Promise(go => { import_ = go }))
+  await inspect('https://github.com/o/r/tree/main')
+  expect(dialog().querySelector('.hs-dialog-footer')!.textContent).toBe('CancelBackImport')
+  button('Back').click()
+  await vi.waitFor(() => expect(field()?.value).toBe('https://github.com/o/r/tree/main'))
+  expect(dialog().querySelector('section')).toBeNull()
+  await vi.waitFor(() => expect(document.activeElement).toBe(field()))
+  expect(dialog().querySelector('.hs-dialog-footer')!.textContent).toBe('CancelInspect')
+  // Inspected again: the list again, then an import that is refused for a library changed since.
+  button('Inspect').click()
+  await vi.waitFor(() => expect(dialog().querySelector('section h3')).not.toBeNull())
+  button('Import').click()
+  await vi.waitFor(() => expect(body().getAttribute('aria-busy')).toBe('true'))
+  // Not while the import is on its way.
+  expect(button('Back').disabled).toBe(true)
+  button('Back').click()
+  expect(field()).toBeUndefined()
+  import_(ok(imported([outcome('library', 'Vision.cs', 'nodes/Vision.cs', 'failed', { message: conflict }),
+    outcome('library', 'PeopleDetector.cs', 'nodes/PeopleDetector.cs', 'failed', { message: conflict }),
+    outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'failed', { message: 'Not imported, because the node libraries were not' })])))
+  await vi.waitFor(() => expect(lines()).toHaveLength(3))
+  await vi.waitFor(() => expect(document.activeElement).toBe(button('Close')))
+  expect(button('Back').disabled).toBe(false)
+  button('Back').click()
+  await vi.waitFor(() => expect(field()?.value).toBe('https://github.com/o/r/tree/main'))
+  expect(lines()).toEqual([])
+  expect(dialog().querySelector('[role="note"]')?.textContent).toBe(warning)
+  button('Inspect').click()
+  await vi.waitFor(() => expect(requests.map(r => r.operation)).toEqual(['inspect', 'inspect', 'import', 'inspect']))
+  expect(requests[3]).toEqual({ operation: 'inspect', url: 'https://github.com/o/r/tree/main' })
 })
 
 it('reads Home Assistant’s own refusal as its message', async () => {

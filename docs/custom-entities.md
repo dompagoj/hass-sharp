@@ -1100,7 +1100,7 @@ For example, the People detector of
 
 To update it, run **Add external** again: the three items start unchecked, and
 checking one offers to overwrite it. An Overwrite of **Front door people** keeps the
-camera you picked.
+camera you picked, and the other values you typed into its **Front door** device.
 
 ## Run history
 
