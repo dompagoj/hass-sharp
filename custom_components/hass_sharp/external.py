@@ -642,6 +642,7 @@ async def import_items(github: GitHub, backend: Backend, request: dict) -> dict:
             elif len(same) == 1:
                 kinds[item.id] = same[0]
     answer = {"owner": owner, "repo": repo, "sha": sha, "items": [], "libraries": None}
+    rebuilt: dict[str, int] = {}
     library_picks = [(item, pick) for item, pick in chosen if item.kind == "library"]
     entity_picks = [(item, pick) for item, pick in chosen if item.kind == "entity"]
     if library_picks:
@@ -655,12 +656,13 @@ async def import_items(github: GitHub, backend: Backend, request: dict) -> dict:
                                + [_outcome(item, "failed", message=_NOT_ATTEMPTED) for item, _ in entity_picks])
             return answer
         answer["libraries"] = _stored_libraries(imported.get("result"))
+        rebuilt = _rebuilt_revisions(imported.get("result"))
         answer["items"] = [_outcome(item, "overwritten" if pick["mode"] == "overwrite" else "imported", used[item])
                            for item, pick in library_picks]
     taken = {d["id"] for d in definitions} | set(unreadable)
     for item, pick in entity_picks:
         try:
-            outcome = await _import_entity(backend, item, pick, contents[item], kinds, taken)
+            outcome = await _import_entity(backend, item, pick, contents[item], kinds, taken, rebuilt)
         except Exception as ex:  # noqa: BLE001 - the libraries are stored: each item still gets its line
             _LOGGER.exception("External import of %s failed", item.path)
             outcome = _outcome(item, "failed", message=f"Not imported: {str(ex) or type(ex).__name__}")
@@ -678,7 +680,20 @@ def _stored_libraries(result: object) -> dict | None:
         for d in documents if isinstance(d, dict)] if isinstance(documents, list) else []}
 
 
-async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, kinds: dict[str, str], taken: set[str]) -> dict:
+def _rebuilt_revisions(result: object) -> dict[str, int]:
+    """Each definition a library import rebuilt, by id, and the revision it is now stored at. CommitLibraries rebuilds
+    every definition at exactly its next revision (EntityDefinitionStore.Rebuilt) and answers each in `definitions`."""
+    definitions = result.get("definitions") if isinstance(result, dict) else None
+    revisions = {}
+    for answered in definitions if isinstance(definitions, list) else []:
+        document = answered.get("document") if isinstance(answered, dict) else None
+        if isinstance(document, dict) and isinstance(document.get("id"), str) and _revision(document.get("revision")):
+            revisions[document["id"]] = document["revision"]
+    return revisions
+
+
+async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, kinds: dict[str, str], taken: set[str],
+                         rebuilt: dict[str, int]) -> dict:
     graph = rewrite_library_kinds(body["logic"]["graph"], kinds)
     settings = body["settings"]
     if pick["mode"] == "new":
@@ -694,7 +709,12 @@ async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, k
         logic = stored.get("logic")
         settings = _kept_settings(settings, stored.get("settings"))
         graph = keep_device_inputs(graph, logic.get("graph") if isinstance(logic, dict) else {})
-        request = {"operation": "save", "id": id, "expectedRevision": pick["expectedRevision"]}
+        # The libraries' import rebuilt it at its next revision: from the revision inspect answered, the rebuild is the
+        # only change since. From any other, something else changed it, and the save at the picked revision conflicts.
+        expected = pick["expectedRevision"]
+        if rebuilt.get(id) == expected + 1:
+            expected = rebuilt[id]
+        request = {"operation": "save", "id": id, "expectedRevision": expected}
     # deriveSignatures: each C# node's pins are written from the code of the libraries now stored (Ruling 14).
     request |= {"deriveSignatures": True, "definition": {**body, "settings": settings, "logic": {**body["logic"], "graph": graph}}}
     saved = await backend.save_definition(request)

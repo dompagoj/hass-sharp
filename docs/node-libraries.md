@@ -643,8 +643,11 @@ break an automation or a definition that works ("it would break {name}"), and wh
 file it overwrites was saved again since Inspect ("It changed after you inspected
 the repository; inspect it again").
 
-Each definition is then saved by itself, as a save in the editor is. One that is
-refused says why on its line and leaves the imported libraries, and the other
+Each definition is then saved by itself, as a save in the editor is. The rebuild that
+the libraries' import made is not a change since Inspect: a definition overwritten
+with the libraries it uses is saved over its rebuilt revision. Only a definition
+saved again by something else since Inspect is refused with "It changed after you
+inspected the repository; inspect it again". One that is refused says why on its line and leaves the imported libraries, and the other
 definitions, in place: fix it in the editor, or import it again. The result has one
 line for each item, such as `Vision.cs: imported`, `PeopleDetector.cs: overwritten`,
 `Front door people: imported, turned off` or `{name}: not imported — {why}`.

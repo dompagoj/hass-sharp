@@ -784,6 +784,51 @@ class Importing(unittest.TestCase):
         self.assertEqual(answer['items'], [outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'overwritten',
                                                    'front_door_people', True)])
 
+    def test_overwrite_after_the_libraries_rebuilt_it(self):
+        """The libraries' import rebuilds every definition at its next revision: one the import rebuilt from the revision
+        inspect answered is overwritten at the rebuilt revision; one changed by anything else is still a conflict."""
+        class Store(Backend):
+            """Revisions kept as .NET keeps them: the import rebuilds every stored definition at its next revision and
+            answers each in `definitions`, as CommitLibraries does; a save at any other revision is a conflict."""
+
+            async def import_libraries(self, libraries):
+                answer = await super().import_libraries(libraries)
+                rebuilt = []
+                for id, document in self.stored.items():
+                    document['revision'] += 1
+                    rebuilt.append({'id': id, 'saved': True, 'document': copy.deepcopy(document), 'active': True,
+                                    'activationError': None, 'enabled': True})
+                answer['result']['definitions'] = rebuilt
+                return answer
+
+            async def save_definition(self, request):
+                if request['expectedRevision'] != self.stored[request['id']]['revision']:
+                    self.calls.append(('save', copy.deepcopy(request)))
+                    return refused('conflict', 'Revision mismatch')
+                return await super().save_definition(request)
+
+        def importing(revision):
+            libraries = [{'id': 'vision', 'name': 'Vision.cs', 'revision': 1}, {'id': 'people_detector', 'name': 'PeopleDetector.cs', 'revision': 1}]
+            stored = {'front_door_people': {'id': 'front_door_people', 'revision': revision, 'name': 'Front door people', 'settings': [],
+                                            'logic': {'kind': 'graph', 'graph': graph(device_node())}}}
+            backend = Store(libraries=libraries, definitions=[{'id': 'front_door_people', 'name': 'Front door people', 'revision': revision}],
+                            stored=stored)
+            # Picked as inspect answered them: each library at revision 1, the definition at revision 2.
+            return self.importing([pick('nodes/Vision.cs', 'overwrite', target='vision', expectedRevision=1),
+                                   pick('nodes/PeopleDetector.cs', 'overwrite', target='people_detector', expectedRevision=1),
+                                   pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=2)],
+                                  backend=backend)
+
+        answer, _, backend = importing(2)
+        self.assertEqual([i['outcome'] for i in answer['items']], ['overwritten', 'overwritten', 'overwritten'])
+        [saved] = backend.saves()
+        self.assertEqual((saved['id'], saved['expectedRevision']), ('front_door_people', 3))
+        # Changed by someone else since the inspect (2 → 4), then rebuilt (4 → 5): still a conflict.
+        answer, _, backend = importing(4)
+        self.assertEqual([i['outcome'] for i in answer['items']], ['overwritten', 'overwritten', 'failed'])
+        self.assertEqual(answer['items'][2]['message'], CONFLICT)
+        self.assertEqual([s['expectedRevision'] for s in backend.saves()], [2])
+
     def test_overwrite_keeps_device_inputs(self):
         def stored(node):
             return {'front_door_people': {'id': 'front_door_people', 'revision': 3, 'name': 'Front door people', 'settings': [],
