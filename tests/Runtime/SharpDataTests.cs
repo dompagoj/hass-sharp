@@ -41,6 +41,7 @@ static class SharpDataTests
             LeftoversAreRemoved();
             await UpdateDoesNotLoseWrites();
             await ChangedReachesTheOthersOnly();
+            await ADisposedSubscriptionOwesNoRun();
             await ChangedSkipsTheWritersOtherHandles();
             await ClosedHandlesRefuse();
             await EqualUsersAreTwo();
@@ -412,15 +413,43 @@ static class SharpDataTests
         await Until(() => Volatile.Read(ref failed) == 2 && Volatile.Read(ref thrown) == 2 && Volatile.Read(ref refused) == 2, "the failing actions' second runs");
         Check(a.Get<int>("w") == 2, "a write with failing actions");
 
-        // A disposed subscription runs no more; disposing it twice is nothing.
-        await Until(() => Volatile.Read(ref inB) == 0, "B's action to end");
+        // A disposed subscription runs no more; disposing it twice is nothing. A run of it in flight as it was disposed may
+        // finish, and is not counted: once it has ended, another's write runs nothing.
+        onB.Dispose();
+        onB.Dispose();
+        var disposed = (DataStores.Subscription)onB;
+        await Until(() => !disposed.Running, "B's run in flight as it was disposed to end");
         var before = Volatile.Read(ref ranB);
-        onB.Dispose();
-        onB.Dispose();
         a.Set("x", 100);
         await Task.Delay(300);
-        Check(ranB == before, $"B's disposed action ran {ranB - before} times");
+        Check(ranB == before && !disposed.Running, $"B's disposed action ran {ranB - before} times");
         Console.WriteLine("PASS sharp data: a write runs the other handles' Changed actions, one at a time and coalesced, and never the writer's own");
+    }
+
+    /// <summary>
+    /// A subscription disposed while its action runs, with one more run owed for a change meanwhile, lets the run under way
+    /// finish and begins no other: its action ran once.
+    /// </summary>
+    static async Task ADisposedSubscriptionOwesNoRun()
+    {
+        using var scratch = new Scratch();
+        var stores = new DataStores(scratch.Root);
+        var writer = stores.OpenShared("people", User("def-a"));
+        var reader = stores.OpenShared("people", new DataUser("def-b", "node", action => action()));
+        var open = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ran = 0;
+        var subscription = (DataStores.Subscription)reader.Changed(async () => { Interlocked.Increment(ref ran); await open.Task; });
+        writer.Set("x", 1);
+        await Until(() => Volatile.Read(ref ran) == 1, "the action's first run");
+        // A change while it runs: one more run is owed.
+        writer.Set("x", 2);
+        subscription.Dispose();
+        open.SetResult();
+        await Until(() => !subscription.Running, "the run under way to end");
+        writer.Set("x", 3);
+        await Task.Delay(200);
+        Check(ran == 1 && !subscription.Running, $"the action disposed during its run ran {ran} times");
+        Console.WriteLine("PASS sharp data: a subscription disposed during a run, with a run owed, finishes that run and begins no other");
     }
 
     /// <summary>A component that opened a store twice is not told of its own writes through either handle; another component's write tells it.</summary>

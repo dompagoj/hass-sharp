@@ -472,7 +472,8 @@ internal sealed class DataStores
 
     /// <summary>
     /// A <c>Changed</c> action: run through its user's <see cref="DataUser.Run"/> after another handle changed the store,
-    /// one run at a time; changes while it runs cause one more run.
+    /// one run at a time; changes while it runs cause one more run. Once it has ended (disposed, or its handle closed), no
+    /// run begins: each is decided under its lock just before it runs, and one decided before may finish.
     /// </summary>
     internal sealed class Subscription(Store store, SharpData handle, Func<Task> action) : IDisposable
     {
@@ -480,6 +481,8 @@ internal sealed class DataStores
         bool running, again, ended;
 
         internal SharpData Handle => handle;
+        /// <summary>Whether a run is waiting to begin or under way; for tests, which wait for one in flight to end.</summary>
+        internal bool Running { get { lock (gate) return running; } }
 
         internal void Signal()
         {
@@ -497,13 +500,21 @@ internal sealed class DataStores
         {
             while (true)
             {
+                // Decided here, under the lock that ending takes: a run queued, or owed for a change during the last one,
+                // does not begin once the subscription has ended.
+                lock (gate)
+                    if (ended)
+                    {
+                        running = false;
+                        return;
+                    }
                 // The user's Run reports a failure of the action; a failure of the Run itself is the user's too, and
                 // neither reaches the store or the writer.
                 try { await handle.User.Run(action); }
                 catch (Exception) { }
                 lock (gate)
                 {
-                    if (ended || !again) { running = false; return; }
+                    if (!again) { running = false; return; }
                     again = false;
                 }
             }
