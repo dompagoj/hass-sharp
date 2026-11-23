@@ -25,11 +25,12 @@ function patched(patch: Record<string, unknown>): VisualCatalogSnapshot {
 }
 
 /**
- * What a drop decides: the ports, then connectData (clone plus two validations). The ports are read as the validator
- * reads them, under the graph's own catalog (its Custom C# types and the resolved type of each Select property
- * output). The drag once refused by a type pre-check of its own, under the bare catalog, where a Select property output
- * had no type; this check copied that pre-check, so the two agreed on refusing a wire connectData accepts (live defect
- * D1). It now has none: only connectData says whether a wire fits.
+ * What a drop decides: the ports, then connectData (clone plus a validation of the wired graph; the unchanged graph's
+ * is cached per graph and catalog). The ports are read as the validator reads them, under the graph's own catalog (its
+ * Custom C# types and the resolved type of each Select property output). The drag once refused by a type pre-check of
+ * its own, under the bare catalog, where a Select property output had no type; this check copied that pre-check, so the
+ * two agreed on refusing a wire connectData accepts (live defect D1). It now has none: only connectData says whether a
+ * wire fits.
  */
 function fullCheck(graph: Graph, source: string, sourcePort: string, target: string, targetPort: string, catalog: VisualCatalogSnapshot,
   types = contract.withGraphTypes(catalog, graph)) {
