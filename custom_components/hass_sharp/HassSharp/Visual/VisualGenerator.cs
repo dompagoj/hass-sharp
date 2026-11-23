@@ -363,7 +363,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         // A descriptor from an invalid library preview is never an executable snapshot.
         if(snapshot.Compilation==null)return Preview(graph,snapshot.Sources,settings);
         if(snapshot.LibraryDiagnostics.Any(d=>d.Severity==3))return new(false,"",[],snapshot.LibraryDiagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
-        var libraryErrors=snapshot.Compilation.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
+        var libraryErrors=NodeLibraryCompiler.InSourceOrder(snapshot.Compilation).Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
         if(libraryErrors.Length>0)return new(false,"",[],libraryErrors.Select(d=>new VisualDiagnostic("$library:"+d.Location.SourceTree?.FilePath,d.GetMessage())).ToList());
         // A graph of the wrong shape or past the size limits gets the validator's answer (graph.shape, graph.limit) before
         // any Custom C# code is compiled: 300 nodes of code would otherwise all compile first, and each be looked up by id
@@ -562,7 +562,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             var trees=new List<SyntaxTree>{tree,CSharpSyntaxTree.ParseText(DiagnosticsProvider.GlobalUsings)};
             var compilation=CSharpCompilation.Create("VisualPreview",trees,NodeLibraryCompiler.FrameworkReferences().AddRange(services.References),new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,allowUnsafe:true,nullableContextOptions:NullableContextOptions.Enable));
             var unsetRequiredSetting=NodeLibraryCompiler.RequiredSettingWarnings(compilation);
-            foreach(var d in compilation.GetDiagnostics().Where(d=>d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)) {
+            // In the order of their lines, whichever thread of the build found each first.
+            foreach(var d in NodeLibraryCompiler.InSourceOrder(compilation)) {
                 // Only a diagnostic in the generated automation has a line a node owns: one elsewhere (the global usings)
                 // is the graph's, never the node whose section has the same line number. The typed service calls are a
                 // built assembly here, so nothing in them is bound or reported again.

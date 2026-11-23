@@ -506,11 +506,12 @@ static class CustomNodeTests
             var section = graph.Diagnostics.Where(d => d.NodeId == "$library:meters" && d.Message.StartsWith("Non-nullable property '", StringComparison.Ordinal)).ToArray();
             var kept = string.Join(" | ", section.Select(d => $"{d.Severity} {d.StartLine}:{d.StartColumn} {d.Message}"));
             // The two warnings kept, as the preview gave them before required settings lost theirs: the property's
-            // (or, with a constructor, the constructor's) line and column in the generated source, word for word.
+            // (or, with a constructor, the constructor's) line and column in the generated source, word for word, in the
+            // order of their lines (the build finds them on two threads, Meter's and Plain's, in either order).
             const string Tail = " must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable.";
             var expected = constructor.Length == 0
-                ? $"2 {{1}}:29 Non-nullable property 'Address'{Tail} | 2 {{0}}:19 Non-nullable property 'Other'{Tail}"
-                : $"2 {{1}}:29 Non-nullable property 'Address'{Tail} | 2 {{0}}:12 Non-nullable property 'Other'{Tail}";
+                ? $"2 {{0}}:19 Non-nullable property 'Other'{Tail} | 2 {{1}}:29 Non-nullable property 'Address'{Tail}"
+                : $"2 {{0}}:12 Non-nullable property 'Other'{Tail} | 2 {{1}}:29 Non-nullable property 'Address'{Tail}";
             var start = graph.SourceMap.Single(m => m.NodeId == "$library:meters").StartLine;
             // The library's lines in the source: the wrapper's three, then the code. Other's warning is on Other's line (the
             // code's fifth) or, with a constructor, on the constructor's (its third); Address's on the last but one.

@@ -203,7 +203,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 nodeSettings[tree] = taken = NodeClass(custom.Kind, tree, Model(tree), classes, cancellationToken).Creatable is [var type] ? SettingProperties(type, classes) : new Dictionary<string, IPropertySymbol>();
             return UnsetRequiredSetting(diagnostic, p => taken.TryGetValue(p.Name, out var setting) && SymbolEqualityComparer.Default.Equals(setting, p) && classes.RequiredSetting(p), DeclaredAt);
         }
-        foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning))
+        foreach (var diagnostic in InSourceOrder(compilation, cancellationToken))
         {
             if (RequiredSettingWarning(diagnostic)) continue;
             if (diagnostic.Id is "CS1591" or "CS1573" && diagnostic.Location.SourceTree is { } tree && customTrees.ContainsKey(tree)) continue;
@@ -792,6 +792,21 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 .Any(p => message.Contains($"property '{p.Name}'", StringComparison.Ordinal) && requiredSetting(p)),
             _ => false,
         };
+    }
+
+    /// <summary>
+    /// The errors and warnings of a compilation in the order of their place in its code: by syntax tree (in the
+    /// compilation's order, one in no tree first), then by where each starts and ends, then by id and message. A
+    /// concurrent build reports what it finds in method bodies (a constructor's nullability warning, say) in whatever
+    /// order its threads finish, so the editor's problems would otherwise come in another order on each preview.
+    /// </summary>
+    internal static IEnumerable<Diagnostic> InSourceOrder(Compilation compilation, CancellationToken cancellationToken = default)
+    {
+        var trees = compilation.SyntaxTrees.Select((tree, index) => (tree, index)).ToDictionary(t => t.tree, t => t.index);
+        return compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)
+            .OrderBy(d => d.Location.SourceTree is { } tree && trees.TryGetValue(tree, out var index) ? index : -1)
+            .ThenBy(d => d.Location.SourceSpan.Start).ThenBy(d => d.Location.SourceSpan.End)
+            .ThenBy(d => d.Id, StringComparer.Ordinal).ThenBy(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture), StringComparer.Ordinal);
     }
 
     /// <summary>
