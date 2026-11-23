@@ -1101,6 +1101,49 @@ it('says when a saved definition\'s runs appear, in its Runs tab with none yet',
   expectClean(root)
 })
 
+const drawerTabs = (root: Element) => [...root.querySelectorAll<HTMLButtonElement>('.hs-drawer [role="tab"]')]
+/** Answers `hass_sharp/device_ui` with the plug's page, and keeps every request of it. */
+const devicePages = (fixture: Fixture) => {
+  const requests: any[] = []
+  const inner = fixture.callWS
+  fixture.callWS = async (message: any) => {
+    if (message.type !== 'hass_sharp/device_ui') return inner(message)
+    requests.push(message.request)
+    return { version: 1, ok: true, result: { running: true, revision: 'r1', pages: [
+      { nodeKey: 'relay', title: 'Relay', attention: 0, lists: [{ id: 'schedules', title: 'Schedules', attention: false, empty: 'No schedules yet.', cards: [] }] },
+    ] } }
+  }
+  return requests
+}
+
+it('offers a Device tab after Runs, and ?drawer=device opens the drawer on it with the running definition\'s pages', async () => {
+  let requests: any[] = []
+  const { root, history } = setup('/entities/plug?drawer=device', fixture => { fixture.entities.seed('plug', plugBody()); requests = devicePages(fixture) })
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('Saved'))
+  expect(drawerTabs(root).map(tab => tab.textContent?.replace(/\d+$/, ''))).toEqual(['Problems', 'Generated C#', 'Runs', 'Device'])
+  expect(root.querySelector('.hs-drawer')!.classList).toContain('hs-drawer--open')
+  expect(drawerTabs(root)[3].getAttribute('aria-selected')).toBe('true')
+  expect(history.get()).toBe('/entities/plug')
+  await vi.waitFor(() => expect(root.querySelector('.hs-drawer [role="tabpanel"]:not([hidden])')!.textContent).toContain('No schedules yet.'))
+  expect(requests[0]).toEqual({ operation: 'read', definitionId: 'plug' })
+  expect(root.querySelector('.hs-drawer [role="tabpanel"]:not([hidden]) h3')!.textContent).toBe('Relay')
+  // Closed, it reads no more.
+  drawerTabs(root)[3].click()
+  const count = requests.length
+  await new Promise(resolve => setTimeout(resolve, 2100))
+  expect(requests).toHaveLength(count)
+  expectClean(root)
+})
+
+it('says in its Device tab that a definition never saved has no device pages yet', async () => {
+  let requests: any[] = []
+  const { root } = setup('/entities/new?name=Porch', fixture => { requests = devicePages(fixture) })
+  await vi.waitFor(() => expect(drawerTabs(root).map(tab => tab.textContent)).toContain('Device'))
+  drawerTabs(root)[3].click()
+  await vi.waitFor(() => expect(root.querySelector('.hs-drawer [role="tabpanel"]:not([hidden])')!.textContent).toBe('Save this entity definition to see its device pages.'))
+  expect(requests).toEqual([])
+})
+
 it('opens a run of the definition on its run page and comes back to its Runs tab, with no secret on the way, typed or stored', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   const { root, history } = await openPlugRuns(plugRuns)

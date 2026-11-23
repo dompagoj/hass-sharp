@@ -604,6 +604,14 @@ it('opens with the drawer closed otherwise', async () => {
   await saved(root, 4)
   expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
 })
+
+it('offers no Device tab, and opens nothing for ?drawer=device', async () => {
+  const { root, history } = setup(true, false, '/visual/motion?drawer=device')
+  await saved(root, 4)
+  expect([...root.querySelectorAll('.hs-drawer [role="tab"]')].map(tab => tab.textContent?.replace(/\d+$/, ''))).toEqual(['Problems', 'Generated C#', 'Runs'])
+  expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
+  expect(history.get()).toBe('/visual/motion')
+})
 it('turns a saved automation off and on from the top bar without a change to save, and rolls back a refused switch', async () => {
   const { root, fixture } = setup(true)
   await saved(root, 4)

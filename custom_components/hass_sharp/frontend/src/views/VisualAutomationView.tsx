@@ -23,8 +23,8 @@ export function EditorView<D extends EditorDocument>(props: { adapter: EditorAda
   const [dirty, setDirty] = createSignal(false)
   // Leaving through Discard changes also drops the draft the editor keeps of them.
   let discardDraft: (() => void) | undefined
-  // `?drawer=runs` only says which tab to open with: the editor has read it by now, so it leaves the address and a
-  // reload opens the editor as usual.
+  // `?drawer=<tab>` (`runs`, an entity definition's `device`) only says which tab to open with: the editor has read it
+  // by now, so it leaves the address and a reload opens the editor as usual.
   onMount(() => { if (params.drawer !== undefined) setParams({ drawer: undefined }, { replace: true }) })
   return <>
     <VisualEditor adapter={adapter} documentId={route.id && route.id !== 'new' ? route.id : undefined} onDirtyChange={setDirty}
@@ -33,7 +33,7 @@ export function EditorView<D extends EditorDocument>(props: { adapter: EditorAda
       onSaved={doc => { if (route.id !== doc.id) navigate(adapter.editorHref(doc.id), { replace: true }) }}
       onBack={() => navigate(adapter.listHref)}
       onOpenLibrary={(id, line) => navigate(libraryHref(id, line))}
-      drawer={params.drawer === 'runs' ? 'runs' : undefined}
+      drawer={typeof params.drawer === 'string' ? params.drawer : undefined}
       name={typeof params.name === 'string' && params.name.trim() ? params.name : adapter.texts.untitled} />
     <LeaveGuard dirty={dirty()} onDiscard={() => discardDraft?.()} />
   </>

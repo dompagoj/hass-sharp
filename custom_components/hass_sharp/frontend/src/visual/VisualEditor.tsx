@@ -52,8 +52,11 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   onSaved?: (document: D) => void
   /** Back to the list; the page shows no back button without it. */
   onBack?: () => void
-  /** Opens with the bottom drawer on this tab (a run's trace goes back to the Runs tab). */
-  drawer?: DrawerTab
+  /**
+   * Opens with the bottom drawer on this tab (a run's trace goes back to the Runs tab): one of the editor's own or of the
+   * adapter's `drawerTabs`; another id opens nothing.
+   */
+  drawer?: string
   /** Receives what discards the unsaved changes' draft, for leaving without saving. */
   discardRef?: (discard: () => void) => void
   /** Opens a node library file at a line (a type's definition was declared there); not offered without it. */
@@ -272,7 +275,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   const [drawerOpen, setDrawerOpen] = createSignal(!!props.drawer)
   const mobileDrawer = media('(max-width: 699px)')
   const leaveDrawer = () => { if (mobileDrawer()) setDrawerOpen(false) }
-  const [drawerTab, setDrawerTab] = createSignal<DrawerTab>(props.drawer ?? 'problems')
+  const [drawerTab, setDrawerTab] = createSignal<string>(props.drawer ?? 'problems')
   const [codeView, setCodeView] = createSignal<'code' | 'json'>('code')
   const shownProblems = () => session.diagnostics().filter(d => d.severity > 0)
   const errorCount = () => session.diagnostics().filter(d => d.severity === 3).length
@@ -419,6 +422,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     get enabled() { return enabled() }, get dirty() { return session.dirty() }, get busy() { return busy() },
     get conflict() { return session.conflict() }, get catalogError() { return session.catalogError() },
     get located() { return located() },
+    get drawerTab() { return drawerOpen() ? drawerTab() : undefined },
     reload: () => {
       const doc = session.document()
       if (doc && !session.unsaved() && !busy() && !switching()) void session.load(doc.id)
@@ -510,6 +514,12 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
     if (session.previewError()) return 'Could not check the graph'
     if (session.previewPending()) return 'Checking…'
   }
+
+  // The drawer's tabs only this kind of document has, after Runs; a `drawer` tab that is neither those nor the editor's
+  // own opens nothing.
+  const adapterTabs = untrack(() => adapter.drawerTabs?.(context(choose)) ?? [])
+  if (props.drawer && !['problems', 'code', 'runs', ...adapterTabs.map(tab => tab.id)].includes(props.drawer))
+    batch(() => { setDrawerOpen(false); setDrawerTab('problems') })
 
   return (
     <section
@@ -648,7 +658,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
         open={drawerOpen()}
         tab={drawerTab()}
         onOpenChange={setDrawerOpen}
-        onTabChange={tab => setDrawerTab(tab as DrawerTab)}
+        onTabChange={setDrawerTab}
         tabs={[
           {
             id: 'problems',
@@ -685,6 +695,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
               </Show>
             ),
           },
+          ...adapterTabs,
         ]}
       />
       <Dialog

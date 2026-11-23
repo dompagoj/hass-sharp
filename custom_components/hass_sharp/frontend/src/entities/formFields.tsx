@@ -35,6 +35,8 @@ export function TextField(props: {
   multiline?: boolean
   required?: boolean
   errors?: string[]
+  /** The id of a `datalist` of suggestions. */
+  list?: string
   /** The new text; a message keeps it in the field and says why it is not taken. */
   commit(text: string): string | undefined | void
 }) {
@@ -43,7 +45,7 @@ export function TextField(props: {
   return (
     <div class="hs-insp-field hs-def-field" data-field={props.name} aria-invalid={errors().length > 0 || undefined}>
       <label class="hs-insp-field__label" for={id}>{props.label}</label>
-      <DraftField id={id} label={props.label} text={props.text} placeholder={props.placeholder} type={props.type} inputmode={props.inputmode}
+      <DraftField id={id} label={props.label} text={props.text} placeholder={props.placeholder} type={props.type} inputmode={props.inputmode} list={props.list}
         multiline={props.multiline} shortcutHint={props.multiline} invalid={errors().length > 0} required={props.required}
         describedBy={describedBy(!!props.hint && hintId, errors().length > 0 && errorsId)} commit={text => props.commit(text) || undefined} />
       <Show when={props.hint}><small id={hintId} class="hs-field-hint">{props.hint}</small></Show>

@@ -61,9 +61,9 @@ export const connectionLostMessage = 'The connection to Home Assistant was lost.
 /**
  * Home Assistant's websocket library rejects a command with a plain value, never an Error: the result's `{code,
  * message}`, a whole failed result `{type: 'result', success: false, error: {code, message}}` (a lost connection), or
- * the bare number {@link connectionLost}.
+ * the bare number {@link connectionLost}. The device page API (`deviceUi.ts`) reads its refusals so too.
  */
-const homeAssistantError = (error: unknown) => {
+export const homeAssistantError = (error: unknown) => {
   if (error === connectionLost) return new EntityApiError(String(error), connectionLostMessage)
   if (error === null || typeof error !== 'object' || error instanceof Error) return
   const found = error as { code?: unknown; message?: unknown; error?: unknown }

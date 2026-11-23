@@ -5,6 +5,7 @@ import type { SourceRange, VisualDiagnostic, VisualPreview } from './api'
 import type { VisualGraph } from './graph'
 import type { SummaryNames } from './nodeSummary'
 import type { RunNotice } from './RunNow'
+import type { DrawerTab } from './BottomDrawer'
 
 export { automationAdapter, automationTexts } from './automationAdapter'
 
@@ -154,6 +155,8 @@ export interface EditorContext<D extends EditorDocument = EditorDocument> {
    * time one is chosen and undefined once a step is selected: the overview opens that row and moves focus into it.
    */
   readonly located?: { target: string }
+  /** The bottom drawer's tab shown, or undefined while the drawer is closed. */
+  readonly drawerTab?: string
 }
 
 /**
@@ -229,6 +232,11 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
    * deleted at once.
    */
   removal?(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot): { title: string; body: string } | undefined
+  /**
+   * Tabs of the bottom drawer only this kind of document has (an entity definition's Device tab), shown after Runs.
+   * Asked once, when the editor opens; `?drawer=<id>` opens the drawer on one of them as on a tab of the editor's own.
+   */
+  drawerTabs?(context: EditorContext<D>): DrawerTab[]
   /** The help dialog, opened from the "⋯" menu (no Help item without it). */
   help?: Component<{ open: boolean; onClose(): void }>
 }

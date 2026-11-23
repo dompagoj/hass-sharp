@@ -6,6 +6,7 @@ import { definitionDeviceKeys, definitionEntityKeys } from '../visual/contract'
 import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult } from './api'
 import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
+import { DevicePanel } from './DevicePanel'
 import { icons } from '../visual/icons'
 import { copyNotice, entityRemoval, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
 import { EntityHelp } from './EntityHelp'
@@ -99,6 +100,11 @@ export function entityAdapter(
     queryKeys: [definitionsQueryKey],
     texts: entityTexts,
     runGroup: context => createComponent(DefinitionRunNow, { context }),
+    // The pages the running revision's C# nodes draw, read while the tab is shown.
+    drawerTabs: context => [{
+      id: 'device', label: 'Device', lazy: true,
+      content: () => createComponent(DevicePanel, { get definitionId() { return context.document?.id }, get visible() { return context.drawerTab === 'device' } }),
+    }],
     overview: context => createComponent(DefinitionOverview, { context }),
     // An Entity node's or a C# entity's key is fixed once saved; the line under an Entity node's gives the entity id Home
     // Assistant gave it. So is a Device node's or a C# device's: the saved entities and devices are those the nodes of
