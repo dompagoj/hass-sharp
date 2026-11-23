@@ -226,7 +226,7 @@ Page data, per C# node:
     cards: [ { id, image: "<sha256>" | null, title, detail,
       fields:  [ { key, label, type: "text"|"select"|"number"|"toggle", value, options?, suggestions?,
                    minimum?, maximum?, required? } ],
-      actions: [ { id, label, style, confirm? } ] } ] } ] }
+      actions: [ { id, label, style, confirm?, validate } ] } ] } ] }
 ```
 
 No new HTTP route and no push: images travel on the admin-only websocket, and the panel polls.

@@ -8,8 +8,8 @@ using static VisualExecutionTests;
 /// refused before <c>Start()</c>; a started device has its page, its attention and a revision that changes with each
 /// redraw and with each save; a press runs the handler of the card as drawn now with the values it sent, answers
 /// <c>changed</c> for a card the device removed, and presses take turns; a refusal and a failure are answered as such,
-/// the failure logged without the values; a handler past its time is answered as failed and keeps its page's turn until
-/// it ends; stopping waits for a press and refuses one after it began; an entity a device added draws on the device's
+/// the failure logged without the values; a handler past its time is answered as failed, logged as a warning, and keeps
+/// its page's turn until it ends, and what it throws later is logged as an error; stopping waits for a press and refuses one after it began; an entity a device added draws on the device's
 /// page; and a stopped host keeps no page. The device Board draws its list <c>items</c> from a field of its class, each
 /// card with an image, and the list <c>slow</c>, whose one action waits on the test's gate; its sensors show what its
 /// handlers saw.
@@ -95,6 +95,21 @@ static class DeviceUiHostTests
                     .Field("name", "Name", required: true)
                     .Action("Save", values => { seen.Value = values["name"]; return Task.CompletedTask; })
                     .Action("Skip", values => { seen.Value = "skipped:" + values["name"]; return Task.CompletedTask; }, validate: false)]);
+                return Task.CompletedTask;
+            }
+        }
+        """;
+    // A device whose one action waits on the test's gate and then throws.
+    const string LateCode = """
+        public class Late : SharpDevice
+        {
+            protected override Task Start()
+            {
+                Ui.List("late", "Late", [new UiCard("1").Field("note", "Note").Action("Lag", async _ =>
+                {
+                    await ((TaskCompletionSource)AppContext.GetData("HassSharp.DeviceUiHostTests.Gate")!).Task;
+                    throw new InvalidOperationException("late boom");
+                })]);
                 return Task.CompletedTask;
             }
         }
@@ -204,6 +219,7 @@ static class DeviceUiHostTests
             await RefusalsAndFailures();
             await AnActionThatDoesNotValidateRunsWithAnEmptyRequiredField();
             await ASlowHandlerTimesOut();
+            await ASlowHandlerThatThrowsIsLogged();
             await StoppingWaitsForAPress();
             await AnAddedEntityDrawsOnItsDevicesPage();
             await AStoppedHostKeepsNoPage();
@@ -340,6 +356,8 @@ static class DeviceUiHostTests
             var queued = host.UiAct("board", "items", "1", "save", Sent("""{"name":"Ivan"}"""));
             var first = await waiting;
             Check(Answer(first).StartsWith("failed: The action did not finish within", StringComparison.Ordinal), "the slow press fails: " + Answer(first));
+            const string Late = "Board: the action 'Wait' on the page of Board did not finish within 0.2 s; no other action of this page runs until it ends";
+            Check(rig.Home.Logs(PyLogLevel.Warn).Count(line => line == Late) == 1, "the handler past its time is logged once as a warning: " + string.Join(" | ", rig.Home.Logs()));
             Check(Answer(await queued) == "refused: An earlier action of this device is still running.", "the press waiting behind it is refused: " + Answer(await queued));
             var second = await host.UiAct("board", "items", "1", "save", Sent("""{"name":"Ivan"}"""));
             Check(Answer(second) == "refused: An earlier action of this device is still running.", "a press while the handler runs is refused: " + Answer(second));
@@ -355,6 +373,8 @@ static class DeviceUiHostTests
             }
             Check(Answer(third) == "done", "a press once the handler ended: " + Answer(third));
             await rig.Shows("board:board:seen", "\"Ivan\"", "the press once the handler ended ran");
+            Check(rig.Home.Logs(PyLogLevel.Warn).Count(line => line.Contains("did not finish within", StringComparison.Ordinal)) == 1, "the warning stays the only one: " + string.Join(" | ", rig.Home.Logs()));
+            Check(rig.Home.Logs(PyLogLevel.Error).Length == 0, "a handler that ended well past its time logs no error: " + string.Join(" | ", rig.Home.Logs(PyLogLevel.Error)));
         }
         finally
         {
@@ -363,6 +383,35 @@ static class DeviceUiHostTests
             AppContext.SetData(GateKey, null);
         }
         Console.WriteLine("PASS device ui host: a handler past its time fails the press and keeps the page's turn until it ends; the presses meanwhile are refused");
+    }
+
+    static async Task ASlowHandlerThatThrowsIsLogged()
+    {
+        DefinitionHost.UiActionTimeout = TimeSpan.FromMilliseconds(200);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        AppContext.SetData(GateKey, gate);
+        try
+        {
+            await using var rig = await Rig.Start("late");
+            var host = await rig.Running("late", Definition("Late", Device("late", "Late", LateCode)));
+            var first = await host.UiAct("late", "late", "1", "lag", Sent("""{"note":"Secret note 77"}"""));
+            Check(Answer(first).StartsWith("failed: The action did not finish within", StringComparison.Ordinal), "the slow press fails: " + Answer(first));
+            Check(rig.Home.Logs(PyLogLevel.Warn).Count(line => line.Contains("'Lag'", StringComparison.Ordinal) && line.Contains("did not finish within", StringComparison.Ordinal)) == 1,
+                "the handler past its time is logged once as a warning: " + string.Join(" | ", rig.Home.Logs()));
+            Check(rig.Home.Logs(PyLogLevel.Error).Length == 0, "no error while the handler still runs: " + string.Join(" | ", rig.Home.Logs(PyLogLevel.Error)));
+            gate.SetResult();
+            const string Failure = "Late: the action 'Lag' on the page of Late failed: late boom";
+            await EntityTestHome.Until(() => rig.Home.Logs(PyLogLevel.Error).Contains(Failure), "the late failure is logged: " + string.Join(" | ", rig.Home.Logs()));
+            Check(rig.Home.Logs(PyLogLevel.Error).Count(line => line.Contains("late boom", StringComparison.Ordinal)) == 1, "one error line: " + string.Join(" | ", rig.Home.Logs(PyLogLevel.Error)));
+            Check(!rig.Home.Logs().Any(line => line.Contains("Secret note 77", StringComparison.Ordinal)), "no log line has the value sent: " + string.Join(" | ", rig.Home.Logs()));
+        }
+        finally
+        {
+            DefinitionHost.UiActionTimeout = TimeSpan.FromSeconds(30);
+            gate.TrySetResult();
+            AppContext.SetData(GateKey, null);
+        }
+        Console.WriteLine("PASS device ui host: a handler past its time is logged as a warning naming the action, and its failure when it later throws as an error, without the values");
     }
 
     static async Task StoppingWaitsForAPress()

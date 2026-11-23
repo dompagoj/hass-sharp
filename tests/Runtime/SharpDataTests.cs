@@ -97,13 +97,15 @@ static class SharpDataTests
         byte[] bytes = [0, 1, 2, 254, 255];
         data.Set("people/ivan", new Person("Ivan", 41));
         data.SetBytes("crops/1", bytes);
+        data.SetBytes("crops/empty", []);
         Check(data.Get<Person>("people/ivan") == new Person("Ivan", 41), "read back at once");
         Check(Directory.Exists(scratch.Device("def", "node")), "the device's directory is " + string.Join(", ", scratch.Entries()));
 
         var again = new DataStores(scratch.Root).OpenDevice(User("def"));
         Check(again.Get<Person>("people/ivan") == new Person("Ivan", 41), "the record after a restart");
         Check(again.GetBytes("crops/1") is { } read && read.SequenceEqual(bytes), "the bytes after a restart");
-        Check(again.Keys().SequenceEqual(["crops/1", "people/ivan"]), "keys: " + string.Join(", ", again.Keys()));
+        Check(again.GetBytes("crops/empty") is { Length: 0 }, "an empty array comes back empty, not as nothing");
+        Check(again.Keys().SequenceEqual(["crops/1", "crops/empty", "people/ivan"]), "keys: " + string.Join(", ", again.Keys()));
         Check(again.Keys("people/").SequenceEqual(["people/ivan"]), "keys by prefix: " + string.Join(", ", again.Keys("people/")));
         Check(again.Keys("nobody/").Count == 0, "keys of a prefix nothing has");
         Check(again.Get<Person>("people/ana") == null && again.Get<int>("count") == 0 && again.GetBytes("crops/2") == null, "a key without a value reads as nothing");
@@ -162,6 +164,7 @@ static class SharpDataTests
         }
         foreach (var (definition, node) in new[] { ("..", "node"), ("def", ".."), ("a/b", "node"), ("def", "a/b"), ("", "node"), ("def", "") })
             Throws<ArgumentException>(() => stores.OpenDevice(User(definition, node)), $"the device {definition}/{node}");
+        Throws<ArgumentException>(() => data.SetBytes("k", null!), "SetBytes of null bytes");
         Check(scratch.Entries().SequenceEqual(before), "a refused name wrote " + string.Join(", ", scratch.Entries().Except(before)));
 
         // The longest of each is a name, as are dots, dashes and underscores after the first character.

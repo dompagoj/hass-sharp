@@ -209,9 +209,9 @@
 .hs-app .hs-device__list { display: grid; gap: 6px; min-width: 0; }
 .hs-app .hs-device__list-title { margin: 0; font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
 .hs-app .hs-device__list--attention .hs-device__list-title { color: var(--hs-accent); }
-.hs-app .hs-device__cards { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.hs-app .hs-device-card { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--hs-line); border-radius: 8px; background: var(--hs-bg); }
-.hs-app .hs-device-card__image { flex: none; width: 72px; height: 72px; object-fit: cover; border-radius: 6px; background: var(--hs-soft); }
+.hs-app .hs-device__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.hs-app .hs-device-card { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 10px 12px; border: 1px solid var(--hs-line); border-radius: 8px; background: var(--hs-bg); }
+.hs-app .hs-device-card__image { flex: none; width: 96px; height: 96px; object-fit: contain; border-radius: 6px; background: var(--hs-soft); }
 .hs-app .hs-device-card__body { flex: 1; display: grid; gap: 6px; min-width: 0; }
 .hs-app .hs-device-card__title { font-weight: 650; overflow-wrap: anywhere; }
 .hs-app .hs-device-card__detail { margin: 0; color: var(--hs-muted); overflow-wrap: anywhere; }

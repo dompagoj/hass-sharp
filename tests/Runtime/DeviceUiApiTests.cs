@@ -238,8 +238,16 @@ static class DeviceUiApiTests
         // "hello" is stored as its JSON, 7 bytes.
         Check(stores.ToJsonString() == """{"shared":[{"name":"test.ui","bytes":7,"users":["keeper"]}]}""", "the shared stores: " + stores.ToJsonString());
         var inUse = await rig.Error(new { operation = "delete_store", name = "test.ui" });
-        Check(inUse == ("in_use", "test.ui is in use by Keeper: turn them off first."), "deleting a store in use: " + inUse);
+        Check(inUse == ("in_use", "test.ui is in use by Keeper: turn it off first."), "deleting a store in use: " + inUse);
         Check(Directory.Exists(rig.SharedStore("test.ui")), "the store in use is kept");
+        await rig.Running("another", DeviceUiHostTests.Definition("Another", DeviceUiHostTests.Device("d", "Keeper", KeeperCode)));
+        await rig.Running("binder", DeviceUiHostTests.Definition("Binder", DeviceUiHostTests.Device("d", "Keeper", KeeperCode)));
+        var three = await rig.Error(new { operation = "delete_store", name = "test.ui" });
+        Check(three == ("in_use", "test.ui is in use by Another, Binder and Keeper: turn them off first."), "deleting a store three definitions use: " + three);
+        await rig.Off("another");
+        var two = await rig.Error(new { operation = "delete_store", name = "test.ui" });
+        Check(two == ("in_use", "test.ui is in use by Binder and Keeper: turn them off first."), "deleting a store two definitions use: " + two);
+        await rig.Off("binder");
         await rig.Off("keeper");
         var deleted = await rig.Ok(new { operation = "delete_store", name = "test.ui" });
         Check(deleted.ToJsonString() == """{"deleted":true}""", "deleting the store once it is off: " + deleted.ToJsonString());
@@ -255,7 +263,7 @@ static class DeviceUiApiTests
             Check(refused.Code is "not_found" or "invalid_request", $"deleting the store '{name}': " + refused);
         }
         Check(Directory.Exists(outside), "nothing outside the shared stores is deleted");
-        Console.WriteLine("PASS device ui api: stores lists each shared store with its size and users; delete_store refuses one in use, naming its definition, deletes it once off, and answers not_found after");
+        Console.WriteLine("PASS device ui api: stores lists each shared store with its size and users; delete_store refuses one in use, naming its definitions, deletes it once off, and answers not_found after");
     }
 
     static async Task BadRequests()

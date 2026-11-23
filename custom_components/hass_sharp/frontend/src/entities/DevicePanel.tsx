@@ -260,6 +260,8 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
       first?.querySelector<HTMLElement>('input, select')?.focus()
       return
     }
+    // A press that goes ahead, one that does not validate too, clears the marks an earlier stopped press left.
+    if (missing().size) setMissing(new Set<string>())
     if (action(actionId)?.confirm) setAsking(actionId)
     else void send(actionId)
   }
@@ -314,12 +316,15 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
 }
 
 /**
- * A field of a card in the definition form's controls. A text records each keystroke, so what is typed counts at once;
- * a number holds its value from the first keystroke until its text is taken (on blur or Enter), so a refresh does not
- * replace the text being typed.
+ * A field of a card in the definition form's controls, a required one marked as the form marks one (the hint
+ * "Required.", and a text's placeholder). A text records each keystroke, so what is typed counts at once; a number
+ * holds its value from the first keystroke until its text is taken (on blur or Enter), so a refresh does not replace
+ * the text being typed.
  */
 function CardField(props: { field: DeviceField; value: FieldValue; missing: boolean; edited: boolean; onEdit(value: FieldValue): void }) {
-  const id = createUniqueId(), errorsId = `${id}-errors`, listId = `${id}-suggestions`
+  const id = createUniqueId(), hintId = `${id}-hint`, errorsId = `${id}-errors`, listId = `${id}-suggestions`
+  // A toggle is never empty: nothing to mark.
+  const hint = () => (props.field.required && props.field.type !== 'toggle' ? 'Required.' : undefined)
   // Only a change of the value reaches the control: a new revision with the same value leaves it alone.
   const value = createMemo(() => props.value)
   const errors = createMemo(() => (props.missing ? [`${props.field.label} is required.`] : []), undefined, { equals: (a, b) => a.join('\n') === b.join('\n') })
@@ -334,6 +339,7 @@ function CardField(props: { field: DeviceField; value: FieldValue; missing: bool
       <Match when={props.field.type === 'text'}>
         <div class="hs-device-card__field" onInput={event => props.onEdit((event.target as HTMLInputElement).value)}>
           <TextField name={props.field.key} label={props.field.label} text={text()} required={props.field.required} errors={errors()}
+            hint={hint()} placeholder={props.field.required ? 'Required' : undefined}
             list={suggestions().length ? listId : undefined} commit={typed => props.onEdit(typed)} />
           <Show when={suggestions().length}>
             <datalist id={listId}><For each={suggestions()}>{suggestion => <option value={suggestion} />}</For></datalist>
@@ -342,7 +348,7 @@ function CardField(props: { field: DeviceField; value: FieldValue; missing: bool
       </Match>
       <Match when={props.field.type === 'select'}>
         <div class="hs-device-card__field">
-          <SelectField name={props.field.key} label={props.field.label} value={text()} choices={choices()} errors={errors()} onChange={chosen => props.onEdit(chosen)} />
+          <SelectField name={props.field.key} label={props.field.label} value={text()} choices={choices()} hint={hint()} errors={errors()} onChange={chosen => props.onEdit(chosen)} />
         </div>
       </Match>
       <Match when={props.field.type === 'number'}>
@@ -351,7 +357,8 @@ function CardField(props: { field: DeviceField; value: FieldValue; missing: bool
             <label class="hs-insp-field__label" for={id}>{props.field.label}</label>
             <NumberWidget id={id} label={props.field.label} widget={{ kind: 'number', multiple: false, min: props.field.minimum, max: props.field.maximum }}
               value={typeof value() === 'number' ? value() as number : undefined} commit={typed => props.onEdit(typeof typed === 'number' ? typed : null)}
-              describedBy={describedBy(errors().length > 0 && errorsId)} invalid={errors().length > 0} disabled={false} compact={false} required={props.field.required} />
+              describedBy={describedBy(!!hint() && hintId, errors().length > 0 && errorsId)} invalid={errors().length > 0} disabled={false} compact={false} required={props.field.required} />
+            <Show when={hint()}>{said => <small id={hintId} class="hs-field-hint">{said()}</small>}</Show>
             <FieldErrors id={errorsId} list={errors()} />
           </div>
         </div>

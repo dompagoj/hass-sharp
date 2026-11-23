@@ -60,8 +60,8 @@ public sealed class SharpData
         return Store.Read(this, key, DataStores.Bytes)?.AsSpan(1).ToArray();
     }
 
-    /// <summary>Writes bytes under a key, replacing what the key held.</summary>
-    /// <exception cref="ArgumentException">The key is not one, or there are no bytes.</exception>
+    /// <summary>Writes bytes under a key, replacing what the key held; an empty array is stored as an empty value, which reads back as an empty array.</summary>
+    /// <exception cref="ArgumentException">The key is not one, or the array is null.</exception>
     /// <exception cref="InvalidOperationException">The bytes take more than 8 MiB, or would take the store past 512 MiB; nothing was written.</exception>
     /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
     public void SetBytes(string key, byte[] value)

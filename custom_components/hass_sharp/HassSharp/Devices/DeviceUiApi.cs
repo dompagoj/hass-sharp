@@ -6,7 +6,7 @@ namespace HassSharp;
 public partial class HassSharpManager
 {
     // The host of the definition while it runs: none while it sets up, once its start failed, or once it stops.
-    DefinitionHost? UiHost(string id) => _userScriptManager.Entities.Host(id) is { Status: "running" } host ? host : null;
+    DefinitionHost? UiHost(string id) => _userScriptManager.Entities.Host(id) is { IsRunning: true } host ? host : null;
 
     const string UiNotRunning = "The entity definition is not running";
 
@@ -41,7 +41,7 @@ public partial class HassSharpManager
                 var revision = host?.UiRevision;
                 var pages = host == null || revision == known ? null : host.UiPages();
                 // A host that began to stop meanwhile has no pages: it is not running.
-                if (host?.Status != "running") result = new JsonObject { ["running"] = false };
+                if (host?.IsRunning != true) result = new JsonObject { ["running"] = false };
                 else if (pages == null) result = new { running = true, revision, unchanged = true };
                 else result = new { running = true, revision, pages };
             }
@@ -74,7 +74,7 @@ public partial class HassSharpManager
             {
                 var attention = new SortedDictionary<string, IReadOnlyDictionary<string, int>>(StringComparer.Ordinal);
                 foreach (var host in _userScriptManager.Entities.Hosts())
-                    if (host.Status == "running" && host.UiAttention() is { Count: > 0 } waiting) attention[host.DefinitionId] = waiting;
+                    if (host.IsRunning && host.UiAttention() is { Count: > 0 } waiting) attention[host.DefinitionId] = waiting;
                 result = new { attention, stored = _userScriptManager.Data?.Stored() ?? new Dictionary<string, IReadOnlyList<string>>() };
             }
             else if (operation == "stores")
@@ -92,7 +92,8 @@ public partial class HassSharpManager
                 {
                     var users = data.Shared().FirstOrDefault(store => store.Name == name)?.Users ?? [];
                     var names = users.Select(user => _userScriptManager.Entities.Host(user)?.DefinitionName is { } called && !string.IsNullOrWhiteSpace(called) ? called : user).ToList();
-                    return Error("in_use", $"{name} is in use by {(names.Count == 0 ? "a definition" : string.Join(", ", names))}: turn them off first.");
+                    return Error("in_use", names.Count > 1 ? $"{name} is in use by {string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}: turn them off first."
+                        : $"{name} is in use by {(names.Count == 1 ? names[0] : "a definition")}: turn it off first.");
                 }
                 result = new { deleted = true };
             }

@@ -6,7 +6,7 @@ import { attentionOf, createDeviceCounts, nodeAttention } from '../src/entities/
 import type { DeviceCounts } from '../src/entities/deviceUi'
 
 // The "waiting" counts of the device pages: one shared query, read every 10 seconds while the page is shown, that
-// shows nothing when it fails.
+// keeps the counts of its last good read when one fails.
 
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
@@ -75,21 +75,28 @@ it('requests no counts while the page is hidden, reads them at once when it show
   expect(page.requests).toHaveLength(3)
 })
 
-it('shows nothing for a failed counts request, and what the next one answers', async () => {
+it('shows nothing for a first counts request that fails, and keeps the last good counts through a later failure', async () => {
   let answer: () => unknown = () => { throw new Error('Connection lost') }
   const page = mount(() => answer())
   await settle()
   expect(page.shown()).toBeUndefined()
+  expect(page.host.textContent).toBe('')
   answer = () => ok(counts({ door: { faces: 1, plates: 2 } }))
   await vi.advanceTimersByTimeAsync(10_000)
   expect(page.shown()).toBe('3')
-  // A refusal after counts were shown: none of them shows, with no error.
+  // A refusal after counts were shown: they stay, with no error, and are read again at the next interval.
   answer = () => ({ version: 1, ok: false, error: { code: 'internal', detail: 'Something broke' } })
   await vi.advanceTimersByTimeAsync(10_000)
-  expect(page.shown()).toBeUndefined()
-  expect(page.host.textContent).toBe('')
+  expect(page.requests).toHaveLength(3)
+  expect(page.shown()).toBe('3')
+  expect(page.host.textContent).toBe('3')
+  answer = () => { throw new Error('Connection lost') }
+  await vi.advanceTimersByTimeAsync(10_000)
+  expect(page.requests).toHaveLength(4)
+  expect(page.shown()).toBe('3')
   answer = () => ok(counts({ door: { faces: 4 } }))
   await vi.advanceTimersByTimeAsync(10_000)
+  expect(page.requests).toHaveLength(5)
   expect(page.shown()).toBe('4')
 })
 

@@ -106,7 +106,7 @@ class DeviceUiTests(unittest.IsolatedAsyncioTestCase):
     async def test_refusals_come_through_as_results(self):
         for code, detail in (('not_running', 'The entity definition is not running'),
                              ('not_found', "The device's page shows no such image"),
-                             ('in_use', 'faces is in use by Door: turn them off first.'),
+                             ('in_use', 'faces is in use by Door: turn it off first.'),
                              ('invalid_request', 'Unknown device page operation')):
             with self.subTest(code=code):
                 self.answer = {'version': 1, 'ok': False, 'error': {'code': code, 'detail': detail}}

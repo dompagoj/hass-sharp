@@ -146,6 +146,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     public IReadOnlyList<LiveEntity> Entities { get; private set; } = [];
     /// <summary><c>setup</c> until started, then <c>running</c>, or <c>failed</c> when a <c>Start()</c> threw; <c>stopped</c> once stopping.</summary>
     public string Status => status;
+    /// <summary>Whether the definition is running: started, and not yet stopping.</summary>
+    internal bool IsRunning => status == Running;
     /// <summary>Why the start failed; null otherwise.</summary>
     public string? Error => error;
     /// <summary>What <see cref="Start"/> began: done once every <c>Start()</c> ended and the entities were published; a completed task before it.</summary>
@@ -317,9 +319,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// <c>changed</c> when the page no longer has the list, card or action, or the definition the node: nothing runs.
     /// <c>refused</c> with a sentence when a value does not fit its field, when the handler throws <see cref="UiRefusal"/>
     /// (its message), and while a handler that ran past its time still runs. <c>failed</c> when the handler ran past its
-    /// time, which keeps the page's turn until it ends, and when it threw anything else, which is logged for the
-    /// definition with the node and the action's label, never with the values. Stopping waits for the press, its handler
-    /// past its time too, before any <c>Stop()</c>.
+    /// time, which keeps the page's turn until it ends and is logged as a warning, and when it threw anything else, which
+    /// is logged for the definition with the node and the action's label, never with the values, as is what a handler past
+    /// its time throws when it later ends. Stopping waits for the press, its handler past its time too, before any
+    /// <c>Stop()</c>.
     /// </summary>
     /// <exception cref="InvalidOperationException">The definition is not running, or began to stop before the press's turn came or as its handler was cancelled.</exception>
     internal async Task<UiActResult> UiAct(string nodeKey, string list, string card, string action, JsonObject values)
@@ -368,12 +371,20 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                     // It keeps the page's turn until it ends: the presses behind it, and those that come meanwhile, are refused.
                     overran = true;
                     page.Line.Overran();
+                    Report($"the action '{press.Label}' on the page of {Called(page.Node)} did not finish within {Seconds(UiActionTimeout)} s; no other action of this page runs until it ends", PyLogLevel.Warn);
                     _ = handler.ContinueWith(ended =>
                     {
-                        _ = ended.Exception;
-                        page.Line.Ended();
-                        place.Over.TrySetResult();
-                        End();
+                        // Its failure is logged as one within the time is, also once the definition began to stop.
+                        try { ended.GetAwaiter().GetResult(); }
+                        catch (Exception failure) when (failure is not UiRefusal && !(failure is OperationCanceledException && Stopping.IsCancellationRequested))
+                        { ReportFailure(press, page, failure); }
+                        catch { }
+                        finally
+                        {
+                            page.Line.Ended();
+                            place.Over.TrySetResult();
+                            End();
+                        }
                     }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
                     return new("failed", $"The action did not finish within {Seconds(UiActionTimeout)} s.");
                 }
@@ -389,12 +400,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             catch (OperationCanceledException) when (Stopping.IsCancellationRequested) { throw DefinitionNotRunning(); }
             catch (Exception failure)
             {
-                // The node, the action's label and the exception: never what the press sent.
-                var what = $"the action '{press.Label}' on the page of {Called(page.Node)} failed";
-                Report(what, failure, PyLogLevel.Error);
-                string whole;
-                try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
-                Report($"{what}: {whole}", PyLogLevel.Debug);
+                ReportFailure(press, page, failure);
                 return new("failed", "The action failed; see the Home Assistant log.");
             }
         }
@@ -408,6 +414,16 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
     }
 
+    // A handler's failure, with the node, the action's label and the exception: never what the press sent. Never throws.
+    void ReportFailure(UiPress press, NodePage page, Exception failure)
+    {
+        var what = $"the action '{press.Label}' on the page of {Called(page.Node)} failed";
+        Report(what, failure, PyLogLevel.Error);
+        string whole;
+        try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
+        Report($"{what}: {whole}", PyLogLevel.Debug);
+    }
+
     static readonly UiActResult ActDone = new("done"), ActChanged = new("changed"),
         ActBusy = new("refused", "An earlier action of this device is still running.");
 
@@ -416,7 +432,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     // The pages in node order; none once stopped.
     NodePage[] Pages()
     {
-        lock (pageGate) return [.. definition.Components.Select(node => pages.GetValueOrDefault(node.Key)).OfType<NodePage>().Distinct()];
+        lock (pageGate) return [.. definition.Components.Select(node => pages.GetValueOrDefault(node.Key)).OfType<NodePage>()];
     }
 
     // The page of a C# node, titled as the host names the node: made with its class, kept until the definition has stopped.

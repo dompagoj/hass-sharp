@@ -401,6 +401,31 @@ it('disables the card\'s buttons while a press is out', async () => {
   expect(actions(f1).map(b => b.disabled)).toEqual([false, false])
 })
 
+it('marks a required field as the definition form does', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([faceCard('f1', {
+    fields: [
+      text('name', 'Name', '', { required: true }),
+      text('note', 'Note'),
+      { key: 'role', label: 'Role', type: 'select', value: null, options: ['guest', 'family'], required: true },
+      { key: 'age', label: 'Age', type: 'number', value: null, required: true },
+      { key: 'score', label: 'Score', type: 'number', value: null, required: false },
+    ],
+  })])]
+  const { host } = mount(device)
+  await settle()
+  const f1 = card(host, 'unknown', 'f1')!
+  const hint = (key: string) => f1.querySelector(`[data-field="${key}"] .hs-field-hint`)
+  for (const key of ['name', 'role', 'age']) {
+    expect(hint(key)?.textContent, key).toBe('Required.')
+    const control = f1.querySelector<HTMLElement>(`[data-field="${key}"] input, [data-field="${key}"] select`)!
+    expect(control.getAttribute('aria-describedby')?.split(' '), key).toContain(hint(key)!.id)
+  }
+  for (const key of ['note', 'score']) expect(hint(key), key).toBeNull()
+  expect(input(f1, 'Name').placeholder).toBe('Required')
+  expect(input(f1, 'Note').placeholder).not.toBe('Required')
+})
+
 it('stops a press with an empty required field', async () => {
   const device = backend()
   device.state.pages = [doorPage([faceCard('f1', { fields: [text('name', 'Name', '', { required: true }), text('note', 'Note')] })])]
@@ -456,6 +481,24 @@ it('a press of an action that does not validate goes out with an empty required 
   await settle()
   expect(acts(device)).toHaveLength(1)
   expect(f1.querySelector('[data-field="name"]')!.getAttribute('aria-invalid')).toBe('true')
+})
+
+it('a press of an action that does not validate clears the marks of an earlier stopped press', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([skippingCard()])]
+  const { host } = mount(device)
+  await settle()
+  const f1 = card(host, 'unknown', 'f1')!
+  button(f1, 'Save').click()
+  await settle()
+  expect(acts(device)).toEqual([])
+  expect(f1.querySelector('[data-field="name"]')!.getAttribute('aria-invalid')).toBe('true')
+  expect(f1.textContent).toContain('Name is required.')
+  button(f1, 'Dismiss').click()
+  await settle()
+  expect(acts(device)).toHaveLength(1)
+  expect(f1.querySelectorAll('[aria-invalid="true"]')).toHaveLength(0)
+  expect(f1.textContent).not.toContain('Name is required.')
 })
 
 it('it still asks when it has a confirm text', async () => {

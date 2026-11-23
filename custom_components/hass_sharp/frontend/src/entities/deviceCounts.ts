@@ -11,8 +11,8 @@ export const deviceCountsQueryKey = ['hass-sharp', 'device-counts'] as const
 /**
  * The cards waiting for the person on the device pages of every running definition, as one query the whole page shares:
  * read when the page opens and every 10 s while the browser shows it, never while it is hidden, and no more once the
- * page is left. Undefined before the first answer, and while the last read failed: it shows nothing then, and is read
- * again at the next interval.
+ * page is left. A read that fails shows no error: the counts of the last good read stay, and are read again at the next
+ * interval. Undefined only before the first good read.
  */
 export function createDeviceCounts(hass: Accessor<Pick<HomeAssistant, 'callWS'>>): Accessor<DeviceCounts | undefined> {
   const [shown, setShown] = createSignal(document.visibilityState !== 'hidden')
@@ -28,7 +28,8 @@ export function createDeviceCounts(hass: Accessor<Pick<HomeAssistant, 'callWS'>>
     refetchIntervalInBackground: false,
     retry: false,
   }))
-  return () => (query.isError ? undefined : query.data)
+  // A failed refetch keeps the data of the last success.
+  return () => query.data
 }
 
 /** A definition's counts by node key, if it is listed (a definition id is any text: never an object's own member). */

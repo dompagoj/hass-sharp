@@ -21,7 +21,7 @@ internal sealed record SharedStoreInfo(string Name, long Bytes, IReadOnlyList<st
 /// A store is a file per key, named by the key with <c>+</c> for each <c>/</c>, holding one byte for its kind and then the
 /// value. One <see cref="Store"/> serves every handle open on a directory, so their operations are atomic against each other.
 /// </summary>
-internal sealed class DataStores
+internal sealed partial class DataStores
 {
     /// <summary>The most a value may take; settable for tests.</summary>
     internal static long ValueLimit { get; set; } = 8L * 1024 * 1024;
@@ -34,8 +34,10 @@ internal sealed class DataStores
     // What a write writes before it is renamed into place; a key's file name never starts with a dot.
     const string Partial = ".partial";
 
-    static readonly Regex KeyPattern = new(@"^(?=.{1,200}\z)[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*\z", RegexOptions.CultureInvariant);
-    static readonly Regex SharedPattern = new(@"^[a-z0-9][a-z0-9_.-]{0,63}\z", RegexOptions.CultureInvariant);
+    [GeneratedRegex(@"^(?=.{1,200}\z)[a-z0-9][a-z0-9_.-]*(/[a-z0-9][a-z0-9_.-]*)*\z", RegexOptions.CultureInvariant)]
+    private static partial Regex KeyPattern();
+    [GeneratedRegex(@"^[a-z0-9][a-z0-9_.-]{0,63}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex SharedPattern();
 
     readonly string devices;
     readonly string shared;
@@ -125,7 +127,7 @@ internal sealed class DataStores
         lock (gate)
         {
             var open = stores.Values.Where(store => store.SharedName != null).ToDictionary(store => store.SharedName!, StringComparer.Ordinal);
-            return Subdirectories(shared).Where(name => SharedPattern.IsMatch(name)).Union(open.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal)
+            return Subdirectories(shared).Where(name => SharedPattern().IsMatch(name)).Union(open.Keys, StringComparer.Ordinal).Order(StringComparer.Ordinal)
                 .Select(name => open.TryGetValue(name, out var store)
                     ? new SharedStoreInfo(name, store.Size, store.Handles.Select(handle => handle.User.DefinitionId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList())
                     : new SharedStoreInfo(name, Scan(Path.Combine(shared, name)).Sum(value => value.Size), []))
@@ -151,13 +153,13 @@ internal sealed class DataStores
     /// <exception cref="ArgumentException">The key is not one.</exception>
     internal static void CheckKey(string key)
     {
-        if (key == null || !KeyPattern.IsMatch(key))
+        if (key == null || !KeyPattern().IsMatch(key))
             throw new ArgumentException($"{(key == null ? "A null key" : $"'{key}'")} is not a key: a key is 1 to 200 characters of segments joined by '/', each of lower-case letters, digits, '_', '.' and '-', starting with a letter or a digit");
     }
 
     static void CheckShared(string name)
     {
-        if (name == null || !SharedPattern.IsMatch(name))
+        if (name == null || !SharedPattern().IsMatch(name))
             throw new ArgumentException($"{(name == null ? "A null name" : $"'{name}'")} is not a shared store's name: it is 1 to 64 lower-case letters, digits, '_', '.' and '-', starting with a letter or a digit");
     }
 
@@ -222,7 +224,7 @@ internal sealed class DataStores
     static IEnumerable<(string Key, long Size)> Scan(string directory) =>
         ValueFiles(directory)
             .Select(file => (Key: Path.GetFileName(file).Replace('+', '/'), Size: Math.Max(0, new FileInfo(file).Length - 1)))
-            .Where(value => KeyPattern.IsMatch(value.Key));
+            .Where(value => KeyPattern().IsMatch(value.Key));
 
     // A directory name without a separator: not empty, not hidden (so never "." or ".."), no control character, and at
     // most the 255 bytes a Linux file name takes.

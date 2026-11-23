@@ -34,13 +34,16 @@ internal sealed record DrawnList(string Id, bool Attention, DrawnCard[] Cards, J
 /// <see cref="Ui"/> is what the node's code draws with. Every member is safe from any thread; <see cref="Changed"/> is
 /// raised outside the page's lock.
 /// </summary>
-internal sealed class DevicePage
+internal sealed partial class DevicePage
 {
     internal const int MaxLists = 20, MaxCards = 200, MaxFields = 8, MaxActions = 4, MaxText = 500, MaxImageBytes = 1024 * 1024;
 
-    static readonly Regex IdPattern = new(@"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}\z", RegexOptions.CultureInvariant);
-    static readonly Regex KeyPattern = new(@"^[a-z][a-z0-9_]{0,39}\z", RegexOptions.CultureInvariant);
-    static readonly Regex OtherCharacters = new("[^a-z0-9]+", RegexOptions.CultureInvariant);
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex IdPattern();
+    [GeneratedRegex(@"^[a-z][a-z0-9_]{0,39}\z", RegexOptions.CultureInvariant)]
+    private static partial Regex KeyPattern();
+    [GeneratedRegex("[^a-z0-9]+", RegexOptions.CultureInvariant)]
+    private static partial Regex OtherCharacters();
 
     readonly string nodeKey;
     readonly string title;
@@ -177,12 +180,12 @@ internal sealed class DevicePage
     internal static string Hash(byte[] jpeg) => Convert.ToHexStringLower(SHA256.HashData(jpeg));
 
     /// <summary>An action's id: its label in lower case, with each run of other characters than letters and digits made one <c>_</c>, trimmed of <c>_</c>.</summary>
-    internal static string ActionId(string label) => OtherCharacters.Replace(label.ToLowerInvariant(), "_").Trim('_');
+    internal static string ActionId(string label) => OtherCharacters().Replace(label.ToLowerInvariant(), "_").Trim('_');
 
     /// <exception cref="ArgumentException">The id is not a list's or a card's.</exception>
     internal static void CheckId(string id, string of)
     {
-        if (id == null || !IdPattern.IsMatch(id))
+        if (id == null || !IdPattern().IsMatch(id))
             throw new ArgumentException($"{(id == null ? "A null id" : $"'{id}'")} is not a {of}'s id: an id is 1 to 64 letters, digits, '_', '.', ':' and '-', starting with a letter or a digit");
     }
 
@@ -196,7 +199,7 @@ internal sealed class DevicePage
     /// <exception cref="ArgumentException">The field is not one.</exception>
     internal static void CheckField(DrawnField field)
     {
-        if (field.Key == null || !KeyPattern.IsMatch(field.Key))
+        if (field.Key == null || !KeyPattern().IsMatch(field.Key))
             throw new ArgumentException($"{(field.Key == null ? "A null key" : $"'{field.Key}'")} is not a field's key: a key is 1 to 40 lower-case letters, digits and '_', starting with a letter");
         CheckText(field.Label, $"The label of field '{field.Key}'", required: true);
         CheckText(field.Text, $"The value of field '{field.Key}'");
