@@ -601,6 +601,8 @@ public static class VisualGraphValidator
         bool Pure(JsonObject node) => IsPure(node, Spec(node));
         /// <summary>Whether the node is a declaration (<see cref="Declaration"/>): a Device node, neither a step nor a value.</summary>
         bool Declared(JsonObject node) => Declaration(Spec(node));
+        /// <summary>Whether the node is a library step or class its node library no longer has: a <c>library:</c> kind the catalog lacks.</summary>
+        bool MissingLibraryNode(JsonObject node) => Spec(node) == null && Kind(node).StartsWith("library:", StringComparison.Ordinal);
         bool Visible(JsonObject source, JsonObject target, JsonNode port) => scopes.TryGetValue(Id(target), out var b) && VisibleIn(source, b, port);
         /// <summary>Whether an output of <paramref name="source"/> may be read by a step in scope <paramref name="b"/>.</summary>
         bool VisibleIn(JsonObject source, (string Owner, string Port)[] b, JsonNode port)
@@ -658,7 +660,7 @@ public static class VisualGraphValidator
             {
                 if (raw is not JsonObject node || Id(node) == "" || node["config"] is not JsonObject) { Error(null, "Each node requires id and config", code: "node.invalid"); continue; }
                 if (!nodes.TryAdd(Id(node), node)) Error(Id(node), "Duplicate node id", code: "node.duplicate");
-                if (Spec(node) == null) Error(Id(node), Kind(node).StartsWith("library:", StringComparison.Ordinal) ? Words.MissingLibraryNode : "Unknown node kind", code: "node.unknownKind");
+                if (Spec(node) == null) Error(Id(node), MissingLibraryNode(node) ? Words.MissingLibraryNode : "Unknown node kind", code: "node.unknownKind");
             }
             foreach (var id in nodes.Keys) outgoing[id] = [];
             var edgeIds = new HashSet<string>(StringComparer.Ordinal);
@@ -703,10 +705,11 @@ public static class VisualGraphValidator
             if (document == "automation" && !nodes.Values.Any(n => Kind(n) == "trigger")) Error(null, "At least one trigger is required", code: "graph.noTrigger");
             foreach (var root in roots) Scope(Id(root), []);
             // A value node is never reached by execution; it is a warning when nothing reads it. Nor is a declaration (a Device
-            // node), which never runs.
+            // node), which never runs. A node whose library step or class is gone is reported as missing only: a class node
+            // never takes a step order wire, and connecting a step that no longer exists would not help.
             foreach (var (id, node) in nodes)
                 if (Pure(node)) { if (!data.Any(e => Text(e, "source") == id)) errors.Add(new(id, Words.Unused(Words.StepName(node, Spec(node))), 2, Code: "pure.unused")); }
-                else if (!scopes.ContainsKey(id) && !Declared(node)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
+                else if (!scopes.ContainsKey(id) && !Declared(node) && !MissingLibraryNode(node)) Error(id, Words.Unreachable(Words.StepName(node, Spec(node))), code: "node.unreachable");
             foreach (var edge in data)
             {
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];

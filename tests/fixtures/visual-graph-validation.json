@@ -17558,6 +17558,39 @@
     ]
   },
   {
+    "name": "a library step that is no longer in its node library and is not connected",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "library:gone:global%3A%3ANodeLib.Gone.Run",
+          "config": {
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "l",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
     "name": "custom node: a CLR list goes into another custom node's IEnumerable<object> pin when a third node names both (listed first)",
     "graph": {
       "version": 5,
@@ -48061,12 +48094,10 @@
     "nodeId": "gone",
     "contains": "This step is no longer in its node library; delete it and add it again from the node library",
     "messages": [
-      "Library:relays:global%3A%3ANodeLib.Gone is not connected into the flow; connect a step to its execution input",
       "This step is no longer in its node library; delete it and add it again from the node library"
     ],
     "codes": [
-      "node.unknownKind",
-      "node.unreachable"
+      "node.unknownKind"
     ]
   }
 ]
