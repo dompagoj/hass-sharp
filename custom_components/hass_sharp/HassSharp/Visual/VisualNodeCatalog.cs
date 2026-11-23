@@ -55,13 +55,22 @@ public static class VisualNodeCatalog
     /// </summary>
     internal static bool IsHub(JsonNode? spec) => Flag(spec, "root") && Declares(spec, "entity");
     /// <summary>
-    /// Whether the kind is a class node (<c>"dynamicInputs": "settings"</c>, a C# entity or a C# device): its code is one
-    /// class, and its pins after its kind's own are the class's settings (<see cref="ClassSignature"/>). Mirrored by
-    /// <c>isClassNode</c> in <c>contract.ts</c>.
+    /// Whether the kind is a class node (<c>"dynamicInputs": "settings"</c>, a C# entity, a C# device or a library's class):
+    /// it is one class, and its pins after its kind's own are the class's settings (<see cref="ClassSignature"/>). Mirrored
+    /// by <c>isClassNode</c> in <c>contract.ts</c>.
     /// </summary>
     internal static bool IsClassNode(JsonNode? spec) => Text(spec, "dynamicInputs") == "settings";
-    /// <summary>Whether a node of the kind holds C# code: a Custom C# step or a class node. Mirrored by <c>hasCode</c> in <c>contract.ts</c>.</summary>
-    internal static bool HasCode(JsonNode? spec) => Text(spec, "dynamicInputs") is "custom" or "settings";
+    /// <summary>
+    /// Whether a node of the kind holds C# code: a Custom C# step, or a class node whose entry has no
+    /// <c>classSignature</c> (a C# entity or C# device; a library's class is the library's code). Mirrored by
+    /// <c>hasCode</c> in <c>contract.ts</c>.
+    /// </summary>
+    internal static bool HasCode(JsonNode? spec) => Text(spec, "dynamicInputs") switch
+    {
+        "custom" => true,
+        "settings" => spec?["classSignature"] == null,
+        _ => false,
+    };
     /// <summary>
     /// The pin type of a class's setting, from its signature's <c>type</c> (and an entity's <c>domain</c>): text for a string
     /// or an enum, a number for an integer or a number, true or false for a boolean, an entity id for an entity, and an
@@ -107,11 +116,12 @@ public static class VisualNodeCatalog
     /// <summary>
     /// A class node's signature, when the node's kind is a class node's (<see cref="IsClassNode"/>), its signature is well
     /// formed (<see cref="WellFormedClassSignature"/>) and no setting has the key of one of its kind's own pins; else null.
-    /// Mirrored by <c>classSignature</c> in <c>contract.ts</c>.
+    /// A library class's is its kind's entry's (<c>classSignature</c>), whatever the node's config holds; a C# entity's or
+    /// C# device's is its config's. Mirrored by <c>classSignature</c> in <c>contract.ts</c>.
     /// </summary>
     internal static JsonObject? ClassSignature(JsonObject node, JsonNode? spec) =>
-        IsClassNode(spec) && node["config"] is JsonObject config && config["signature"] is JsonObject signature && WellFormedClassSignature(signature)
-            && !signature["settings"]!.AsArray().Any(s => (spec?["inputs"] as JsonObject)?.ContainsKey(Text(s, "key")) == true) ? signature : null;
+        IsClassNode(spec) && (spec?["classSignature"] is { } entry ? entry : node["config"] is JsonObject config ? config["signature"] : null) is JsonObject signature
+            && WellFormedClassSignature(signature) && !signature["settings"]!.AsArray().Any(s => (spec?["inputs"] as JsonObject)?.ContainsKey(Text(s, "key")) == true) ? signature : null;
     /// <summary>
     /// The pin of a class's setting: of the setting's pin type (<see cref="SettingPinType"/>), required when the signature
     /// says so (else optional), labelled and described as the setting is, with the setting's type, secret flag, options,

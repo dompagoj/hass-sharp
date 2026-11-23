@@ -59,6 +59,10 @@ static class CustomNodeTests
             ClassSignatures();
             LibraryBaseSettings();
             ClassTitles();
+            AMarkedLibraryClassIsAStep();
+            AnUnmarkedOrUncreatableLibraryClassIsNoStep();
+            ALibraryClassNodeHasSettingsAndNoCode();
+            TwoLibrariesMayOfferTheSameTitle();
             ClassProblems();
             RequiredSettingsDrawNoWarning();
             NodeCodeNamesADomainByHassDomains();
@@ -348,7 +352,7 @@ static class CustomNodeTests
     }
 
     // A class node's title is its class's name in words (an acronym kept whole), or the title a [Node] on the class gives;
-    // [Node] on a class, in a node's code or in a library, makes no step.
+    // [Node] on a class in a C# node's own code is only its title and makes no step.
     static void ClassTitles()
     {
         var plug = ClassCompiled("csharp_device", "public class ShellyPlugPro : SharpDevice { }");
@@ -358,11 +362,151 @@ static class CustomNodeTests
             && titled.Signature?["title"]?.GetValue<string>() == "Poller box",
             "a class's title is its name in words, else its [Node] title: " + string.Join(", ", new[] { plug, sensor, titled }.Select(c => c.Signature?["title"]?.ToJsonString() ?? Messages(c.Diagnostics))));
         Check(titled.Valid && titled.Method == null && titled.Types.IsEmpty, "[Node] on a node's class makes it no step: " + titled.Method);
-        var library = Library("[Node(\"Poller box\")]\npublic class Poller : SharpDevice { }\npublic class ShellyPlugPro : SharpDevice { }", "ranged");
-        var nodes = library.Snapshot.Catalog["nodes"]!.AsObject();
-        Check(library.Valid && !nodes.Any(n => n.Key.StartsWith("library:", StringComparison.Ordinal)) && !nodes.ToJsonString().Contains("Poller", StringComparison.Ordinal),
-            "[Node] on a library's class makes no step: " + string.Join(", ", nodes.Select(n => n.Key).Where(k => k.StartsWith("library:", StringComparison.Ordinal))));
-        Console.WriteLine("PASS class titles: a class's name in words, an acronym whole, or its [Node] title; [Node] on a class makes no step");
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", "[Node(\"Poller box\")]\npublic class Poller : SharpDevice { }", "csharp_device"),
+            new CustomNodeSource("e", "[Node(\"Poller lamp\")]\npublic class Lamp : SharpLight { }", "csharp_entity")]);
+        var nodes = preview.Snapshot.Catalog["nodes"]!.AsObject();
+        Check(preview.Valid && preview.Snapshot.Classes.IsEmpty && !nodes.Any(n => n.Key.StartsWith("library:", StringComparison.Ordinal)) && !nodes.ToJsonString().Contains("Poller", StringComparison.Ordinal),
+            "[Node] on a C# node's class makes no kind of its own: " + string.Join(", ", nodes.Select(n => n.Key).Where(k => k.StartsWith("library:", StringComparison.Ordinal))) + " " + Messages(preview.Diagnostics));
+        Console.WriteLine("PASS class titles: a class's name in words, an acronym whole, or its [Node] title; [Node] on a C# node's class makes no step");
+    }
+
+    /// <summary>
+    /// The node library the library class tests share: a device and an entity class marked [Node], an unmarked entity
+    /// class (a helper) and a marked abstract one (a base), which are no steps.
+    /// </summary>
+    static readonly NodeLibrarySource Relays = new("relays", """
+        /// <summary>A hub of relays.</summary>
+        [Node("Relay hub", Category = "Relays")]
+        public class RelayHub : SharpDevice
+        {
+            [Setting] public string Address { get; set; }
+            [Setting(Secret = true)] public string? Token { get; set; }
+            [Setting("Poll every", Minimum = 1, Maximum = 60)] public double PollEvery { get; set; } = 5;
+            public RelayHub() { Add(new SharpSwitch("relay", "Relay")); }
+        }
+        /// <summary>One relay.</summary>
+        [Node("Relay")]
+        public class Relay : SharpSwitch
+        {
+            [Setting] public string Address { get; set; } = "";
+        }
+        public class Helper : SharpSwitch { }
+        [Node("Base relay")]
+        public abstract class BaseRelay : SharpSwitch { }
+        """, 1);
+    /// <summary>The kind of <see cref="Relays"/>'s hub, the device.</summary>
+    const string HubKind = "library:relays:global%3A%3ANodeLib.RelayHub";
+    /// <summary>The kind of <see cref="Relays"/>'s relay, the entity.</summary>
+    const string RelayKind = "library:relays:global%3A%3ANodeLib.Relay";
+    static string Keys(JsonNode? members) => string.Join(",", (members as JsonObject ?? []).Select(p => p.Key));
+
+    // A library's device or entity class marked [Node] is a kind of its own: a copy of the C# device's or C# entity's entry
+    // without code, its title, category and summary, its library, and its class's settings in the entry.
+    static void AMarkedLibraryClassIsAStep()
+    {
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([Relays]);
+        Check(preview.Valid, "the relays library compiles: " + Messages(preview.Diagnostics));
+        var nodes = preview.Snapshot.Catalog["nodes"]!.AsObject();
+        Check(nodes[HubKind] is JsonObject && nodes[RelayKind] is JsonObject, "both marked classes are kinds: " + string.Join(", ", nodes.Select(n => n.Key).Where(k => k.StartsWith("library:", StringComparison.Ordinal))));
+        var graphVersion = preview.Snapshot.Catalog["graphVersion"]!.GetValue<int>();
+        var hub = nodes[HubKind]!.AsObject();
+        Check(VisualNodeCatalog.Text(hub, "label") == "Relay hub" && VisualNodeCatalog.Text(hub, "category") == "Relays" && VisualNodeCatalog.Text(hub, "description") == "A hub of relays."
+            && VisualNodeCatalog.Text(hub, "declares") == "device" && hub["declaration"]?.GetValue<bool>() == true && hub["documents"]?.ToJsonString() == """["entity"]"""
+            && VisualNodeCatalog.Text(hub, "sourceId") == "relays" && VisualNodeCatalog.Text(hub, "dynamicInputs") == "settings" && VisualNodeCatalog.Text(hub, "argumentStorage") == "arguments"
+            && hub["minGraphVersion"]?.GetValue<int>() == graphVersion && hub["runtimeVersions"]?.ToJsonString() == $"[{graphVersion}]" && hub["keywords"] == null,
+            "the hub's entry is a C# device's with its title, category, summary and library: " + hub.ToJsonString());
+        Check(Keys(hub["config"]) == "key,name,via,arguments", "the hub's config is a C# device's without code: " + Keys(hub["config"]));
+        var settings = hub["classSignature"]!["settings"]!.AsArray();
+        JsonNode? Setting(string key) => settings.FirstOrDefault(s => VisualNodeCatalog.Text(s, "key") == key);
+        Check(string.Join(",", settings.Select(s => VisualNodeCatalog.Text(s, "key"))) == "Address,Token,PollEvery" && Setting("Address")?["required"]?.GetValue<bool>() == true
+            && Setting("Token")?["secret"]?.GetValue<bool>() == true && Setting("PollEvery")?["minimum"]?.GetValue<double>() == 1 && Setting("PollEvery")?["maximum"]?.GetValue<double>() == 60
+            && VisualNodeCatalog.Text(Setting("PollEvery"), "label") == "Poll every" && VisualNodeCatalog.Text(hub["classSignature"], "title") == "Relay hub",
+            "the hub's settings are in its entry, in their order, with their flags and range: " + hub["classSignature"]!.ToJsonString());
+        Check(VisualNodeCatalog.WellFormedClassSignature(hub["classSignature"]), "the hub's class signature is well formed: " + hub["classSignature"]!.ToJsonString());
+        var relay = nodes[RelayKind]!.AsObject();
+        Check(VisualNodeCatalog.Text(relay, "declares") == "entity" && VisualNodeCatalog.Text(relay, "category") == "Custom" && VisualNodeCatalog.Text(relay, "label") == "Relay"
+            && VisualNodeCatalog.Text(relay, "description") == "One relay." && relay["classSignature"]!.AsObject().ContainsKey("domain") && VisualNodeCatalog.Text(relay["classSignature"], "domain") == "switch"
+            && JsonNode.DeepEquals(relay["inputs"]?["device"], VisualNodeCatalog.Root["nodes"]!["csharp_entity"]!["inputs"]!["device"]),
+            "the relay's entry is a C# entity's, of the switch domain, with its Device pin: " + relay.ToJsonString());
+        Check(Keys(relay["config"]) == "key,arguments", "the relay's config is a C# entity's without code: " + Keys(relay["config"]));
+        var classes = preview.Snapshot.Classes;
+        Check(classes.Count == 2 && classes.GetValueOrDefault(HubKind) == new LibraryClassDescriptor(HubKind, "relays", "global::NodeLib.RelayHub", "device")
+            && classes.GetValueOrDefault(RelayKind) == new LibraryClassDescriptor(RelayKind, "relays", "global::NodeLib.Relay", "entity"),
+            "the snapshot keeps each class's type expression by kind: " + string.Join(", ", classes.Values));
+        Console.WriteLine("PASS library classes: a marked device or entity class of a library is a kind, a C# device's or C# entity's entry without code, with its title, category, summary and settings");
+    }
+
+    // A library's class without [Node] is no step, nor is a marked one a definition cannot create: that one draws a warning
+    // at its name that says why.
+    static void AnUnmarkedOrUncreatableLibraryClassIsNoStep()
+    {
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([Relays]);
+        var kinds = preview.Snapshot.Catalog["nodes"]!.AsObject().Select(n => n.Key).Where(k => k.StartsWith("library:", StringComparison.Ordinal)).ToArray();
+        Check(!kinds.Any(k => k.Contains("Helper", StringComparison.Ordinal) || k.Contains("BaseRelay", StringComparison.Ordinal)) && !preview.Snapshot.Classes.Keys.Any(k => k.Contains("Helper", StringComparison.Ordinal) || k.Contains("BaseRelay", StringComparison.Ordinal)),
+            "neither the unmarked nor the abstract class is a kind: " + string.Join(", ", kinds));
+        var lines = Relays.Source.Split('\n');
+        var line = Array.FindIndex(lines, l => l.Contains("class BaseRelay", StringComparison.Ordinal)) + 1;
+        var column = Column(Relays.Source, line, "BaseRelay");
+        Check(preview.Diagnostics is [{ Severity: 2, SourceId: "relays" } only] && only.StartLine == line && only.StartColumn == column && only.EndColumn == column + "BaseRelay".Length
+            && only.Message == NodeLibraryCompiler.UnofferedClassMessage("BaseRelay"),
+            $"one warning, at BaseRelay's name ({line}:{column}): " + Messages(preview.Diagnostics));
+        Check(NodeLibraryCompiler.UnofferedClassMessage("BaseRelay") == "BaseRelay has [Node] but is not offered as a step: a class a definition creates is public, not abstract or generic, and has a public constructor without parameters",
+            "the sentence names the class, says it is no step and why: " + NodeLibraryCompiler.UnofferedClassMessage("BaseRelay"));
+        // Each way of being uncreatable draws it; a marked class that is no device or entity of a domain draws nothing.
+        foreach (var (source, name) in new[] {
+            ("[Node(\"Hidden\")]\nclass Hidden : SharpDevice { }", "Hidden"),
+            ("[Node(\"Boxed\")]\npublic class Boxed<T> : SharpDevice { }", "Boxed"),
+            ("public static class Outer\n{\n    [Node(\"Inner\")]\n    public class Inner : SharpDevice { }\n}", "Inner"),
+            ("[Node(\"Hosted\")]\npublic class Hosted : SharpSwitch\n{\n    public Hosted(string host) { }\n}", "Hosted") })
+        {
+            var one = Library(source, "odd");
+            Check(one.Valid && one.Diagnostics is [{ Severity: 2 } warning] && warning.Message == NodeLibraryCompiler.UnofferedClassMessage(name) && one.Snapshot.Classes.IsEmpty,
+                $"{name} is no step and draws the warning: " + Messages(one.Diagnostics));
+        }
+        var plain = Library("[Node(\"Plain\")]\npublic class Plain { }\n[Node(\"Bare\")]\npublic abstract class Bare : SharpEntity { }", "plain");
+        Check(plain.Valid && plain.Diagnostics.IsEmpty && plain.Snapshot.Classes.IsEmpty, "a marked class that is no device or entity of a domain is as before: " + Messages(plain.Diagnostics));
+        // A marked class whose setting cannot be a pin is no step: the problem is said in the library, at the property, as a
+        // C# node's code has it.
+        var foreign = Library("[Node(\"Plug\")]\npublic class Plug : SharpDevice\n{\n    [Setting] public string Širina { get; set; } = \"\";\n}", "foreign");
+        Check(foreign.Diagnostics is [{ Severity: 3, SourceId: "foreign", StartLine: 4 } pin] && pin.Message == NodeLibraryCompiler.PinNameMessage("setting", "Širina") && foreign.Snapshot.Classes.IsEmpty,
+            "a setting that cannot be a pin keeps the class from being a step, said at the property: " + Messages(foreign.Diagnostics));
+        var device = Library("[Node(\"Lamp\")]\npublic class Lamp : SharpLight\n{\n    [Setting] public string device { get; set; } = \"\";\n}", "device");
+        Check(device.Diagnostics is [{ Severity: 3, SourceId: "device", StartLine: 4 } taken] && taken.Message == NodeLibraryCompiler.DeviceSettingMessage && device.Snapshot.Classes.IsEmpty,
+            "an entity's setting called device keeps it from being a step, said at the property: " + Messages(device.Diagnostics));
+        Console.WriteLine("PASS library classes: an unmarked class is no step, nor a marked one a definition cannot create, which draws a warning at its name; a setting that cannot be a pin is said in the library");
+    }
+
+    // A node of a library class's kind is a class node without code: its settings are its entry's, whatever its config
+    // holds; a C# device node is as before.
+    static void ALibraryClassNodeHasSettingsAndNoCode()
+    {
+        var snapshot = new NodeLibraryCompiler(Diagnostics).Preview([Relays]).Snapshot;
+        var hub = new JsonObject { ["id"] = "hub", ["kind"] = HubKind, ["config"] = new JsonObject { ["key"] = "hub", ["name"] = "Hub", ["arguments"] = new JsonObject() } };
+        var spec = VisualNodeCatalog.Spec(hub, snapshot);
+        Check(VisualNodeCatalog.IsClassNode(spec) && !VisualNodeCatalog.HasCode(spec), "a library class node is a class node without code: " + spec?.ToJsonString());
+        Check(ReferenceEquals(VisualNodeCatalog.ClassSignature(hub, spec), spec!["classSignature"]), "its signature is its entry's: " + VisualNodeCatalog.ClassSignature(hub, spec)?.ToJsonString());
+        Check(Keys(VisualNodeCatalog.DataInputs(hub, null, snapshot)) == "Address,Token,PollEvery", "its data inputs are its class's settings: " + Keys(VisualNodeCatalog.DataInputs(hub, null, snapshot)));
+        var stale = hub.DeepClone().AsObject();
+        stale["config"]!["signature"] = JsonNode.Parse("""{"title":"Old","description":"","domain":null,"settings":[{"key":"Old","label":"Old","description":"","type":"string","secret":false}]}""");
+        Check(ReferenceEquals(VisualNodeCatalog.ClassSignature(stale, spec), spec["classSignature"]) && Keys(VisualNodeCatalog.DataInputs(stale, null, snapshot)) == "Address,Token,PollEvery",
+            "a signature in its config changes nothing: " + Keys(VisualNodeCatalog.DataInputs(stale, null, snapshot)));
+        var device = VisualGraphContract.CreateNode("csharp_device", "d", snapshot);
+        var deviceSpec = VisualNodeCatalog.Spec(device, snapshot);
+        Check(VisualNodeCatalog.IsClassNode(deviceSpec) && VisualNodeCatalog.HasCode(deviceSpec) && ReferenceEquals(VisualNodeCatalog.ClassSignature(device, deviceSpec), device["config"]!["signature"])
+            && Keys(VisualNodeCatalog.DataInputs(device, null, snapshot)) == "Address",
+            "a C# device node has its code and its config's signature, as before: " + device.ToJsonString());
+        Console.WriteLine("PASS library classes: a library class node is a class node without code, whose settings are its entry's; a C# device node is as before");
+    }
+
+    // Two libraries may each offer a class of the same title: each is its own kind.
+    static void TwoLibrariesMayOfferTheSameTitle()
+    {
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([new("a", "[Node(\"Relay hub\")]\npublic class FirstHub : SharpDevice { }", 1),
+            new("b", "[Node(\"Relay hub\")]\npublic class SecondHub : SharpDevice { }", 1)]);
+        var titled = preview.Snapshot.Catalog["nodes"]!.AsObject().Where(n => VisualNodeCatalog.Text(n.Value, "label") == "Relay hub").Select(n => n.Key).Order(StringComparer.Ordinal).ToArray();
+        Check(preview.Valid && titled.SequenceEqual(["library:a:global%3A%3ANodeLib.FirstHub", "library:b:global%3A%3ANodeLib.SecondHub"]),
+            "two kinds, both called Relay hub: " + string.Join(", ", titled) + " " + Messages(preview.Diagnostics));
+        Console.WriteLine("PASS library classes: two libraries may offer classes of the same title, each its own kind");
     }
 
     // Each problem a class node's code can have, said in the node's own lines.

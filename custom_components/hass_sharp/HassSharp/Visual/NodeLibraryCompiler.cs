@@ -573,6 +573,42 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             customs.Add(new(custom.NodeId, signature == null ? null : descriptor, signature, own.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)).ToImmutableArray(), customErrors[custom.NodeId].ToImmutableArray()));
         }
         CheckLibrarySettings(classes, compilation, trees);
+        // A library's device or entity class marked [Node] is a kind of its own, for entity definitions: the C# device's or
+        // C# entity's entry without code, with the class's settings in it. One a definition cannot create may be meant as a
+        // base only: it is no step, and a warning says why. One with a setting no pin can be is no step either, said where
+        // the setting is written, as a C# node's code has it.
+        var libraryClasses = new List<LibraryClassDescriptor>();
+        var settingProblems = new HashSet<(Location, string)>();
+        foreach (var type in LibraryClasses(compilation, trees))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, nodeAttribute)) is not { } attribute || classes.Kind(type) is not { } declared) continue;
+            var library = trees[type.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).First(trees.ContainsKey)];
+            var at = type.Locations.FirstOrDefault(l => l.SourceTree != null && trees.ContainsKey(l.SourceTree)) ?? Location.None;
+            if (DescribeEntityType(type, classes) is not { } described) { Report(at, UnofferedClassMessage(type.Name), 2); continue; }
+            var isEntity = declared.Kind == "entity";
+            Location SettingAt(string key) => BaseTypes(type).Prepend(type).SelectMany(t => t.GetMembers(key).OfType<IPropertySymbol>())
+                .SelectMany(p => p.Locations).FirstOrDefault(l => l.SourceTree != null && trees.ContainsKey(l.SourceTree)) ?? at;
+            var problems = described.Settings.Select(s => (s.Key, Problem: !PinId(s.Key) ? PinNameMessage("setting", s.Key) : isEntity && s.Key == "device" ? DeviceSettingMessage : null))
+                .Where(p => p.Problem != null).ToArray();
+            // A setting a marked base and a marked class share is said once.
+            foreach (var (key, problem) in problems) if (settingProblems.Add((SettingAt(key), problem!))) Report(SettingAt(key), problem!);
+            if (problems.Length > 0) continue;
+            var classKind = "library:" + Uri.EscapeDataString(library.Id) + ":" + Uri.EscapeDataString(TypeIdentity(type));
+            var spec = root["nodes"]![isEntity ? "csharp_entity" : "csharp_device"]!.DeepClone().AsObject();
+            spec.Remove("keywords");
+            spec["config"]!.AsObject().Remove("source");
+            spec["config"]!.AsObject().Remove("signature");
+            spec["label"] = described.Title;
+            spec["category"] = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Category").Value.Value as string ?? "Custom";
+            spec["description"] = described.Description ?? "";
+            spec["sourceId"] = library.Id;
+            spec["minGraphVersion"] = graphVersion;
+            spec["runtimeVersions"] = new JsonArray(graphVersion);
+            spec["classSignature"] = ClassSignature(described);
+            root["nodes"]![classKind] = spec;
+            libraryClasses.Add(new(classKind, library.Id, TypeIdentity(type), declared.Kind));
+        }
         foreach (var (tree, custom) in customTrees.Where(pair => pair.Value.IsClass))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -584,7 +620,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             customs.Add(new(custom.NodeId, null, described?.Signature, [], problems.ToImmutableArray()) { TypeExpression = described?.TypeExpression });
         }
         foreach (var (id, symbol) in unlistedBuiltIn) typeSymbols.TryAdd(id, symbol);
-        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs);
+        var snapshot = new VisualCatalogSnapshot(root, sources, methods, typeSymbols.Select(p => new NodeTypeDescriptor(p.Key, TypeIdentity(p.Value), p.Value)), compilation, errors, customs, libraryClasses);
         return new(!errors.Any(e => e.Severity == 3), errors.ToImmutableArray(), snapshot);
     }
 
@@ -865,17 +901,20 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// once, before any C# node's code reads them: one a setting cannot be is reported where it is written, in the library,
     /// and left out (a C# node's class that derives the library's class then has no such setting).
     /// </summary>
-    static void CheckLibrarySettings(EntityClasses read, CSharpCompilation compilation, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees)
+    static void CheckLibrarySettings(EntityClasses read, CSharpCompilation compilation, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees) =>
+        read.CheckSettings(LibraryClasses(compilation, trees).Where(t => read.Derives(t, read.Component)).ToArray());
+
+    /// <summary>The classes the libraries' code declares, nested ones too.</summary>
+    static IEnumerable<INamedTypeSymbol> LibraryClasses(CSharpCompilation compilation, IReadOnlyDictionary<SyntaxTree, NodeLibrarySource> trees)
     {
-        bool InLibrary(INamedTypeSymbol type) => type.DeclaringSyntaxReferences.Any(r => trees.ContainsKey(r.SyntaxTree));
         static IEnumerable<INamedTypeSymbol> All(INamespaceOrTypeSymbol space) => space.GetTypeMembers().SelectMany(t => All(t).Prepend(t))
             .Concat(space is INamespaceSymbol ns ? ns.GetNamespaceMembers().SelectMany(All) : Enumerable.Empty<INamedTypeSymbol>());
-        read.CheckSettings(All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && read.Derives(t, read.Component) && InLibrary(t)).ToArray());
+        return All(compilation.Assembly.GlobalNamespace).Where(t => t.TypeKind == TypeKind.Class && t.DeclaringSyntaxReferences.Any(r => trees.ContainsKey(r.SyntaxTree)));
     }
 
     /// <summary>
-    /// A custom device or entity class as the C# entity and C# device nodes describe it: its domain, title (a
-    /// <c>[Node]</c> on the class, which makes no step, else its name in words), summary, and settings (a base class's
+    /// A custom device or entity class as the C# entity and C# device nodes, and a library class's kind, describe it: its
+    /// domain, title (a <c>[Node]</c> on the class, else its name in words), summary, and settings (a base class's
     /// first; one declared again in a derived class keeps its place), as <paramref name="read"/> has read them. Null for
     /// a class a definition cannot create (<see cref="EntityClasses.Creatable"/>) or that is neither a device nor an
     /// entity of a domain.
@@ -1030,6 +1069,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     internal static string DeviceInEntityMessage(string type) => $"{type} is a device: write it in a C# device node";
     internal static string UncreatableMessage(string type) => $"{type} must be public, not abstract or generic, and have a public constructor without parameters";
     internal const string DeviceSettingMessage = "A setting cannot be called device: that is the pin the entity's device connects to";
+    /// <summary>A warning at a library's device or entity class marked <c>[Node]</c> that a definition cannot create: it may be meant as a base only.</summary>
+    internal static string UnofferedClassMessage(string type) => $"{type} has [Node] but is not offered as a step: a class a definition creates is public, not abstract or generic, and has a public constructor without parameters";
 
     /// <summary>
     /// The classes a C# entity's or C# device's code declares, the device classes among them, those that could be the
@@ -1082,7 +1123,15 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         // The class, what it derives from and its settings' types are this code's or a library's, not another node's.
         var settingTypes = BaseTypes(type).Prepend(type).SelectMany(t => t.GetMembers().OfType<IPropertySymbol>()).Where(p => described.Settings.Any(s => s.Key == p.Name)).Select(p => Scalar(p.Type));
         if (!ownTypesArePrivate(BaseTypes(type).Concat(settingTypes), At(type)) || !clean()) return null;
-        var signature = new JsonObject
+        return (ClassSignature(described), TypeIdentity(type));
+    }
+
+    /// <summary>
+    /// The class signature (<c>{title, description, domain, settings}</c>) of a class as <see cref="DescribeEntityType"/>
+    /// describes it: a C# entity's or C# device's, and a library class's in its kind's entry.
+    /// </summary>
+    static JsonObject ClassSignature(EntityTypeDescriptor described) =>
+        new()
         {
             ["title"] = described.Title, ["description"] = described.Description ?? "", ["domain"] = described.Domain,
             ["settings"] = new JsonArray([.. described.Settings.Select(s =>
@@ -1099,8 +1148,6 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 return (JsonNode?)entry;
             })]),
         };
-        return (signature, TypeIdentity(type));
-    }
 
     /// <summary>
     /// A setting's type for a property of <paramref name="type"/>, with an enum's member names and an <c>int</c>'s

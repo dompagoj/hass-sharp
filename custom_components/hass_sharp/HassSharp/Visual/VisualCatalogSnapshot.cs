@@ -67,6 +67,15 @@ public sealed record CustomNodeDescriptor(string NodeId, NodeMethodDescriptor? M
     /// <summary>The class of a valid C# entity or C# device as generated code names it, such as <c>global::NodeLib.Custom_plug.Plug</c>; null otherwise.</summary>
     public string? TypeExpression { get; init; }
 }
+/// <summary>
+/// A node library's device or entity class that is a kind of its own (marked <see cref="NodeAttribute"/>, one a definition
+/// can create): what generated code needs to create it. Its catalog entry, under <paramref name="Kind"/>, has its settings.
+/// </summary>
+/// <param name="Kind">Its kind: <c>library:&lt;library id&gt;:&lt;type identity&gt;</c>, each part escaped.</param>
+/// <param name="SourceId">The id of the library that declares it.</param>
+/// <param name="TypeExpression">The class as generated code names it, such as <c>global::NodeLib.RelayHub</c>.</param>
+/// <param name="Declares">What a node of it declares: <c>device</c> or <c>entity</c>.</param>
+public sealed record LibraryClassDescriptor(string Kind, string SourceId, string TypeExpression, string Declares);
 /// <summary>One setting of a custom device or entity class: a <c>[Setting]</c> property, an input of its C# node.</summary>
 /// <param name="Key">The property's name, as written.</param>
 /// <param name="Label">What the node's input is called: the attribute's label, else the property's name.</param>
@@ -121,15 +130,18 @@ public sealed class VisualCatalogSnapshot
     public ImmutableDictionary<string, NodeTypeDescriptor> Types { get; }
     /// <summary>The Custom C# nodes compiled with this generation, by node id; empty for a library-only preview.</summary>
     public ImmutableDictionary<string, CustomNodeDescriptor> Custom { get; private init; } = ImmutableDictionary<string, CustomNodeDescriptor>.Empty;
+    /// <summary>The node libraries' classes that are kinds of their own, by kind; empty for the built-in catalog.</summary>
+    public ImmutableDictionary<string, LibraryClassDescriptor> Classes { get; private init; } = ImmutableDictionary<string, LibraryClassDescriptor>.Empty;
     /// <summary>Home Assistant service schemas for validation only; never part of <see cref="Root"/> (D2).</summary>
     public ServiceSchemaCatalog? Services { get; private init; }
     public static VisualCatalogSnapshot BuiltIn { get; } = new(VisualNodeCatalog.Root, [], [], [], null);
 
     internal VisualCatalogSnapshot(JsonObject catalog, IEnumerable<NodeLibrarySource> sources,
         IEnumerable<NodeMethodDescriptor> methods, IEnumerable<NodeTypeDescriptor> types, CSharpCompilation? compilation, IEnumerable<NodeLibraryDiagnostic>? libraryDiagnostics = null,
-        IEnumerable<CustomNodeDescriptor>? custom = null)
+        IEnumerable<CustomNodeDescriptor>? custom = null, IEnumerable<LibraryClassDescriptor>? classes = null)
     {
         Custom = (custom ?? []).ToImmutableDictionary(c => c.NodeId, StringComparer.Ordinal);
+        Classes = (classes ?? []).ToImmutableDictionary(c => c.Kind, StringComparer.Ordinal);
         this.catalog = (JsonObject)catalog.DeepClone();
         Sources = sources.ToImmutableArray();
         Methods = methods.ToImmutableDictionary(m => m.Kind, StringComparer.Ordinal);
@@ -142,7 +154,7 @@ public sealed class VisualCatalogSnapshot
     VisualCatalogSnapshot(VisualCatalogSnapshot other)
     {
         catalog = other.catalog; Sources = other.Sources; Methods = other.Methods; Types = other.Types;
-        Compilation = other.Compilation; LibraryDiagnostics = other.LibraryDiagnostics; Custom = other.Custom; Services = other.Services;
+        Compilation = other.Compilation; LibraryDiagnostics = other.LibraryDiagnostics; Custom = other.Custom; Classes = other.Classes; Services = other.Services;
     }
     VisualCatalogSnapshot(VisualCatalogSnapshot other, JsonObject root) : this(other) { catalog = root; }
 

@@ -1,9 +1,12 @@
 namespace HassSharp;
 
 /// <summary>
-/// Makes a public static method a node: each parameter is an input pin, the return value is the output pin. On a custom
-/// device or entity class it is only the class's title, which the entity panel shows (<see cref="Category"/> and
-/// <see cref="Pure"/> mean nothing there); without it the title is the class's name in words.
+/// Makes a public static method a node: each parameter is an input pin, the return value is the output pin. On a node
+/// library's device or entity class it makes the class a node of entity definitions, listed under <see cref="Category"/>,
+/// whose inputs are its settings; the class must be public, not abstract or generic, with a public constructor without
+/// parameters. On the class of a C# device or C# entity node it is only the class's title, which the entity panel shows
+/// (<see cref="Category"/> means nothing there). <see cref="Pure"/> means nothing on a class; without the attribute a
+/// class's title is its name in words.
 /// </summary>
 [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class NodeAttribute(string title) : Attribute
