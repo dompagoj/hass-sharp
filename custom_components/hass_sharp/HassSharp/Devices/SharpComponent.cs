@@ -5,9 +5,9 @@ namespace HassSharp;
 
 /// <summary>
 /// What hosts a custom device or entity while its definition runs: it publishes state to Home Assistant, owns the
-/// timers and entity tracks the component starts, the definition's HTTP client and downloads and its C# nodes' handles
-/// on their data stores, and says when the definition is stopping. A component without one (built but not yet
-/// attached, or in a test) publishes nothing.
+/// timers and entity tracks the component starts, the definition's HTTP client and downloads, its C# nodes' handles
+/// on their data stores and their pages, and says when the definition is stopping. A component without one (built but
+/// not yet attached, or in a test) publishes nothing.
 /// </summary>
 internal interface IComponentHost
 {
@@ -42,6 +42,12 @@ internal interface IComponentHost
     SharpData Data(SharpComponent component);
     /// <summary>The shared store of that name, opened for the component's C# node, the same handle on each use; as <see cref="Data"/>.</summary>
     SharpData Shared(SharpComponent component, string name);
+    /// <summary>
+    /// What the component draws the page of its C# node with, the same for the node's device and every entity it added;
+    /// only once the host has run the component's <c>Start()</c>. Closed once the definition has stopped: drawing on it
+    /// throws <see cref="ObjectDisposedException"/> after.
+    /// </summary>
+    SharpUi Ui(SharpComponent component);
 }
 
 /// <summary>A change of an entity that <see cref="SharpComponent.Track(string, Func{EntityChange, Task})"/> follows.</summary>
@@ -184,6 +190,19 @@ public abstract class SharpComponent
     /// <exception cref="InvalidOperationException">The component has not started yet.</exception>
     /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
     protected SharpData Shared(string name) => Started(nameof(Shared)).Shared(this, name);
+
+    /// <summary>
+    /// The page of the component's C# node in the HassSharp panel (<see cref="SharpUi"/>), which a C# device shares with
+    /// the entities it adds, such as <c>Ui.List("people", "People", cards)</c>: lists of cards whose actions run here when
+    /// the user presses them. Nothing of it is stored: draw it in <see cref="Start"/>, and again whenever what it shows
+    /// changes. An action's handler runs one at a time for the page, beside the timers and tracks, and has 30 seconds;
+    /// <see cref="Stop"/> runs after the handlers have ended. Only from <see cref="Start"/> on, and in timers, tracks,
+    /// commands, actions and <see cref="Stop"/>: before, in <see cref="Setup"/> or the constructor, it throws. Once the
+    /// definition has stopped, drawing throws <see cref="ObjectDisposedException"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The component has not started yet.</exception>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    protected SharpUi Ui => Started(nameof(Ui)).Ui(this);
 
     /// <summary>The current state of an entity, read from Home Assistant now. Throws when the entity does not exist.</summary>
     /// <param name="entityId">The entity, such as <c>light.kitchen</c>.</param>

@@ -58,10 +58,11 @@ internal sealed record NodeClassSetup(string Class, Func<NodeSetupContext, Task>
 /// and an Entity node's command flow for each command; beside them it creates each C# entity and C# device node's class,
 /// applies its settings and sets it up, after the <c>[NodeSetup]</c> of each node library class its graph uses. It tells
 /// Home Assistant which entities exist, starts and stops them, and carries their states, timers, tracks and commands. It
-/// owns the definition's HTTP client and downloads, its C# nodes' handles on their data stores, and what its node
-/// setups own (<see cref="Own"/>), which it ends once the definition has stopped; it prunes the stores of nodes a saved
-/// revision no longer has as that revision starts. It answers Home Assistant's requests for its cameras' pictures,
-/// making their frames (<see cref="CameraImage"/>).
+/// owns the definition's HTTP client and downloads, its C# nodes' handles on their data stores and their pages, and what
+/// its node setups own (<see cref="Own"/>), which it ends once the definition has stopped; it prunes the stores of nodes
+/// a saved revision no longer has as that revision starts. It answers Home Assistant's requests for its cameras'
+/// pictures, making their frames (<see cref="CameraImage"/>), and the panel's for its pages, running their actions'
+/// handlers (<see cref="UiAct"/>).
 /// </summary>
 internal sealed partial class DefinitionHost(UserScript script, CompiledDefinition definition) : IComponentHost, IDefinitionRuntime
 {
@@ -78,6 +79,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     internal static TimeSpan SyncTimeout { get; set; } = TimeSpan.FromSeconds(30);
     /// <summary>How long the <c>Start()</c>s may take before the host warns that the entities stay unavailable; settable for tests.</summary>
     internal static TimeSpan StartWarning { get; set; } = TimeSpan.FromSeconds(10);
+    /// <summary>How long a press waits for its action's handler (<see cref="UiAct"/>); settable for tests.</summary>
+    internal static TimeSpan UiActionTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     // Guards the status, the start and stop, the timer and track lists, the commands, track callbacks and frames running,
     // the entities whose publish failed, the HTTP client and the downloads, what node setups own, and a graph's entities,
@@ -124,6 +127,14 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     readonly Lock dataGate = new();
     readonly Dictionary<string, NodeData> nodeData = new(StringComparer.Ordinal);
     bool dataClosed;
+    // Guards the C# nodes' pages, by node key, and whether they are closed; taken alone or before the gate, never under
+    // it, and never while a page's own lock is held.
+    readonly Lock pageGate = new();
+    readonly Dictionary<string, NodePage> pages = new(StringComparer.Ordinal);
+    bool pagesClosed;
+    // The pages' revision: this host's own, and how many times one of its pages changed.
+    readonly string pagesOf = Guid.NewGuid().ToString("N");
+    long pageChanges;
 
     UserScriptManager Manager => script.ScriptManager;
 
@@ -255,6 +266,253 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         public DataUser User { get; } = user;
         public SharpData? Device { get; set; }
         public Dictionary<string, SharpData> Shared { get; } = new(StringComparer.Ordinal);
+    }
+
+    /// <inheritdoc/>
+    public SharpUi Ui(SharpComponent component)
+    {
+        lock (pageGate)
+        {
+            if (pagesClosed) throw new ObjectDisposedException(null, $"{definition.Name} has stopped: its pages draw nothing more");
+            // Under the page lock, which closing takes before the components are let go: begun is not emptied meanwhile.
+            CheckBegun(component, "Ui");
+            return NodeOf(component) is { } node && pages.TryGetValue(node.Key, out var page) ? page.Page.Ui
+                : throw new InvalidOperationException($"{component.GetType().Name} is no C# node of {definition.Name}, so it has no page");
+        }
+    }
+
+    /// <summary>
+    /// What the panel compares to tell whether a page changed: another value after every change of any of the pages, and
+    /// another for each host, so for each revision of the definition. Read it before <see cref="UiPages"/>, so that a
+    /// change between the two shows as a new revision the next time.
+    /// </summary>
+    internal string UiRevision => $"{pagesOf}:{Interlocked.Read(ref pageChanges)}";
+
+    /// <summary>The page data of each C# node that has drawn on its page (<see cref="DevicePage.Snapshot"/>), in node order; none once stopped.</summary>
+    internal IReadOnlyList<JsonObject> UiPages() => [.. Pages().Where(page => page.Page.Used).Select(page => page.Page.Snapshot())];
+
+    /// <summary>The number of cards waiting for the user on each C# node's page, by node key, where there are any; none once stopped.</summary>
+    internal IReadOnlyDictionary<string, int> UiAttention()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var page in Pages())
+            if (page.Page.Attention is var attention and > 0) counts[page.Node.Key] = attention;
+        return counts;
+    }
+
+    /// <summary>The JPEG of an image a current card of the C# node's page shows, by its hash; null when none does, and once stopped.</summary>
+    internal byte[]? UiImage(string nodeKey, string hash)
+    {
+        if (nodeKey == null) return null;
+        NodePage? page;
+        lock (pageGate) page = pages.GetValueOrDefault(nodeKey);
+        return page?.Page.Image(hash);
+    }
+
+    /// <summary>
+    /// Runs the action a press in the panel names, on the C# node's page as it is when the press's turn comes: the presses
+    /// of one page take turns in the order they came, each handler on the pool within <see cref="UiActionTimeout"/>.
+    /// <c>changed</c> when the page no longer has the list, card or action, or the definition the node: nothing runs.
+    /// <c>refused</c> with a sentence when a value does not fit its field, when the handler throws <see cref="UiRefusal"/>
+    /// (its message), and while a handler that ran past its time still runs. <c>failed</c> when the handler ran past its
+    /// time, which keeps the page's turn until it ends, and when it threw anything else, which is logged for the
+    /// definition with the node and the action's label, never with the values. Stopping waits for the press, its handler
+    /// past its time too, before any <c>Stop()</c>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The definition is not running, or began to stop before the press's turn came or as its handler was cancelled.</exception>
+    internal async Task<UiActResult> UiAct(string nodeKey, string list, string card, string action, JsonObject values)
+    {
+        ArgumentNullException.ThrowIfNull(nodeKey);
+        ArgumentNullException.ThrowIfNull(values);
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate)
+        {
+            // Under the lock that stopping takes: a press either is refused or is one stopping waits for.
+            if (status != Running) throw DefinitionNotRunning();
+            running.Add(done.Task);
+        }
+        // Stopping waits for the press until it has ended: its handler, also one past its time, or its place in line.
+        void End()
+        {
+            lock (gate) running.Remove(done.Task);
+            done.TrySetResult();
+        }
+        NodePage? page;
+        lock (pageGate) page = pages.GetValueOrDefault(nodeKey);
+        // Taken on the caller's thread, so that the presses take turns in the order they came.
+        var place = page?.Line.Enter();
+        if (page == null || place == null)
+        {
+            End();
+            return page == null ? ActChanged : ActBusy;
+        }
+        var overran = false;
+        try
+        {
+            await Task.WhenAny(place.Before, place.Overran);
+            if (!place.Before.IsCompleted) return ActBusy;
+            if (Stopping.IsCancellationRequested) throw DefinitionNotRunning();
+            // Looked up as its turn comes: what the press before it drew is what it finds.
+            if (page.Page.Find(list, card, action) is not { } press) return ActChanged;
+            UiValues given;
+            try { given = press.Values(values); }
+            catch (UiRefusal refusal) { return new("refused", Text(refusal)); }
+            // The async lambda makes a null task fail rather than look cancelled.
+            var handler = Task.Run(async () => await press.Run(given));
+            using (var timer = new CancellationTokenSource())
+            {
+                if (await Task.WhenAny(handler, Task.Delay(UiActionTimeout, timer.Token)) != handler)
+                {
+                    // It keeps the page's turn until it ends: the presses behind it, and those that come meanwhile, are refused.
+                    overran = true;
+                    page.Line.Overran();
+                    _ = handler.ContinueWith(ended =>
+                    {
+                        _ = ended.Exception;
+                        page.Line.Ended();
+                        place.Over.TrySetResult();
+                        End();
+                    }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                    return new("failed", $"The action did not finish within {Seconds(UiActionTimeout)} s.");
+                }
+                timer.Cancel();
+            }
+            try
+            {
+                await handler;
+                return ActDone;
+            }
+            catch (UiRefusal refusal) { return new("refused", Text(refusal)); }
+            // A cancellation because the definition stops is no failure of the action.
+            catch (OperationCanceledException) when (Stopping.IsCancellationRequested) { throw DefinitionNotRunning(); }
+            catch (Exception failure)
+            {
+                // The node, the action's label and the exception: never what the press sent.
+                var what = $"the action '{press.Label}' on the page of {Called(page.Node)} failed";
+                Report(what, failure, PyLogLevel.Error);
+                string whole;
+                try { whole = failure.ToString(); } catch { whole = failure.GetType().FullName ?? "an exception"; }
+                Report($"{what}: {whole}", PyLogLevel.Debug);
+                return new("failed", "The action failed; see the Home Assistant log.");
+            }
+        }
+        finally
+        {
+            if (!overran)
+            {
+                place.Leave();
+                End();
+            }
+        }
+    }
+
+    static readonly UiActResult ActDone = new("done"), ActChanged = new("changed"),
+        ActBusy = new("refused", "An earlier action of this device is still running.");
+
+    static InvalidOperationException DefinitionNotRunning() => new("The entity definition is not running");
+
+    // The pages in node order; none once stopped.
+    NodePage[] Pages()
+    {
+        lock (pageGate) return [.. definition.Components.Select(node => pages.GetValueOrDefault(node.Key)).OfType<NodePage>().Distinct()];
+    }
+
+    // The page of a C# node, titled as the host names the node: made with its class, kept until the definition has stopped.
+    void AddPage(DefinitionComponent node)
+    {
+        var page = new DevicePage(node.Key, Called(node));
+        page.Changed += PageChanged;
+        lock (pageGate)
+            if (!pagesClosed) pages.TryAdd(node.Key, new(node, page));
+    }
+
+    void PageChanged() => Interlocked.Increment(ref pageChanges);
+
+    // Closes the C# nodes' pages: from now on none shows anything, keeps a handler or is drawn on. Never throws.
+    void ClosePages()
+    {
+        NodePage[] open;
+        lock (pageGate)
+        {
+            pagesClosed = true;
+            open = [.. pages.Values];
+            pages.Clear();
+        }
+        foreach (var page in open)
+        {
+            page.Page.Changed -= PageChanged;
+            page.Page.Close();
+        }
+        if (open.Length > 0) PageChanged();
+    }
+
+    /// <summary>One C# node's page, with the line its presses take turns in.</summary>
+    sealed class NodePage(DefinitionComponent node, DevicePage page)
+    {
+        public DefinitionComponent Node { get; } = node;
+        public DevicePage Page { get; } = page;
+        public PressLine Line { get; } = new();
+    }
+
+    /// <summary>
+    /// The turns of a page's presses: each has its turn once the one before it is over, in the order they took their
+    /// places. A handler that ran past its time keeps its turn until it ends; meanwhile the presses waiting are refused
+    /// and none takes a place.
+    /// </summary>
+    sealed class PressLine
+    {
+        readonly Lock gate = new();
+        // Over once the press of the last place is.
+        Task last = Task.CompletedTask;
+        // Ends when the handler that has the turn runs past its time; a new one once that handler has ended.
+        TaskCompletionSource overran = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool overrunning;
+
+        /// <summary>The next place in line; null while a handler that ran past its time still runs.</summary>
+        public Place? Enter()
+        {
+            lock (gate)
+            {
+                if (overrunning) return null;
+                var place = new Place(last, new(TaskCreationOptions.RunContinuationsAsynchronously), overran.Task);
+                last = place.Over.Task;
+                return place;
+            }
+        }
+
+        /// <summary>The handler that has the turn ran past its time: until it has <see cref="Ended"/>, the presses waiting are refused and none takes a place.</summary>
+        public void Overran()
+        {
+            lock (gate)
+            {
+                overrunning = true;
+                overran.TrySetResult();
+            }
+        }
+
+        /// <summary>The handler that ran past its time has ended; called before its turn is over.</summary>
+        public void Ended()
+        {
+            lock (gate)
+            {
+                overrunning = false;
+                overran = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+    }
+
+    /// <summary>A press's place in its page's line.</summary>
+    /// <param name="Before">Over when the press's turn comes: the turn of the press before it.</param>
+    /// <param name="Over">Ended once its own turn is over.</param>
+    /// <param name="Overran">Ends when the handler that has the turn before it runs past its time.</param>
+    sealed record Place(Task Before, TaskCompletionSource Over, Task Overran)
+    {
+        /// <summary>Ends its turn: a press that ran no handler keeps its place until the one before it is over, so that none behind it runs beside that one.</summary>
+        public void Leave()
+        {
+            if (Before.IsCompleted) Over.TrySetResult();
+            else _ = Before.ContinueWith(_ => Over.TrySetResult(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
     }
 
     /// <summary>
@@ -617,6 +875,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             ReleasePredecessor();
             // After the last Stop(), which may still use them; before the components are let go.
             CloseData();
+            ClosePages();
             // Nothing of the user's code stays reachable from the host once stopped.
             entities = [];
             lifecycle = [];
@@ -1249,6 +1508,11 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
     }
 }
+
+/// <summary>How a press of a device page's action ended (<see cref="DefinitionHost.UiAct"/>).</summary>
+/// <param name="Status"><c>done</c>, <c>changed</c> (the page no longer has what it named; nothing ran), <c>refused</c> or <c>failed</c>.</param>
+/// <param name="Message">For <c>refused</c> and <c>failed</c>, the sentence the panel shows on the card; null otherwise.</param>
+internal sealed record UiActResult(string Status, string? Message = null);
 
 /// <summary>
 /// Why something that runs again and again last failed, as last logged, such as a timer's callback or a camera's frames:

@@ -187,6 +187,7 @@ internal sealed partial class DefinitionHost
             var who = $"{definition.Name}: {Called(node)}";
             var root = await CreateNode(node, who);
             nodes[root] = node;
+            AddPage(node);
             var standalone = node.Device == null;
             var all = await SetUpComponent(root, who, node.Settings, node.Unset, entity => entity.Adopt(node.Key, standalone ? node.Title : null));
             made.Add(new(node, root, all));
