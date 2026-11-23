@@ -48,6 +48,17 @@ public static class VisualGraphContractTests
             }
             foreach (var d in diagnostics) if (Jargon.IsMatch(d.Message)) throw new Exception($"Visual graph {name}: message is not worded for people: {d.Message}");
         }
+        // The entries of the relays library's classes a case carries are the ones the compiler writes for it, so they cannot drift.
+        var relays = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([CustomNodeTests.Relays]).Snapshot.Catalog["nodes"]!;
+        var carried = 0;
+        foreach (var fixture in fixtures)
+            foreach (var kind in new[] { CustomNodeTests.HubKind, CustomNodeTests.RelayKind })
+            {
+                if (fixture!["catalogPatch"]?["nodes"]?[kind] is not { } entry) continue;
+                if (!JsonNode.DeepEquals(entry, relays[kind])) throw new Exception($"Visual graph {fixture["name"]}: the entry of {kind} is not the one the compiler writes: {relays[kind]?.ToJsonString()}");
+                carried++;
+            }
+        if (carried == 0) throw new Exception("Visual graph: no case carries the relays library's classes");
         var graph = JsonNode.Parse("""{"version":5,"name":"Layout","nodes":[{"id":"trigger/é","kind":"trigger","config":{"type":"manual"},"position":{"x":13,"y":42},"size":{"width":300,"height":90}},{"id":"d","kind":"delay","config":{"seconds":{"kind":"literal","type":"number","value":2}}}],"edges":[]}""")!.AsObject();
         var laidOut = VisualGraphContract.FillMissingLayout(graph);
         if (graph["nodes"]![1]!["position"] != null || laidOut["nodes"]![0]!["position"]!["x"]!.GetValue<int>() != 13 || laidOut["nodes"]![1]!["position"]!["x"]!.GetValue<int>() != 360)

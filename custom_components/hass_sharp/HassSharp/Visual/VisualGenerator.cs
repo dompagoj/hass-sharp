@@ -152,11 +152,12 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         return libraries.Valid?Preview(graph,libraries.Snapshot,settings):new(false,"",[],libraries.Diagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
     }
     static bool IsCustom(JsonObject node,VisualCatalogSnapshot snapshot)=>Text(VisualNodeCatalog.Spec(node,snapshot),"dynamicInputs")=="custom";
-    /// <summary>Whether the node is a C# entity or a C# device (<see cref="VisualNodeCatalog.IsClassNode"/>).</summary>
+    /// <summary>Whether the node is a C# entity, a C# device or a library's class (<see cref="VisualNodeCatalog.IsClassNode"/>).</summary>
     static bool IsClass(JsonObject node,VisualCatalogSnapshot snapshot)=>VisualNodeCatalog.IsClassNode(VisualNodeCatalog.Spec(node,snapshot));
     /// <summary>
     /// The code of each node that has some, with its kind: a Custom C# step's (a statement-style one is the validator's to
-    /// report), a C# entity's or a C# device's.
+    /// report), a C# entity's or a C# device's. A library class node has none (<see cref="VisualNodeCatalog.HasCode"/>):
+    /// code its config holds is never compiled.
     /// </summary>
     static CustomNodeSource[] CustomSources(JsonObject graph,VisualCatalogSnapshot snapshot)=>(graph["nodes"] as JsonArray??[]).OfType<JsonObject>()
         .Where(n=>VisualNodeCatalog.HasCode(VisualNodeCatalog.Spec(n,snapshot))&&Text(n,"id")!=""&&n["config"] is JsonObject cfg&&!cfg.ContainsKey("code")&&cfg["source"] is JsonValue v&&v.TryGetValue<string>(out _))
@@ -321,10 +322,10 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         }
     }
     /// <summary>
-    /// <c>setting.value</c>: each value a C# entity or C# device of <paramref name="upToDate"/> (whose settings are its
-    /// code's) is given, typed or from the Setting wired to it (<see cref="DefinitionGraph.Components"/>), that its setting
-    /// does not take (<see cref="DefinitionGenerator.Fits"/>: a fraction in an integer, a number outside the range, a text
-    /// no member of the enum), on its pin: <c>{Label} takes {Phrase}</c>, never quoting the value, which may be a secret. A
+    /// <c>setting.value</c>: each value a C# entity, C# device or library class node of <paramref name="upToDate"/> (whose
+    /// settings are its code's, or its kind's entry's) is given, typed or from the Setting wired to it
+    /// (<see cref="DefinitionGraph.Components"/>), that its setting does not take (<see cref="DefinitionGenerator.Fits"/>: a
+    /// fraction in an integer, a number outside the range, a text no member of the enum), on its pin: <c>{Label} takes {Phrase}</c>, never quoting the value, which may be a secret. A
     /// pin that already has a problem (a value of the wrong type, a secret typed in) is not checked again.
     /// </summary>
     static IEnumerable<VisualDiagnostic> SettingValues(JsonObject graph,VisualCatalogSnapshot snapshot,HashSet<string> upToDate,IReadOnlyList<DefinitionSetting> settings,List<VisualDiagnostic> errors) {
@@ -352,10 +353,12 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     public VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot)=>Preview(graph,snapshot,null);
     /// <summary>
     /// The graph checked and, when valid, generated. A Custom C# node's stored pins and a C# entity's or C# device's stored
-    /// settings are checked against what its code gives; then, for a C# node whose settings are its code's, each pin's value
-    /// against its setting (<c>setting.value</c>): the value typed into it, or the value <paramref name="settings"/> gives
-    /// the Setting wired to it. The source has each C# node's code in its own namespace and, when the graph has a C# entity
-    /// or C# device, <c>SharpNodes.Create</c>, which creates one's class by its node's id: nothing is created here.
+    /// settings are checked against what its code gives; then, for a C# node whose settings are its code's and for a
+    /// library class node (whose settings are its kind's entry's), each pin's value against its setting
+    /// (<c>setting.value</c>): the value typed into it, or the value <paramref name="settings"/> gives the Setting wired to
+    /// it. The source has each C# node's code in its own namespace (a library class node has none) and, when the graph has
+    /// a C# entity, C# device or library class node, <c>SharpNodes.Create</c>, which creates one's class by its node's id
+    /// (a library class node's the library's class): nothing is created here.
     /// </summary>
     /// <param name="settings">An entity definition's settings with their values, which no source or answer holds; none for an automation.</param>
     internal VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot,IReadOnlyList<DefinitionSetting>? settings)
@@ -378,7 +381,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
         snapshot=WithCustom(graph,snapshot,services);
         var errors=new List<VisualDiagnostic>();
         JsonObject? refreshed=null;
-        // The C# entities and C# devices whose stored settings are what their code gives: only their values are checked.
+        // The C# entities and C# devices whose stored settings are what their code gives, and the library class nodes: only
+        // their values are checked.
         var upToDate=new HashSet<string>(StringComparer.Ordinal);
         void Refresh(string id,JsonObject signature) {
             refreshed??=(JsonObject)graph.DeepClone();
@@ -399,6 +403,9 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             if(!SamePins(stored,custom.Signature)||!SameSelected(graph,snapshot.Root,stored,custom.Signature))errors.Add(new(id,VisualGraphValidator.Words.StaleSignature,InputId:"source",Code:"custom.signature"));
             else if(!SameJson(stored,custom.Signature))Refresh(id,custom.Signature);
         }
+        // A library's class node has no code: its settings are its kind's entry's, so they are always up to date.
+        foreach(var node in (graph["nodes"] as JsonArray??[]).OfType<JsonObject>())
+            if(VisualNodeCatalog.Spec(node,snapshot) is var spec&&VisualNodeCatalog.IsClassNode(spec)&&!VisualNodeCatalog.HasCode(spec)&&VisualNodeCatalog.ClassSignature(node,spec)!=null)upToDate.Add(Text(node,"id"));
         if(refreshed!=null)graph=refreshed;
         errors.AddRange(VisualGraphValidator.Validate(graph,snapshot,out var inputTypes));
         errors.AddRange(SettingValues(graph,snapshot,upToDate,settings??[],errors));
@@ -468,7 +475,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 Section(current,$"new global::HassSharp.AutomationAction(nameof({hubFlow?.Method??VisualNodeCatalog.EffectiveTriggerMethod(root)}),global::HassSharp.AutomationMode.{mode},Startup:{startup.ToString().ToLowerInvariant()},Manual:{manual.ToString().ToLowerInvariant()},Entities:{entities},Schedules:{schedules},Triggers:{triggers}){(i+1<roots.Length?",":"")}");
             }
             Add(");");
-            // A library node is dispatched by its kind; a Custom C# node, exactly alike, by its own method.
+            // A library node is dispatched by its kind; a Custom C# node, exactly alike, by its own method. A library class
+            // node's kind is no method's: it has none, and is never dispatched.
             NodeMethodDescriptor? MethodOf(JsonObject node)=>IsCustom(node,snapshot)?snapshot.Custom.GetValueOrDefault(Text(node,"id"))?.Method:snapshot.Methods.GetValueOrDefault(Text(node,"kind"));
             string MethodKey(JsonObject node)=>IsCustom(node,snapshot)?"custom:"+Text(node,"id"):Text(node,"kind");
             var delegates=nodes.Where(n=>MethodOf(n)!=null).Select(MethodKey).Distinct().Select((key,index)=>(key,name:prefix+"method_"+index)).ToDictionary(p=>p.key,p=>p.name);
@@ -539,12 +547,15 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
                 var id=Text(node,"id");Add($"// {(IsClass(node,snapshot)?Text(VisualNodeCatalog.Spec(node,snapshot),"label"):"Custom C#")} node {Q(id)}");var start=lines.Count+1;
                 Add(NodeLibraryCompiler.WrapCustomSource(id,Text(node["config"],"source")));maps.Add(new(id,start,lines.Count));customSections.Add((id,start,lines.Count));
             }
-            // The factory the host creates each C# entity's and C# device's class with, by its node's id; only a graph with one
-            // has it, so every other graph's source stays as it was. Each case is its node's.
-            var classes=nodes.Where(n=>IsClass(n,snapshot)&&snapshot.Custom.GetValueOrDefault(Text(n,"id"))?.TypeExpression!=null).ToArray();
+            // The factory the host creates each C# entity's and C# device's class with, by its node's id, and each library
+            // class node's, the library's class itself; only a graph with one has it, so every other graph's source stays as
+            // it was. Each case is its node's.
+            string? ClassOf(JsonObject node)=>VisualNodeCatalog.HasCode(VisualNodeCatalog.Spec(node,snapshot))?snapshot.Custom.GetValueOrDefault(Text(node,"id"))?.TypeExpression
+                :snapshot.Classes.GetValueOrDefault(Text(node,"kind"))?.TypeExpression;
+            var classes=nodes.Where(n=>IsClass(n,snapshot)&&ClassOf(n)!=null).ToArray();
             if(classes.Length>0) {
                 Add("#nullable enable");Add("public static class SharpNodes {");Add("public static object? Create(string nodeId) => nodeId switch {");
-                foreach(var node in classes){var id=Text(node,"id");Section(id,$"{Q(id)} => new {snapshot.Custom[id].TypeExpression}(),");}
+                foreach(var node in classes){var id=Text(node,"id");Section(id,$"{Q(id)} => new {ClassOf(node)}(),");}
                 Add("_ => null,");Add("};");Add("}");
             }
             // The [NodeSetup] of each library class whose nodes the graph uses, which the host runs as the definition starts;

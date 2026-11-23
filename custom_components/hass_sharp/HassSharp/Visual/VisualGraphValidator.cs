@@ -105,9 +105,10 @@ public static class VisualGraphValidator
             : KeyWords(node["kind"] is JsonValue k && k.TryGetValue<string>(out var kind) ? kind : "");
         /// <summary>
         /// An Entity node's entity as people read it, in the validator's messages and in its runs' names: its name, else its
-        /// key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device and a C# device's
-        /// alike. A C# entity has no name of its own (its code names its entity): it is its class's title, else its key,
-        /// else its kind's label. Mirrored by <c>entityNodeName</c> in <c>contract.ts</c>.
+        /// key, each trimmed, else its kind's label; never a label of the node's own. A Device node's device, a C# device's and
+        /// a library device class's alike (a library class's kind's label is its title). A C# entity, or a library's entity
+        /// class, has no name of its own (its class names its entity): it is its class's title, else its key, else its kind's
+        /// label. Mirrored by <c>entityNodeName</c> in <c>contract.ts</c>.
         /// </summary>
         internal static string EntityName(JsonObject node, JsonNode? spec) =>
             (IsClassNode(spec) && Declares(spec, "entity") ? Trimmed(Text(ClassSignature(node, spec), "title")) : Trimmed(Text(node["config"], "name"))) is { Length: > 0 } name ? name
@@ -1238,8 +1239,9 @@ public static class VisualGraphValidator
             if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetRules(node, spec, cfg, id); }
             if (cfg.ContainsKey("output")) Error(id, Words.ExposedValue, "output");
             if (Text(spec, "dynamicInputs") == "custom" && cfg["signature"] is JsonObject signature && !WellFormedSignature(signature)) Error(id, Words.MalformedSignature, "source", code: "custom.signature");
-            // A class node whose settings cannot be read has no setting pins; its code, applied again, writes them.
-            if (IsClassNode(spec) && cfg["signature"] is JsonObject && ClassSignature(node, spec) == null) Error(id, Words.UnreadableSettings, "signature", code: "csharp.signature");
+            // A C# node whose settings cannot be read has no setting pins; its code, applied again, writes them. A library
+            // class node's settings are its kind's entry's: a signature its config holds is never read.
+            if (IsClassNode(spec) && HasCode(spec) && cfg["signature"] is JsonObject && ClassSignature(node, spec) == null) Error(id, Words.UnreadableSettings, "signature", code: "csharp.signature");
             if (kind == "trigger")
             {
                 var type = TriggerType(node, snapshot);

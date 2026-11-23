@@ -181,52 +181,51 @@ public static class VisualNodeCatalog
     }
     /// <summary>
     /// The entities the graph's Entity nodes declare, each with its node's id, in the order of the graph's <c>nodes</c>;
-    /// none for a graph of the wrong shape. A C# entity's entity is its code's: the definition's entities, which steps name
-    /// and the host builds, are its Entity nodes', and a C# entity is listed for reading only (<see cref="CSharpEntities"/>).
-    /// Every kind that declares an entity is named here on purpose: one this does not know is refused, never copied as it
-    /// is (its config may hold code). Mirrored by <c>declaredEntities</c> in <c>contract.ts</c>.
+    /// none for a graph of the wrong shape. A class node's entity (a C# entity's, a library's entity class's) is its class's:
+    /// the definition's entities, which steps name and the host builds, are its Entity nodes', and a class node is listed
+    /// for reading only (<see cref="CSharpEntities"/>). Every other kind that declares an entity is named here on purpose:
+    /// one this does not know is refused, never copied as it is (its config may hold code). Mirrored by
+    /// <c>declaredEntities</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<(string NodeId, JsonObject Entity)> DeclaredEntities(JsonObject graph, JsonObject catalog)
     {
         foreach (var raw in graph["nodes"] as JsonArray ?? [])
-            if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "entity"))
-                switch (Text(node, "kind"))
-                {
-                    case "entity": yield return (Text(node, "id"), EntityDescription(node)); break;
-                    case "csharp_entity": break;
-                    case var kind: throw new InvalidOperationException($"The kind {kind} declares an entity that no list knows how to describe");
-                }
+        {
+            if (raw is not JsonObject node || catalog["nodes"]?[Text(node, "kind")] is not { } spec || !Declares(spec, "entity") || IsClassNode(spec)) continue;
+            if (Text(node, "kind") == "entity") yield return (Text(node, "id"), EntityDescription(node));
+            else throw new InvalidOperationException($"The kind {Text(node, "kind")} declares an entity that no list knows how to describe");
+        }
     }
     /// <summary>
     /// The devices the graph's device nodes declare (<c>"declares": "device"</c>), each with its node's id, in the order of
     /// the graph's <c>nodes</c>: a Device node's the members of a device its config has (<see cref="DeviceMembers"/>), as it
-    /// has them, and no other; a C# device's the key, name and Part of its config has, as it has them, marked
-    /// <c>csharp</c> (<see cref="IsCSharpDevice"/>), and never its code, settings or their values. Each is empty of what
-    /// its config does not have, all of it when the config is not an object. None for a graph of the wrong shape. A
-    /// declaring kind this does not know is refused, as in <see cref="DeclaredEntities"/>. Mirrored by
-    /// <c>declaredDevices</c> in <c>contract.ts</c>.
+    /// has them, and no other; a class node's (a C# device's, a library's device class's) the key, name and Part of its
+    /// config has, as it has them, marked <c>csharp</c> (<see cref="IsCSharpDevice"/>), and never its code, settings or
+    /// their values. Each is empty of what its config does not have, all of it when the config is not an object. None for
+    /// a graph of the wrong shape. Any other declaring kind this does not know is refused, as in
+    /// <see cref="DeclaredEntities"/>. Mirrored by <c>declaredDevices</c> in <c>contract.ts</c>.
     /// </summary>
     internal static IEnumerable<(string NodeId, JsonObject Device)> DeclaredDevices(JsonObject graph, JsonObject catalog)
     {
         foreach (var raw in graph["nodes"] as JsonArray ?? [])
-            if (raw is JsonObject node && Declares(catalog["nodes"]?[Text(node, "kind")], "device"))
-                switch (Text(node, "kind"))
-                {
-                    case "device": yield return (Text(node, "id"), Picked(node["config"], DeviceMembers)); break;
-                    case "csharp_device":
-                        var picked = Picked(node["config"], CSharpDeviceMembers);
-                        picked["csharp"] = true;
-                        yield return (Text(node, "id"), picked);
-                        break;
-                    case var kind: throw new InvalidOperationException($"The kind {kind} declares a device that no list knows how to describe");
-                }
+        {
+            if (raw is not JsonObject node || catalog["nodes"]?[Text(node, "kind")] is not { } spec || !Declares(spec, "device")) continue;
+            if (IsClassNode(spec))
+            {
+                var picked = Picked(node["config"], CSharpDeviceMembers);
+                picked["csharp"] = true;
+                yield return (Text(node, "id"), picked);
+            }
+            else if (Text(node, "kind") == "device") yield return (Text(node, "id"), Picked(node["config"], DeviceMembers));
+            else throw new InvalidOperationException($"The kind {Text(node, "kind")} declares a device that no list knows how to describe");
+        }
     }
     /// <summary>
     /// The members a Device node's device has: those of the Device kind's config in the built-in catalog (key, name,
     /// manufacturer… Part of), whatever a graph's own catalog says. Mirrored by <c>deviceMembers</c> in <c>contract.ts</c>.
     /// </summary>
     static IEnumerable<string> DeviceMembers => (Root["nodes"]?["device"]?["config"] as JsonObject ?? []).Select(member => member.Key);
-    /// <summary>The members of a C# device's config its device lists: its code gives the rest.</summary>
+    /// <summary>The members of a C# device's config, or a library device class's, its device lists: its class gives the rest.</summary>
     static readonly string[] CSharpDeviceMembers = ["key", "name", "via"];
     /// <summary>
     /// A copy of the <paramref name="members"/> the config has, as it has them and in its own order (a Device node's
@@ -278,17 +277,18 @@ public static class VisualNodeCatalog
     internal static IEnumerable<JsonObject> DerivedDevices(JsonObject graph, JsonObject catalog) =>
         DeclaredDevices(graph, catalog).Where(d => DeviceKey(d.Device) != null).OrderBy(d => IsCSharpDevice(d.Device)).Select(d => DeviceDescription(d.Device));
     /// <summary>
-    /// Whether a device a graph lists is a C# device's (<c>"csharp": true</c>), which its own code sets up. Only
-    /// <see cref="DeclaredDevices"/> sets the member, for a node of the C# device kind: a Device node's config that holds
-    /// one does not pass it on.
+    /// Whether a device a graph lists is a C# device's or a library device class's (<c>"csharp": true</c>), which its own
+    /// class sets up. Only <see cref="DeclaredDevices"/> sets the member, for a class node: a Device node's config that
+    /// holds one does not pass it on.
     /// </summary>
     internal static bool IsCSharpDevice(JsonNode? device) => Flag(device, "csharp");
     /// <summary>
     /// The entities the graph's C# entities declare, as a definition lists them for reading (its stored document and its
-    /// answers, never the catalog's <c>definition</c>, whose entities steps name): for each node of the C# entity kind, in
-    /// the order of the graph's <c>nodes</c>, <c>{key, domain, name, device, csharp}</c>: its config's key as given (none
-    /// when it has none), the domain its signature gives (<see cref="ClassSignature"/>; null when that cannot be read),
-    /// no name (null: its code names it, else its title, as it runs), the key of the Device node it is on
+    /// answers, never the catalog's <c>definition</c>, whose entities steps name): for each class node that declares an
+    /// entity (a C# entity, a library's entity class), in the order of the graph's <c>nodes</c>,
+    /// <c>{key, domain, name, device, csharp}</c>: its config's key as given (none when it has none), the domain its
+    /// signature gives (<see cref="ClassSignature"/>: a library class's its entry's; null when that cannot be read), no
+    /// name (null: its class names it, else its title, as it runs), the key of the Device node it is on
     /// (<see cref="DeviceOf"/>, <see cref="DeviceKey"/>) or null, and <c>csharp</c>, set here by the node's kind alone,
     /// never read from its config. Never its code, signature, settings or their values. Mirrored by
     /// <c>csharpEntities</c> in <c>contract.ts</c>.
@@ -298,7 +298,7 @@ public static class VisualNodeCatalog
         var nodes = GraphNodes(graph);
         foreach (var raw in graph["nodes"] as JsonArray ?? [])
         {
-            if (raw is not JsonObject node || Text(node, "kind") != "csharp_entity" || catalog["nodes"]?["csharp_entity"] is not { } spec || !Declares(spec, "entity")) continue;
+            if (raw is not JsonObject node || catalog["nodes"]?[Text(node, "kind")] is not { } spec || !IsClassNode(spec) || !Declares(spec, "entity")) continue;
             var entity = Picked(node["config"], ["key"]);
             entity["domain"] = ClassSignature(node, spec)?["domain"]?.DeepClone();
             entity["name"] = null;

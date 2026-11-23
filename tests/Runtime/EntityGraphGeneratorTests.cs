@@ -141,6 +141,176 @@ static class EntityGraphGeneratorTests
             catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
         if (failures.Count > 0) throw new Exception($"C# nodes in the entity graph generator: {failures.Count} failing:\n" + string.Join("\n", failures));
         Console.WriteLine("PASS C# nodes generate: a factory of their classes, signatures checked against their code, values against their settings, components resolved, no secret in the source, nothing constructed");
+        foreach (var (name, test) in new (string, Func<Task>)[] {
+            (nameof(ALibraryClassNodeGetsAFactoryAndNoCode), ALibraryClassNodeGetsAFactoryAndNoCode),
+            (nameof(ALibraryClassNodeBesideACSharpNode), ALibraryClassNodeBesideACSharpNode),
+            (nameof(ALibraryClassNodesSettingValueMustFit), () => { ALibraryClassNodesSettingValueMustFit(); return Task.CompletedTask; }),
+            (nameof(ALibraryClassNodesStrayCodeIsNotCompiled), () => { ALibraryClassNodesStrayCodeIsNotCompiled(); return Task.CompletedTask; }),
+            (nameof(ComponentsResolveALibraryClassNodesSettings), () => { ComponentsResolveALibraryClassNodesSettings(); return Task.CompletedTask; }),
+            (nameof(DevicesAndEntitiesListALibraryClassNode), () => { DevicesAndEntitiesListALibraryClassNode(); return Task.CompletedTask; }) })
+            try { await test(); }
+            catch (Exception e) { failures.Add($"{name}: {e.Message}"); }
+        if (failures.Count > 0) throw new Exception($"Library class nodes in the entity graph generator: {failures.Count} failing:\n" + string.Join("\n", failures));
+        Console.WriteLine("PASS library class nodes generate: a factory case creating the library's class, no code section, values checked against the entry's settings, components resolved, listed as C# nodes are");
+    }
+
+    // ---- Library class nodes ----
+
+    /// <summary>The catalog of <see cref="CustomNodeTests.Relays"/>: its hub and relay are kinds of their own.</summary>
+    static readonly Lazy<VisualCatalogSnapshot> RelaysCatalog = new(() =>
+    {
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([CustomNodeTests.Relays]);
+        Check(preview.Valid, "the relays library compiles: " + string.Join(" | ", preview.Diagnostics.Select(d => d.Message)));
+        return preview.Snapshot;
+    });
+    /// <summary>A node of the relays library's hub as the editor drops one, of the key, named Hub, with these values under arguments.</summary>
+    static JsonObject RelayHub(string id, string key, JsonObject? arguments = null)
+    {
+        var node = VisualGraphContract.CreateNode(CustomNodeTests.HubKind, id, RelaysCatalog.Value);
+        node.Remove("label");
+        node["config"]!["key"] = key; node["config"]!["name"] = "Hub"; node["config"]!["arguments"] = arguments ?? new JsonObject();
+        return node;
+    }
+    /// <summary>A node of the relays library's relay, an entity, of the key, with these values under arguments.</summary>
+    static JsonObject Relay(string id, string key, JsonObject? arguments = null)
+    {
+        var node = VisualGraphContract.CreateNode(CustomNodeTests.RelayKind, id, RelaysCatalog.Value);
+        node.Remove("label");
+        node["config"]!["key"] = key; node["config"]!["arguments"] = arguments ?? new JsonObject();
+        return node;
+    }
+    static DefinitionPreview PreviewedWithRelays(DefinitionBody body) => new DefinitionGenerator(Diagnostics).Preview(body, RelaysCatalog.Value);
+
+    /// <summary>
+    /// A graph of a library's hub alone previews valid (it needs no Entity node: its class makes its entities) and its
+    /// factory creates the library's class directly, a case of its node's own; no code section is generated for it. The
+    /// source compiles.
+    /// </summary>
+    static async Task ALibraryClassNodeGetsAFactoryAndNoCode()
+    {
+        var preview = PreviewedWithRelays(Body([RelayHub("hub", "hub", new JsonObject { ["Address"] = Lit("string", "10.0.0.2") })], []));
+        Check(preview.Valid && preview.Diagnostics.Count == 0, "a graph of a hub alone previews valid with no problem: " + Shown(preview.Diagnostics));
+        var lines = preview.Source.Split('\n');
+        var factory = Array.IndexOf(lines, "public static class SharpNodes {");
+        Check(factory >= 0 && lines[factory + 1] == "public static object? Create(string nodeId) => nodeId switch {"
+            && lines[factory + 2] == "\"hub\" => new global::NodeLib.RelayHub(),"
+            && lines[factory + 3] == "_ => null,",
+            "the factory creates the library's class:\n" + string.Join("\n", lines.Skip(Math.Max(0, factory)).Take(6)));
+        Check(!preview.Source.Contains("// Relay hub node \"hub\"", StringComparison.Ordinal) && !preview.Source.Contains("namespace NodeLib.Custom_hub", StringComparison.Ordinal),
+            "no code section is generated for the hub");
+        Check(preview.SourceMap.Count(m => m.NodeId == "hub") == 1, "the hub owns its case of the factory alone: " + string.Join(", ", preview.SourceMap.Select(m => $"{m.NodeId} {m.StartLine}-{m.EndLine}")));
+        await CompilesWithAFactory(preview, ["hub"], "a graph of a hub alone");
+    }
+
+    /// <summary>
+    /// A library's hub beside a C# device whose class derives it: each has its case of the factory, in node order, the
+    /// hub's creating the library's class and the C# device's its own; the C# device's code is in the source, the hub has none.
+    /// </summary>
+    static async Task ALibraryClassNodeBesideACSharpNode()
+    {
+        const string source = "public class FrontHub : RelayHub { }";
+        var compiled = new NodeLibraryCompiler(Diagnostics).Preview([CustomNodeTests.Relays], [new CustomNodeSource("c", source, "csharp_device")]).Snapshot.Custom["c"];
+        Check(compiled.Valid, "the C# device's code compiles: " + string.Join(" | ", compiled.Diagnostics.Select(d => d.Message)));
+        var address = new JsonObject { ["Address"] = Lit("string", "10.0.0.2") };
+        var front = EntityNodeTests.CSharpDevice("front", "front", "Front", new JsonObject { ["source"] = source, ["signature"] = compiled.Signature!.DeepClone(), ["arguments"] = address.DeepClone() });
+        var preview = PreviewedWithRelays(Body([RelayHub("hub", "hub", address), front], []));
+        Check(preview.Valid && preview.Diagnostics.Count == 0, "the hub and the C# device preview valid with no problem: " + Shown(preview.Diagnostics));
+        var lines = preview.Source.Split('\n');
+        var factory = Array.IndexOf(lines, "public static class SharpNodes {");
+        Check(factory >= 0 && lines[factory + 2] == "\"hub\" => new global::NodeLib.RelayHub(),"
+            && lines[factory + 3] == "\"front\" => new global::NodeLib.Custom_front.FrontHub(),"
+            && lines[factory + 4] == "_ => null,",
+            "both cases are in the factory, in node order:\n" + string.Join("\n", lines.Skip(Math.Max(0, factory)).Take(6)));
+        Check(preview.Source.Contains("// C# device node \"front\"\n", StringComparison.Ordinal) && preview.Source.Contains("namespace NodeLib.Custom_front\n", StringComparison.Ordinal)
+            && !preview.Source.Contains("node \"hub\"", StringComparison.Ordinal), "the C# device's code section is there, and none for the hub");
+        await CompilesWithAFactory(preview, ["hub", "front"], "the hub beside a C# device");
+    }
+
+    /// <summary>
+    /// A value given to a library class node's setting is checked against the entry's setting as a C# node's is against
+    /// its code's: Poll every typed 0 is <c>setting.value</c> on its pin, worded as the same setting of a C# device is.
+    /// </summary>
+    static void ALibraryClassNodesSettingValueMustFit()
+    {
+        var preview = PreviewedWithRelays(Body([RelayHub("hub", "hub", new JsonObject { ["Address"] = Lit("string", "10.0.0.2"), ["PollEvery"] = Lit("number", 0) })], []));
+        const string poll = "public class Poller : SharpDevice\n{\n    [Setting(\"Poll every\", Minimum = 1, Maximum = 60)] public double PollEvery { get; set; } = 5;\n}";
+        var csharp = Previewed(Body([CSharp("csharp_device", "hub", "hub", poll, new JsonObject { ["PollEvery"] = Lit("number", 0) })], []));
+        Check(!preview.Valid && preview.Source == "" && Shown(preview.Diagnostics) == "setting.value@hub:PollEvery:3 Poll every takes a number from 1 to 60",
+            "Poll every typed 0 does not fit: " + Shown(preview.Diagnostics));
+        Check(Shown(csharp.Diagnostics) == Shown(preview.Diagnostics), "a C# device's same setting is told alike: " + Shown(csharp.Diagnostics));
+        var fits = PreviewedWithRelays(Body([RelayHub("hub", "hub", new JsonObject { ["Address"] = Lit("string", "10.0.0.2"), ["PollEvery"] = Lit("number", 60) })], []));
+        Check(fits.Valid, "a value on the bound fits: " + Shown(fits.Diagnostics));
+    }
+
+    /// <summary>
+    /// A library class node's config that holds code and a signature (from an older or a hand-made graph) is not compiled
+    /// and changes nothing: its settings are its entry's, and it previews valid with no code section.
+    /// </summary>
+    static void ALibraryClassNodesStrayCodeIsNotCompiled()
+    {
+        var hub = RelayHub("hub", "hub", new JsonObject { ["Address"] = Lit("string", "10.0.0.2") });
+        hub["config"]!["source"] = "this is not C# at all {";
+        hub["config"]!["signature"] = JsonNode.Parse("""{"title":"Old","description":"","domain":null,"settings":[{"key":"Old","label":"Old","description":"","type":"string","secret":false,"required":true}]}""");
+        var body = Body([hub], []);
+        var preview = PreviewedWithRelays(body);
+        Check(preview.Valid && preview.Diagnostics.Count == 0, "the hub with stray code previews valid with no problem: " + Shown(preview.Diagnostics));
+        Check(!preview.Source.Contains("namespace NodeLib.Custom_hub", StringComparison.Ordinal) && !preview.Source.Contains("// Relay hub node \"hub\"", StringComparison.Ordinal)
+            && preview.Source.Contains("\"hub\" => new global::NodeLib.RelayHub(),", StringComparison.Ordinal),
+            "the stray code has no section of the source, and the factory creates the library's class");
+        var inputs = VisualNodeCatalog.DataInputs(hub, null, RelaysCatalog.Value).Select(p => p.Key).ToList();
+        Same(inputs, ["Address", "Token", "PollEvery"], "its pins are the entry's three settings");
+        Same(DefinitionGraph.Components(DefinitionGraph.Compose(body), RelaysCatalog.Value, []).Single().Settings.Select(s => s.Key).ToList(), ["Address"], "its component has the entry's settings, not the stray signature's");
+    }
+
+    /// <summary>
+    /// <see cref="DefinitionGraph.Components"/> gives a library class node as it gives a C# device: its kind, key, name,
+    /// its class's title, and its pins resolved (a typed value as typed, a wired secret Setting as the definition's saved
+    /// value); a required setting without a value is listed in Unset by its label.
+    /// </summary>
+    static void ComponentsResolveALibraryClassNodesSettings()
+    {
+        var hub = RelayHub("hub", "hub", new JsonObject { ["Address"] = Lit("string", "10.0.0.2"), ["PollEvery"] = Lit("number", 10) });
+        var body = Body([hub, N("token", "setting", new { key = "token" })], [D("token", "hub", "Token")], Setting("token", "string", "s3cret", secret: true));
+        var preview = PreviewedWithRelays(body);
+        Check(preview.Valid, "the graph previews valid: " + Shown(preview.Diagnostics));
+        Check(!preview.Source.Contains("s3cret", StringComparison.Ordinal), "the source does not hold the secret");
+        var components = DefinitionGraph.Components(preview.Graph ?? DefinitionGraph.Compose(body), RelaysCatalog.Value, body.Settings!);
+        static string Of(DefinitionComponent c) => $"{c.NodeId} {c.Kind} {c.Key} {c.Name ?? "-"} {(c.Via == null ? "-" : JsonSerializer.Serialize(c.Via, VisualStore.Json))} {c.Device ?? "-"} {c.Title} "
+            + "[" + string.Join(", ", c.Settings.Select(s => s.Key + "=" + s.Value?.ToJsonString())) + "]";
+        Same(components.Select(Of).ToList(), ["""hub device hub Hub - - Relay hub [Address="10.0.0.2", Token="s3cret", PollEvery=10]"""], "the hub's component, its settings resolved");
+        Check(components.Single().Unset.Count == 0, "nothing is unset: " + string.Join(", ", components.Single().Unset));
+        Check(components.Single().KindLabel == "Relay hub", "its kind is called by its entry's label, its class's title: " + components.Single().KindLabel);
+        var csharp = DefinitionGraph.Components(DefinitionGraph.Compose(Body([CSharp("csharp_device", "plug", "plug", PlugSource)], [])), BuiltIn, []).Single();
+        Check(csharp.KindLabel == "C# device", "a C# device's kind is called C# device, as before: " + csharp.KindLabel);
+        var unset = DefinitionGraph.Components(DefinitionGraph.Compose(Body([RelayHub("hub", "hub")], [])), RelaysCatalog.Value, []).Single();
+        Same([.. unset.Unset], ["Address"], "Address without a value is listed in Unset");
+    }
+
+    /// <summary>
+    /// A library's hub is listed among the definition's devices as a C# device is (its key and name, <c>csharp</c>); its
+    /// relay among the C# entities as a C# entity is (its key, its entry's domain, no name, the key of the Device node it
+    /// is on), and not among the Entity nodes' entities. A node of a class that is gone is in neither list, and nothing
+    /// throws for it; a declaring kind that is no class node and that no list knows is still refused.
+    /// </summary>
+    static void DevicesAndEntitiesListALibraryClassNode()
+    {
+        var catalog = RelaysCatalog.Value.Root;
+        var graph = DefinitionGraph.Compose(Body([N("strip", "device", new { key = "strip", name = "Strip" }), RelayHub("hub", "hub"), Relay("relay", "relay"), Lamp(),
+            N("gone", "library:relays:global%3A%3ANodeLib.Gone", new { key = "gone", arguments = new { } })], [D("strip", "relay", "device", "entities")]));
+        Same(VisualNodeCatalog.DerivedDevices(graph, catalog).Select(d => d.ToJsonString()).ToList(), ["""{"key":"strip","name":"Strip"}""", """{"key":"hub","name":"Hub","csharp":true}"""],
+            "the Device node's device, then the hub's, marked csharp");
+        Same(VisualNodeCatalog.CSharpEntities(graph, catalog).Select(e => e.ToJsonString()).ToList(), ["""{"key":"relay","domain":"switch","name":null,"device":"strip","csharp":true}"""],
+            "the relay is listed as a C# entity is, on the Device node it is wired to");
+        Same(VisualNodeCatalog.DeclaredEntities(graph, catalog).Select(e => e.NodeId).ToList(), ["lamp"], "the Entity nodes' entities are the lamp's alone");
+        var odd = (JsonObject)catalog.DeepClone();
+        odd["nodes"]!["odd"] = new JsonObject { ["label"] = "Odd", ["declares"] = "device", ["config"] = new JsonObject() };
+        var refused = new JsonObject { ["version"] = 5, ["name"] = "Odd", ["nodes"] = new JsonArray(N("o", "odd", new { key = "o" })), ["edges"] = new JsonArray() };
+        string Thrown(Action list) { try { list(); return "(nothing)"; } catch (InvalidOperationException e) { return e.Message; } }
+        Check(Thrown(() => VisualNodeCatalog.DeclaredDevices(refused, odd).ToList()) == "The kind odd declares a device that no list knows how to describe",
+            "a declaring kind that is no class node is refused: " + Thrown(() => VisualNodeCatalog.DeclaredDevices(refused, odd).ToList()));
+        odd["nodes"]!["odd"]!["declares"] = "entity";
+        Check(Thrown(() => VisualNodeCatalog.DeclaredEntities(refused, odd).ToList()) == "The kind odd declares an entity that no list knows how to describe",
+            "an entity kind that is no class node is refused: " + Thrown(() => VisualNodeCatalog.DeclaredEntities(refused, odd).ToList()));
     }
 
     // ---- C# entity and C# device nodes ----

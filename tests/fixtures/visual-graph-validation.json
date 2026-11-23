@@ -46456,5 +46456,1617 @@
     "codes": [
       "node.document"
     ]
+  },
+  {
+    "name": "library class node: a hub, and a relay on a Device node, are valid",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        },
+        {
+          "id": "strip",
+          "kind": "device",
+          "config": {
+            "key": "strip",
+            "name": "Strip"
+          }
+        },
+        {
+          "id": "relay",
+          "kind": "library:relays:global%3A%3ANodeLib.Relay",
+          "config": {
+            "key": "relay",
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "strip.entities:relay.device",
+          "kind": "data",
+          "source": "strip",
+          "target": "relay",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "library class node: a graph of a hub alone needs no Entity node",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": true,
+    "noDiagnostics": true
+  },
+  {
+    "name": "library class node: a required setting without a value",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "inputId": "Address",
+    "contains": "is required",
+    "messages": [
+      "Address is required"
+    ]
+  },
+  {
+    "name": "library class node: a value typed into a secret setting",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              },
+              "Token": {
+                "kind": "literal",
+                "type": "string",
+                "value": "hunter2"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "inputId": "Token",
+    "messages": [
+      "Token is a secret: connect a Setting instead of typing it here"
+    ],
+    "codes": [
+      "setting.secretLiteral"
+    ]
+  },
+  {
+    "name": "library class node: a setting wired from a node that is no Setting",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "text",
+          "kind": "constant",
+          "config": {
+            "type": "string",
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "10.0.0.2"
+            }
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "text.value:hub.Address",
+          "kind": "data",
+          "source": "text",
+          "target": "hub",
+          "sourcePort": "value",
+          "targetPort": "Address"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "inputId": "Address",
+    "messages": [
+      "Address takes a typed value or a Setting: it is set before anything runs"
+    ],
+    "codes": [
+      "scope.settingSource"
+    ]
+  },
+  {
+    "name": "library class node: two hubs of one key",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "a",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "b",
+    "inputId": "key",
+    "messages": [
+      "The key hub is already used by Hub: give this device its own"
+    ],
+    "codes": [
+      "definition.duplicateDevice"
+    ]
+  },
+  {
+    "name": "library class node: a relay and an Entity node of one key",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "relay",
+          "kind": "library:relays:global%3A%3ANodeLib.Relay",
+          "config": {
+            "key": "lamp",
+            "arguments": {}
+          }
+        },
+        {
+          "id": "lamp",
+          "kind": "entity",
+          "config": {
+            "key": "lamp",
+            "domain": "binary_sensor",
+            "name": "Lamp",
+            "arguments": {
+              "is_on": {
+                "kind": "literal",
+                "type": "boolean",
+                "value": true
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "lamp",
+    "inputId": "key",
+    "messages": [
+      "The key lamp is already used by Relay: give this entity its own"
+    ],
+    "codes": [
+      "definition.duplicateEntity"
+    ]
+  },
+  {
+    "name": "library class node: a hub in an automation",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        }
+      ],
+      "edges": []
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "messages": [
+      "Hub only works in the graph of an entity definition; delete it from this automation"
+    ],
+    "codes": [
+      "node.document"
+    ]
+  },
+  {
+    "name": "library class node: a class that is no longer in its node library",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        },
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "gone",
+          "kind": "library:relays:global%3A%3ANodeLib.Gone",
+          "config": {
+            "key": "gone",
+            "name": "Gone",
+            "via": null,
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "gone",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "Library:relays:global%3A%3ANodeLib.Gone is not connected into the flow; connect a step to its execution input",
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind",
+      "node.unreachable"
+    ]
   }
 ]

@@ -374,7 +374,7 @@ static class CustomNodeTests
     /// The node library the library class tests share: a device and an entity class marked [Node], an unmarked entity
     /// class (a helper) and a marked abstract one (a base), which are no steps.
     /// </summary>
-    static readonly NodeLibrarySource Relays = new("relays", """
+    internal static readonly NodeLibrarySource Relays = new("relays", """
         /// <summary>A hub of relays.</summary>
         [Node("Relay hub", Category = "Relays")]
         public class RelayHub : SharpDevice
@@ -395,9 +395,9 @@ static class CustomNodeTests
         public abstract class BaseRelay : SharpSwitch { }
         """, 1);
     /// <summary>The kind of <see cref="Relays"/>'s hub, the device.</summary>
-    const string HubKind = "library:relays:global%3A%3ANodeLib.RelayHub";
+    internal const string HubKind = "library:relays:global%3A%3ANodeLib.RelayHub";
     /// <summary>The kind of <see cref="Relays"/>'s relay, the entity.</summary>
-    const string RelayKind = "library:relays:global%3A%3ANodeLib.Relay";
+    internal const string RelayKind = "library:relays:global%3A%3ANodeLib.Relay";
     static string Keys(JsonNode? members) => string.Join(",", (members as JsonObject ?? []).Select(p => p.Key));
 
     // A library's device or entity class marked [Node] is a kind of its own: a copy of the C# device's or C# entity's entry

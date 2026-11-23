@@ -50,6 +50,11 @@ internal sealed record DefinitionComponent(string NodeId, string Kind, string Ke
     /// refuses to set it up while one is listed.
     /// </summary>
     public IReadOnlyList<string> Unset { get; init; } = [];
+    /// <summary>
+    /// What its kind is called: its catalog entry's label (<c>C# entity</c>, <c>C# device</c>, or a library class's
+    /// title); empty when its entry has none.
+    /// </summary>
+    public string KindLabel { get; init; } = "";
 }
 
 /// <summary>
@@ -170,14 +175,14 @@ internal static class DefinitionGraph
             if (VisualNodeCatalog.Declares(spec, "entity"))
             {
                 var device = VisualNodeCatalog.DeviceOf(graph, id, snapshot.Root) is { } deviceNode ? VisualNodeCatalog.DeviceKey(nodes[deviceNode]["config"]) : null;
-                components.Add(new(id, "entity", VisualNodeCatalog.Text(config, "key"), null, null, device, title, resolved) { Unset = unset });
+                components.Add(new(id, "entity", VisualNodeCatalog.Text(config, "key"), null, null, device, title, resolved) { Unset = unset, KindLabel = VisualNodeCatalog.Text(spec, "label") });
             }
             else
             {
                 var name = VisualNodeCatalog.Text(config, "name") is var given && VisualGraphValidator.Words.Trimmed(given).Length > 0 ? given : null;
                 DefinitionVia? via = null;
                 try { via = config["via"]?.Deserialize<DefinitionVia>(VisualStore.Json); } catch (System.Text.Json.JsonException) { }
-                components.Add(new(id, "device", VisualNodeCatalog.Text(config, "key"), name, via, null, title, resolved) { Unset = unset });
+                components.Add(new(id, "device", VisualNodeCatalog.Text(config, "key"), name, via, null, title, resolved) { Unset = unset, KindLabel = VisualNodeCatalog.Text(spec, "label") });
             }
         }
         return components;

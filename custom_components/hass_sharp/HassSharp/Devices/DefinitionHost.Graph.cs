@@ -196,10 +196,14 @@ internal sealed partial class DefinitionHost
         return [.. made.SelectMany(part => part.Entities)];
     }
 
-    /// <summary>A C# node as the host's messages name it: a C# entity its class's title, else its key; a C# device its name, else its key; else its kind.</summary>
+    /// <summary>
+    /// A C# node as the host's messages name it: a C# entity its class's title, else its key; a C# device its name, else
+    /// its key; else its kind's label (a library class node's its class's title). A library class node is named alike.
+    /// </summary>
     static string Called(DefinitionComponent node) =>
         VisualGraphValidator.Words.Trimmed(node.Kind == "entity" ? node.Title : node.Name ?? "") is { Length: > 0 } name ? name
         : VisualGraphValidator.Words.Trimmed(node.Key) is { Length: > 0 } key ? key
+        : VisualGraphValidator.Words.Trimmed(node.KindLabel) is { Length: > 0 } label ? label
         : node.Kind == "entity" ? "C# entity" : "C# device";
 
     /// <summary>
