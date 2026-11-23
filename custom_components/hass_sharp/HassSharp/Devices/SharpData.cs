@@ -112,9 +112,9 @@ public sealed class SharpData
     }
 
     /// <summary>
-    /// Runs an action after another handle on this store, another C# node's in this or another definition, wrote, removed
-    /// or cleared: not after this handle's own. The action runs as a track callback does, one run at a time; changes
-    /// while it runs cause one more run, not one each.
+    /// Runs an action after another component's handle on this store, another C# node's in this or another definition,
+    /// wrote, removed or cleared: not after this component's own, through any of its handles. The action runs as a track
+    /// callback does, one run at a time; changes while it runs cause one more run, not one each.
     /// </summary>
     /// <returns>Ends the subscription when disposed; it also ends when the definition stops.</returns>
     /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>

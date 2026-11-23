@@ -41,7 +41,9 @@ static class SharpDataTests
             LeftoversAreRemoved();
             await UpdateDoesNotLoseWrites();
             await ChangedReachesTheOthersOnly();
+            await ChangedSkipsTheWritersOtherHandles();
             await ClosedHandlesRefuse();
+            await EqualUsersAreTwo();
             DeleteSharedIsRefusedWhileOpen();
             DeviceDataIsDeletedAndPruned();
         }
@@ -419,6 +421,57 @@ static class SharpDataTests
         await Task.Delay(300);
         Check(ranB == before, $"B's disposed action ran {ranB - before} times");
         Console.WriteLine("PASS sharp data: a write runs the other handles' Changed actions, one at a time and coalesced, and never the writer's own");
+    }
+
+    /// <summary>A component that opened a store twice is not told of its own writes through either handle; another component's write tells it.</summary>
+    static async Task ChangedSkipsTheWritersOtherHandles()
+    {
+        using var scratch = new Scratch();
+        var stores = new DataStores(scratch.Root);
+        var one = User("def-a");
+        var first = stores.OpenShared("people", one);
+        var second = stores.OpenShared("people", one);
+        var other = stores.OpenShared("people", User("def-b"));
+        var ran = 0;
+        using var changed = second.Changed(() => { Interlocked.Increment(ref ran); return Task.CompletedTask; });
+        first.Set("x", 1);
+        first.Update<int>("x", n => n + 1);
+        Check(first.Remove("x"), "removing a value");
+        await Task.Delay(300);
+        Check(ran == 0, $"the component's own writes through its other handle ran its action {ran} times");
+        other.Set("x", 3);
+        await Until(() => Volatile.Read(ref ran) == 1, "the action after another component's write");
+        Console.WriteLine("PASS sharp data: a component's writes through any of its handles do not run its own Changed actions; another component's do");
+    }
+
+    /// <summary>Two users with equal ids and the same Run, such as an old and a new revision's node, are two: closing one leaves the other's handles open.</summary>
+    static async Task EqualUsersAreTwo()
+    {
+        using var scratch = new Scratch();
+        var stores = new DataStores(scratch.Root);
+        Func<Func<Task>, Task> run = action => Task.Run(action);
+        var (old, current) = (new DataUser("def", "node", run), new DataUser("def", "node", run));
+        Check(old == current, "the two users are equal records");
+        var oldShared = stores.OpenShared("people", old);
+        var currentShared = stores.OpenShared("people", current);
+        var oldOwn = stores.OpenDevice(old);
+        var currentOwn = stores.OpenDevice(current);
+        var ran = 0;
+        using var changed = currentShared.Changed(() => { Interlocked.Increment(ref ran); return Task.CompletedTask; });
+        // The old revision's write is another component's to the new one.
+        oldShared.Set("x", 1);
+        await Until(() => Volatile.Read(ref ran) == 1, "the new revision's action after the old one's write");
+        stores.Close(old);
+        Throws<ObjectDisposedException>(() => oldShared.Get<int>("x"), "the closed user's shared handle");
+        Throws<ObjectDisposedException>(() => oldOwn.Get<int>("x"), "the closed user's own handle");
+        Check(currentShared.Get<int>("x") == 1, "the other user's shared handle after an equal user closed");
+        currentOwn.Set("k", 1);
+        Check(currentOwn.Get<int>("k") == 1, "the other user's own handle after an equal user closed");
+        Check(!stores.DeleteShared("people"), "a store deleted while the other user has it open");
+        Check(stores.Shared() is [{ Name: "people", Users: ["def"] }], "the store no longer counted as open");
+        stores.Close(current);
+        Check(stores.DeleteShared("people"), "the store refused after both closed");
+        Console.WriteLine("PASS sharp data: two users with equal ids and the same Run are two, and closing one leaves the other's handles open");
     }
 
     static void InterlockedMax(ref int target, int value)

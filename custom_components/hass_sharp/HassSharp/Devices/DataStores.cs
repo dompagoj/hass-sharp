@@ -43,8 +43,8 @@ internal sealed class DataStores
     readonly Lock gate = new();
     // The stores that have a handle open, by directory.
     readonly Dictionary<string, Store> stores = new(StringComparer.Ordinal);
-    // The handles each user opened, until it is closed.
-    readonly Dictionary<DataUser, List<SharpData>> opened = [];
+    // The handles each user opened, until it is closed; by reference, since an old and a new revision's users are equal records.
+    readonly Dictionary<DataUser, List<SharpData>> opened = new(ReferenceEqualityComparer.Instance);
     // Guards stored; taken inside a store's lock, and nothing is taken inside it.
     readonly Lock storedGate = new();
     // Each definition's nodes whose store holds a value.
@@ -458,10 +458,10 @@ internal sealed class DataStores
             if (Device is var (definition, node)) owner.Holds(definition, node, sizes.Count > 0);
         }
 
-        // The subscriptions of every handle but the writer's; under gate.
+        // The subscriptions of another component's handles: of every user but the writer's, by reference; under gate.
         Subscription[] Others(SharpData by)
         {
-            lock (listening) return subscriptions.Where(subscription => subscription.Handle != by).ToArray();
+            lock (listening) return subscriptions.Where(subscription => !ReferenceEquals(subscription.Handle.User, by.User)).ToArray();
         }
 
         static void Signal(Subscription[] subscriptions)
