@@ -3,34 +3,37 @@
 Written 2026-11-23 at the end of the session that built face/person detection and Add external.
 This is the starting point for a planning (brainstorming) session. Nothing below is built yet.
 
-## What the owner wants, in their words
+## What the owner wants
 
-A custom UI in the HassSharp panel where the People detector device **asks the Home Assistant
-user to annotate people it does not recognise yet**. Only that part is the owner's own ask. The
-pieces around it (below) are proposals from the earlier session and have not been agreed.
+The owner confirmed all four parts below. They belong in the plan; how each is built is for the
+planning session.
 
-The question left open when the session ended, still unanswered:
-**"When the camera recognises someone, what do you want to happen?"** It decides what the
-device must expose. For example: an entity per person, a "Last recognised" sensor, an event, a
-graph trigger, or only a log line.
+1. **A custom UI in the HassSharp panel** where the People detector device **asks the Home
+   Assistant user to annotate people it does not recognise yet**. This is the owner's own ask.
+2. **A stored list of people, with their data.** The owner: "we do need to store the list of
+   people along with their data, that's how annotation is going to work". Annotating a face
+   adds it to this list, and recognition matches new faces against it.
+   - What is kept per person: a name, the face embeddings, and face crops so the UI can show
+     who it is. Probably under `/config/.storage/hass_sharp/`.
+   - Embeddings and face crops are biometric data. Keep them local and deletable, and never
+     send them anywhere.
+3. **Recognition by face embeddings: SFace**, from the OpenCV model zoo, the same zoo as the
+   YuNet detector already used.
+   - It runs in the same native library on tract.
+   - Faces are aligned with the five landmarks YuNet already returns (`DetectedFace` in
+     `Vision.cs` carries them).
+   - Not checked yet: SFace's licence, whether it runs on tract without unsupported ops, and its
+     speed on the arm64 container. A spike should settle these first.
+4. **Unknown faces are grouped (clustered)**, so the user names each person once, not every
+   frame.
+   - Each group can be named (a new person, or added to an existing one) or dismissed.
+   - The user can also review, merge, rename and delete people.
 
-## Proposals from the earlier session (not agreed, open to change)
-
-- Recognition by face embeddings: SFace, from the OpenCV model zoo, the same zoo as the YuNet
-  detector already used. It runs in the same native library on tract. Faces are aligned with the
-  five landmarks YuNet already returns (`DetectedFace` in `Vision.cs` carries them).
-  - Not checked yet: SFace's licence, whether it runs on tract without unsupported ops, and its
-    speed on the arm64 container.
-- A people database kept under `/config/.storage/hass_sharp/`: names, embeddings, and maybe a
-  few face crops for the UI.
-  - Embeddings and face crops are biometric data. Keep them local and deletable, and never
-    send them anywhere.
-- The annotate UI:
-  - unknown faces are grouped (clustered) so the user names a person once, not every frame;
-  - each group can be named (new person, or added to an existing one) or dismissed;
-  - the user can also review, merge, rename and delete people.
-- Automations get the result, for example a "Person recognised" trigger or a "Last recognised"
-  sensor. This waits on the open question above.
+Also in scope: **automations get the result**, for example a "Person recognised" trigger or a
+"Last recognised" sensor. The exact form waits on the question left open when the session
+ended, still unanswered: **"When the camera recognises someone, what do you want to happen?"**
+It decides what the device must expose. For example: an entity per person, a "Last recognised"
+sensor, an event, a graph trigger, or only a log line.
 
 ## What exists today
 
