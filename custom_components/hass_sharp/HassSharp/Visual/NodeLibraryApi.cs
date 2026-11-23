@@ -199,6 +199,27 @@ public partial class HassSharpManager
                 finally { await _visualGate.WaitAsync(); }
                 return Success(new { id = nodeId, workspaceVersion = workspace, generation = saved.Generation, saved = false, data = answer });
             }
+            // Several library files in one checked commit, as a repository's manifest lists them: a library that uses another's
+            // types compiles when the other is imported beside it or already stored.
+            if (operation == "import")
+            {
+                var items = (ApiRequest.OptionalObjects(request, "libraries") ?? throw new ArgumentException("libraries is required: the node libraries to import")).ToArray();
+                if (items.Length == 0) throw new ArgumentException("libraries must list at least one library");
+                var imported = new List<(NodeLibraryDocument Document, long Expected)>();
+                foreach (var item in items)
+                {
+                    var libraryId = RequiredString(item, "id"); NodeLibraryStore.ValidateId(libraryId);
+                    var name = RequiredString(item, "name"); NodeLibraryStore.ValidateName(name);
+                    var source = RequiredString(item, "source");
+                    var expected = ApiRequest.Long(item, "expectedRevision", "the revision this replaces, 0 for a new library");
+                    if (imported.Any(i => i.Document.Id == libraryId)) throw new ArgumentException("Each library may be imported once: " + libraryId);
+                    imported.Add((new(1, libraryId, name, checked(expected + 1), source), expected));
+                }
+                foreach (var (library, expected) in imported)
+                    if ((saved.Documents.SingleOrDefault(d => d.Id == library.Id)?.Revision ?? 0) != expected) throw new VisualConflictException();
+                var documents = imported.Select(i => i.Document).ToArray();
+                return await CommitLibraries(saved, documents, null, c => new { saved = true, documents, generation = c.Generation, catalog = c.Catalog, automations = c.Automations, invalid = c.Invalid, definitions = c.Definitions, invalidDefinitions = c.InvalidDefinitions });
+            }
             var id = RequiredString(request, "id"); NodeLibraryStore.ValidateId(id);
             var old = saved.Documents.SingleOrDefault(d => d.Id == id);
             if (operation == "read") return Success(old ?? throw new FileNotFoundException("Library document not found"));
@@ -253,40 +274,7 @@ public partial class HassSharpManager
                 var name = RequiredString(request, "name"); NodeLibraryStore.ValidateName(name);
                 document = new(1, id, name, checked(revision + 1), RequiredString(request, "source"));
             }
-            // Source ordering is part of the generated artifact identity and must match reload.
-            var candidates = saved.Documents.Where(d => d.Id != id).Concat(document == null ? [] : new[] { document })
-                .OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
-            var candidate = new NodeLibraryCompiler(_diagnosticsProvider).Preview(candidates.Select(d => d.AsSource()));
-            var generation = LibraryWorkspaceGeneration(candidates, candidate);
-            // Every artifact embeds every source, including advanced C# and indirect helper dependencies.
-            var graphs = VisualDocuments.List(strict: true);
-            var all = graphs.Select(g => (Document: g, Preview: new VisualGenerator(_diagnosticsProvider).Preview(g.Graph, candidate.Snapshot))).ToArray();
-            // Only a graph that is valid now can be broken by the save. One that is already invalid with the saved libraries
-            // does not block it: it is left as it is and reported in "invalid".
-            var invalidBefore = all.Where(p => !p.Preview.Valid).Select(p => p.Document.Id)
-                .Where(id => !new VisualGenerator(_diagnosticsProvider).Preview(all.First(p => p.Document.Id == id).Document.Graph, saved.Preview.Snapshot).Valid).ToHashSet(StringComparer.Ordinal);
-            var previews = all.Where(p => !invalidBefore.Contains(p.Document.Id)).ToArray();
-            // Such a graph is not rebuilt: a copy of it that is running keeps the previous version, with the previous library code.
-            var invalid = all.Where(p => invalidBefore.Contains(p.Document.Id)).Select(p =>
-            {
-                var running = _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(p.Document.Id) && s.Active);
-                return new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = p.Preview.Diagnostics, running,
-                    message = running ? "Not rebuilt, because it has errors: it is still running the previous version, with the previous library code"
-                        : "Not rebuilt, because it has errors; it is not running" };
-            }).ToArray();
-            // The entity definitions embed the libraries too, and are checked alike.
-            var definitionCheck = CheckDefinitions(candidate.Snapshot, saved.Preview.Snapshot, generation);
-            if (!candidate.Valid || previews.Any(p => !p.Preview.Valid) || definitionCheck.Breaking.Length > 0)
-                return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = Described(p.Document.Graph, p.Preview.Diagnostics, candidate.Snapshot) }), invalid, definitions = definitionCheck.Breaking });
-            var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Preview.Graph ?? p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
-            var changes = rebuilt.ToDictionary(d => VisualDocuments.FilePath(d.Id), d => (string?)JsonSerializer.Serialize(d, VisualStore.Json));
-            changes[LibraryDocuments.DocumentPath(id)] = document == null ? null : JsonSerializer.Serialize(document, VisualStore.Json);
-            AddDefinitionChanges(changes, definitionCheck);
-            AuthoringFiles.Commit(changes);
-            var automations = new List<object>();
-            foreach (var graph in rebuilt) automations.Add(await ActivateVisualDocument(graph));
-            var definitions = await ReactivateDefinitions(definitionCheck);
-            return Success(new { saved = true, document, deleted = operation == "delete", generation, catalog = candidate.Snapshot.Catalog, automations, invalid, definitions, invalidDefinitions = definitionCheck.Invalid });
+            return await CommitLibraries(saved, document == null ? [] : [document], operation == "delete" ? id : null, c => new { saved = true, document, deleted = operation == "delete", generation = c.Generation, catalog = c.Catalog, automations = c.Automations, invalid = c.Invalid, definitions = c.Definitions, invalidDefinitions = c.InvalidDefinitions });
         }
         catch (VisualConflictException ex) { return Error("conflict", ex.Message); }
         catch (FileNotFoundException ex) { return Error("not_found", ex.Message); }
@@ -298,5 +286,55 @@ public partial class HassSharpManager
         // Every field is read through ApiRequest, so a null reference here is HassSharp's own defect, not the request's.
         catch (NullReferenceException ex) { return InternalError("Node library", ex); }
         finally { _visualGate.Release(); }
+    }
+
+    /// <summary>What a library commit answers beside the documents it wrote: <c>save</c>, <c>delete</c> and <c>import</c> each name them so.</summary>
+    sealed record LibraryCommit(string Generation, JsonObject Catalog, List<object> Automations, object[] Invalid, List<object> Definitions, object[] InvalidDefinitions);
+
+    /// <summary>
+    /// Writes library files in one checked commit: the saved libraries with <paramref name="written"/> in place of those of
+    /// their ids and without <paramref name="deleted"/> compile as one candidate, every graph and entity definition is rebuilt
+    /// against it once, and nothing is written unless all of it is valid. Then the rebuilt graphs and definitions run.
+    /// </summary>
+    /// <param name="answer">The success answer, from the commit's members.</param>
+    /// <returns>The answer, or the <c>validation</c> refusal.</returns>
+    async Task<string> CommitLibraries((NodeLibraryDocument[] Documents, string Generation, NodeLibraryPreview Preview) saved, IReadOnlyCollection<NodeLibraryDocument> written, string? deleted, Func<LibraryCommit, object> answer)
+    {
+        // Source ordering is part of the generated artifact identity and must match reload.
+        var replaced = written.Select(d => d.Id).Append(deleted).ToHashSet(StringComparer.Ordinal);
+        var candidates = saved.Documents.Where(d => !replaced.Contains(d.Id)).Concat(written)
+            .OrderBy(d => d.Id, StringComparer.Ordinal).ToArray();
+        var candidate = new NodeLibraryCompiler(_diagnosticsProvider).Preview(candidates.Select(d => d.AsSource()));
+        var generation = LibraryWorkspaceGeneration(candidates, candidate);
+        // Every artifact embeds every source, including advanced C# and indirect helper dependencies.
+        var graphs = VisualDocuments.List(strict: true);
+        var all = graphs.Select(g => (Document: g, Preview: new VisualGenerator(_diagnosticsProvider).Preview(g.Graph, candidate.Snapshot))).ToArray();
+        // Only a graph that is valid now can be broken by the save. One that is already invalid with the saved libraries
+        // does not block it: it is left as it is and reported in "invalid".
+        var invalidBefore = all.Where(p => !p.Preview.Valid).Select(p => p.Document.Id)
+            .Where(id => !new VisualGenerator(_diagnosticsProvider).Preview(all.First(p => p.Document.Id == id).Document.Graph, saved.Preview.Snapshot).Valid).ToHashSet(StringComparer.Ordinal);
+        var previews = all.Where(p => !invalidBefore.Contains(p.Document.Id)).ToArray();
+        // Such a graph is not rebuilt: a copy of it that is running keeps the previous version, with the previous library code.
+        var invalid = all.Where(p => invalidBefore.Contains(p.Document.Id)).Select(p =>
+        {
+            var running = _userScriptManager.GetUserScripts().Any(s => s.CompiledScript.FilePath == VisualRuntimePath(p.Document.Id) && s.Active);
+            return (object)new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = p.Preview.Diagnostics, running,
+                message = running ? "Not rebuilt, because it has errors: it is still running the previous version, with the previous library code"
+                    : "Not rebuilt, because it has errors; it is not running" };
+        }).ToArray();
+        // The entity definitions embed the libraries too, and are checked alike.
+        var definitionCheck = CheckDefinitions(candidate.Snapshot, saved.Preview.Snapshot, generation);
+        if (!candidate.Valid || previews.Any(p => !p.Preview.Valid) || definitionCheck.Breaking.Length > 0)
+            return Error("validation", new { diagnostics = candidate.Diagnostics, automations = previews.Where(p => !p.Preview.Valid).Select(p => new { id = p.Document.Id, name = AutomationName(p.Document), diagnostics = Described(p.Document.Graph, p.Preview.Diagnostics, candidate.Snapshot) }), invalid, definitions = definitionCheck.Breaking });
+        var rebuilt = previews.Select(p => new VisualDocument(1,p.Document.Id,checked(p.Document.Revision+1),p.Preview.Graph ?? p.Document.Graph,p.Preview.Source,p.Preview.SourceMap) { CatalogGeneration = generation, EmbeddedCatalog = p.Preview.EmbeddedCatalog, Enabled = p.Document.Enabled, SavedUtc = p.Document.SavedUtc }).ToArray();
+        var changes = rebuilt.ToDictionary(d => VisualDocuments.FilePath(d.Id), d => (string?)JsonSerializer.Serialize(d, VisualStore.Json));
+        foreach (var document in written) changes[LibraryDocuments.DocumentPath(document.Id)] = JsonSerializer.Serialize(document, VisualStore.Json);
+        if (deleted != null) changes[LibraryDocuments.DocumentPath(deleted)] = null;
+        AddDefinitionChanges(changes, definitionCheck);
+        AuthoringFiles.Commit(changes);
+        var automations = new List<object>();
+        foreach (var graph in rebuilt) automations.Add(await ActivateVisualDocument(graph));
+        var definitions = await ReactivateDefinitions(definitionCheck);
+        return Success(answer(new(generation, candidate.Snapshot.Catalog, automations, invalid, definitions, definitionCheck.Invalid)));
     }
 }
