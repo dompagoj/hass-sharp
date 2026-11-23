@@ -132,8 +132,13 @@ export function entityAdapter(
     // A problem about no step and no row of the form is listed at the form's top.
     overviewProblem: diagnostic => problemRow(diagnostic) ?? (diagnostic.nodeId || diagnostic.startLine != null ? undefined : 'problems'),
     check: optionProblems,
-    // Deleting an Entity node that steps left behind still use asks first.
-    removal: entityRemoval,
+    // Deleting an Entity node that steps left behind still use asks first, and so does deleting a C# node that has stored
+    // data in the saved definition (by the counts' `stored`; nothing of it before they are read).
+    removal: (graph, ids, catalog, context) => {
+      const document = context?.document, stored = options.counts?.()?.stored
+      const keys = document && stored && Object.hasOwn(stored, document.id) ? stored[document.id] : undefined
+      return entityRemoval(graph, ids, catalog, document && keys ? { saved: document.graph, keys } : undefined)
+    },
     copyNotice,
     help: EntityHelp,
   }

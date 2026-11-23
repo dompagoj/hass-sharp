@@ -11,6 +11,7 @@ import { definitionsQueryKey, EntityApiError, entityApi, entityError, type Unrea
 import { attentionOf, createDeviceCounts } from '../entities/deviceCounts'
 import { DefinitionCard, definitionPollInterval, definitionsSummary, noteStarting, watchedEntityIds } from '../entities/DefinitionCard'
 import { DeleteDefinitionDialog } from '../entities/DeleteDefinition'
+import { StoredDataDialog } from '../entities/StoredDataDialog'
 import { liveState } from '../entities/liveState'
 import type { HomeDefinition } from '../entities/model'
 import { AddExternalDialog } from '../external/AddExternalDialog'
@@ -91,6 +92,8 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
 
   // ---- Add external (administrators): what it imports is listed once the list is read again.
   const [externalOpen, setExternalOpen] = createSignal(false)
+  // ---- Stored data (administrators): the shared stores C# devices keep, each deletable.
+  const [storedOpen, setStoredOpen] = createSignal(false)
 
   // ---- On/off: shown at once (on is "Starting" until the list is read again), put back with a message on failure.
   const [toggling, setToggling] = createSignal<ReadonlySet<string>>(new Set())
@@ -160,7 +163,10 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
           <Show when={home.isSuccess && definitionsSummary(items())}><p class="hs-muted hs-home-summary">{definitionsSummary(items())}</p></Show>
         </div>
         <div class="hs-home-heading__actions">
-          <Show when={admin()}><Button onClick={() => setExternalOpen(true)}>Add external</Button></Show>
+          <Show when={admin()}>
+            <Button onClick={() => setStoredOpen(true)}>Stored data</Button>
+            <Button onClick={() => setExternalOpen(true)}>Add external</Button>
+          </Show>
           <Button variant="primary" class="hs-home-new" onClick={() => openNew()}><Icon name="plus" />New entity definition</Button>
         </div>
       </header>
@@ -245,6 +251,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
         </form>
       </Dialog>
       <AddExternalDialog open={externalOpen()} onClose={() => setExternalOpen(false)} onImported={() => void refresh()} />
+      <Show when={admin()}><StoredDataDialog open={storedOpen()} definitionName={id => byId().get(id)?.name} onClose={() => setStoredOpen(false)} /></Show>
       <DeleteDefinitionDialog open={!!deleteItem()} name={deleteItem()?.name ?? ''} deleting={deleting()}
         error={deleteError() && <>
           {deleteError()!.text}

@@ -436,7 +436,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   const [removal, setRemoval] = createSignal<{ title: string; body: string; proceed: () => void }>()
   /** Deletes the steps at once, or once the person confirms what the adapter asks; undefined when it never asks. */
   const beforeDelete = adapter.removal && ((ids: string[], proceed: () => void) => {
-    const question = adapter.removal!(graph(), ids, session.catalog())
+    const question = adapter.removal!(graph(), ids, session.catalog(), context(choose))
     if (question) setRemoval({ ...question, proceed })
     else proceed()
   })

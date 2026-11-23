@@ -5,13 +5,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { Dialog } from '../src/components/Dialog'
 import { EditorView } from '../src/views/VisualAutomationView'
-import type { EditorAdapter, EditorDocument } from '../src/visual/adapter'
+import type { EditorAdapter, EditorContext, EditorDocument } from '../src/visual/adapter'
 import type { VisualPreview } from '../src/visual/api'
-import { graphDocument } from '../src/visual/contract'
+import { addGraphNode, graphDocument, nodeCatalog } from '../src/visual/contract'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
 import { add, empty, visualFixture } from './visual-fixture'
 import { automationAdapter } from '../src/visual/automationAdapter'
 import { entityAdapter } from '../src/entities/adapter'
+import type { DeviceCounts } from '../src/entities/deviceUi'
 
 // The editor driven by a second kind of document: a stub adapter with its own backend, ids, routes and words. Nothing
 // of the automation's may show (its words, its routes) and no automation request may be sent.
@@ -400,6 +401,23 @@ it('encodes the id in the editor link of the automation and the entity definitio
   expect(automationAdapter(hass).editorHref('visual-0f3c')).toBe('/visual/visual-0f3c')
   expect(entityAdapter(hass).editorHref('a b/c?d')).toBe('/entities/a%20b%2Fc%3Fd')
   expect(automationAdapter(hass).runHref('visual-a b', 'r/1')).toBe('/visual/visual-a%20b/runs/r%2F1')
+})
+
+it('the entity definition\'s adapter asks before a C# node with stored data of the saved definition is deleted', () => {
+  let counts: DeviceCounts | undefined = { attention: {}, stored: { desk: ['device'], other: ['sensor'] } }
+  const adapter = entityAdapter({ callWS: async () => ({}) }, { counts: () => counts })
+  const graph = addGraphNode(addGraphNode(empty(), 'csharp_device', 'cam', nodeCatalog), 'csharp_entity', 'count', nodeCatalog)
+  const context = (document: unknown) => ({ document }) as unknown as EditorContext
+  const ask = (ids: string[], document: unknown) => adapter.removal!(graph, ids, nodeCatalog, context(document))
+  expect(ask(['cam'], { id: 'desk', graph })).toEqual({ title: 'Delete its stored data too?', body: 'Plug has stored data. It is deleted when you save the entity definition without this node.' })
+  // Another definition's stored data is none of this one's.
+  expect(ask(['count'], { id: 'desk', graph })).toBeUndefined()
+  // Never saved, or its counts not read yet: only what it asked before.
+  expect(ask(['cam'], undefined)).toBeUndefined()
+  counts = undefined
+  expect(ask(['cam'], { id: 'desk', graph })).toBeUndefined()
+  // Without counts (an editor that has none): the same.
+  expect(entityAdapter({ callWS: async () => ({}) }).removal!(graph, ['cam'], nodeCatalog, context({ id: 'desk', graph }))).toBeUndefined()
 })
 
 it('the entity definition\'s adapter answers its saved entities\' keys and the entity ids Home Assistant gave them', () => {

@@ -230,10 +230,10 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   copyNotice?(copied: VisualGraph): string | undefined
   /**
    * What deleting the steps `ids` asks first, as a confirmation's title and text (an entity definition's Entity node
-   * that steps left behind still use); undefined when it asks nothing. Without it, or with that answer, steps are
-   * deleted at once.
+   * that steps left behind still use, or its C# node that has stored data); undefined when it asks nothing. Without it,
+   * or with that answer, steps are deleted at once. `context` is the editor as it is then (its saved document).
    */
-  removal?(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot): { title: string; body: string } | undefined
+  removal?(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot, context?: EditorContext<D>): { title: string; body: string } | undefined
   /**
    * Tabs of the bottom drawer only this kind of document has (an entity definition's Device tab), shown after Runs.
    * Asked once, when the editor opens; `?drawer=<id>` opens the drawer on one of them as on a tab of the editor's own.

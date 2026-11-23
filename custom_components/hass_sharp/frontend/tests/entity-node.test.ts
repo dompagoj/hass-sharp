@@ -903,6 +903,50 @@ it('deleting Entity nodes says how many steps use them, and "these entities" onl
   expect(entityRemoval(graph, ['h'], nodeCatalog)).toBeUndefined()
 })
 
+/** A saved definition's C# device Plug (key `device`, node `cam`) and C# entity Thermometer (key `sensor`, node `count`). */
+const csharpNodes = () => addGraphNode(addGraphNode(empty(), 'csharp_device', 'cam', nodeCatalog), 'csharp_entity', 'count', nodeCatalog)
+const storedQuestion = (name: string) => ({ title: 'Delete its stored data too?', body: `${name} has stored data. It is deleted when you save the entity definition without this node.` })
+
+it('removing a C# node with stored data asks first', () => {
+  const saved = csharpNodes()
+  expect(entityRemoval(saved, ['cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual(storedQuestion('Plug'))
+  expect(entityRemoval(saved, ['count'], nodeCatalog, { saved, keys: ['device', 'sensor'] })).toEqual(storedQuestion('Thermometer'))
+  // Named as its card is now; its stored data is by the key it was saved with.
+  const renamed = updateNode(saved, 'cam', { config: { ...saved.nodes[0].config, name: 'Driveway camera' } })
+  expect(entityRemoval(renamed, ['cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual(storedQuestion('Driveway camera'))
+  // Both at once.
+  expect(entityRemoval(saved, ['cam', 'count'], nodeCatalog, { saved, keys: ['device', 'sensor'] })).toEqual({
+    title: 'Delete its stored data too?', body: 'Plug and Thermometer have stored data. It is deleted when you save the entity definition without these nodes.',
+  })
+})
+
+it('removing a C# node without stored data does not ask', () => {
+  const saved = csharpNodes()
+  expect(entityRemoval(saved, ['cam'], nodeCatalog, { saved, keys: ['sensor'] })).toBeUndefined()
+  expect(entityRemoval(saved, ['cam', 'count'], nodeCatalog, { saved, keys: [] })).toBeUndefined()
+  // Without what is stored (not read yet, or a definition never saved), it asks only what it asked before.
+  expect(entityRemoval(saved, ['cam'], nodeCatalog)).toBeUndefined()
+  // A node added since the last save has none, whatever key it was given.
+  const added = addGraphNode(csharpNodes(), 'csharp_device', 'new', nodeCatalog)
+  const keyed = updateNode(added, 'new', { config: { ...added.nodes.at(-1)!.config, key: 'garage' } })
+  expect(entityRemoval(keyed, ['new'], nodeCatalog, { saved, keys: ['device', 'garage'] })).toBeUndefined()
+  // A step of another kind with a key of stored data is no C# node.
+  const lamp = add(saved, 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  expect(entityRemoval(lamp, ['lamp'], nodeCatalog, { saved: lamp, keys: ['lamp'] })).toBeUndefined()
+})
+
+it('removing a node that steps still use and a C# node that has data shows both reasons', () => {
+  let saved = add(csharpNodes(), 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
+  saved = add(saved, 'set_entity_state', 'set', { entity: 'lamp' })
+  expect(entityRemoval(saved, ['lamp', 'cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual({
+    title: 'Delete its stored data too?',
+    body: 'Plug has stored data. It is deleted when you save the entity definition without this node. 1 step uses this entity. It will show a problem until you change or remove it.',
+  })
+  // Each reason alone, as before.
+  expect(entityRemoval(saved, ['lamp'], nodeCatalog, { saved, keys: ['device'] })).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
+  expect(entityRemoval(saved, ['lamp', 'cam'], nodeCatalog)).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })
+})
+
 it('a name of spaces is no name: the entity has none, and its runs and commands are named by its key', () => {
   const graph = add(empty(), 'entity', 'p', { key: 'power', domain: 'switch', name: ' \t ' })
   const [declared] = declaredEntities(graph, nodeCatalog)

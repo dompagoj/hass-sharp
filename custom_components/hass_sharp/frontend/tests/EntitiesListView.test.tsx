@@ -795,6 +795,31 @@ it('lays out for 360 px: one column of cards, entity rows that wrap', async () =
     expect(root.querySelector(selector), selector).not.toBeNull()
 })
 
+it('offers Stored data to an administrator, naming the definitions that use each store, and to no one else', async () => {
+  const stores = vi.fn(() => ({ version: 1, ok: true, result: { shared: [{ name: 'hass-sharp-vision.people', bytes: 2048, users: ['camera', 'gone'] }] } }))
+  const prepare = (f: Fixture) => {
+    three(f)
+    const inner = f.callWS
+    f.callWS = async (message: any) => (message.type === 'hass_sharp/device_ui' && message.request.operation === 'stores' ? stores() : inner(message))
+  }
+  const { root } = setup({ prepare })
+  await loaded(root)
+  expect(stores).not.toHaveBeenCalled()
+  button(root, 'Stored data').click()
+  const dialog = [...root.querySelectorAll('dialog')].find(d => d.open)!
+  expect(dialog.querySelector('h2')?.textContent).toBe('Stored data')
+  await vi.waitFor(() => expect(dialog.textContent).toContain('Used by Driveway and gone'))
+  expect(dialog.textContent).toContain('2 KiB')
+  expect(stores).toHaveBeenCalledTimes(1)
+  button(dialog, 'Close').click()
+  expect([...root.querySelectorAll('dialog')].some(d => d.open)).toBe(false)
+  dispose?.(); document.body.innerHTML = ''
+
+  const user = setup({ admin: false, prepare })
+  await loaded(user.root)
+  expect([...user.root.querySelectorAll('button')].some(b => b.textContent?.trim() === 'Stored data')).toBe(false)
+})
+
 it('offers Add external to an administrator, and reads the list again after an import', async () => {
   const sha = '0123456789abcdef0123456789abcdef01234567'
   const external = vi.fn((request: any) => ({ version: 1, ok: true, result: request.operation === 'inspect'

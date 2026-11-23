@@ -1184,6 +1184,31 @@ it('shows on a C# device\'s and a C# entity\'s card the cards waiting on its pag
   expect(deviceTab.textContent).toBe('Device4')
 })
 
+it('asks before a saved C# device with stored data is deleted, and deletes a C# entity without any at once', async () => {
+  const { root, fixture } = await openPlug(f => {
+    f.entities.seed('plug', csharpPlug(), { liveEntities: csharpPlugLive })
+    // Keyed by node key: the C# device plug has stored data; the C# entity thermometer has none.
+    f.controls.deviceCounts = { attention: {}, stored: { plug: ['plug'] } }
+  })
+  await vi.waitFor(() => expect(fixture.calls.some(c => c.type === 'hass_sharp/device_ui' && c.request.operation === 'counts')).toBe(true))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const canvas = root.querySelector<HTMLElement>('.hs-flow')!
+  await selectNode(root, 'code')
+  canvas.focus()
+  press(canvas, 'Delete')
+  await vi.waitFor(() => expect(document.querySelector('dialog[open]')).not.toBeNull())
+  const dialog = document.querySelector<HTMLDialogElement>('dialog[open]')!
+  expect(dialog.querySelector('h2')!.textContent).toBe('Delete its stored data too?')
+  expect(dialog.textContent).toContain('Code plug has stored data. It is deleted when you save the entity definition without this node.')
+  button(dialog, 'Cancel').click()
+  expect(card(root, 'code')).not.toBeNull()
+  await selectNode(root, 'thermo')
+  canvas.focus()
+  press(canvas, 'Delete')
+  await vi.waitFor(() => expect(root.querySelector('.solid-flow__node[data-id="thermo"]')).toBeNull())
+  expect(document.querySelector('dialog[open]')).toBeNull()
+})
+
 it('shows no count on the card of a node that is no C# device or C# entity, keyed like a page that waits', async () => {
   const { root } = await openPlug(f => {
     f.entities.seed('plug', plugBody())
