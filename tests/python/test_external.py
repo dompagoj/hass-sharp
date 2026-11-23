@@ -5,7 +5,6 @@ import os
 import pathlib
 import re
 import unittest
-from types import SimpleNamespace
 
 ROOT = pathlib.Path(os.environ.get('HASS_SHARP_TEST_ROOT', pathlib.Path(__file__).resolve().parents[2]))
 spec = importlib.util.spec_from_file_location('hass_sharp_external', ROOT / 'custom_components/hass_sharp/external.py')
@@ -121,6 +120,9 @@ class Manifest(unittest.TestCase):
 
         self.assertTrue(error(self, 'manifest', lambda: x.parse_manifest(b'[[library]\nname = ')).startswith('hass_sharp.toml is not valid TOML: '))
         self.assertEqual(error(self, 'manifest', lambda: x.parse_manifest(b'\xff\xfe')), 'hass_sharp.toml is not UTF-8 text')
+        for depth in (200_000, 2_000):
+            self.assertEqual(error(self, 'manifest', lambda: x.parse_manifest(b'a = ' + b'[' * depth + b']' * depth)),
+                             'hass_sharp.toml is not valid TOML: it nests arrays or tables too deeply')
 
         # Entities listed before libraries still come after them; unknown keys, here and at the top, are ignored.
         items = x.parse_manifest(b'version = 3\n[[entity]]\nname = "E"\npath = "e.json"\nicon = "mdi:eye"\n'
@@ -246,6 +248,16 @@ class Items(unittest.TestCase):
             'nodes/front_door_people.json is not valid JSON: '))
         self.assertEqual(self.problem(lambda: x.entity_body(self.entity, b'\xff')), 'nodes/front_door_people.json is not UTF-8 text')
 
+    def test_deep_entity_file(self):
+        deep = 'nodes/front_door_people.json is not valid JSON: it nests more than 64 levels deep'
+        # Too deep for the parser, and parsed but too deep to copy (rewrite_library_kinds) or for .NET's 64 levels.
+        for depth in (200_000, 1_000, 63):
+            body = b'{"logic": {"kind": "graph", "graph": {"nodes": %s}}}' % (b'[' * depth + b']' * depth)
+            self.assertEqual(self.problem(lambda: x.entity_body(self.entity, body)), deep, depth)
+        body = b'{"logic": {"kind": "graph", "graph": {"nodes": %s}}}' % (b'[' * 61 + b']' * 61)
+        self.assertEqual(x.rewrite_library_kinds(x.entity_body(self.entity, body)['logic']['graph'], {})['nodes'],
+                         json.loads(b'[' * 61 + b']' * 61))
+
     def test_library_source(self):
         self.assertEqual(x.library_source(self.library, 'namespace NodeLib; // Café'.encode()), 'namespace NodeLib; // Café')
         self.assertEqual(self.problem(lambda: x.library_source(self.library, b'class \xc3')), 'nodes/Vision.cs is not UTF-8 text')
@@ -263,8 +275,8 @@ class FakeContent:
 
 
 class FakeResponse:
-    def __init__(self, body=b'', status=200, host='raw.githubusercontent.com', headers=None):
-        self.status, self.url, self.headers, self.content = status, SimpleNamespace(host=host), headers or {}, FakeContent(body)
+    def __init__(self, body=b'', status=200, headers=None):
+        self.status, self.headers, self.content = status, headers or {}, FakeContent(body)
 
     async def __aenter__(self):
         return self
@@ -274,14 +286,21 @@ class FakeResponse:
 
 
 class FakeSession:
+    """Answers each request with `answer`, or, for a dict, with the answer for its URL."""
+
     def __init__(self, answer):
         self.answer, self.calls = answer, []
 
     def get(self, url, **kwargs):
         self.calls.append((url, kwargs))
-        if isinstance(self.answer, BaseException):
-            raise self.answer
-        return self.answer
+        answer = self.answer[url] if isinstance(self.answer, dict) else self.answer
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+def moved(location, status=302):
+    return FakeResponse(b'moved', status=status, headers={'Location': location})
 
 
 class Fetching(unittest.TestCase):
@@ -295,7 +314,8 @@ class Fetching(unittest.TestCase):
         whole = FakeResponse(b'a' * x.CAP)
         session, fetch = self.fetch(whole)
         self.assertEqual(run(fetch(self.url, 'text/plain')), b'a' * x.CAP)
-        self.assertEqual(session.calls, [(self.url, {'headers': {'Accept': 'text/plain', 'User-Agent': 'HassSharp'}, 'timeout': 'the timeout'})])
+        self.assertEqual(session.calls, [(self.url, {'headers': {'Accept': 'text/plain', 'User-Agent': 'HassSharp'},
+                                                     'timeout': 'the timeout', 'allow_redirects': False})])
 
         over = FakeResponse(b'a' * (x.CAP + 1024 * 1024))
         _, fetch = self.fetch(over)
@@ -314,11 +334,6 @@ class Fetching(unittest.TestCase):
             run(fetch(self.url, '*/*'))
         self.assertEqual(raised.exception.status, 404)
 
-        _, fetch = self.fetch(FakeResponse(b'a', host='example.com'))
-        self.assertEqual(error(self, 'fetch', lambda: run(fetch(self.url, '*/*'))), 'Could not reach GitHub: it sent the request to example.com')
-        _, fetch = self.fetch(FakeResponse(b'{}', host='api.github.com'))
-        self.assertEqual(run(fetch('https://api.github.com/repos/o/r/commits/HEAD', 'application/vnd.github+json')), b'{}')
-
         _, fetch = self.fetch(asyncio.TimeoutError())
         self.assertTrue(error(self, 'fetch', lambda: run(fetch(self.url, '*/*'))).startswith('Could not reach GitHub: '))
 
@@ -333,6 +348,44 @@ class Fetching(unittest.TestCase):
         _, fetch = self.fetch(KeyError('x'))
         with self.assertRaises(KeyError):
             run(fetch(self.url, '*/*'))
+
+
+    def test_aiohttp_fetch_redirects(self):
+        api = 'https://api.github.com/repos/o/r/commits/HEAD'
+        renamed = 'https://api.github.com/repositories/42/commits/HEAD'
+        session, fetch = self.fetch({api: moved(renamed, 301), renamed: moved('/repositories/42/commits/main', 307),
+                                     'https://api.github.com/repositories/42/commits/main': moved(self.url),
+                                     self.url: FakeResponse(b'{}')})
+        self.assertEqual(run(fetch(api, 'application/vnd.github+json')), b'{}')
+        self.assertEqual([url for url, _ in session.calls],
+                         [api, renamed, 'https://api.github.com/repositories/42/commits/main', self.url])
+        self.assertTrue(all(kwargs['allow_redirects'] is False for _, kwargs in session.calls))
+
+        # A hop off GitHub's hosts is refused before it is requested, wherever the chain would end.
+        for location, host in (('https://example.com/x.cs', 'example.com'), ('//169.254.169.254/latest', '169.254.169.254'),
+                               ('https://raw.githubusercontent.com:8443/x.cs', 'raw.githubusercontent.com:8443'),
+                               ('https://user@raw.githubusercontent.com/x.cs', 'user@raw.githubusercontent.com')):
+            session, fetch = self.fetch({api: moved(location), 'https://example.com/x.cs': moved(self.url)})
+            self.assertEqual(error(self, 'fetch', lambda: run(fetch(api, '*/*'))), f'Could not reach GitHub: it sent the request to {host}')
+            self.assertEqual([url for url, _ in session.calls], [api])
+        session, fetch = self.fetch({api: moved('http://raw.githubusercontent.com/o/r/x.cs')})
+        self.assertEqual(error(self, 'fetch', lambda: run(fetch(api, '*/*'))),
+                         'Could not reach GitHub: it sent the request to raw.githubusercontent.com without https')
+        self.assertEqual(len(session.calls), 1)
+        _, fetch = self.fetch({})
+        self.assertEqual(error(self, 'fetch', lambda: run(fetch('https://example.com/x.cs', '*/*'))),
+                         'Could not reach GitHub: it sent the request to example.com')
+
+        loop = 'https://raw.githubusercontent.com/loop'
+        session, fetch = self.fetch(moved(loop))
+        self.assertEqual(error(self, 'fetch', lambda: run(fetch(loop, '*/*'))),
+                         f'Could not reach GitHub: it redirected the request more than {x.MAX_REDIRECTS} times')
+        self.assertEqual(len(session.calls), x.MAX_REDIRECTS + 1)
+        # A redirect without a Location is an answer like any other.
+        _, fetch = self.fetch(FakeResponse(status=304))
+        with self.assertRaises(x.HttpStatus) as raised:
+            run(fetch(self.url, '*/*'))
+        self.assertEqual(raised.exception.status, 304)
 
 
 if __name__ == '__main__':

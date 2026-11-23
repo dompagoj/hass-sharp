@@ -10,13 +10,17 @@ import tomllib
 import unicodedata
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 CAP = 2 * 1024 * 1024
 """The most bytes of any one fetched file, hass_sharp.toml included."""
 MAX_ITEMS = 50
 ALLOWED_HOSTS = frozenset({"api.github.com", "raw.githubusercontent.com"})
 CHUNK = 64 * 1024
+MAX_REDIRECTS = 5
+MAX_DEPTH = 64
+"""The deepest nesting of an entity file, System.Text.Json's default; deeper, copying it would exhaust the stack."""
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
 
 _OWNER = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 _REPO = re.compile(r"[A-Za-z0-9._-]{1,100}")
@@ -135,6 +139,8 @@ def parse_manifest(data: bytes) -> list[Item]:
         document = tomllib.loads(text)
     except tomllib.TOMLDecodeError as ex:
         raise ExternalError("manifest", f"hass_sharp.toml is not valid TOML: {ex}") from None
+    except RecursionError:
+        raise ExternalError("manifest", "hass_sharp.toml is not valid TOML: it nests arrays or tables too deeply") from None
     problems: list[str] = []
     tables: dict[str, list] = {}
     for kind in ("library", "entity"):
@@ -245,10 +251,26 @@ def entity_body(item: Item, data: bytes) -> dict:
         file = json.loads(_text(item, data))
     except json.JSONDecodeError as ex:
         raise ItemProblem(f"{item.path} is not valid JSON: {ex}") from None
+    except RecursionError:
+        raise ItemProblem(f"{item.path} is not valid JSON: it nests more than {MAX_DEPTH} levels deep") from None
+    if _deeper_than(file, MAX_DEPTH):
+        raise ItemProblem(f"{item.path} is not valid JSON: it nests more than {MAX_DEPTH} levels deep")
     logic = file.get("logic") if isinstance(file, dict) else None
     if not isinstance(logic, dict) or logic.get("kind") != "graph" or not isinstance(logic.get("graph"), dict):
         raise ItemProblem(f"{item.path} is not an entity definition: it needs logic of kind graph")
     return {"name": item.name, "settings": file.get("settings") or [], "logic": logic}
+
+
+def _deeper_than(value: object, limit: int) -> bool:
+    """Whether objects and arrays nest more than `limit` levels, found without recursion."""
+    stack = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, (dict, list)):
+            if depth > limit:
+                return True
+            stack.extend((child, depth + 1) for child in (node.values() if isinstance(node, dict) else node))
+    return False
 
 
 def _client_error(ex: BaseException) -> bool:
@@ -257,27 +279,40 @@ def _client_error(ex: BaseException) -> bool:
 
 
 def aiohttp_fetch(session, timeout) -> Fetch:
-    """A Fetch over an aiohttp ClientSession that stays on GitHub's hosts and reads at most CAP bytes."""
+    """A Fetch over an aiohttp ClientSession that reads at most CAP bytes and sends no request off GitHub's hosts.
+
+    Redirects are followed here rather than by aiohttp, so each hop is checked before it is requested.
+    """
 
     async def fetch(url: str, accept: str) -> bytes:
         name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
         too_large = ExternalError("fetch", f"{name} is larger than 2 MiB")
         try:
-            async with session.get(url, headers={"Accept": accept, "User-Agent": "HassSharp"}, timeout=timeout) as response:
-                host = response.url.host
-                if host not in ALLOWED_HOSTS:
-                    raise ExternalError("fetch", f"Could not reach GitHub: it sent the request to {host}")
-                if response.status != 200:
-                    raise HttpStatus(response.status)
-                length = response.headers.get("Content-Length")
-                if length is not None and length.strip().isdigit() and int(length) > CAP:
-                    raise too_large
-                body = bytearray()
-                async for chunk in response.content.iter_chunked(CHUNK):
-                    body += chunk
-                    if len(body) > CAP:
+            for _ in range(MAX_REDIRECTS + 1):
+                parts = urlsplit(url)
+                # The netloc whole, so a port or a user name is off the hosts too.
+                if parts.netloc.lower() not in ALLOWED_HOSTS:
+                    raise ExternalError("fetch", f"Could not reach GitHub: it sent the request to {parts.netloc}")
+                if parts.scheme != "https":
+                    raise ExternalError("fetch", f"Could not reach GitHub: it sent the request to {parts.netloc} without https")
+                async with session.get(url, headers={"Accept": accept, "User-Agent": "HassSharp"}, timeout=timeout,
+                                       allow_redirects=False) as response:
+                    location = response.headers.get("Location")
+                    if response.status in _REDIRECTS and location:
+                        url = urljoin(url, location)
+                        continue
+                    if response.status != 200:
+                        raise HttpStatus(response.status)
+                    length = response.headers.get("Content-Length")
+                    if length is not None and length.strip().isdigit() and int(length) > CAP:
                         raise too_large
-                return bytes(body)
+                    body = bytearray()
+                    async for chunk in response.content.iter_chunked(CHUNK):
+                        body += chunk
+                        if len(body) > CAP:
+                            raise too_large
+                    return bytes(body)
+            raise ExternalError("fetch", f"Could not reach GitHub: it redirected the request more than {MAX_REDIRECTS} times")
         except (ExternalError, HttpStatus):
             raise
         except TimeoutError:
