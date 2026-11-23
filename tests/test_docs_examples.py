@@ -1,6 +1,7 @@
 """Keep the custom entities docs true to the code: their examples, the MCP tool names and their links."""
 
 import ast
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -275,6 +276,36 @@ class DocsExamplesTests(unittest.TestCase):
         for member in ("**`Files`**", "**`Log(message, level)`**", "**`RuntimeIdentifier`**", "**`Stopping`**", "**`Own(disposable)`**"):
             with self.subTest(member=member):
                 self.assertIn(member, section)
+
+    def test_the_manifest_in_the_docs_parses(self):
+        # The hass_sharp.toml the node libraries guide quotes is hass-sharp-vision's (the design's section 6): it parses
+        # as external.py parses a repository's, to its two libraries and its definition, and each path is one it takes.
+        spec = importlib.util.spec_from_file_location("hass_sharp_external_docs", INTEGRATION / "external.py")
+        external = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(external)
+        block = fenced_block_after((ROOT / "docs/node-libraries.md").read_text(encoding="utf-8"),
+                                   "hass-sharp-vision's manifest, for example:", "toml")
+        items = external.parse_manifest(block.encode("utf-8"))
+        self.assertEqual(items, [
+            external.Item("library", "Vision.cs", "nodes/Vision.cs",
+                          "Face and person detection on a native library (YuNet and YOLOX-nano on tract), and the Detect faces node", "vision"),
+            external.Item("library", "PeopleDetector.cs", "nodes/PeopleDetector.cs",
+                          "People detector: a device that watches a camera and reports faces and people seen", "people_detector"),
+            external.Item("entity", "Front door people", "nodes/front_door_people.json", "A People detector on camera.front_door", None),
+        ])
+        for item in items:
+            with self.subTest(path=item.path):
+                self.assertIsNone(external.check_path(item.path, item.kind))
+
+    def test_the_import_warning_is_the_dialogs(self):
+        # The warning the guide quotes under Import from GitHub is the one the Add external dialog always shows.
+        dialog = (INTEGRATION / "frontend/src/external/AddExternalDialog.tsx").read_text(encoding="utf-8")
+        warning = re.search(r"^const warning = '([^']*)'$", dialog, re.M).group(1)
+        self.assertIn("full access", warning)
+        text = (ROOT / "docs/node-libraries.md").read_text(encoding="utf-8")
+        section = text[text.index("## Import from GitHub"):text.index("### Writing a hass_sharp.toml")]
+        quoted = " ".join(line.removeprefix("> ") for line in section.splitlines() if line.startswith("> "))
+        self.assertEqual(" ".join(quoted.split()), warning)
 
     def test_every_in_page_link_resolves_to_a_heading(self):
         # A link to #part, in its own document or another one, names a heading there, as GitHub makes its anchor.

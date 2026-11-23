@@ -576,6 +576,164 @@ code, until the graph is fixed and saved; otherwise it is not running.
 Deleting a type or method that is still in use is rejected with dependency
 diagnostics.
 
+## Import from GitHub
+
+**Add external** imports node libraries and entity definitions from a public GitHub
+repository that lists them in a `hass_sharp.toml` at its root. It is a button in the
+**Node library** view, beside **Add file**, and on the **Entities** page, beside
+**New entity definition**; both open the same dialog, which imports both kinds. It is
+for Home Assistant administrators, as the node library is: the **Entities** page
+shows it only to them. The dialog says, and it holds for all that it imports:
+
+> Node libraries and entity definitions run C# inside Home Assistant with full access
+> to it: its devices, its data, its files and your network. Import only from
+> repositories you trust.
+
+Paste the repository's address and choose **Inspect**. The address is the one a
+browser shows: `https://github.com/owner/repo` for the default branch, or
+`https://github.com/owner/repo/tree/<ref>` for a branch, tag or commit, whose name
+may hold a `/`, as in `/tree/feature/x`. A trailing `/`, a `.git`, a query such as
+`?tab=readme-ov-file`, a `#readme` and `www.github.com` are accepted. Any other
+address is refused: "Paste a GitHub repository's address, such as
+https://github.com/owner/repo or https://github.com/owner/repo/tree/main".
+
+Inspect asks GitHub's API once which commit the address names, then reads
+`hass_sharp.toml` and every file it lists at that commit. All that the dialog shows
+and imports is from that one commit, which it names beside the repository. Without
+signing in, GitHub's API answers 60 requests an hour from one network address, so
+Inspect can be refused for a while: "GitHub refused the request: it allows 60
+requests an hour without signing in; try again later". Import makes no API request:
+it reads `hass_sharp.toml` and the picked files again at the same commit, and when
+one cannot be read it writes nothing.
+
+The list has a group of **Node libraries** and one of **Entity definitions**. Each
+item has its description and a **View on GitHub** link to its file at that commit.
+An item is already stored when a library file or a definition has exactly its
+name. Such an item starts unchecked and the others start checked, so inspecting a
+repository you imported from before picks only what is new in it. A file that is not
+in the repository at that commit, is larger than 2 MiB or is not UTF-8 text, or a
+definition that is not valid JSON or has no logic of kind graph, says why and cannot
+be picked. What an item offers:
+
+- **A node library** whose file name is not stored is imported. One whose name is
+  stored can only be overwritten, **Overwrite {name} ({id})** (one choice for each
+  stored file of that name), or skipped by leaving it unchecked. It is never imported
+  as a second copy: every library file is compiled into the one `NodeLib` namespace,
+  where two copies would declare each of their types twice.
+- **An entity definition** whose name is not stored is imported. One whose name is
+  stored offers **Overwrite {name} ({id})**, **Add as new**, or Skip by leaving it
+  unchecked.
+- A definition imported as new comes in turned off, with an id made from its name as
+  the panel makes one: **Front door people** gets `front_door_people`, or
+  `front_door_people_2` when that is taken. An overwritten definition stays on or off
+  as it was.
+
+**Import** saves the picked libraries first, all of them in one change, and then
+each picked definition. The libraries are compiled together with the stored ones,
+and every automation and definition is rebuilt against them, as a library save does
+(see [Node libraries](#node-libraries)). So a library that uses another is imported
+with it, or after it is stored: hass-sharp-vision's `PeopleDetector.cs` uses
+`Vision.cs`, and picked alone while no `Vision.cs` is stored it is refused with the
+compiler's message (`PeopleDetector.cs {line}:{column}: {message}`). A refused
+library import writes no library and no definition: each definition's line says
+"Not imported, because the node libraries were not". It is refused too when it would
+break an automation or a definition that works ("it would break {name}"), and when a
+file it overwrites was saved again since Inspect ("It changed after you inspected
+the repository; inspect it again").
+
+Each definition is then saved by itself, as a save in the editor is. One that is
+refused says why on its line and leaves the imported libraries, and the other
+definitions, in place: fix it in the editor, or import it again. The result has one
+line for each item, such as `Vision.cs: imported`, `PeopleDetector.cs: overwritten`,
+`Front door people: imported, turned off` or `{name}: not imported — {why}`. After
+an import the **Node library** view reads its files again; a draft of a file the
+import overwrote is kept and marked as a revision conflict, as after a save made
+elsewhere.
+
+Overwrite keeps what you filled in:
+
+- Each setting of the definition whose key and type the stored definition has keeps
+  its stored value, a secret too. A new setting, or one whose type changed, takes
+  the file's.
+- A value typed into a C# node's setting, such as the Camera of hass-sharp-vision's
+  **Front door** device, is kept when the stored definition has a node of the same id
+  and kind, the file's node gives that setting a value too, and the setting has the
+  same type (and domain) in both. The node's other values are the file's.
+
+An import is a one-time copy. Nothing keeps track of the repository or updates from
+it: to take a newer version, run **Add external** again and overwrite.
+
+### Writing a hass_sharp.toml
+
+A repository offers its files in a `hass_sharp.toml` at its root; one anywhere else
+is not read. It lists each node library in a `[[library]]` table and each entity
+definition in an `[[entity]]` table:
+
+- `[[library]]`: `id`, optional, the id the library is stored under (see Library
+  ids below): up to 80 lower-case letters, digits, `_` or `-`, starting with a
+  letter or digit; `name`, its file name in the panel, up to 120 characters, without
+  `/`, `\` or a line break; `path`, its `.cs` file; `description`, optional.
+- `[[entity]]`: `name`, the definition's name, not blank and up to 120 characters;
+  `path`, its `.json` file; `description`, optional.
+
+The libraries come first in the dialog and are imported first, and each kind keeps
+the manifest's order. Keys it does not know are ignored. No two items may have one
+path, and no two libraries one name or one id. A path is relative to the
+repository's root and `/`-separated: no leading `/`, no `\`, no empty, `.` or `..`
+part. A library's ends in `.cs` and a definition's in `.json`, in lower case. Each
+file, `hass_sharp.toml` too, may be at most 2 MiB, and a manifest may list at most
+50 items. A manifest that breaks a rule is refused whole, with every problem:
+"hass_sharp.toml: library 1: path must be a relative path inside the repository to a
+.cs file".
+
+An entity file is a definition body, `{name, settings, logic}`, with `logic` of kind
+`graph`. The manifest's `name` is the definition's, whatever the file's says, and it
+is the name an existing definition is matched by. The file may be a definition as the
+entity definitions API's `read` answers it (see
+[the document](backend/entity-definitions.md#the-document)): only its `settings` and
+`logic` are taken, and its other members are dropped. Importing works out the pins of
+each C# node again from its code, against the libraries just imported, so a file
+whose C# nodes lag a library it comes with still imports. A value typed into a C#
+node survives an Overwrite only for a setting the file's node gives a value, so give
+one to each setting a user picks, as **Front door people** gives its Camera
+`camera.front_door`.
+
+**Library ids.** A library node's kind carries its library's id,
+`library:<id>:<type>.<method>`, and a definition whose graph uses a library node,
+such as Detect faces in a graph camera, stores that kind. The Home Assistant that
+imports it may store the library under another id, so set each library's `id` to the
+id the definitions' kinds use (`library:<id>:…`). A new library is stored under its
+`id` when it has one that no stored library has, and otherwise under a new id
+`library-<uuid>`, as a file added in the panel is; an overwritten library keeps the
+stored file's id.
+The import rewrites the `library:<id>:` kinds of the definitions it imports to the id
+each library has: the one it is stored under, or, for a library left unchecked, the
+id of the one stored file of its name (with none or several, the kind stays as it
+is). A class a C# node's code derives from, as in
+`public class FrontDoorPeople : PeopleDetector { }`, is found by its name, whatever
+its library's id, so it needs no `id`.
+
+hass-sharp-vision's manifest, for example:
+
+```toml
+[[library]]
+id = "vision"                                     # stored under this id when free
+name = "Vision.cs"                                # library file name in the panel
+path = "nodes/Vision.cs"
+description = "Face and person detection on a native library (YuNet and YOLOX-nano on tract), and the Detect faces node"
+
+[[library]]
+id = "people_detector"
+name = "PeopleDetector.cs"
+path = "nodes/PeopleDetector.cs"
+description = "People detector: a device that watches a camera and reports faces and people seen"
+
+[[entity]]
+name = "Front door people"
+path = "nodes/front_door_people.json"             # a DefinitionBody: name, settings, logic
+description = "A People detector on camera.front_door"
+```
+
 ## Setting up a node class
 
 A class of a node library may have one method marked `[NodeSetup]`, of the shape

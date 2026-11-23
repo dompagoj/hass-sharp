@@ -1079,6 +1079,29 @@ public class BoxedDoor : SharpCamera
 }
 ```
 
+## Import from GitHub
+
+A definition can also come from a public GitHub repository: **Add external**, on the
+**Entities** page for administrators, imports the definitions and node libraries a
+repository lists in its `hass_sharp.toml`. A definition imported as new comes in
+turned off. What it offers, and what an Overwrite keeps, is in
+[Import from GitHub](node-libraries.md#import-from-github).
+
+For example, the People detector of
+[hass-sharp-vision](https://github.com/dompagoj/hass-sharp-vision):
+
+1. On the **Entities** page, choose **Add external**, paste
+   `https://github.com/dompagoj/hass-sharp-vision` and choose **Inspect**.
+2. Leave the node libraries `Vision.cs` and `PeopleDetector.cs` and the definition
+   **Front door people** checked, and choose **Import**. The libraries are imported
+   first, together, since `PeopleDetector.cs` uses `Vision.cs`.
+3. Open **Front door people**, pick your camera in the **Front door** C# device's
+   **Camera**, save it, and turn it on.
+
+To update it, run **Add external** again: the three items start unchecked, and
+checking one offers to overwrite it. An Overwrite of **Front door people** keeps the
+camera you picked.
+
 ## Run history
 
 Each definition lists its runs under **Runs** in the editor's bottom drawer, and
