@@ -424,6 +424,71 @@ it('stops a press with an empty required field', async () => {
   expect(acts(device)[0].values).toEqual({ name: 'Ana', note: '' })
 })
 
+/** A card with a required Name drawn empty, a Note, a Save that validates and a Dismiss that does not. */
+const skippingCard = (dismiss: { confirm?: string } = {}) => faceCard('f1', {
+  fields: [text('name', 'Name', '', { required: true }), text('note', 'Note', 'first seen at the door')],
+  actions: [
+    { id: 'save', label: 'Save', style: 'primary', confirm: null, validate: true },
+    { id: 'dismiss', label: 'Dismiss', style: 'default', confirm: dismiss.confirm ?? null, validate: false },
+  ],
+})
+
+it('a press of an action that does not validate goes out with an empty required field', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([skippingCard()])]
+  const { host } = mount(device)
+  await settle()
+  const f1 = card(host, 'unknown', 'f1')!
+  type(input(f1, 'Note'), 'typed, and not sent')
+  const before = device.requests.length
+  button(f1, 'Dismiss').click()
+  await settle()
+  expect(device.requests.slice(before)).toEqual([
+    { operation: 'act', definitionId: 'door', nodeKey: 'faces', list: 'unknown', card: 'f1', action: 'dismiss', values: {} },
+    { operation: 'read', definitionId: 'door', knownRevision: 'r1' },
+  ])
+  expect(f1.querySelectorAll('[aria-invalid="true"]')).toHaveLength(0)
+  expect(f1.textContent).not.toContain('Name is required.')
+  // Done: what was typed is reset, as for any press.
+  expect(input(f1, 'Note').value).toBe('first seen at the door')
+  // The card's Save still stops at the empty Name.
+  button(f1, 'Save').click()
+  await settle()
+  expect(acts(device)).toHaveLength(1)
+  expect(f1.querySelector('[data-field="name"]')!.getAttribute('aria-invalid')).toBe('true')
+})
+
+it('it still asks when it has a confirm text', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([skippingCard({ confirm: 'Dismiss this face?' })])]
+  const { host } = mount(device)
+  await settle()
+  const f1 = card(host, 'unknown', 'f1')!
+  button(f1, 'Dismiss').click()
+  await settle()
+  const dialog = () => document.querySelector<HTMLDialogElement>('dialog[open]')
+  expect(dialog()!.textContent).toContain('Dismiss this face?')
+  expect(acts(device)).toEqual([])
+  expect(f1.querySelectorAll('[aria-invalid="true"]')).toHaveLength(0)
+  button(dialog()!, 'Dismiss').click()
+  await settle()
+  expect(dialog()).toBeNull()
+  expect(acts(device)).toEqual([{ operation: 'act', definitionId: 'door', nodeKey: 'faces', list: 'unknown', card: 'f1', action: 'dismiss', values: {} }])
+})
+
+it('an action without the property validates', async () => {
+  const device = backend()
+  // As an older backend answers: no `validate` on the actions.
+  device.state.pages = [doorPage([faceCard('f1', { fields: [text('name', 'Name', '', { required: true })] })])]
+  const { host } = mount(device)
+  await settle()
+  const f1 = card(host, 'unknown', 'f1')!
+  button(f1, 'Dismiss').click()
+  await settle()
+  expect(acts(device)).toEqual([])
+  expect(f1.querySelector('[data-field="name"]')!.getAttribute('aria-invalid')).toBe('true')
+})
+
 it('fetches an image once per hash', async () => {
   const device = backend()
   device.state.images = { h1: 'AAAA' }

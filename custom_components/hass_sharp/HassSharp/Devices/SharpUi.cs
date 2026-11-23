@@ -43,7 +43,7 @@ public sealed class SharpUi
 public sealed class UiCard(string id)
 {
     readonly List<DrawnField> fields = [];
-    readonly List<(string Label, Func<UiValues, Task> Run, string? Confirm, UiActionStyle Style)> actions = [];
+    readonly List<(string Label, Func<UiValues, Task> Run, string? Confirm, UiActionStyle Style, bool Validate)> actions = [];
     bool hasImage;
     byte[]? jpeg;
     string? title, detail;
@@ -128,9 +128,14 @@ public sealed class UiCard(string id)
     /// <param name="run">The handler.</param>
     /// <param name="confirm">What the panel asks before it presses; nothing when null.</param>
     /// <param name="style">How the button looks.</param>
-    public UiCard Action(string label, Func<UiValues, Task> run, string? confirm = null, UiActionStyle style = UiActionStyle.Default)
+    /// <param name="validate">
+    /// Whether a press is checked against the card's fields first: a required field filled in, a number in its range.
+    /// When false, nothing is checked, and the handler gets the card's values as drawn, not what was typed: for a
+    /// button such as Dismiss beside a required field.
+    /// </param>
+    public UiCard Action(string label, Func<UiValues, Task> run, string? confirm = null, UiActionStyle style = UiActionStyle.Default, bool validate = true)
     {
-        actions.Add((label, run, confirm, style));
+        actions.Add((label, run, confirm, style, validate));
         return this;
     }
 
@@ -164,7 +169,7 @@ public sealed class UiCard(string id)
         var ids = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < actions.Count; i++)
         {
-            var (label, run, confirm, style) = actions[i];
+            var (label, run, confirm, style, validate) = actions[i];
             DevicePage.CheckText(label, "An action's label", required: true);
             DevicePage.CheckText(confirm, "An action's confirm text");
             if (run == null) throw new ArgumentException($"Action '{label}' of card '{id}' needs a handler to run");
@@ -172,7 +177,7 @@ public sealed class UiCard(string id)
             var actionId = DevicePage.ActionId(label);
             if (actionId.Length == 0) throw new ArgumentException($"Action '{label}' of card '{id}' needs a letter or a digit in its label, which its id is made of");
             if (!ids.Add(actionId)) throw new ArgumentException($"Two actions of card '{id}' have the id '{actionId}': an action's id is its label in lower case, with '_' for each run of other characters");
-            drawn[i] = new DrawnAction(actionId, label, style, confirm, run);
+            drawn[i] = new DrawnAction(actionId, label, style, confirm, validate, run);
         }
 
         return (new DrawnCard(id, image == null ? null : DevicePage.Hash(image), title, detail, [.. fields], drawn), image);

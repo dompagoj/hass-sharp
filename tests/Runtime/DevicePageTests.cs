@@ -7,7 +7,7 @@ using HassSharp;
 /// of its first drawing, and a redraw that changes nothing raises no change; a bad page is refused and leaves the page
 /// as it was; an action's id comes from its label; only the images of the current cards are kept, each once by its
 /// hash; a press finds the handler of the card as last drawn; the values a press sent are checked against the card's
-/// fields; and a closed page keeps nothing.
+/// fields, unless its action does not validate, which takes them as drawn; and a closed page keeps nothing.
 /// </summary>
 static class DevicePageTests
 {
@@ -49,6 +49,7 @@ static class DevicePageTests
         OnlyCurrentImagesAreKept();
         await FindGivesTheCurrentHandler();
         ValuesAreChecked();
+        AnActionCanSkipTheChecks();
         await PagesAreSafeFromAnyThread();
         AClosedPageKeepsNothing();
     }
@@ -73,7 +74,7 @@ static class DevicePageTests
                 .Number("score", "Score")
                 .Toggle("notify", "Notify", true)
                 .Action("Save", Nothing, style: UiActionStyle.Primary)
-                .Action("Delete", Nothing, confirm: "Delete it?", style: UiActionStyle.Danger),
+                .Action("Delete", Nothing, confirm: "Delete it?", style: UiActionStyle.Danger, validate: false),
             new UiCard("u2").Text("Unknown 2"),
         ], attention: true, empty: "No unknown faces");
         page.Ui.List("people", "People", [new UiCard("p:1").Action("Open", Nothing)]);
@@ -89,12 +90,12 @@ static class DevicePageTests
                   {"key":"score","label":"Score","type":"number","value":null,"required":false},
                   {"key":"notify","label":"Notify","type":"toggle","value":true,"required":false}],
                  "actions":[
-                  {"id":"save","label":"Save","style":"primary","confirm":null},
-                  {"id":"delete","label":"Delete","style":"danger","confirm":"Delete it?"}]},
+                  {"id":"save","label":"Save","style":"primary","confirm":null,"validate":true},
+                  {"id":"delete","label":"Delete","style":"danger","confirm":"Delete it?","validate":false}]},
                 {"id":"u2","image":null,"title":"Unknown 2","detail":null,"fields":[],"actions":[]}]},
               {"id":"people","title":"People","attention":false,"empty":null,"cards":[
                 {"id":"p:1","image":null,"title":null,"detail":null,"fields":[],
-                 "actions":[{"id":"open","label":"Open","style":"default","confirm":null}]}]}]}
+                 "actions":[{"id":"open","label":"Open","style":"default","confirm":null,"validate":true}]}]}]}
             """.Replace("HASH", hash);
         var want = JsonNode.Parse(expected)!.ToJsonString();
         var got = Text(page);
@@ -374,6 +375,48 @@ static class DevicePageTests
         var empty = press.Values(Sent("""{"name":"Ana","weight":1,"kind":""}"""));
         Check(empty["kind"] == "" && empty["note"] == "", $"an unset select: '{empty["kind"]}', note '{empty["note"]}'");
         Console.WriteLine("PASS device page: what a press sent is checked against the card's fields, and a field not sent reads as drawn");
+    }
+
+    /// <summary>
+    /// An action drawn with <c>validate: false</c> takes the card's values as drawn, whatever the press sent, and refuses
+    /// nothing; the card's other actions still check; and a redraw that changes only that is a change of the page.
+    /// </summary>
+    static void AnActionCanSkipTheChecks()
+    {
+        var page = new DevicePage("node", "Device");
+        var changes = 0;
+        page.Changed += () => changes++;
+        UiCard Card(bool validate) => new UiCard("c")
+            .Field("name", "Name", required: true)
+            .Field("nick", "Nick", "Bobby")
+            .Number("count", "Count", 5, minimum: 0, maximum: 10)
+            .Number("weight", "Weight", required: true)
+            .Select("kind", "Kind", ["cat", "dog"], required: true)
+            .Select("pet", "Pet", ["cat", "dog"], "dog")
+            .Toggle("on", "On", true)
+            .Action("Save", Nothing)
+            .Action("Dismiss", Nothing, validate: validate);
+        page.Ui.List("l", "T", [Card(validate: false)]);
+        JsonObject Sent(string json) => JsonNode.Parse(json)!.AsObject();
+
+        foreach (var json in new[] { """{"name":"","count":999,"extra":1}""", "{}", """{"name":5,"nick":"Bob","count":"x","kind":"bird","on":null,"weight":-1}""" })
+        {
+            var values = page.Find("l", "c", "dismiss")!.Values(Sent(json));
+            Check(values["name"] == "" && values["nick"] == "Bobby" && values.Number("count") == 5 && values.Number("weight") == null
+                && values["kind"] == "" && values["pet"] == "dog" && values.Toggle("on"),
+                $"{json}: the values as drawn: '{values["name"]}', '{values["nick"]}', {values.Number("count")}, {values.Number("weight")}, '{values["kind"]}', '{values["pet"]}', {values.Toggle("on")}");
+        }
+        var refused = Throws<UiRefusal>(() => page.Find("l", "c", "save")!.Values(Sent("""{"name":"","count":999,"extra":1}""")), "the card's validating action");
+        Check(refused.Message == "Name is required.", "the validating action: " + refused.Message);
+
+        Check(changes == 1, $"{changes} changes after the first drawing");
+        page.Ui.List("l", "T", [Card(validate: false)]);
+        Check(changes == 1, $"{changes} changes after a drawing that changed nothing");
+        page.Ui.List("l", "T", [Card(validate: true)]);
+        Check(changes == 2, $"{changes} changes after a drawing that changed only validate");
+        Check(page.Snapshot()["lists"]![0]!["cards"]![0]!["actions"]![1]!["validate"]!.GetValue<bool>(), "the redrawn action validates: " + Text(page));
+        Throws<UiRefusal>(() => page.Find("l", "c", "dismiss")!.Values(Sent("""{"name":""}""")), "the redrawn action that validates");
+        Console.WriteLine("PASS device page: an action that does not validate takes the card's values as drawn and refuses nothing, and a change of validate is a change of the page");
     }
 
     /// <summary>Drawing, removing, reading and pressing from many threads at once leaves a page that answers consistently.</summary>

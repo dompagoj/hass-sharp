@@ -82,6 +82,23 @@ static class DeviceUiHostTests
             protected override Task Setup() { _ = Ui; return Task.CompletedTask; }
         }
         """;
+    // A device whose one card has a required Name drawn empty: Save shows the name it got on seen, and Skip, which does
+    // not validate, shows what it got prefixed with "skipped:".
+    const string SkipCode = """
+        public class Skipper : SharpDevice
+        {
+            readonly SharpSensor seen;
+            public Skipper() { seen = Add(new SharpSensor("seen")); }
+            protected override Task Start()
+            {
+                Ui.List("items", "Items", [new UiCard("1")
+                    .Field("name", "Name", required: true)
+                    .Action("Save", values => { seen.Value = values["name"]; return Task.CompletedTask; })
+                    .Action("Skip", values => { seen.Value = "skipped:" + values["name"]; return Task.CompletedTask; }, validate: false)]);
+                return Task.CompletedTask;
+            }
+        }
+        """;
     // A device that draws its list mine, and adds an entity that draws its own list entity.
     const string PadCode = """
         public class Lister : SharpSensor
@@ -185,6 +202,7 @@ static class DeviceUiHostTests
             await AStalePressChangesNothing();
             await TwoPressesTakeTurns();
             await RefusalsAndFailures();
+            await AnActionThatDoesNotValidateRunsWithAnEmptyRequiredField();
             await ASlowHandlerTimesOut();
             await StoppingWaitsForAPress();
             await AnAddedEntityDrawsOnItsDevicesPage();
@@ -295,6 +313,19 @@ static class DeviceUiHostTests
         Console.WriteLine("PASS device ui host: a missing field and a UiRefusal are refused with their sentence; another exception fails, logged once with the action and not the values");
     }
 
+    static async Task AnActionThatDoesNotValidateRunsWithAnEmptyRequiredField()
+    {
+        await using var rig = await Rig.Start("skip");
+        var host = await rig.Running("skipper", Definition("Skipper", Device("skipper", "Skipper", SkipCode)));
+        var refused = await host.UiAct("skipper", "items", "1", "save", Sent("{}"));
+        Check(Answer(refused) == "refused: Name is required.", "the validating action with the required field empty: " + Answer(refused));
+        Check(rig.Shown("skipper:skipper:seen") == null, "the validating action's handler did not run: " + rig.Shown("skipper:skipper:seen"));
+        var skipped = await host.UiAct("skipper", "items", "1", "skip", Sent("{}"));
+        Check(Answer(skipped) == "done", "the action that does not validate: " + Answer(skipped));
+        await rig.Shows("skipper:skipper:seen", "\"skipped:\"", "its handler ran with the empty name as drawn");
+        Console.WriteLine("PASS device ui host: an action that does not validate runs with a required field empty, while the card's other action is refused");
+    }
+
     static async Task ASlowHandlerTimesOut()
     {
         DefinitionHost.UiActionTimeout = TimeSpan.FromMilliseconds(200);
@@ -399,8 +430,9 @@ static class DeviceUiHostTests
     /// The Snapshot namer the custom entities guide shows, as written there (<see cref="ServiceCallTests.GuideCode"/>), on
     /// two definitions over one camera whose pictures are 640 pixels wide: each draws its first snapshot at once, at most
     /// 320 wide and waiting; Save refuses an empty name, and a name saved moves the snapshot to Named on both, the other
-    /// redrawn by Changed; a second Save of that card answers changed; a rename on one shows on the other, and a delete on
-    /// the other empties Named on the first.
+    /// redrawn by Changed; a second Save of that card answers changed; Dismiss takes a snapshot whose name is empty away;
+    /// Rename refuses an empty name, a rename on one shows on the other, and a delete on the other, its name emptied,
+    /// empties Named on the first.
     /// </summary>
     static async Task TheGuidesSnapshotNamerRuns()
     {
@@ -425,7 +457,7 @@ static class DeviceUiHostTests
         Check(image != null && SharpImage.Load(door.UiImage("namer", image)!).Width == 320, "the snapshot's picture is 320 pixels wide");
         Check(door.UiAttention()["namer"] == 1 && CardsOf(Page(door), "named").Length == 0, "the snapshot waits, and nothing is named yet: " + Page(door).ToJsonString());
 
-        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":"  "}"""))) == "refused: Type a name first.", "Save refuses an empty name");
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":"  "}"""))) == "refused: Name is required.", "Save refuses an empty name");
         Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":" Ivan "}"""))) == "done", "Save of a name");
         Check(CardsOf(Page(door), "unnamed").Length == 0 && CardsOf(Page(door), "named") is [(var named, "Ivan", not null)] && named == snapshot,
             "the snapshot is named Ivan, with its picture: " + Page(door).ToJsonString());
@@ -433,11 +465,17 @@ static class DeviceUiHostTests
 
         var hall = await rig.Running("hall", Definition("Hall", Namer()));
         Check(CardsOf(Page(hall), "named") is [(var shared, "Ivan", not null)] && shared == snapshot, "another namer lists the name with its picture: " + Page(hall).ToJsonString());
+        // The other namer's own first snapshot, dismissed with its required Name empty.
+        await EntityTestHome.Until(() => CardsOf(Page(hall), "unnamed").Length == 1, "the other namer draws its first snapshot: " + Page(hall).ToJsonString());
+        var (own, _, _) = CardsOf(Page(hall), "unnamed")[0];
+        Check(Answer(await hall.UiAct("namer", "unnamed", own, "dismiss", Sent("""{"name":""}"""))) == "done", "Dismiss with the name empty");
+        Check(CardsOf(Page(hall), "unnamed").Length == 0 && hall.UiAttention().GetValueOrDefault("namer") == 0, "the dismissed snapshot is gone: " + Page(hall).ToJsonString());
+        Check(Answer(await door.UiAct("namer", "named", snapshot, "rename", Sent("""{"name":""}"""))) == "refused: Name is required.", "Rename refuses an empty name");
         Check(Answer(await door.UiAct("namer", "named", snapshot, "rename", Sent("""{"name":"Ana"}"""))) == "done", "Rename");
         await EntityTestHome.Until(() => CardsOf(Page(hall), "named") is [(_, "Ana", _)], "the other namer shows the new name: " + Page(hall).ToJsonString());
-        Check(Answer(await hall.UiAct("namer", "named", snapshot, "delete", Sent("{}"))) == "done", "Delete");
+        Check(Answer(await hall.UiAct("namer", "named", snapshot, "delete", Sent("""{"name":""}"""))) == "done", "Delete with the name emptied");
         await EntityTestHome.Until(() => CardsOf(Page(door), "named").Length == 0, "the first namer no longer lists it: " + Page(door).ToJsonString());
         Check(CardsOf(Page(hall), "named").Length == 0, "nor the one that deleted it: " + Page(hall).ToJsonString());
-        Console.WriteLine("PASS device ui host: the guide's Snapshot namer draws a snapshot to name, saves, renames and deletes names, and two of them share the names");
+        Console.WriteLine("PASS device ui host: the guide's Snapshot namer draws a snapshot to name, saves, dismisses, renames and deletes, a required name checked only where it is needed, and two of them share the names");
     }
 }

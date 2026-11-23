@@ -235,12 +235,15 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
     if (missing().has(key)) setMissing(current => new Set([...current].filter(k => k !== key)))
   }
   const action = (id: string | undefined) => props.card.actions.find(a => a.id === id)
+  // An action drawn without `validate` (by an older backend) validates.
+  const validates = (id: string) => action(id)?.validate !== false
 
   const send = async (actionId: string) => {
     setAsking()
     setMessage()
     setPressing(actionId)
-    const values = Object.fromEntries(props.card.fields.map(field => [field.key, sentValue(field, valueOf(field))]))
+    // An action that does not validate is given the card's values as drawn: what was typed is not sent.
+    const values = validates(actionId) ? Object.fromEntries(props.card.fields.map(field => [field.key, sentValue(field, valueOf(field))])) : {}
     const outcome = await props.press(props.nodeKey, props.listId, props.card.id, actionId, values)
     if (disposed) return
     setPressing()
@@ -250,7 +253,7 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
     else setMessage({ tone: 'error', text: outcome.message || (outcome.status === 'refused' ? 'The device did not take it.' : 'The action failed.') })
   }
   const start = (actionId: string) => {
-    const empty = props.card.fields.filter(field => field.required && emptyValue(field, valueOf(field))).map(field => field.key)
+    const empty = validates(actionId) ? props.card.fields.filter(field => field.required && emptyValue(field, valueOf(field))).map(field => field.key) : []
     if (empty.length) {
       setMissing(new Set(empty))
       const first = [...root.querySelectorAll<HTMLElement>('[data-field]')].find(el => el.dataset.field === empty[0])

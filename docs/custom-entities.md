@@ -1143,10 +1143,11 @@ A card is `new UiCard(id)` followed by calls that each return the card:
 - **`Number(key, label, value, minimum, maximum, required)`** adds a number field;
   `double.NaN`, the default, is no minimum or no maximum.
 - **`Toggle(key, label, value)`** adds an on-off field.
-- **`Action(label, handler, confirm, style)`** adds a button. A `confirm` text is a
-  question the panel asks before the press, with the label on its button. `style` is
-  `UiActionStyle.Default`, `Primary` (the card's main action) or `Danger` (one that
-  deletes or cannot be undone).
+- **`Action(label, handler, confirm, style, validate)`** adds a button. A `confirm`
+  text is a question the panel asks before the press, with the label on its button.
+  `style` is `UiActionStyle.Default`, `Primary` (the card's main action) or `Danger`
+  (one that deletes or cannot be undone). `validate: false` makes a press skip the
+  card's field checks (see [Buttons and their handlers](#buttons-and-their-handlers)).
 
 Ids and keys:
 
@@ -1179,9 +1180,10 @@ the card has no field of that kind for throws a `KeyNotFoundException`.
 - **Checked first.** The panel, and then HassSharp again, refuses a press while a
   required field is empty, a number is outside its minimum or maximum, or a select's
   value is not one of its options, and says why on the card: "Name is required." A
-  required field is required by every button of its card, so a card with a button
-  that needs no value, such as Dismiss, leaves the field optional and checks it in
-  the handlers that need it.
+  required field is required by every button of its card that validates. A button
+  that needs no value, such as Dismiss or Delete, passes `validate: false`: its press
+  is not checked, and its handler gets the card's values as drawn, not what was
+  typed.
 - **The card as drawn.** A press runs the handler of the card as it was last drawn.
   When the class has removed that card, or its button, since, nothing runs, and the
   card says "This changed meanwhile; the page was refreshed."
@@ -1335,15 +1337,15 @@ public class SnapshotNamer : SharpDevice
             var known = names.Values.Distinct().Order().ToArray();
             var unnamed = Data.Keys("snapshots/").Select(key => key["snapshots/".Length..]);
             Ui.List("unnamed", "Unnamed snapshots", unnamed.Select(id => Card(id, Data.GetBytes($"snapshots/{id}"))
-                    .Field("name", "Name", suggestions: known)
+                    .Field("name", "Name", required: true, suggestions: known)
                     .Action("Save", values => Save(id, values["name"]), style: UiActionStyle.Primary)
-                    .Action("Dismiss", _ => Dismiss(id))),
+                    .Action("Dismiss", _ => Dismiss(id), validate: false)),
                 attention: true, empty: "Every snapshot has a name.");
             Ui.List("named", "Named", names.OrderBy(pair => pair.Value).Take(200).Select(pair => Card(pair.Key, Names.GetBytes($"images/{pair.Key}"))
                     .Text(pair.Value)
-                    .Field("name", "Name", pair.Value)
+                    .Field("name", "Name", pair.Value, required: true)
                     .Action("Rename", values => Rename(pair.Key, values["name"]))
-                    .Action("Delete", _ => Delete(pair.Key), confirm: $"Delete the snapshot named {pair.Value}?", style: UiActionStyle.Danger)),
+                    .Action("Delete", _ => Delete(pair.Key), confirm: $"Delete the snapshot named {pair.Value}?", style: UiActionStyle.Danger, validate: false)),
                 empty: "No snapshot has a name yet.");
         }
     }
@@ -1354,12 +1356,11 @@ public class SnapshotNamer : SharpDevice
     // Gives the snapshot its name: its picture goes to the shared store first, then its name.
     Task Save(string id, string name)
     {
-        var given = Given(name);
         // A snapshot already named or dismissed has nothing left to save.
         if (Data.GetBytes($"snapshots/{id}") is { } jpeg)
         {
             Names.SetBytes($"images/{id}", jpeg);
-            ChangeNames(names => names[id] = given);
+            ChangeNames(names => names[id] = name.Trim());
             Data.Remove($"snapshots/{id}");
         }
         Draw();
@@ -1375,11 +1376,10 @@ public class SnapshotNamer : SharpDevice
 
     Task Rename(string id, string name)
     {
-        var given = Given(name);
         // A snapshot another device deleted meanwhile stays deleted.
         ChangeNames(names =>
         {
-            if (names.ContainsKey(id)) names[id] = given;
+            if (names.ContainsKey(id)) names[id] = name.Trim();
         });
         Draw();
         return Task.CompletedTask;
@@ -1402,10 +1402,6 @@ public class SnapshotNamer : SharpDevice
             change(names);
             return names;
         });
-
-    // The name typed, trimmed; the card shows the refusal when there is none.
-    static string Given(string name) =>
-        name.Trim() is { Length: > 0 } given ? given : throw new UiRefusal("Type a name first.");
 }
 ```
 
@@ -1427,8 +1423,10 @@ same code, on any camera, lists the same names under **Named**.
   as after a press on another device, and `Card` leaves out a picture that has gone.
   `drawing` keeps the redraws from the timer, the handlers and `Changed` from drawing
   over each other.
-- The **Name** field is not required, since **Dismiss** needs no name: **Save** and
-  **Rename** refuse an empty one with a `UiRefusal`, which the card shows.
+- The **Name** field is required, so **Save** and **Rename** are refused while it is
+  empty or only spaces, and their handlers get a name to trim. **Dismiss** and
+  **Delete** need no name: they pass `validate: false`, so they work with the field
+  empty.
 
 ## Import from GitHub
 

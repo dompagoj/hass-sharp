@@ -17,8 +17,12 @@ export interface DeviceField {
   maximum?: number
   required: boolean
 }
-/** A button of a card; with `confirm`, the panel asks that before it sends the press. */
-export interface DeviceAction { id: string; label: string; style: 'default' | 'primary' | 'danger'; confirm: string | null }
+/**
+ * A button of a card; with `confirm`, the panel asks that before it sends the press. With `validate` false, a press is
+ * not checked against the card's fields and sends none of their values. An answer without `validate` (an older
+ * backend) reads as `true`.
+ */
+export interface DeviceAction { id: string; label: string; style: 'default' | 'primary' | 'danger'; confirm: string | null; validate: boolean }
 /** A card of a list: its image by SHA-256 (fetched with `image`), its texts, fields and buttons. */
 export interface DeviceCard { id: string; image: string | null; title: string | null; detail: string | null; fields: DeviceField[]; actions: DeviceAction[] }
 /** A list of a page, its cards in the order first drawn; `empty` is what it says without cards. */

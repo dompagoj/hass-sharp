@@ -124,6 +124,8 @@ Ui.Remove("unknown");
   order they were first added. `attention: true` makes its cards count towards the "waiting" number.
 - Card parts: one image, a title and a detail line, fields (`Field` text, `Select`, `Number` with minimum and
   maximum, `Toggle`), and actions with a label, a style (default, primary, danger) and an optional confirm text.
+  An action can pass `validate: false`: its press skips the card's field checks, and its handler gets the values as
+  drawn (a Dismiss beside a required Name).
 - An action handler is `Func<UiValues, Task>`. `UiValues` gives the card's field values by key.
 - The device replaces a list whenever its data changes. Nothing of the page is stored: the device rebuilds it from
   its data in `Start()`, which is what makes recompiles and restarts safe.

@@ -19,7 +19,8 @@ internal sealed record DrawnField(string Key, string Label, UiFieldType Type, st
     string[]? Options, string[]? Suggestions, double Minimum, double Maximum, bool Required);
 
 /// <summary>An action of a drawn card, with its id made of its label.</summary>
-internal sealed record DrawnAction(string Id, string Label, UiActionStyle Style, string? Confirm, Func<UiValues, Task> Run);
+/// <param name="Validate">Whether a press of it is checked against the card's fields; when not, it takes them as drawn.</param>
+internal sealed record DrawnAction(string Id, string Label, UiActionStyle Style, string? Confirm, bool Validate, Func<UiValues, Task> Run);
 
 /// <summary>A card as drawn: its image by hash, its text, fields and actions, checked.</summary>
 internal sealed record DrawnCard(string Id, string? Image, string? Title, string? Detail, DrawnField[] Fields, DrawnAction[] Actions);
@@ -102,7 +103,7 @@ internal sealed class DevicePage
         lock (gate)
         {
             var drawn = lists.Find(each => each.Id == list)?.Cards.FirstOrDefault(each => each.Id == card);
-            return drawn?.Actions.FirstOrDefault(each => each.Id == action) is { } found ? new UiPress(found.Label, found.Run, drawn.Fields) : null;
+            return drawn?.Actions.FirstOrDefault(each => each.Id == action) is { } found ? new UiPress(found.Label, found.Run, drawn.Fields, found.Validate) : null;
         }
     }
 
@@ -264,6 +265,7 @@ internal sealed class DevicePage
                 ["label"] = action.Label,
                 ["style"] = action.Style switch { UiActionStyle.Primary => "primary", UiActionStyle.Danger => "danger", _ => "default" },
                 ["confirm"] = action.Confirm,
+                ["validate"] = action.Validate,
             })]),
         })]),
     };
@@ -298,18 +300,26 @@ internal sealed record UiPress(string Label, Func<UiValues, Task> Run)
 {
     // The fields of the card as drawn when the press was found.
     readonly DrawnField[] fields = [];
+    // Whether the action checks what a press sent against the fields.
+    readonly bool validate = true;
 
-    internal UiPress(string label, Func<UiValues, Task> run, DrawnField[] fields) : this(label, run) => this.fields = fields;
+    internal UiPress(string label, Func<UiValues, Task> run, DrawnField[] fields, bool validate) : this(label, run)
+    {
+        this.fields = fields;
+        this.validate = validate;
+    }
 
     /// <summary>
     /// The values as the handler gets them: for each field of the card, what the press sent for it, or what it showed
-    /// when the press sent nothing; keys the card has no field for are ignored.
+    /// when the press sent nothing; keys the card has no field for are ignored. For an action that does not validate,
+    /// what the press sent is ignored and every field reads as drawn, unchecked.
     /// </summary>
     /// <param name="sent">The values the panel sent, by key, as they came from the browser.</param>
     /// <exception cref="UiRefusal">A required field is empty, a number is outside its range, an option is not the select's, or a value is of the wrong kind, as a plain sentence for the user.</exception>
     internal UiValues Values(JsonObject sent)
     {
         ArgumentNullException.ThrowIfNull(sent);
+        if (!validate) return Drawn();
         var texts = new Dictionary<string, string>(StringComparer.Ordinal);
         var numbers = new Dictionary<string, double?>(StringComparer.Ordinal);
         var toggles = new Dictionary<string, bool>(StringComparer.Ordinal);
@@ -351,6 +361,12 @@ internal sealed record UiPress(string Label, Func<UiValues, Task> Run)
         }
         return new UiValues(texts, numbers, toggles);
     }
+
+    // Each field's value as the card was drawn: a text or an option, or the empty text; a number or null; a toggle.
+    UiValues Drawn() => new(
+        fields.Where(field => field.Type is UiFieldType.Text or UiFieldType.Select).ToDictionary(field => field.Key, field => field.Text ?? "", StringComparer.Ordinal),
+        fields.Where(field => field.Type == UiFieldType.Number).ToDictionary(field => field.Key, field => field.Number, StringComparer.Ordinal),
+        fields.Where(field => field.Type == UiFieldType.Toggle).ToDictionary(field => field.Key, field => field.On, StringComparer.Ordinal));
 
     static JsonValueKind Kind(JsonNode? node) => node?.GetValueKind() ?? JsonValueKind.Null;
 
