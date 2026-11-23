@@ -1,6 +1,7 @@
 {
   "domain": "hass_sharp",
   "name": "HassSharp",
+  "after_dependencies": ["ffmpeg"],
   "codeowners": ["@dompagoj"],
   "config_flow": true,
   "dependencies": ["http"],
