@@ -220,6 +220,16 @@ class AuthoringService:
             return ex.answer()
         return {"version": 1, "ok": True, "result": result}
 
+    async def device_ui(self, request, *, is_admin):
+        """The Device tab's and the Stored data dialog's request (`read`, `image`, `act`, `counts`, `stores`,
+        `delete_store`), answered by .NET in the envelope as it is, a refusal included. Nothing of it is logged here: an
+        image answer carries the JPEG, an `act` the values typed into a card."""
+        if not is_admin:
+            raise PermissionError("Administrator required")
+        if not isinstance(request, dict):
+            raise ValueError("Device page request must be an object")
+        return await self._request(self.manager.DeviceUiRequest, request, is_admin=True)
+
     async def run_now(self, automation_id, class_name, method, *, is_admin):
         if not is_admin:
             raise PermissionError("Administrator required")

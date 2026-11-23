@@ -70,6 +70,7 @@ def register_websocket_routes(hass_outer: HomeAssistant, hass_sharp):
         ("node_library", envelope_command(authoring.node_library, "Node library", "library_failed")),
         ("entities", envelope_command(authoring.entities, "Entity", "entity_request_failed")),
         ("external", envelope_command(authoring.external, "External import", "external_failed")),
+        ("device_ui", envelope_command(authoring.device_ui, "Device page", "device_ui_failed")),
     ):
         websocket_api.async_register_command(
             hass_outer, f"hass_sharp/{command}", handler,
