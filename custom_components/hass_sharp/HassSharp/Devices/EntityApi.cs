@@ -527,6 +527,10 @@ public partial class HassSharpManager
                         // this id starts a history of its own.
                         await _userScriptManager.DeleteScriptAsync(EntityRuntimePath(id));
                         ClearLoadError(EntityRuntimePath(id));
+                        // Its C# nodes' data goes with it, now that its host has stopped and closed their stores; the shared
+                        // stores it used stay. The definition is deleted all the same.
+                        try { _userScriptManager.Data?.DeleteDevice(id); }
+                        catch (Exception ex) { try { Logger.Error($"Cannot delete the stored data of deleted entity definition {id}: {ex.Message}"); } catch { } }
                         // Its entities' last states go with it, so a definition saved later under this id starts afresh.
                         if (_userScriptManager.States is { } states) states.Forget(states.Ids().Where(unique => unique.StartsWith(id + ":", StringComparison.Ordinal)));
                         // Whether it ran or not: Home Assistant may still have its entities from an earlier run. Its last

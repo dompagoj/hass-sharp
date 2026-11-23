@@ -152,6 +152,10 @@ internal sealed partial class DefinitionHost
     DefinitionComponent? Node(SharpEntity entity) =>
         nodes.TryGetValue(entity, out var own) ? own : entity.AddedTo is { } device && nodes.TryGetValue(device, out var added) ? added : null;
 
+    /// <summary>The C# node whose data the component keeps: a C# entity's own, a C# device's, or that of the C# device that added the entity; null for any other.</summary>
+    DefinitionComponent? NodeOf(SharpComponent component) =>
+        component is SharpEntity entity ? Node(entity) : nodes.TryGetValue(component, out var node) ? node : null;
+
     /// <summary>Whether the host made the entity from one of the graph's Entity nodes, whose flows are its behaviour; a C# node's class is its own.</summary>
     bool IsHub(SharpEntity entity) => Node(entity) == null;
 

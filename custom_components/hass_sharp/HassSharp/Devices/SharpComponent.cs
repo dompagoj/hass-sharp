@@ -5,8 +5,9 @@ namespace HassSharp;
 
 /// <summary>
 /// What hosts a custom device or entity while its definition runs: it publishes state to Home Assistant, owns the
-/// timers and entity tracks the component starts and the definition's HTTP client and downloads, and says when the
-/// definition is stopping. A component without one (built but not yet attached, or in a test) publishes nothing.
+/// timers and entity tracks the component starts, the definition's HTTP client and downloads and its C# nodes' handles
+/// on their data stores, and says when the definition is stopping. A component without one (built but not yet
+/// attached, or in a test) publishes nothing.
 /// </summary>
 internal interface IComponentHost
 {
@@ -34,6 +35,13 @@ internal interface IComponentHost
     HttpClient Http { get; }
     /// <summary>The definition's downloads (<see cref="SharpFiles"/>): ended once it stopped. Throws <see cref="ObjectDisposedException"/> after.</summary>
     SharpFiles Files { get; }
+    /// <summary>
+    /// The store of the component's C# node, the same handle on each use; only once the host has run the component's
+    /// <c>Start()</c>. Closed once the definition has stopped: throws <see cref="ObjectDisposedException"/> after.
+    /// </summary>
+    SharpData Data(SharpComponent component);
+    /// <summary>The shared store of that name, opened for the component's C# node, the same handle on each use; as <see cref="Data"/>.</summary>
+    SharpData Shared(SharpComponent component, string name);
 }
 
 /// <summary>A change of an entity that <see cref="SharpComponent.Track(string, Func{EntityChange, Task})"/> follows.</summary>
@@ -152,6 +160,31 @@ public abstract class SharpComponent
     /// </summary>
     protected SharpFiles Files => Attached(nameof(Files)).Files;
 
+    /// <summary>
+    /// Values the component keeps across a recompile and a restart, such as <c>Data.Update&lt;int&gt;("starts", n =&gt; n + 1)</c>
+    /// (<see cref="SharpData"/>): the store of its C# node, which a C# device shares with the entities it adds, under
+    /// <c>.storage/hass_sharp/data/devices/&lt;definition&gt;/&lt;node&gt;/</c>. The same handle on each use. Its values go when
+    /// the definition is deleted, and when a saved revision of it no longer has the node, as that revision starts; turning
+    /// the definition off keeps them. Only from <see cref="Start"/> on, and in timers, tracks, commands and
+    /// <see cref="Stop"/>: before, in <see cref="Setup"/> or the constructor, it throws. Once the definition has stopped
+    /// the handle throws <see cref="ObjectDisposedException"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The component has not started yet.</exception>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    protected SharpData Data => Started(nameof(Data)).Data(this);
+
+    /// <summary>
+    /// The store shared by every component, of this definition or another, that names it, such as <c>Shared("people")</c>,
+    /// under <c>.storage/hass_sharp/data/shared/&lt;name&gt;/</c>: what one writes the others read, and its
+    /// <see cref="SharpData.Changed"/> runs after another's write. The same handle for each use of one name. It is kept
+    /// when a definition that uses it is deleted. Only from <see cref="Start"/> on, as <see cref="Data"/>.
+    /// </summary>
+    /// <param name="name">1 to 64 lower-case letters, digits, <c>_</c>, <c>.</c> and <c>-</c>, starting with a letter or a digit.</param>
+    /// <exception cref="ArgumentException">The name is not a shared store's.</exception>
+    /// <exception cref="InvalidOperationException">The component has not started yet.</exception>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    protected SharpData Shared(string name) => Started(nameof(Shared)).Shared(this, name);
+
     /// <summary>The current state of an entity, read from Home Assistant now. Throws when the entity does not exist.</summary>
     /// <param name="entityId">The entity, such as <c>light.kitchen</c>.</param>
     protected EntityStateSnapshot State(string entityId) => VisualRuntime.ReadEntity(entityId, fresh: true);
@@ -204,4 +237,11 @@ public abstract class SharpComponent
 
     IComponentHost Attached(string what) =>
         Host ?? throw new InvalidOperationException($"{GetType().Name} is not running yet: use {what} from Setup or later, not from the constructor.");
+
+    // A member that works only from Start() on: the host refuses it until it has run the component's Start() too.
+    IComponentHost Started(string what) => Host ?? throw NotStarted(what);
+
+    /// <summary>What a member that works only from <see cref="Start"/> on, such as <see cref="Data"/>, throws before it.</summary>
+    internal InvalidOperationException NotStarted(string what) =>
+        new($"{GetType().Name} is not running yet: use {what} from Start or later, not from Setup or the constructor.");
 }

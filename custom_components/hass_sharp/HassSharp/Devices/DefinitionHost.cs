@@ -58,9 +58,10 @@ internal sealed record NodeClassSetup(string Class, Func<NodeSetupContext, Task>
 /// and an Entity node's command flow for each command; beside them it creates each C# entity and C# device node's class,
 /// applies its settings and sets it up, after the <c>[NodeSetup]</c> of each node library class its graph uses. It tells
 /// Home Assistant which entities exist, starts and stops them, and carries their states, timers, tracks and commands. It
-/// owns the definition's HTTP client and downloads, and what its node setups own (<see cref="Own"/>), which it ends once
-/// the definition has stopped. It answers Home Assistant's requests for its cameras' pictures, making their frames
-/// (<see cref="CameraImage"/>).
+/// owns the definition's HTTP client and downloads, its C# nodes' handles on their data stores, and what its node
+/// setups own (<see cref="Own"/>), which it ends once the definition has stopped; it prunes the stores of nodes a saved
+/// revision no longer has as that revision starts. It answers Home Assistant's requests for its cameras' pictures,
+/// making their frames (<see cref="CameraImage"/>).
 /// </summary>
 internal sealed partial class DefinitionHost(UserScript script, CompiledDefinition definition) : IComponentHost, IDefinitionRuntime
 {
@@ -115,6 +116,14 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     volatile SetupClock? setupClock;
     // Why the When started flow last failed, as FlowFailed words it (the step's sentence, with its cause), for its start's error.
     volatile string? setupFailure;
+    // The components whose Start() the host has begun, or whose Stop() it runs: what works only from Start() on (Data,
+    // Shared) works for these alone. Under the gate; emptied once stopped.
+    readonly HashSet<SharpComponent> begun = new(ReferenceEqualityComparer.Instance);
+    // Guards the data stores the C# nodes opened, by node key, and whether they are closed; taken alone, never under the
+    // gate, and before the stores' own locks.
+    readonly Lock dataGate = new();
+    readonly Dictionary<string, NodeData> nodeData = new(StringComparer.Ordinal);
+    bool dataClosed;
 
     UserScriptManager Manager => script.ScriptManager;
 
@@ -158,6 +167,94 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                     line => Report(line, PyLogLevel.Info), () => setupClock?.Receiving() ?? Nothing);
             }
         }
+    }
+
+    /// <inheritdoc/>
+    public SharpData Data(SharpComponent component) => OpenData(component, "Data", null);
+
+    /// <inheritdoc/>
+    public SharpData Shared(SharpComponent component, string name) => OpenData(component, "Shared", name);
+
+    /// <summary>
+    /// The handle of the component's C# node on its own store, or on the shared store <paramref name="shared"/>: opened on
+    /// first use with the one <see cref="DataUser"/> of that node, which the device and the entities it added share, so
+    /// that a <c>Changed</c> action of the node never runs for the node's own writes; the same handle after.
+    /// </summary>
+    SharpData OpenData(SharpComponent component, string what, string? shared)
+    {
+        var stores = Manager.Data ?? throw new InvalidOperationException("Stored data has no directory here");
+        lock (dataGate)
+        {
+            if (dataClosed) throw new ObjectDisposedException(null, $"{definition.Name} has stopped: its data stores are closed");
+            // Under the data lock, which closing takes before the components are let go: begun is not emptied meanwhile.
+            CheckBegun(component, what);
+            var node = NodeOf(component) ?? throw new InvalidOperationException($"{component.GetType().Name} is no C# node of {definition.Name}, so it keeps no data");
+            if (!nodeData.TryGetValue(node.Key, out var data)) nodeData[node.Key] = data = new(new DataUser(definition.Id, node.Key, RunChanged));
+            if (shared == null) return data.Device ??= stores.OpenDevice(data.User);
+            if (!data.Shared.TryGetValue(shared, out var handle)) data.Shared[shared] = handle = stores.OpenShared(shared, data.User);
+            return handle;
+        }
+    }
+
+    /// <summary>
+    /// Throws what <paramref name="what"/>, a member of the component's that works only from <c>Start()</c> on, throws
+    /// before it (<see cref="SharpComponent.NotStarted"/>), unless the host has begun the component's <c>Start()</c> or runs
+    /// its <c>Stop()</c>.
+    /// </summary>
+    void CheckBegun(SharpComponent component, string what)
+    {
+        bool has;
+        lock (gate) has = begun.Contains(component);
+        if (!has) throw component.NotStarted(what);
+    }
+
+    // From now on what works only from Start() on works for the component.
+    void Begin(SharpComponent component)
+    {
+        lock (gate) begun.Add(component);
+    }
+
+    // How a Changed action of the C# nodes' data runs (DataUser.Run), on the thread the store runs it on: as a track
+    // callback, none once stopping began, counted among what stopping waits for, its failure logged here.
+    async Task RunChanged(Func<Task> action)
+    {
+        var token = Stopping;
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (gate)
+        {
+            if (stopped != null) return;
+            running.Add(done.Task);
+        }
+        try { await Callback("a Changed callback of its data", action, token); }
+        finally
+        {
+            lock (gate) running.Remove(done.Task);
+            done.TrySetResult();
+        }
+    }
+
+    // Closes the data stores the C# nodes opened: from now on each refuses, and its Changed actions run no more. Never throws.
+    void CloseData()
+    {
+        NodeData[] opened;
+        lock (dataGate)
+        {
+            dataClosed = true;
+            opened = [.. nodeData.Values];
+            nodeData.Clear();
+        }
+        if (opened.Length == 0 || Manager.Data is not { } stores) return;
+        foreach (var data in opened)
+            try { stores.Close(data.User); }
+            catch (Exception failure) { Report("closing its data stores failed", failure, PyLogLevel.Warn); }
+    }
+
+    /// <summary>One C# node's user of the data stores, and the handles it opened: on its own store, and on each shared one by name.</summary>
+    sealed class NodeData(DataUser user)
+    {
+        public DataUser User { get; } = user;
+        public SharpData? Device { get; set; }
+        public Dictionary<string, SharpData> Shared { get; } = new(StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -356,6 +453,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         var (cycle, all) = (lifecycle, entities);
         // The revision this one replaced has stopped by now.
         ReleasePredecessor();
+        // The data of a C# node this revision no longer has goes now, never while that revision ran: it has closed its stores.
+        try { Manager.Data?.PruneDevice(definition.Id, definition.Components.Select(node => node.Key).ToHashSet(StringComparer.Ordinal)); }
+        catch (Exception failure) { Report("deleting the data of the C# nodes the definition no longer has failed", failure, PyLogLevel.Warn); }
         // A replaced revision may have sent the same states: they are sent again, as the new entities' first.
         try { Manager.Pump.Forget(all.Select(UniqueId)); }
         catch (Exception failure) { Report("forgetting the states of the replaced revision failed", failure, PyLogLevel.Warn); }
@@ -375,8 +475,16 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         {
             foreach (var (owner, members) in cycle)
             {
-                if (owner != null) await owner.Start();
-                foreach (var entity in members) await entity.Start();
+                if (owner != null)
+                {
+                    Begin(owner);
+                    await owner.Start();
+                }
+                foreach (var entity in members)
+                {
+                    Begin(entity);
+                    await entity.Start();
+                }
             }
             lock (gate) if (stopped == null) status = Running;
         }
@@ -507,6 +615,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             Manager.Entities.Leave(this, heir);
             // A revision this one was to replace keeps nothing of it, nor it of that one.
             ReleasePredecessor();
+            // After the last Stop(), which may still use them; before the components are let go.
+            CloseData();
             // Nothing of the user's code stays reachable from the host once stopped.
             entities = [];
             lifecycle = [];
@@ -546,6 +656,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
                 frameFailures.Clear();
                 handed = [];
                 own.Clear();
+                begun.Clear();
                 successor = null;
             }
             try { calls.Cancel(); } catch { }
@@ -590,6 +701,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     async Task StopOne(SharpComponent component)
     {
+        // Also one whose own Start() never ran because an earlier one threw: its Stop() may use its data.
+        Begin(component);
         try { await component.Stop(); }
         catch (Exception failure) { Report("stopping failed", failure, PyLogLevel.Error); }
     }

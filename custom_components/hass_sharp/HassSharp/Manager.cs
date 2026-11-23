@@ -46,8 +46,12 @@ public partial class HassSharpManager
         _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
         _entitySchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "entity_schema.json"), "entity");
         // One state pump carries every entity definition's states to Home Assistant; one store keeps those they come back
-        // with; their downloads are kept in one directory.
-        _userScriptManager = new() { History = _history, Pump = new(), States = new(EntityStatesPath), FilesRoot = FilesPath };
+        // with; their downloads are kept in one directory, and their C# nodes' data in another.
+        _userScriptManager = new()
+        {
+            History = _history, Pump = new(), States = new(EntityStatesPath), FilesRoot = FilesPath,
+            Data = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "data")),
+        };
     }
 
     public async Task Init()

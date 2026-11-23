@@ -30,6 +30,8 @@ static class SharpEntityTests
         HttpClient? http;
         public HttpClient Http => http ??= SharpHttp.Create();
         public SharpFiles Files => throw new NotSupportedException("this host downloads nothing");
+        public SharpData Data(SharpComponent component) => throw new NotSupportedException("this host stores nothing");
+        public SharpData Shared(SharpComponent component, string name) => throw new NotSupportedException("this host stores nothing");
     }
 
     // Reaches the protected services a component's own code uses.

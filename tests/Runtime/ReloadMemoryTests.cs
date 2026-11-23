@@ -13,7 +13,8 @@ using static VisualExecutionTests;
 /// deriving a class of its own node library, starts a 20 ms timer and a track of an entity, calls a service from Start() with a record of
 /// its library serialized by System.Text.Json, reads a value with its HTTP client from a loopback server and leaves a
 /// request open to a server that never answers (it does not pass Stopping, so only disposing the client ends it, which
-/// every reload must see happen), and takes a command on its switch; its camera shows a frame, and a frame request is
+/// every reload must see happen), and takes a command on its switch; it stores a record of its own code in its Data and
+/// reads it back, and follows a shared store, whose change by another component runs its action; its camera shows a frame, and a frame request is
 /// left waiting across the reload, which the stop answers with that frame; a library save then rebuilds it
 /// (and the automations) and replaces the one Init loaded. After the reloads, a definition built from nodes is saved 100 times,
 /// each revision replacing the one before, taking a command on its switch and working out its State from its setting;
@@ -200,7 +201,7 @@ static class ReloadMemoryTests
             var samples = string.Join(", ", memory.OrderBy(m => m.Key).Select(m => $"{m.Value / 1048576.0:F1} MiB after reload {m.Key}"));
             var growth = memory.Keys.Where(reload => reload > From).Min(reload => (memory[reload] - memory[reload - Window]) / 1048576.0);
             Check(growth <= BoundMiB, $"managed memory grew in every {Window} reloads from reload {From} to reload {Reloads}, {growth:F2} MiB at the least ({samples}); a window that grows at most {BoundMiB} MiB is required");
-            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose C# device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, takes a switch command and has a camera that shows a frame with a frame request in flight across the reload, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
+            Console.WriteLine($"PASS reload memory: {Reloads} reloads with {Automations.Length} automations, each reload running those that call services (a typed call with an enum and an anonymous object of the node's own, a library record made an object for a Call service field, a Select property node reading a Custom C# class), and an entity definition rebuilt by a library save whose C# device runs a timer and a track, calls a service with a record of its library, reads over HTTP and leaves a request open across the reload, takes a switch command, stores a record of its own code in its Data and runs a Changed action of a shared store, and has a camera that shows a frame with a frame request in flight across the reload, then a definition built from nodes saved {GraphRevisions} times, each revision taking a command and working out its State, every load context collected; managed memory {samples}");
         }
         finally
         {
@@ -343,9 +344,26 @@ static class ReloadMemoryTests
 
     // The definition Memory meter: one C# device node, key box named Meter box, whose class derives the library's
     // MemoryMeter; its signature is the one the compiler derives from its code against the library, as the editor stores it.
+    // Its Start() stores a record of its own code in its Data and reads it back to its sensor person, and follows the
+    // shared store memory.people, whose count it shows there each time another component changes it.
     static JsonObject MeterDefinition()
     {
-        const string source = "public class Box : MemoryMeter { }";
+        const string source = """
+            public record Person(string Name, int Age);
+
+            public class Box : MemoryMeter
+            {
+                readonly SharpSensor person;
+                public Box() { person = Add(new SharpSensor("person")); }
+                protected override async Task Start()
+                {
+                    await base.Start();
+                    Data.Set("p", new Person("Ivan", 40));
+                    person.Value = Data.Get<Person>("p")!.Name;
+                    Shared("memory.people").Changed(() => { person.Value = "seen " + Shared("memory.people").Get<int>("n"); return Task.CompletedTask; });
+                }
+            }
+            """;
         var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([new NodeLibrarySource("meters", MeterLibrary(0), 1)], [new CustomNodeSource("box", source, "csharp_device")]).Snapshot.Custom["box"];
         Check(descriptor.Valid, "the C# device's code compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
         var box = EntityNodeTests.CSharpDevice("box", "box", "Meter box", new JsonObject { ["source"] = source, ["signature"] = descriptor.Signature!.DeepClone(), ["arguments"] = new JsonObject() });
@@ -391,6 +409,12 @@ static class ReloadMemoryTests
         lock (states) return states.GetValueOrDefault("gauge:" + key)?["values"]?[field]?.ToJsonString();
     }
 
+    // The data stores of the manager, and the test's own user of them, which writes to the definition's shared store.
+    static DataStores Stores(HassSharpManager manager) =>
+        ((UserScriptManager)typeof(HassSharpManager).GetField("_userScriptManager", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(manager)!).Data
+        ?? throw new Exception("the manager has no data stores");
+    static readonly DataUser Writer = new("reload-memory", "writer", action => action());
+
     // The last value pushed for one of the definition's entities, which its C# device box adds.
     static string? Pushed(Dictionary<string, JsonObject> states, string key, string field)
     {
@@ -415,6 +439,15 @@ static class ReloadMemoryTests
         await manager.EntityCommand("meter:box:relay", "turn_on", null);
         await EntityTestHome.Until(() => Pushed(states, "seen", "value") == $"\"command {marker}\"" && Pushed(states, "relay", "is_on") == "true",
             $"reload {reload}: the rebuilt definition's switch takes the command");
+        await EntityTestHome.Until(() => Pushed(states, "person", "value") == "\"Ivan\"", $"reload {reload}: the rebuilt definition reads back the record it stored");
+        // Another component's write to the shared store runs the definition's Changed action.
+        var people = Stores(manager).OpenShared("memory.people", Writer);
+        try
+        {
+            people.Set("n", reload);
+            await EntityTestHome.Until(() => Pushed(states, "person", "value") == $"\"seen {reload}\"", $"reload {reload}: the rebuilt definition's Changed action runs");
+        }
+        finally { Stores(manager).Close(Writer); }
         var shown = await manager.CameraImage("meter:box:view");
         Check(shown is [0xFF, 0xD8, ..] && shown.Length > 100, $"reload {reload}: the rebuilt definition's camera answers the frame it showed");
         await Task.Delay(10);

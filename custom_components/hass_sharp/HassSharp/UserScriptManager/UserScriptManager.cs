@@ -59,6 +59,8 @@ class UserScriptManager
     public EntityStateStore? States { get; init; }
     /// <summary>The directory the entity definitions' downloads are kept in (<see cref="SharpFiles"/>); null for none, which refuses them.</summary>
     public string? FilesRoot { get; init; }
+    /// <summary>The data stores the entity definitions' C# nodes keep their data in (<see cref="SharpData"/>); null for none, which refuses them.</summary>
+    public DataStores? Data { get; init; }
     public ScriptSyncRunner SyncRunner { get; } = new();
 
     public List<UserScript> GetUserScripts() { lock (ActivationGate) return _userScripts.ToList(); }
