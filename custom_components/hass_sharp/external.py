@@ -1,6 +1,7 @@
 """Importing node libraries and entity definitions from a public GitHub repository's hass_sharp.toml.
 
-The rules (the URL forms, the manifest, its paths, sizes and ids, the rewrite of library node kinds) and the fetcher.
+The rules (the URL forms, the manifest, its paths, sizes and ids, the rewrite of library node kinds), the fetcher, and
+the flow: `inspect` a repository, then `import_items` what was picked from it, libraries first.
 The standard library only, so tests load this file by its path without Home Assistant or aiohttp.
 """
 import copy
@@ -8,8 +9,10 @@ import json
 import re
 import tomllib
 import unicodedata
+import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
+from typing import Protocol
 from urllib.parse import quote, unquote, urljoin, urlsplit
 
 CAP = 2 * 1024 * 1024
@@ -30,6 +33,9 @@ _INVALID_URL = ("Paste a GitHub repository's address, such as https://github.com
                 "https://github.com/owner/repo/tree/main")
 _LIMIT = "GitHub refused the request: it allows 60 requests an hour without signing in; try again later"
 _EXTENSIONS = {"library": ".cs", "entity": ".json"}
+_CONFLICT = "It changed after you inspected the repository; inspect it again"
+_NOT_ATTEMPTED = "Not imported, because the node libraries were not"
+_C_SHARP_NODES = frozenset({"csharp_entity", "csharp_device"})
 
 
 class ExternalError(Exception):
@@ -50,6 +56,13 @@ class HttpStatus(Exception):
     def __init__(self, status: int) -> None:
         super().__init__(f"HTTP {status}")
         self.status = status
+
+
+class TooLarge(ExternalError):
+    """What a fetcher raises for a file over CAP: a refusal of the whole request, unless the file is one listed item."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__("fetch", f"{name} is larger than 2 MiB")
 
 
 class ItemProblem(Exception):
@@ -75,7 +88,7 @@ class Item:
 
 
 Fetch = Callable[[str, str], Awaitable[bytes]]
-"""`(url, accept)`: the body, at most CAP bytes; raises HttpStatus, or ExternalError("fetch", …)."""
+"""`(url, accept)`: the body, at most CAP bytes; raises HttpStatus, TooLarge, or ExternalError("fetch", …)."""
 
 
 def parse_url(url: str) -> Repo:
@@ -286,7 +299,7 @@ def aiohttp_fetch(session, timeout) -> Fetch:
 
     async def fetch(url: str, accept: str) -> bytes:
         name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
-        too_large = ExternalError("fetch", f"{name} is larger than 2 MiB")
+        too_large = TooLarge(name)
         try:
             for _ in range(MAX_REDIRECTS + 1):
                 parts = urlsplit(url)
@@ -366,3 +379,287 @@ class GitHub:
             if ex.status == 404:
                 raise
             raise _refusal(ex.status) from None
+
+
+class Backend(Protocol):
+    """HassSharp's stores, as the flow uses them. The lists and the read raise ExternalError for a refusal; the import
+    and the save answer .NET's envelope, a refusal included."""
+
+    async def libraries(self) -> list[dict]:
+        """The stored library files, each `{id, name, revision}`."""
+
+    async def definitions(self) -> tuple[list[dict], list[str]]:
+        """The stored entity definitions, each `{id, name, revision}`, and the ids of the files that cannot be read."""
+
+    async def read_definition(self, id: str) -> dict:
+        """A stored definition as `read` answers it."""
+
+    async def import_libraries(self, libraries: list[dict]) -> dict:
+        """The node library `import` request's envelope."""
+
+    async def save_definition(self, request: dict) -> dict:
+        """An entity definition `save` request's envelope."""
+
+
+async def _manifest(github: GitHub, owner: str, repo: str, sha: str) -> list[Item]:
+    try:
+        data = await github.file(owner, repo, sha, "hass_sharp.toml")
+    except HttpStatus:
+        raise ExternalError("not_found", f"{owner}/{repo} has no hass_sharp.toml at its root at {sha[:7]}") from None
+    return parse_manifest(data)
+
+
+async def _contents(github: GitHub, owner: str, repo: str, sha: str, item: Item) -> str | dict:
+    """A listed library's source or entity's body; ItemProblem when the file cannot be imported, ExternalError when it
+    cannot be fetched."""
+    try:
+        data = await github.file(owner, repo, sha, item.path)
+    except HttpStatus:
+        raise ItemProblem(f"{item.path} is not in the repository at {sha[:7]}") from None
+    except TooLarge:
+        raise ItemProblem(f"{item.path} is larger than 2 MiB") from None
+    return library_source(item, data) if item.kind == "library" else entity_body(item, data)
+
+
+def _named(listed: list[dict], name: str) -> list[dict]:
+    """The stored files or definitions of exactly that name."""
+    return [{"id": d["id"], "revision": d["revision"], "name": d["name"]} for d in listed if d.get("name") == name]
+
+
+async def inspect(github: GitHub, backend: Backend, url: object) -> dict:
+    """The repository at the commit its address names, and each item its manifest lists: the stored files or
+    definitions of that name, and why the file cannot be imported, if it cannot. Every listed file is fetched."""
+    if not isinstance(url, str):
+        raise ExternalError("invalid_request", _INVALID_URL)
+    repo = parse_url(url)
+    sha = await github.resolve(repo)
+    items = await _manifest(github, repo.owner, repo.repo, sha)
+    problems = []
+    for item in items:
+        try:
+            await _contents(github, repo.owner, repo.repo, sha, item)
+            problems.append(None)
+        except ItemProblem as ex:
+            problems.append(str(ex))
+    libraries = await backend.libraries()
+    definitions, _ = await backend.definitions()
+    return {"owner": repo.owner, "repo": repo.repo, "ref": repo.ref, "sha": sha, "items": [
+        {"kind": item.kind, "name": item.name, "description": item.description, "path": item.path,
+         "existing": _named(libraries if item.kind == "library" else definitions, item.name), "problem": problem}
+        for item, problem in zip(items, problems)]}
+
+
+def _invalid(message: str) -> ExternalError:
+    return ExternalError("invalid_request", message)
+
+
+def _revision(value: object) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _request_picks(request: dict) -> tuple[str, str, str, dict[tuple[str, str], dict]]:
+    """The import request's repository, commit and picks by (kind, path), checked before anything is fetched."""
+    owner, repo, sha, picks = (request.get(key) for key in ("owner", "repo", "sha", "picks"))
+    if (not isinstance(owner, str) or not _OWNER.fullmatch(owner) or not isinstance(repo, str) or not _REPO.fullmatch(repo)
+            or repo in (".", "..")):
+        raise _invalid("owner and repo must name the GitHub repository inspect answered")
+    if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+        raise _invalid("sha must be the 40-character commit sha inspect answered")
+    if not isinstance(picks, list) or not picks:
+        raise _invalid("picks must list at least one item to import")
+    picked: dict[tuple[str, str], dict] = {}
+    for number, pick in enumerate(picks, 1):
+        if not isinstance(pick, dict) or not isinstance(pick.get("path"), str):
+            raise _invalid(f"pick {number} must be an object with the path of a listed file")
+        path = pick["path"]
+        if pick.get("kind") not in _EXTENSIONS:
+            raise _invalid(f"{path}: kind must be library or entity")
+        if pick.get("mode") not in ("new", "overwrite"):
+            raise _invalid(f"{path}: mode must be new or overwrite")
+        if (pick["kind"], path) in picked:
+            raise _invalid(f"{path} is picked twice")
+        picked[(pick["kind"], path)] = pick
+    return owner, repo, sha, picked
+
+
+def _check_pick(item: Item, pick: dict, libraries: list[dict], definitions: list[dict]) -> None:
+    """A pick against the stored files and definitions: a library file name is never stored twice."""
+    if item.kind == "library":
+        same = [d["id"] for d in libraries if d.get("name") == item.name]
+        if same and pick["mode"] == "new":
+            raise _invalid(f"{item.path}: a library file named {item.name} is stored, so it can only overwrite it or be skipped")
+        if not same and pick["mode"] == "overwrite":
+            raise _invalid(f"{item.path}: no library file named {item.name} is stored, so it can only be imported as new")
+        if pick["mode"] == "new" and "target" in pick:
+            raise _invalid(f"{item.path}: a new library file takes no target")
+        if pick["mode"] == "overwrite" and pick.get("target") not in same:
+            raise _invalid(f"{item.path}: target must be the id of the stored library file named {item.name}: {', '.join(same)}")
+    elif pick["mode"] == "overwrite" and pick.get("target") not in [d["id"] for d in definitions if d.get("name") == item.name]:
+        raise _invalid(f"{item.path}: target must be the id of a stored entity definition named {item.name}")
+    if pick["mode"] == "overwrite" and not _revision(pick.get("expectedRevision")):
+        raise _invalid(f"{item.path}: expectedRevision must be the revision inspect answered")
+
+
+def _errors(diagnostics: object, describe: Callable[[dict], str]) -> list[str]:
+    """Up to three error diagnostics, each described."""
+    errors = [d for d in diagnostics if isinstance(d, dict) and d.get("severity") in (3, "error")] if isinstance(diagnostics, list) else []
+    return [describe(d) for d in errors[:3]]
+
+
+def _refusal_message(error: object, describe_validation: Callable[[dict], list[str]]) -> str:
+    """The sentence of a refused import or save."""
+    code, detail = (error.get("code"), error.get("detail")) if isinstance(error, dict) else (None, None)
+    if code == "conflict":
+        return _CONFLICT
+    if code == "validation" and isinstance(detail, dict):
+        return "; ".join(describe_validation(detail)) or "It is not valid"
+    return detail if isinstance(detail, str) else "It could not be saved"
+
+
+def _library_problems(detail: dict, names: dict[str, str]) -> list[str]:
+    """A refused library import's errors, each `{file name} {line}:{column}: {message}`, then what it would break."""
+    problems = _errors(detail.get("diagnostics"), lambda d: f"{names.get(d.get('sourceId'), d.get('sourceId'))} "
+                                                           f"{d.get('startLine')}:{d.get('startColumn')}: {d.get('message')}")
+    broken = [*(detail.get("automations") or []), *(detail.get("definitions") or [])]
+    return problems + [f"it would break {b.get('name') or b.get('id')}" for b in broken if isinstance(b, dict)]
+
+
+def _kept_settings(settings: object, stored: object) -> object:
+    """The imported settings, each that the stored definition has by key and type marked to keep its stored value."""
+    if not isinstance(settings, list):
+        return settings
+    types = {s["key"]: s.get("type") for s in stored if isinstance(s, dict) and isinstance(s.get("key"), str)} if isinstance(stored, list) else {}
+    kept = []
+    for setting in settings:
+        if isinstance(setting, dict) and setting.get("key") in types and setting.get("type") == types[setting["key"]]:
+            setting = {**{k: v for k, v in setting.items() if k not in ("value", "hasValue")}, "keep": True}
+        kept.append(setting)
+    return kept
+
+
+def _signature_settings(config: dict) -> dict[str, dict]:
+    signature = config.get("signature")
+    settings = signature.get("settings") if isinstance(signature, dict) else None
+    return {s["key"]: s for s in settings if isinstance(s, dict) and isinstance(s.get("key"), str)} if isinstance(settings, list) else {}
+
+
+def _nodes(graph: object) -> list[dict]:
+    nodes = graph.get("nodes") if isinstance(graph, dict) else None
+    return [n for n in nodes if isinstance(n, dict)] if isinstance(nodes, list) else []
+
+
+def keep_device_inputs(imported: dict, existing: dict) -> dict:
+    """A copy of the imported graph in which each C# entity or device node keeps the typed arguments the stored graph's
+    node of the same id and kind has, for each setting both signatures give the same type and domain. An argument the
+    imported node does not have is not added: its pin may take a Setting step instead."""
+    graph = copy.deepcopy(imported)
+    stored = {n.get("id"): n for n in _nodes(existing)}
+    for node in _nodes(graph):
+        before = stored.get(node.get("id"))
+        if node.get("kind") not in _C_SHARP_NODES or before is None or before.get("kind") != node.get("kind"):
+            continue
+        config, old = node.get("config"), before.get("config")
+        if not isinstance(config, dict) or not isinstance(old, dict):
+            continue
+        arguments, old_arguments = config.get("arguments"), old.get("arguments")
+        if not isinstance(arguments, dict) or not isinstance(old_arguments, dict):
+            continue
+        settings, old_settings = _signature_settings(config), _signature_settings(old)
+        for key in arguments:
+            setting, old_setting = settings.get(key), old_settings.get(key)
+            if (setting is not None and old_setting is not None and key in old_arguments
+                    and (setting.get("type"), setting.get("domain")) == (old_setting.get("type"), old_setting.get("domain"))):
+                arguments[key] = copy.deepcopy(old_arguments[key])
+    return graph
+
+
+def _outcome(item: Item, outcome: str, id: str | None = None, enabled: bool | None = None, message: str | None = None) -> dict:
+    return {"kind": item.kind, "name": item.name, "path": item.path, "outcome": outcome, "id": id, "enabled": enabled, "message": message}
+
+
+async def import_items(github: GitHub, backend: Backend, request: dict) -> dict:
+    """Imports what was picked from the repository at the inspected commit: every picked file is fetched again first
+    (no API call), then the libraries in one `import`, then each entity definition, saved on its own. A refused library
+    import stops before any definition; a refused definition leaves the libraries and the others imported."""
+    owner, repo, sha, picked = _request_picks(request)
+    items = await _manifest(github, owner, repo, sha)
+    listed = {(item.kind, item.path) for item in items}
+    for kind, path in picked:
+        if (kind, path) not in listed:
+            raise _invalid(f"{path} is not a {'node library' if kind == 'library' else 'entity definition'} "
+                          f"hass_sharp.toml lists at {sha[:7]}")
+    libraries = await backend.libraries()
+    definitions, unreadable = await backend.definitions()
+    chosen = [(item, picked[(item.kind, item.path)]) for item in items if (item.kind, item.path) in picked]
+    for item, pick in chosen:
+        _check_pick(item, pick, libraries, definitions)
+    contents = {}
+    for item, _ in chosen:
+        try:
+            contents[item] = await _contents(github, owner, repo, sha, item)
+        except ItemProblem as ex:
+            raise _invalid(str(ex)) from None
+
+    stored_ids = {d["id"] for d in libraries}
+    used = {item: pick["target"] if pick["mode"] == "overwrite"
+            else item.id if item.id is not None and item.id not in stored_ids else f"library-{uuid.uuid4()}"
+            for item, pick in chosen if item.kind == "library"}
+    # The ids a definition's `library:` kinds are rewritten to: the one each library is stored under after this import.
+    kinds = {}
+    for item in items:
+        if item.kind == "library" and item.id is not None:
+            same = [d["id"] for d in libraries if d.get("name") == item.name]
+            if item in used:
+                kinds[item.id] = used[item]
+            elif len(same) == 1:
+                kinds[item.id] = same[0]
+    answer = {"owner": owner, "repo": repo, "sha": sha, "items": [], "libraries": None}
+    library_picks = [(item, pick) for item, pick in chosen if item.kind == "library"]
+    entity_picks = [(item, pick) for item, pick in chosen if item.kind == "entity"]
+    if library_picks:
+        imported = await backend.import_libraries([
+            {"id": used[item], "name": item.name, "source": contents[item],
+             "expectedRevision": pick["expectedRevision"] if pick["mode"] == "overwrite" else 0} for item, pick in library_picks])
+        if not imported.get("ok"):
+            names = {**{d["id"]: d.get("name") for d in libraries}, **{used[item]: item.name for item, _ in library_picks}}
+            message = _refusal_message(imported.get("error"), lambda detail: _library_problems(detail, names))
+            answer["items"] = ([_outcome(item, "failed", message=message) for item, _ in library_picks]
+                               + [_outcome(item, "failed", message=_NOT_ATTEMPTED) for item, _ in entity_picks])
+            return answer
+        answer["libraries"] = imported.get("result")
+        answer["items"] = [_outcome(item, "overwritten" if pick["mode"] == "overwrite" else "imported", used[item])
+                           for item, pick in library_picks]
+    taken = {d["id"] for d in definitions} | set(unreadable)
+    for item, pick in entity_picks:
+        answer["items"].append(await _import_entity(backend, item, pick, contents[item], kinds, taken))
+    return answer
+
+
+async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, kinds: dict[str, str], taken: set[str]) -> dict:
+    graph = rewrite_library_kinds(body["logic"]["graph"], kinds)
+    settings = body["settings"]
+    if pick["mode"] == "new":
+        id = definition_id(item.name, taken)
+        taken.add(id)
+        request = {"operation": "save", "id": id, "expectedRevision": 0, "enabled": False}
+    else:
+        id = pick["target"]
+        try:
+            stored = await backend.read_definition(id)
+        except ExternalError as ex:
+            return _outcome(item, "failed", message=_CONFLICT if ex.code == "not_found" else ex.message)
+        logic = stored.get("logic")
+        settings = _kept_settings(settings, stored.get("settings"))
+        graph = keep_device_inputs(graph, logic.get("graph") if isinstance(logic, dict) else {})
+        request = {"operation": "save", "id": id, "expectedRevision": pick["expectedRevision"]}
+    # deriveSignatures: each C# node's pins are written from the code of the libraries now stored (Ruling 14).
+    request |= {"deriveSignatures": True, "definition": {**body, "settings": settings, "logic": {**body["logic"], "graph": graph}}}
+    saved = await backend.save_definition(request)
+    if not saved.get("ok"):
+        message = _refusal_message(saved.get("error"), lambda detail: _errors(detail.get("diagnostics"), lambda d: str(d.get("message"))))
+        return _outcome(item, "failed", message=message)
+    if pick["mode"] == "new":
+        return _outcome(item, "imported", id, False)
+    document = (saved.get("result") or {}).get("document")
+    enabled = document.get("enabled") if isinstance(document, dict) else None
+    return _outcome(item, "overwritten", id, enabled if isinstance(enabled, bool) else None)

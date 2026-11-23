@@ -132,6 +132,12 @@ class WebsocketReadinessTests(unittest.IsolatedAsyncioTestCase):
         hass.data = {}
         results, errors = await self.send(handlers['hass_sharp/visual'], hass, messages['hass_sharp/visual'])
         self.assertEqual(errors[0][1], 'not_ready')
+        # External import too: refused before it fetches anything (test_external.py has it while ready).
+        for data in ({'hass_sharp_llm': {'entry': state}}, {}):
+            hass.data = data
+            results, errors = await self.send(handlers['hass_sharp/external'], hass,
+                                              {'request': {'operation': 'inspect', 'url': 'https://github.com/o/r'}})
+            self.assertEqual((results, errors[0][1]), ([], 'not_ready'))
         self.assertEqual(calls, [])
         state.ready = True
         hass.data = {'hass_sharp_llm': {'entry': state}}

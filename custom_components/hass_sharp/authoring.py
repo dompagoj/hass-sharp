@@ -1,9 +1,11 @@
 """Shared administrator authoring services; managed gates/store remain authoritative."""
 import json
 
+from aiohttp import ClientTimeout
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import dotnet_tasks, native_triggers
+from . import dotnet_tasks, external, native_triggers
 from .const import DOMAIN
 
 
@@ -69,6 +71,38 @@ def definition_triggers(document):
     graph = logic.get("graph") if isinstance(logic, dict) and logic.get("kind") == "graph" else None
     running = bool(document.get("currentRevisionActive") and document.get("status") == "running")
     return runnable_triggers({**document, "currentRevisionActive": running}, graph) if isinstance(graph, dict) else []
+
+
+class ExternalBackend:
+    """external.Backend over the service: .NET's library and definition stores, read as they are, and each save made
+    through `entities`, so Home Assistant's trigger check and `registeredEntities` apply as for any save."""
+
+    def __init__(self, service):
+        self.service = service
+
+    async def _result(self, method, request):
+        answer = await self.service._request(method, request, is_admin=True)
+        if not answer.get("ok"):
+            raise external.ExternalError(answer["error"]["code"], answer["error"]["detail"])
+        return answer
+
+    async def libraries(self):
+        answer = await self._result(self.service.manager.NodeLibraryRequest, {"operation": "list"})
+        return [{"id": d["id"], "name": d["name"], "revision": d["revision"]} for d in answer["result"]["documents"]]
+
+    async def definitions(self):
+        answer = await self._result(self.service.manager.EntityRequest, {"operation": "list"})
+        return ([{"id": d["id"], "name": d["name"], "revision": d["revision"]} for d in answer["result"]],
+                [d["id"] for d in answer.get("unreadable") or []])
+
+    async def read_definition(self, id):
+        return (await self._result(self.service.manager.EntityRequest, {"operation": "read", "id": id}))["result"]
+
+    async def import_libraries(self, libraries):
+        return await self.service._request(self.service.manager.NodeLibraryRequest, {"operation": "import", "libraries": libraries}, is_admin=True)
+
+    async def save_definition(self, request):
+        return await self.service.entities(request, is_admin=True)
 
 
 class AuthoringService:
@@ -164,6 +198,27 @@ class AuthoringService:
                 document["registeredEntities"] = registered.get(document.get("id"), [])
                 document["triggers"] = definition_triggers(document)
         return result
+
+    async def external(self, request, *, is_admin):
+        """The Add external dialog's request: `inspect {url}` a public GitHub repository's hass_sharp.toml, or `import
+        {owner, repo, sha, picks}` what was picked from it (external.py), answered in the envelope, a refusal included."""
+        if not is_admin:
+            raise PermissionError("Administrator required")
+        if not isinstance(request, dict):
+            raise ValueError("Authoring request must be an object")
+        operation = request.get("operation")
+        if operation not in ("inspect", "import"):
+            return error("invalid_request", "operation must be inspect or import")
+        github = external.GitHub(external.aiohttp_fetch(async_get_clientsession(self.hass), ClientTimeout(total=30)))
+        backend = ExternalBackend(self)
+        try:
+            if operation == "inspect":
+                result = await external.inspect(github, backend, request.get("url"))
+            else:
+                result = await external.import_items(github, backend, request)
+        except external.ExternalError as ex:
+            return ex.answer()
+        return {"version": 1, "ok": True, "result": result}
 
     async def run_now(self, automation_id, class_name, method, *, is_admin):
         if not is_admin:

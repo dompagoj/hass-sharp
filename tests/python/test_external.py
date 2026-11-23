@@ -1,10 +1,15 @@
 import asyncio
+import copy
 import importlib.util
 import json
 import os
 import pathlib
 import re
 import unittest
+from types import SimpleNamespace as NS
+from urllib.parse import unquote
+
+from test_visual import EntryState, load_routes
 
 ROOT = pathlib.Path(os.environ.get('HASS_SHARP_TEST_ROOT', pathlib.Path(__file__).resolve().parents[2]))
 spec = importlib.util.spec_from_file_location('hass_sharp_external', ROOT / 'custom_components/hass_sharp/external.py')
@@ -386,6 +391,529 @@ class Fetching(unittest.TestCase):
         with self.assertRaises(x.HttpStatus) as raised:
             run(fetch(self.url, '*/*'))
         self.assertEqual(raised.exception.status, 304)
+
+
+SHA7 = '0123abc'
+REPO_SHA = SHA7 + '0' * 33
+RAW = f'https://raw.githubusercontent.com/o/r/{REPO_SHA}/'
+API = 'https://api.github.com/repos/o/r/commits/'
+DETECT = 'library:vision:global%3A%3ANodeLib.FaceDetection.DetectFaces'
+VISION = 'namespace NodeLib.FaceDetection;\npublic static class Faces { }\n'
+PEOPLE = 'namespace NodeLib;\npublic class PeopleDetector : SharpDevice { }\n'
+CONFLICT = 'It changed after you inspected the repository; inspect it again'
+NOT_ATTEMPTED = 'Not imported, because the node libraries were not'
+FACES_ENTRY = '\n[[entity]]\nname = "Faces at the door"\npath = "nodes/faces.json"\ndescription = "Detect faces on the door camera"\n'
+
+
+def device_node(camera='camera.front_door', *, kind='csharp_device', setting_type='entity', settings=None, arguments=None):
+    """The People detector's C# device node, `front_door`, whose Camera is typed into it."""
+    camera_setting = {'key': 'Camera', 'label': 'Camera', 'description': '', 'type': setting_type, 'secret': False,
+                      'domain': 'camera', 'required': True}
+    return {'id': 'front_door', 'kind': kind, 'position': {'x': 0, 'y': 0},
+            'config': {'key': 'front_door', 'name': 'Front door', 'source': 'public class FrontDoor : PeopleDetector { }',
+                       'signature': {'title': 'Front door', 'description': '', 'domain': None,
+                                     'settings': [camera_setting] if settings is None else settings},
+                       'arguments': {'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': camera}}
+                       if arguments is None else arguments}}
+
+
+def graph(*nodes):
+    return {'nodes': list(nodes), 'edges': []}
+
+
+def people_file(settings=(), **node):
+    return {'name': 'Named in the file', 'settings': list(settings), 'logic': {'kind': 'graph', 'graph': graph(device_node(**node))}}
+
+
+FACES_GRAPH = graph({'id': 'faces', 'kind': DETECT, 'config': {}})
+
+
+class Repository:
+    """GitHub, faked: the API names REPO_SHA for any ref, and the raw host serves `files` by path at that sha, 404 for
+    any other. A file over CAP is refused as aiohttp_fetch refuses it; an exception given as a file is raised."""
+
+    def __init__(self, manifest=None, files=None, api=None):
+        self.files = {'hass_sharp.toml': spec_manifest() + FACES_ENTRY if manifest is None else manifest,
+                      'nodes/Vision.cs': VISION, 'nodes/PeopleDetector.cs': PEOPLE,
+                      'nodes/front_door_people.json': json.dumps(people_file()),
+                      'nodes/faces.json': json.dumps({'name': 'Faces', 'logic': {'kind': 'graph', 'graph': FACES_GRAPH}}),
+                      **(files or {})}
+        self.api = api if api is not None else json.dumps({'sha': REPO_SHA, 'commit': {}})
+        self.asked = []
+        self.github = x.GitHub(self.fetch)
+
+    async def fetch(self, url, accept):
+        self.asked.append(url)
+        if url.startswith(API):
+            answer = self.api
+        elif url.startswith(RAW):
+            answer = self.files.get(unquote(url[len(RAW):]), x.HttpStatus(404))
+        else:
+            answer = x.HttpStatus(404)
+        if isinstance(answer, BaseException):
+            raise answer
+        data = answer.encode() if isinstance(answer, str) else answer
+        if len(data) > x.CAP:
+            raise x.TooLarge(unquote(url.rsplit('/', 1)[-1]))
+        return data
+
+
+def ok(result):
+    return {'version': 1, 'ok': True, 'result': result}
+
+
+def refused(code, detail):
+    return {'version': 1, 'ok': False, 'error': {'code': code, 'detail': detail}}
+
+
+class Backend:
+    """HassSharp's stores, faked, recording every call: `libraries` and `definitions` are summaries, `stored` the
+    definitions a read answers, `imported` the import's answer and `saved` each save's in turn (None: saved)."""
+
+    def __init__(self, libraries=(), definitions=(), unreadable=(), stored=None, imported=None, saved=()):
+        self.listed_libraries, self.listed_definitions = list(libraries), list(definitions)
+        self.unreadable, self.stored = list(unreadable), stored or {}
+        self.imported, self.saved = imported, list(saved)
+        self.calls = []
+
+    async def libraries(self):
+        self.calls.append(('libraries',))
+        return copy.deepcopy(self.listed_libraries)
+
+    async def definitions(self):
+        self.calls.append(('definitions',))
+        return copy.deepcopy(self.listed_definitions), list(self.unreadable)
+
+    async def read_definition(self, id):
+        self.calls.append(('read', id))
+        if id not in self.stored:
+            raise x.ExternalError('not_found', 'Entity definition not found')
+        return copy.deepcopy(self.stored[id])
+
+    async def import_libraries(self, libraries):
+        self.calls.append(('import', copy.deepcopy(libraries)))
+        return self.imported or ok({'saved': True, 'documents': [{**l, 'revision': l['expectedRevision'] + 1} for l in libraries],
+                                    'generation': 'g2', 'catalog': {}, 'automations': [], 'invalid': [], 'definitions': [],
+                                    'invalidDefinitions': []})
+
+    async def save_definition(self, request):
+        self.calls.append(('save', copy.deepcopy(request)))
+        answer = self.saved.pop(0) if self.saved else None
+        return answer or ok({'id': request['id'], 'saved': True,
+                             'document': {'id': request['id'], 'enabled': request.get('enabled', True)}, 'active': False})
+
+    def writes(self):
+        return [call for call in self.calls if call[0] in ('import', 'save')]
+
+    def saves(self):
+        return [call[1] for call in self.calls if call[0] == 'save']
+
+
+def pick(path, mode='new', kind=None, **more):
+    return {'kind': kind or ('library' if path.endswith('.cs') else 'entity'), 'path': path, 'mode': mode, **more}
+
+
+def outcome(kind, name, path, outcome, id=None, enabled=None, message=None):
+    return {'kind': kind, 'name': name, 'path': path, 'outcome': outcome, 'id': id, 'enabled': enabled, 'message': message}
+
+
+class Inspecting(unittest.TestCase):
+    def test_inspect_lists_items_and_existing(self):
+        manifest = spec_manifest() + FACES_ENTRY + (
+            '\n[[entity]]\nname = "Missing"\npath = "x.json"\n[[entity]]\nname = "Not one"\npath = "bad.json"\n'
+            '[[library]]\nname = "Big.cs"\npath = "x.cs"\n[[library]]\nname = "Latin1.cs"\npath = "latin1.cs"\n')
+        repo = Repository(manifest, {'x.cs': 'a' * (x.CAP + 1), 'bad.json': '{"logic": {"kind": "class"}}', 'latin1.cs': b'// caf\xe9'})
+        backend = Backend(libraries=[{'id': 'a', 'name': 'Vision.cs', 'revision': 2}, {'id': 'b', 'name': 'Vision.cs', 'revision': 5},
+                                     {'id': 'other', 'name': 'Other.cs', 'revision': 1}],
+                          definitions=[{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3},
+                                       {'id': 'lower', 'name': 'front door people', 'revision': 1}],
+                          unreadable=['broken'])
+        answer = run(x.inspect(repo.github, backend, 'https://github.com/o/r/tree/main'))
+
+        def item(kind, name, path, description='', existing=(), problem=None):
+            return {'kind': kind, 'name': name, 'description': description, 'path': path, 'existing': list(existing), 'problem': problem}
+        self.assertEqual(answer, {'owner': 'o', 'repo': 'r', 'ref': 'main', 'sha': REPO_SHA, 'items': [
+            item('library', 'Vision.cs', 'nodes/Vision.cs',
+                 'Face and person detection on a native library (YuNet and YOLOX-nano on tract), and the Detect faces node',
+                 [{'id': 'a', 'revision': 2, 'name': 'Vision.cs'}, {'id': 'b', 'revision': 5, 'name': 'Vision.cs'}]),
+            item('library', 'PeopleDetector.cs', 'nodes/PeopleDetector.cs',
+                 'People detector: a device that watches a camera and reports faces and people seen'),
+            item('library', 'Big.cs', 'x.cs', problem='x.cs is larger than 2 MiB'),
+            item('library', 'Latin1.cs', 'latin1.cs', problem='latin1.cs is not UTF-8 text'),
+            item('entity', 'Front door people', 'nodes/front_door_people.json', 'A People detector on camera.front_door',
+                 [{'id': 'front_door_people', 'revision': 3, 'name': 'Front door people'}]),
+            item('entity', 'Faces at the door', 'nodes/faces.json', 'Detect faces on the door camera'),
+            item('entity', 'Missing', 'x.json', problem='x.json is not in the repository at 0123abc'),
+            item('entity', 'Not one', 'bad.json', problem='bad.json is not an entity definition: it needs logic of kind graph'),
+        ]})
+        # One API call for the ref, then the manifest and every listed file at the sha it answered.
+        self.assertEqual(repo.asked[0], API + 'main')
+        self.assertEqual(repo.asked[1:], [RAW + p for p in ('hass_sharp.toml', 'nodes/Vision.cs', 'nodes/PeopleDetector.cs', 'x.cs',
+                                                           'latin1.cs', 'nodes/front_door_people.json', 'nodes/faces.json',
+                                                           'x.json', 'bad.json')])
+        self.assertEqual(backend.writes(), [])
+
+    def test_inspect_errors(self):
+        cases = (
+            (Repository(api=x.HttpStatus(404)), 'not_found', 'GitHub has no public repository o/r'),
+            (Repository(api=x.HttpStatus(403)), 'fetch', LIMIT),
+            (Repository(files={'hass_sharp.toml': x.HttpStatus(404)}), 'not_found', 'o/r has no hass_sharp.toml at its root at 0123abc'),
+            (Repository(files={'hass_sharp.toml': 'x' * (x.CAP + 1)}), 'fetch', 'hass_sharp.toml is larger than 2 MiB'),
+            (Repository(files={'nodes/Vision.cs': x.ExternalError('fetch', 'Could not reach GitHub: it did not answer in time')}),
+             'fetch', 'Could not reach GitHub: it did not answer in time'),
+        )
+        for repo, code, message in cases:
+            backend = Backend()
+            self.assertEqual(error(self, code, lambda: run(x.inspect(repo.github, backend, 'https://github.com/o/r'))), message)
+            self.assertEqual(backend.writes(), [])
+        backend = Backend()
+        repo = Repository(manifest='[[library]\n')
+        self.assertTrue(error(self, 'manifest', lambda: run(x.inspect(repo.github, backend, 'https://github.com/o/r'))).startswith(
+            'hass_sharp.toml is not valid TOML: '))
+        for url in ('https://gitlab.com/o/r', None, 3):
+            repo = Repository()
+            self.assertEqual(error(self, 'invalid_request', lambda: run(x.inspect(repo.github, backend, url))), INVALID_URL)
+            self.assertEqual(repo.asked, [])
+        self.assertEqual(backend.calls, [])
+
+
+class Importing(unittest.TestCase):
+    def importing(self, picks, repo=None, backend=None):
+        repo, backend = repo or Repository(), backend or Backend()
+        answer = run(x.import_items(repo.github, backend, {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': picks}))
+        return answer, repo, backend
+
+    def test_import_refetches_the_sha_only(self):
+        _, repo, _ = self.importing([pick('nodes/Vision.cs'), pick('nodes/PeopleDetector.cs'), pick('nodes/front_door_people.json')])
+        self.assertEqual(repo.asked, [RAW + p for p in ('hass_sharp.toml', 'nodes/Vision.cs', 'nodes/PeopleDetector.cs',
+                                                       'nodes/front_door_people.json')])
+        self.assertFalse(any(url.startswith('https://api.github.com') for url in repo.asked))
+
+    def test_import_libraries_then_entities(self):
+        answer, _, backend = self.importing([pick('nodes/Vision.cs'), pick('nodes/PeopleDetector.cs'), pick('nodes/front_door_people.json')])
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'import', 'save'])
+        self.assertEqual(backend.calls[2][1], [
+            {'id': 'vision', 'name': 'Vision.cs', 'source': VISION, 'expectedRevision': 0},
+            {'id': 'people_detector', 'name': 'PeopleDetector.cs', 'source': PEOPLE, 'expectedRevision': 0}])
+        # The manifest's name, not the file's; the file's graph as it is, with no library kind to rewrite.
+        self.assertEqual(backend.saves(), [{'operation': 'save', 'id': 'front_door_people', 'expectedRevision': 0, 'enabled': False,
+                                            'deriveSignatures': True,
+                                            'definition': {'name': 'Front door people', 'settings': [],
+                                                           'logic': people_file()['logic']}}])
+        self.assertEqual(answer['items'], [
+            outcome('library', 'Vision.cs', 'nodes/Vision.cs', 'imported', 'vision'),
+            outcome('library', 'PeopleDetector.cs', 'nodes/PeopleDetector.cs', 'imported', 'people_detector'),
+            outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'imported', 'front_door_people', False)])
+        self.assertEqual((answer['owner'], answer['repo'], answer['sha']), ('o', 'r', REPO_SHA))
+        self.assertEqual(answer['libraries']['documents'][0]['id'], 'vision')
+
+    def test_kinds_follow_the_library_actually_used(self):
+        stored = [{'id': 'library-1234', 'name': 'Vision.cs', 'revision': 4}]
+        used = 'library:library-1234:global%3A%3ANodeLib.FaceDetection.DetectFaces'
+        answer, _, backend = self.importing([pick('nodes/Vision.cs', 'overwrite', target='library-1234', expectedRevision=4),
+                                             pick('nodes/faces.json')], backend=Backend(libraries=stored))
+        self.assertEqual(backend.calls[2], ('import', [{'id': 'library-1234', 'name': 'Vision.cs', 'source': VISION, 'expectedRevision': 4}]))
+        self.assertEqual(backend.saves()[0]['definition']['logic']['graph']['nodes'][0]['kind'], used)
+        self.assertEqual([i['outcome'] for i in answer['items']], ['overwritten', 'imported'])
+        self.assertEqual(answer['items'][0]['id'], 'library-1234')
+
+        # Skipped, it is still the one stored file of that name that the definition uses.
+        answer, _, backend = self.importing([pick('nodes/faces.json')], backend=Backend(libraries=stored))
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'save'])
+        self.assertEqual(backend.saves()[0]['definition']['logic']['graph']['nodes'][0]['kind'], used)
+        self.assertIsNone(answer['libraries'])
+
+        # Two files of that name: which one is meant is not known, so the kind is left as the file has it.
+        _, _, backend = self.importing([pick('nodes/faces.json')], backend=Backend(
+            libraries=[{'id': 'a', 'name': 'Vision.cs', 'revision': 1}, {'id': 'b', 'name': 'Vision.cs', 'revision': 1}]))
+        self.assertEqual(backend.saves()[0]['definition']['logic']['graph']['nodes'][0]['kind'], DETECT)
+
+    def test_manifest_id_taken_gives_a_new_id(self):
+        backend = Backend(libraries=[{'id': 'vision', 'name': 'Other.cs', 'revision': 1}])
+        answer, _, backend = self.importing([pick('nodes/Vision.cs'), pick('nodes/PeopleDetector.cs'), pick('nodes/faces.json')],
+                                            backend=backend)
+        vision, people = backend.calls[2][1]
+        self.assertRegex(vision['id'], r'^library-[0-9a-f-]{36}$')
+        self.assertEqual(people['id'], 'people_detector')
+        self.assertEqual(answer['items'][0]['id'], vision['id'])
+        self.assertEqual(backend.saves()[0]['definition']['logic']['graph']['nodes'][0]['kind'],
+                         f'library:{vision["id"]}:global%3A%3ANodeLib.FaceDetection.DetectFaces')
+
+    def test_library_overwrite_only(self):
+        libraries = [{'id': 'a', 'name': 'Vision.cs', 'revision': 1}, {'id': 'other', 'name': 'Other.cs', 'revision': 1}]
+        definitions = [{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3},
+                       {'id': 'porch', 'name': 'Porch', 'revision': 1}]
+        named = (
+            pick('nodes/Vision.cs'),
+            pick('nodes/Vision.cs', 'overwrite', target='other', expectedRevision=1),
+            pick('nodes/Vision.cs', 'overwrite', target='a'),
+            pick('nodes/Vision.cs', 'overwrite', target='a', expectedRevision='1'),
+            pick('nodes/PeopleDetector.cs', 'overwrite', target='a', expectedRevision=1),
+            pick('nodes/PeopleDetector.cs', target='people_detector'),
+            pick('nodes/front_door_people.json', 'overwrite', target='porch', expectedRevision=1),
+            pick('nodes/front_door_people.json', 'overwrite', target='front_door_people'),
+            pick('nodes/Nope.cs'),
+            pick('nodes/front_door_people.json', kind='library'),
+        )
+        for bad in named:
+            with self.subTest(pick=bad):
+                repo, backend = Repository(), Backend(libraries=libraries, definitions=definitions)
+                message = error(self, 'invalid_request', lambda: self.importing([pick('nodes/faces.json'), bad], repo, backend))
+                self.assertIn(bad['path'], message)
+                self.assertEqual(backend.writes(), [])
+                self.assertEqual(repo.asked, [RAW + 'hass_sharp.toml'])
+        # Refused before anything is fetched.
+        for request in ({'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': [pick('nodes/Vision.cs'), pick('nodes/Vision.cs')]},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': []},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': [pick('nodes/Vision.cs', 'copy')]},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': [pick('nodes/Vision.cs', kind='script')]},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': [{'kind': 'library', 'mode': 'new'}]},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': ['nodes/Vision.cs']},
+                        {'owner': 'o', 'repo': 'r', 'sha': REPO_SHA.upper(), 'picks': [pick('nodes/Vision.cs')]},
+                        {'owner': 'o', 'repo': 'r', 'sha': SHA7, 'picks': [pick('nodes/Vision.cs')]},
+                        {'owner': 'o/x', 'repo': 'r', 'sha': REPO_SHA, 'picks': [pick('nodes/Vision.cs')]},
+                        {'owner': 'o', 'repo': '..', 'sha': REPO_SHA, 'picks': [pick('nodes/Vision.cs')]},
+                        {'repo': 'r', 'sha': REPO_SHA, 'picks': [pick('nodes/Vision.cs')]}):
+            with self.subTest(request=request):
+                repo, backend = Repository(), Backend(libraries=libraries)
+                error(self, 'invalid_request', lambda: run(x.import_items(repo.github, backend, request)))
+                self.assertEqual((repo.asked, backend.calls), ([], []))
+        # A picked file that cannot be imported refuses the whole import, before anything is written.
+        repo, backend = Repository(files={'nodes/faces.json': '{"logic": 3}'}), Backend()
+        self.assertEqual(error(self, 'invalid_request', lambda: self.importing([pick('nodes/Vision.cs'), pick('nodes/faces.json')], repo, backend)),
+                         'nodes/faces.json is not an entity definition: it needs logic of kind graph')
+        self.assertEqual(backend.writes(), [])
+        repo, backend = Repository(files={'nodes/faces.json': x.ExternalError('fetch', 'Could not reach GitHub: down')}), Backend()
+        self.assertEqual(error(self, 'fetch', lambda: self.importing([pick('nodes/Vision.cs'), pick('nodes/faces.json')], repo, backend)),
+                         'Could not reach GitHub: down')
+        self.assertEqual(backend.writes(), [])
+
+    def test_refused_libraries_stop_entities(self):
+        diagnostics = [{'sourceId': 'people_detector', 'startLine': 3, 'startColumn': 5, 'endLine': 3, 'endColumn': 9,
+                        'message': "The type or namespace name 'Faces' could not be found", 'severity': 3},
+                       {'sourceId': 'people_detector', 'startLine': 1, 'startColumn': 1, 'endLine': 1, 'endColumn': 2,
+                        'message': 'A warning', 'severity': 2},
+                       {'sourceId': 'shared', 'startLine': 7, 'startColumn': 2, 'endLine': 7, 'endColumn': 3,
+                        'message': 'Another error', 'severity': 3}]
+        validation = refused('validation', {'diagnostics': diagnostics, 'invalid': [],
+                                            'automations': [{'id': 'porch', 'name': 'Porch lights', 'diagnostics': []}],
+                                            'definitions': [{'id': 'door', 'name': 'Door bell', 'diagnostics': []}]})
+        backend = Backend(libraries=[{'id': 'shared', 'name': 'Shared.cs', 'revision': 2}], imported=validation)
+        answer, _, backend = self.importing([pick('nodes/PeopleDetector.cs'), pick('nodes/front_door_people.json')], backend=backend)
+        message = ("PeopleDetector.cs 3:5: The type or namespace name 'Faces' could not be found; Shared.cs 7:2: Another error; "
+                   "it would break Porch lights; it would break Door bell")
+        self.assertEqual(answer['items'], [
+            outcome('library', 'PeopleDetector.cs', 'nodes/PeopleDetector.cs', 'failed', message=message),
+            outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'failed', message=NOT_ATTEMPTED)])
+        self.assertIsNone(answer['libraries'])
+        self.assertEqual(backend.saves(), [])
+
+        many = refused('validation', {'diagnostics': [{**diagnostics[0], 'message': f'Error {n}'} for n in range(5)],
+                                      'automations': [], 'invalid': [], 'definitions': []})
+        answer, _, _ = self.importing([pick('nodes/PeopleDetector.cs')], backend=Backend(imported=many))
+        self.assertEqual(answer['items'][0]['message'],
+                         'PeopleDetector.cs 3:5: Error 0; PeopleDetector.cs 3:5: Error 1; PeopleDetector.cs 3:5: Error 2')
+        for answered, expected in ((refused('conflict', 'The document changed'), CONFLICT),
+                                   (refused('storage', 'Disk full'), 'Disk full')):
+            answer, _, backend = self.importing([pick('nodes/Vision.cs'), pick('nodes/faces.json')], backend=Backend(imported=answered))
+            self.assertEqual([(i['outcome'], i['message']) for i in answer['items']], [('failed', expected), ('failed', NOT_ATTEMPTED)])
+            self.assertEqual(backend.saves(), [])
+
+    def test_entity_failure_keeps_libraries(self):
+        validation = refused('validation', {'valid': False, 'diagnostics': [
+            {'nodeId': 'front_door', 'message': 'Camera is required', 'severity': 3},
+            {'nodeId': None, 'message': 'Only advice', 'severity': 2}]})
+        backend = Backend(saved=[validation])
+        answer, _, backend = self.importing([pick('nodes/Vision.cs'), pick('nodes/PeopleDetector.cs'),
+                                             pick('nodes/front_door_people.json'), pick('nodes/faces.json')], backend=backend)
+        self.assertEqual(answer['items'], [
+            outcome('library', 'Vision.cs', 'nodes/Vision.cs', 'imported', 'vision'),
+            outcome('library', 'PeopleDetector.cs', 'nodes/PeopleDetector.cs', 'imported', 'people_detector'),
+            outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'failed', message='Camera is required'),
+            outcome('entity', 'Faces at the door', 'nodes/faces.json', 'imported', 'faces_at_the_door', False)])
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'import', 'save', 'save'])
+        self.assertIsNotNone(answer['libraries'])
+
+        stored = {'front_door_people': {'id': 'front_door_people', 'revision': 3, 'name': 'Front door people', 'settings': [],
+                                        'logic': {'kind': 'graph', 'graph': graph()}}}
+        listed = [{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3}]
+        for answered, expected in ((refused('conflict', 'Revision mismatch'), CONFLICT), (refused('storage', 'Disk full'), 'Disk full')):
+            answer, _, _ = self.importing([pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)],
+                                          backend=Backend(definitions=listed, stored=stored, saved=[answered]))
+            self.assertEqual(answer['items'][0]['outcome'], 'failed')
+            self.assertEqual(answer['items'][0]['message'], expected)
+        # Deleted since it was listed: changed after the inspect.
+        answer, _, backend = self.importing([pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)],
+                                            backend=Backend(definitions=listed))
+        self.assertEqual((answer['items'][0]['outcome'], answer['items'][0]['message']), ('failed', CONFLICT))
+        self.assertEqual(backend.saves(), [])
+
+    def test_overwrite_keeps_setting_values(self):
+        stored = {'front_door_people': {
+            'id': 'front_door_people', 'revision': 3, 'name': 'Front door people', 'enabled': True,
+            'settings': [{'key': 'address', 'label': 'Address', 'type': 'string', 'secret': True, 'hasValue': True},
+                         {'key': 'interval', 'type': 'number', 'value': 5}],
+            'logic': {'kind': 'graph', 'graph': graph()}}}
+        settings = [{'key': 'address', 'label': 'Address', 'type': 'string', 'secret': True, 'value': ''},
+                    {'key': 'interval', 'type': 'string', 'value': '5 s'},
+                    {'key': 'extra', 'type': 'boolean', 'value': True}]
+        repo = Repository(files={'nodes/front_door_people.json': json.dumps(people_file(settings))})
+        backend = Backend(definitions=[{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3}], stored=stored)
+        answer, _, backend = self.importing(
+            [pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)], repo, backend)
+        [saved] = backend.saves()
+        self.assertEqual(saved['definition']['settings'], [
+            {'key': 'address', 'label': 'Address', 'type': 'string', 'secret': True, 'keep': True},
+            {'key': 'interval', 'type': 'string', 'value': '5 s'},
+            {'key': 'extra', 'type': 'boolean', 'value': True}])
+        self.assertEqual((saved['id'], saved['expectedRevision'], saved['deriveSignatures']), ('front_door_people', 3, True))
+        self.assertNotIn('enabled', saved)
+        self.assertEqual(saved['definition']['name'], 'Front door people')
+        self.assertEqual(answer['items'], [outcome('entity', 'Front door people', 'nodes/front_door_people.json', 'overwritten',
+                                                   'front_door_people', True)])
+
+    def test_overwrite_keeps_device_inputs(self):
+        def stored(node):
+            return {'front_door_people': {'id': 'front_door_people', 'revision': 3, 'name': 'Front door people', 'settings': [],
+                                          'logic': {'kind': 'graph', 'graph': graph(node)}}}
+        listed = [{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3}]
+        answer, _, backend = self.importing(
+            [pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)],
+            backend=Backend(definitions=listed, stored=stored(device_node('camera.porch'))))
+        [node] = backend.saves()[0]['definition']['logic']['graph']['nodes']
+        self.assertEqual(node['config']['arguments']['Camera'], {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'})
+        self.assertEqual({k: v for k, v in node.items() if k != 'config'}, {'id': 'front_door', 'kind': 'csharp_device', 'position': {'x': 0, 'y': 0}})
+
+        imported = graph(device_node())
+        before = copy.deepcopy(imported)
+        camera = lambda g: g['nodes'][0]['config']['arguments'].get('Camera', {}).get('value')
+        self.assertEqual(camera(x.keep_device_inputs(imported, graph(device_node('camera.porch')))), 'camera.porch')
+        self.assertEqual(imported, before)
+        # A setting of another type or domain, a node of another kind or id, or a setting the imported node does not have.
+        retyped = device_node('camera.porch', setting_type='string')
+        other_domain = device_node('camera.porch', settings=[{'key': 'Camera', 'type': 'entity', 'domain': 'image'}])
+        other_kind = device_node('camera.porch', kind='csharp_entity')
+        other_id = {**device_node('camera.porch'), 'id': 'back_door'}
+        for existing in (retyped, other_domain, other_kind, other_id):
+            self.assertEqual(camera(x.keep_device_inputs(imported, graph(existing))), 'camera.front_door', existing)
+        self.assertEqual(camera(x.keep_device_inputs(graph(device_node(settings=[])), graph(device_node('camera.porch')))), 'camera.front_door')
+        # An argument only the stored node has is not added.
+        both = device_node('camera.porch', settings=[device_node()['config']['signature']['settings'][0],
+                                                     {'key': 'Interval', 'type': 'integer'}],
+                           arguments={'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'},
+                                      'Interval': {'kind': 'literal', 'type': 'integer', 'value': 9}})
+        kept = x.keep_device_inputs(imported, graph(both))
+        self.assertEqual(kept['nodes'][0]['config']['arguments'],
+                         {'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.porch'}})
+        # A C# entity's typed settings are kept alike; graphs of other shapes are taken as they come.
+        entity = device_node(kind='csharp_entity')
+        self.assertEqual(camera(x.keep_device_inputs(graph(entity), graph(device_node('camera.porch', kind='csharp_entity')))), 'camera.porch')
+        self.assertEqual(x.keep_device_inputs(imported, {}), imported)
+        self.assertEqual(x.keep_device_inputs({'nodes': [3, {'id': 'front_door'}]}, graph(device_node())), {'nodes': [3, {'id': 'front_door'}]})
+
+    def test_new_ids_avoid_taken_and_each_other(self):
+        manifest = ('[[entity]]\nname = "Front door people"\npath = "a.json"\n'
+                    '[[entity]]\nname = "Front door people"\npath = "b.json"\n')
+        body = json.dumps(people_file())
+        repo = Repository(manifest, {'a.json': body, 'b.json': body})
+        backend = Backend(definitions=[{'id': 'front_door_people', 'name': 'Front door people', 'revision': 1}],
+                          unreadable=['front_door_people_2'])
+        answer, _, backend = self.importing([pick('b.json'), pick('a.json')], repo, backend)
+        self.assertEqual([s['id'] for s in backend.saves()], ['front_door_people_3', 'front_door_people_4'])
+        self.assertEqual([(i['path'], i['id']) for i in answer['items']], [('a.json', 'front_door_people_3'), ('b.json', 'front_door_people_4')])
+
+
+class Route(unittest.IsolatedAsyncioTestCase):
+    """hass_sharp/external through websocket.py and AuthoringService, with .NET, Home Assistant's session and its
+    trigger check faked, and the real fetcher."""
+
+    def setUp(self):
+        self.dotnet = []
+        self.libraries = [{'version': 1, 'id': 'shared', 'name': 'Shared.cs', 'revision': 2, 'source': '//'}]
+
+        def library_request(raw):
+            request = json.loads(raw)
+            self.dotnet.append(('library', request))
+            if request['operation'] == 'list':
+                return json.dumps(ok({'documents': self.libraries, 'generation': 'g1'}))
+            return json.dumps(ok({'saved': True, 'documents': [{**l, 'revision': 1} for l in request['libraries']]}))
+
+        def entity_request(raw):
+            request = json.loads(raw)
+            self.dotnet.append(('entity', request))
+            if request['operation'] == 'list':
+                return json.dumps({**ok([{'id': 'porch', 'name': 'Porch', 'revision': 1, 'enabled': True}]),
+                                   'unreadable': [{'id': 'broken', 'reason': 'bad', 'deletable': True}]})
+            if request['operation'] == 'preview':
+                return json.dumps(ok({'valid': True, 'diagnostics': []}))
+            return json.dumps(ok({'id': request['id'], 'saved': True, 'document': {'id': request['id'], 'enabled': False}}))
+
+        files = {'hass_sharp.toml': spec_manifest(), 'nodes/Vision.cs': VISION, 'nodes/PeopleDetector.cs': PEOPLE,
+                 'nodes/front_door_people.json': json.dumps(people_file())}
+        self.session = FakeSession({**{RAW + path: FakeResponse(body.encode()) for path, body in files.items()},
+                                    API + 'HEAD': FakeResponse(json.dumps({'sha': REPO_SHA}).encode())})
+        self.hass = NS(data={'hass_sharp_llm': {'entry': EntryState(None, ready=True)}})
+
+        async def no_trigger_problems(hass, graph):
+            return []
+        sessions = []
+        self.sessions = sessions
+        self.handlers, self.env = load_routes(
+            NS(NodeLibraryRequest=library_request, EntityRequest=entity_request), self.hass, external=x,
+            async_get_clientsession=lambda hass: sessions.append(hass) or self.session,
+            ClientTimeout=lambda **k: k, native_triggers=NS(async_validate_graph_triggers=no_trigger_problems))
+
+    async def send(self, request, admin=True):
+        results, errors = [], []
+        connection = NS(user=NS(is_admin=admin), send_result=lambda *v: results.append(v), send_error=lambda *v: errors.append(v))
+        await self.handlers['hass_sharp/external'](self.hass, connection, {'id': 1, 'request': request})
+        return results, errors
+
+    async def test_external_route_is_admin_and_envelope(self):
+        results, errors = await self.send({'operation': 'inspect', 'url': 'https://github.com/o/r'}, admin=False)
+        self.assertEqual((results, errors), ([], [(1, 'unauthorized', 'Administrator required')]))
+        self.assertEqual((self.session.calls, self.dotnet), ([], []))
+
+        results, errors = await self.send({'operation': 'inspect', 'url': 'https://github.com/o/r'})
+        self.assertEqual(errors, [])
+        [(_, answer)] = results
+        self.assertEqual((answer['version'], answer['ok']), (1, True))
+        self.assertEqual(answer['result']['sha'], REPO_SHA)
+        self.assertEqual([(i['name'], i['existing'], i['problem']) for i in answer['result']['items']],
+                         [('Vision.cs', [], None), ('PeopleDetector.cs', [], None), ('Front door people', [], None)])
+        self.assertEqual(self.sessions, [self.hass])
+        self.assertTrue(all(kwargs['timeout'] == {'total': 30} for _, kwargs in self.session.calls))
+        self.assertEqual(self.dotnet, [('library', {'operation': 'list'}), ('entity', {'operation': 'list'})])
+
+        results, errors = await self.send({'operation': 'inspect', 'url': 'https://gitlab.com/o/r'})
+        self.assertEqual(results, [(1, refused('invalid_request', INVALID_URL))])
+        results, errors = await self.send({'operation': 'export'})
+        self.assertEqual(results, [(1, refused('invalid_request', 'operation must be inspect or import'))])
+        self.env['logger'].exception.assert_not_called()
+
+    async def test_external_import_saves_through_the_stores(self):
+        results, errors = await self.send({'operation': 'import', 'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': [
+            pick('nodes/Vision.cs'), pick('nodes/front_door_people.json')]})
+        self.assertEqual(errors, [])
+        [(_, answer)] = results
+        self.assertEqual([(i['outcome'], i['id']) for i in answer['result']['items']], [('imported', 'vision'), ('imported', 'front_door_people')])
+        self.assertEqual([(side, request['operation']) for side, request in self.dotnet],
+                         [('library', 'list'), ('entity', 'list'), ('library', 'import'), ('entity', 'preview'), ('entity', 'save')])
+        self.assertEqual(self.dotnet[2][1]['libraries'], [{'id': 'vision', 'name': 'Vision.cs', 'source': VISION, 'expectedRevision': 0}])
+        # The save goes through `entities`, so Home Assistant's trigger check runs on its derived preview first.
+        self.assertTrue(self.dotnet[3][1]['deriveSignatures'])
+        save = self.dotnet[4][1]
+        self.assertEqual((save['id'], save['expectedRevision'], save['enabled'], save['deriveSignatures']), ('front_door_people', 0, False, True))
+        self.assertEqual(self.session.calls[0][0], RAW + 'hass_sharp.toml')
+        self.assertFalse(any(url.startswith('https://api.github.com') for url, _ in self.session.calls))
+
+    async def test_external_refusal_of_a_list_is_the_answer(self):
+        async def storage(hass, method, request):
+            return json.dumps(refused('storage', 'The node library folder cannot be read'))
+        self.env['dotnet_tasks'] = NS(async_run_dotnet_task=storage)
+        results, errors = await self.send({'operation': 'inspect', 'url': 'https://github.com/o/r'})
+        self.assertEqual((results, errors), ([(1, refused('storage', 'The node library folder cannot be read'))], []))
 
 
 if __name__ == '__main__':
