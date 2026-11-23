@@ -237,8 +237,8 @@ public sealed class SharpFiles
 
     static string Seconds(TimeSpan span) => span.TotalSeconds.ToString("0.#", CultureInfo.InvariantCulture);
 
-    // A size as a log line or a message says it: in bytes, KiB, MiB or GiB.
-    static string Size(long bytes)
+    // A size as a log line or a message says it: in bytes, KiB, MiB or GiB; the data stores word their limits with it too.
+    internal static string Size(long bytes)
     {
         if (bytes < 1024) return bytes == 1 ? "1 byte" : $"{bytes} bytes";
         string[] units = ["KiB", "MiB", "GiB"];
