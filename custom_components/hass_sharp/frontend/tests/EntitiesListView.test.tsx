@@ -629,6 +629,39 @@ it('opens a definition from its menu', async () => {
   await vi.waitFor(() => expect(history.get()).toBe('/entities/camera'))
 })
 
+it('shows on a definition\'s card the cards waiting on its device pages as "2 waiting", linking to its Device tab, and nothing for none', async () => {
+  const { root, fixture } = setup({ prepare: f => { three(f); f.controls.deviceCounts = { attention: { camera: { faces: 1, plates: 1 } }, stored: {} } } })
+  await loaded(root)
+  const waiting = (id: string) => card(root, id).querySelector<HTMLAnchorElement>('.hs-ent-card__waiting')
+  await vi.waitFor(() => expect(waiting('camera')?.textContent).toBe('2 waiting'))
+  expect(waiting('camera')!.getAttribute('href')).toBe('/entities/camera?drawer=device')
+  expect(waiting('plug')).toBeNull()
+  expect(waiting('porch')).toBeNull()
+  // One shared request for every card.
+  expect(fixture.calls.filter(c => c.type === 'hass_sharp/device_ui')).toEqual([{ type: 'hass_sharp/device_ui', request: { operation: 'counts' } }])
+  waiting('camera')!.click()
+  await vi.waitFor(() => expect(root.querySelector('[data-opened]')?.textContent).toBe('/entities/camera?drawer=device'))
+})
+
+it('shows no waiting count when the counts cannot be read, and asks no counts of a user who is no administrator', async () => {
+  let asked = 0
+  const failing = setup({ prepare: f => { three(f); const inner = f.callWS; f.callWS = async (message: any) => {
+    if (message.type !== 'hass_sharp/device_ui') return inner(message)
+    asked++
+    throw { code: 'unknown_error', message: 'The device page request failed.' }
+  } } })
+  await loaded(failing.root)
+  await vi.waitFor(() => expect(asked).toBe(1))
+  expect(failing.root.querySelector('.hs-ent-card__waiting')).toBeNull()
+  expect(failing.root.querySelector('[role="alert"]')).toBeNull()
+  dispose?.(); document.body.innerHTML = ''
+
+  const user = setup({ admin: false, prepare: f => { three(f); f.controls.deviceCounts = { attention: { camera: { faces: 2 } }, stored: {} } } })
+  await loaded(user.root)
+  expect(user.fixture.calls.filter(c => c.type === 'hass_sharp/device_ui')).toEqual([])
+  expect(user.root.querySelector('.hs-ent-card__waiting')).toBeNull()
+})
+
 it('reads the list again after a node library is saved', async () => {
   const { root, fixture } = setup({ prepare: three })
   await loaded(root)

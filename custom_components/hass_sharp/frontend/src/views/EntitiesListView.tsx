@@ -8,6 +8,7 @@ import { startOfToday } from '../automations/model'
 import { focusSoon } from '../visual/soon'
 import { createNotice } from '../visual/TopBar'
 import { definitionsQueryKey, EntityApiError, entityApi, entityError, type UnreadableDefinition } from '../entities/api'
+import { attentionOf, createDeviceCounts } from '../entities/deviceCounts'
 import { DefinitionCard, definitionPollInterval, definitionsSummary, noteStarting, watchedEntityIds } from '../entities/DefinitionCard'
 import { DeleteDefinitionDialog } from '../entities/DeleteDefinition'
 import { liveState } from '../entities/liveState'
@@ -57,6 +58,8 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
   onCleanup(() => window.removeEventListener('hass-sharp-libraries-changed', librariesChanged))
   // One subscription for every card's entities.
   const states = liveState(hass, () => items().flatMap(watchedEntityIds))
+  // One request for every card's cards waiting on its device pages (an administrator's: only they see the pages).
+  const counts = admin() ? createDeviceCounts(() => hass) : () => undefined
   // The clock a button's last press is told from ("Pressed 5 minutes ago").
   const [now, setNow] = createSignal(Date.now())
   const clock = setInterval(() => setNow(Date.now()), 30_000)
@@ -193,6 +196,7 @@ export const EntitiesListView = (_props: RouteSectionProps) => {
                     states={states()}
                     now={now()}
                     admin={admin()}
+                    waiting={attentionOf(counts(), id)}
                     busy={deleting()}
                     switching={toggling().has(id)}
                     onToggle={enabled => void toggle(item(), enabled)}

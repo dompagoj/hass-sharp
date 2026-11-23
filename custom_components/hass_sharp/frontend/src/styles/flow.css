@@ -75,6 +75,8 @@
 
 .hs-app .hs-card__badge { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 8px; border: 0; border-radius: 12px; background: var(--hs-port-error); color: var(--hs-surface); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
 .hs-app .hs-card__badge--warning { background: var(--hs-warning); }
+/* A C# node's cards waiting on the person (its device page): a primary button's colours, never a problem's. */
+.hs-app .hs-card__badge--attention { background: var(--hs-action); color: var(--hs-on-action); }
 .hs-app .hs-card__badge:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; }
 .hs-app .hs-card__badge-icon { width: 14px; height: 14px; }
 /* A Custom C# card's code control: quiet until hovered or focused. */

@@ -56,6 +56,9 @@
 .hs-app .hs-ent-card__status--failed, .hs-app .hs-ent-card__status--stopped { color: var(--hs-danger); }
 .hs-app .hs-ent-card__status--failed::before, .hs-app .hs-ent-card__status--stopped::before { background: var(--hs-danger); }
 .hs-app .hs-ent-card__status--off { color: var(--hs-muted); }
+/* "2 waiting": a link of its own to the Device tab, above the card's own link. */
+.hs-app .hs-ent-card__waiting { position: relative; z-index: 1; display: inline-flex; align-items: center; min-height: 24px; color: var(--hs-accent); font-size: 13px; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+.hs-app .hs-ent-card__waiting:focus-visible { outline: 2px solid var(--hs-focus); outline-offset: 2px; border-radius: 4px; }
 .hs-app .hs-ent-card .hs-home-card__health { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
 .hs-app .hs-ent-card .hs-home-card__health:has(.hs-ent-card__stale) { color: var(--hs-warning); }
 .hs-app .hs-ent-card--warning { border-color: color-mix(in srgb, var(--hs-warning) 50%, var(--hs-line)); background: color-mix(in srgb, var(--hs-warning) 5%, var(--hs-surface)); }

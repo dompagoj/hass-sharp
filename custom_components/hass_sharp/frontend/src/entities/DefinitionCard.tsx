@@ -133,8 +133,8 @@ export function definitionsSummary(items: readonly HomeDefinition[]): string {
 
 /**
  * One entity definition on the entities page. The whole card is the link to its editor (the name is the link's text;
- * its devices and its status describe it); the switch and the "⋯" menu sit above the link. Setting values are never
- * shown.
+ * its devices and its status describe it); the switch, the "⋯" menu and "2 waiting", a link to its editor with the
+ * Device tab open, sit above the link. Setting values are never shown.
  */
 export function DefinitionCard(props: {
   item: HomeDefinition
@@ -142,6 +142,8 @@ export function DefinitionCard(props: {
   /** The time a button's last press is told from: the page's clock. */
   now: number
   admin: boolean
+  /** The cards its running device pages wait on the person with: shown when above 0. */
+  waiting?: number
   /** Deleting it: its actions wait. */
   busy?: boolean
   /** Its own switch request is in flight: the switch ignores presses but keeps focus. */
@@ -169,6 +171,13 @@ export function DefinitionCard(props: {
             <p class="hs-ent-card__kind"><span class="hs-home-chip hs-ent-card__device">{props.item.devices === 1 ? 'Device' : `${props.item.devices} devices`}</span></p>
           </Show>
           <p class={`hs-ent-card__status hs-ent-card__status--${status().tone}`}>{status().label}</p>
+          <Show when={props.waiting}>
+            {waiting => (
+              <p>
+                <A class="hs-ent-card__waiting" href={`/entities/${encodeURIComponent(props.item.id)}?drawer=device`}>{`${waiting()} waiting`}</A>
+              </p>
+            )}
+          </Show>
           <Show when={status().error}>
             {error => (
               <p class="hs-home-card__health">

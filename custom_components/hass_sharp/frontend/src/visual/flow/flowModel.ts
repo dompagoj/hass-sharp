@@ -127,6 +127,11 @@ export interface NodeView {
    * is not told them (a run's).
    */
   entities?: DeviceEntity[]
+  /**
+   * What a C# device's or a C# entity's page waits on the person with, by its key, on a canvas that is told it
+   * (`ViewContext.attention`): shown as a badge beside its problems. Only when above 0.
+   */
+  attention?: number
   /** A Camera frame's or a Video frame's mode, as its wiring decides it (`cameraFrameMode`): shown as a badge on its card. */
   frameMode?: CameraFrameMode
   /** Accessible name of the whole card. */
@@ -234,12 +239,24 @@ export interface ViewContext {
   rejected?: { nodeId: string; handle: string; message: string }
   /** The entities Home Assistant has of each C# device, by its key; undefined on a canvas that does not show them. */
   deviceEntities?: Readonly<Record<string, readonly DeviceEntity[]>>
+  /** What the page of each C# device and C# entity waits on the person with, by its key; undefined on a canvas that does not show it. */
+  attention?: (nodeKey: string) => number
 }
 /** What a C# device's card lists of Home Assistant's entities for it: those of its key, none before it has started once. */
 const ownEntities = (node: GraphNode, ctx: ViewContext): DeviceEntity[] | undefined => {
   if (node.kind !== 'csharp_device' || !ctx.deviceEntities) return undefined
   const key = text(node.config.key)
   return key && Object.hasOwn(ctx.deviceEntities, key) ? [...ctx.deviceEntities[key]] : []
+}
+
+/** The kinds whose node has a page of its own (its code draws it), and so a count of what it waits on. */
+const pageKinds = ['csharp_device', 'csharp_entity']
+/** What a C# device's or a C# entity's page waits on the person with, when above 0; undefined for any other node. */
+const ownAttention = (node: GraphNode, ctx: ViewContext): number | undefined => {
+  if (!pageKinds.includes(node.kind) || !ctx.attention) return undefined
+  const key = text(node.config.key)
+  const count = key ? ctx.attention(key) : 0
+  return count > 0 ? count : undefined
 }
 
 const typeName = (types: string[], catalog: VisualCatalogSnapshot) => {
@@ -368,6 +385,7 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
   const warnings = problems.filter(p => p.severity === 2).length
   const targetEntityIds = literalTargetEntities(node)
   const entities = ownEntities(node, ctx)
+  const attention = ownAttention(node, ctx)
   const frameMode = frameSourceKinds.includes(node.kind) ? cameraFrameMode(graph, node.id, catalog) : undefined
   const problemText = errors || warnings ? `. ${[errors && `${errors} error${errors === 1 ? '' : 's'}`, warnings && `${warnings} warning${warnings === 1 ? '' : 's'}`].filter(Boolean).join(', ')}: ${problems.map(p => p.message).join('; ')}` : ''
   return {
@@ -375,9 +393,9 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     execIn, ...(headerInput ? { headerInput } : {}), next: headerNext ? execPin('next') : undefined, rows,
     footer: execPorts.includes('error') ? execPin('error') : undefined,
     problems, errors, warnings, targetEntityIds, unreachable: unreachable(node, ctx), pure, declaration, ...(entities ? { entities } : {}),
-    ...(frameMode ? { frameMode } : {}),
+    ...(attention ? { attention } : {}), ...(frameMode ? { frameMode } : {}),
     // A value node says so: it has no place in the run order, which a sighted reader sees from its missing pins.
-    label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary, frameMode?.label].filter(Boolean).join('. ')}${problemText}`,
+    label: `${[`${title}, ${identity.label}${pure ? ', value' : ''}`, summary, frameMode?.label, attention && `${attention} waiting`].filter(Boolean).join('. ')}${problemText}`,
   }
 }
 
@@ -418,11 +436,13 @@ export function viewKey(node: GraphNode, ctx: ViewContext, index = connectionInd
   const rejected = ctx.rejected?.nodeId === node.id ? ctx.rejected : undefined
   // A C# device lists the entities Home Assistant has of it, which change without the graph.
   const entities = ownEntities(node, ctx)
+  // A C# node's count of what its page waits on changes without the graph too.
+  const attention = ownAttention(node, ctx)
   // A Camera frame's mode follows the wires past its own, to the camera whose Image it reaches.
   const frameMode = frameSourceKinds.includes(node.kind) ? cameraFrameMode(graph, node.id, catalog).label : undefined
   return JSON.stringify([
     node.kind, node.label ?? null, node.config, inputs, outputs, executionPorts(node, catalog), wires, unreachable(node, ctx), resolved, diagnostics,
-    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null, entities ?? null, frameMode ?? null,
+    rejected ?? null, stateContext ?? null, named ?? null, setting ?? null, entities ?? null, frameMode ?? null, attention ?? null,
   ])
 }
 
@@ -515,6 +535,8 @@ export interface FlowContextValue {
   /** Chooses a Select property node's property as one change, removing the wires it no longer fits, with a notice. */
   chooseProperty(nodeId: string, name: string): void
   locateProblem(nodeId: string): void
+  /** Opens what a C# node's attention badge shows (an entity definition's Device tab). */
+  showAttention(nodeId: string): void
   /** Whether the node's code can be opened (a Custom C# node on a page with the code editor). */
   hasCode(nodeId: string): boolean
   editCode(nodeId: string): void

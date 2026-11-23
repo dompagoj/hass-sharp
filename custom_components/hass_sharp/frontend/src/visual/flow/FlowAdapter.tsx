@@ -79,6 +79,12 @@ export interface FlowAdapterProps {
    * empty before its first save). Without it (a run's canvas) a C# device's card lists none.
    */
   deviceEntities?: Readonly<Record<string, readonly DeviceEntity[]>>
+  /**
+   * What the page of each C# device and C# entity waits on the person with, by the node's key, shown on its card as a
+   * badge when above 0 (an entity definition's editor); `onAttention` is what the badge opens. Without it, none shows.
+   */
+  attention?: (nodeKey: string) => number
+  onAttention?(nodeId: string): void
 }
 
 /** What the page may ask of the canvas: its own Duplicate, a cleared selection, a pan and its notice. */
@@ -180,7 +186,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   let cache = new Map<string, { key: string; view: NodeView }>()
   let cacheFor: [VisualCatalogSnapshot, SummaryNames | undefined] | undefined
   const views = createMemo(() => {
-    const ctx: ViewContext = { graph: graph(), catalog: catalog(), diagnostics: props.diagnostics ?? [], names: names(), rejected: rejected(), deviceEntities: props.deviceEntities }
+    const ctx: ViewContext = { graph: graph(), catalog: catalog(), diagnostics: props.diagnostics ?? [], names: names(), rejected: rejected(), deviceEntities: props.deviceEntities, attention: props.attention }
     if (!cacheFor || cacheFor[0] !== ctx.catalog || cacheFor[1] !== ctx.names) cache = new Map()
     cacheFor = [ctx.catalog, ctx.names]
     const index = connectionIndex(ctx.graph, ctx.catalog)
@@ -1112,6 +1118,7 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
       if (result.notice) notify(result.notice)
     },
     locateProblem,
+    showAttention: nodeId => props.onAttention?.(nodeId),
     hasCode,
     editCode,
   }

@@ -112,6 +112,20 @@ it('saves server generated source, opens persisted identity and exposes run/hist
   root.querySelector<HTMLAnchorElement>('a')!.click(); await Promise.resolve()
   expect(root.textContent).toContain('Elsewhere')
 })
+it('requests no device page counts in an automation\'s editor, which has no Device tab', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const { root, fixture } = setup(true)
+    await saved(root, 4)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(fixture.calls.filter(c => c.type === 'hass_sharp/device_ui')).toEqual([])
+    expect([...root.querySelectorAll('.hs-drawer [role="tab"]')].map(t => t.textContent)).not.toContain('Device')
+    expect(root.querySelector('.hs-card__badge--attention')).toBeNull()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('keeps a conflicted local draft until the person chooses what to keep, and can still reload and discard it', async () => {
   const { root, fixture } = setup()
   await vi.waitFor(() => expect(button(root, 'Save').disabled).toBe(false))

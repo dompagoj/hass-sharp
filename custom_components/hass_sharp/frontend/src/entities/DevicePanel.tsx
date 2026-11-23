@@ -1,10 +1,12 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, Match, onCleanup, Show, Switch, untrack } from 'solid-js'
+import { useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
 import { useHass } from '../context'
 import { NumberWidget } from '../visual/widgets/basic'
 import { describedBy } from '../visual/widgets/common'
 import { EntityApiError, entityError } from './api'
+import { countsChanged, noteDeviceRead } from './deviceCounts'
 import { deviceUiApi, type DeviceActResult, type DeviceCard, type DeviceField, type DeviceList, type DevicePageData } from './deviceUi'
 import { FieldErrors, SelectField, SwitchField, TextField } from './formFields'
 
@@ -28,10 +30,13 @@ const notRunning = (error: unknown) => error instanceof EntityApiError && error.
  * list a heading with its card count, and each card its image, texts, fields and buttons. A card, and what the person
  * changed in its fields, stays as long as a card of that list and id is drawn: a refresh never re-creates it, so what
  * is typed, focus and the caret survive. A press names its card by the ids drawn. Everything the device drew is shown
- * as text; an image only as the `data:` URL built from its JPEG, fetched once per hash while a card shows it.
+ * as text; an image only as the `data:` URL built from its JPEG, fetched once per hash while a card shows it. Each read
+ * hands its pages' attention to the page's shared counts (none once not running), and each press that answers makes
+ * them stale.
  */
 export function DevicePanel(props: { definitionId: string | undefined; visible: boolean }) {
   const api = deviceUiApi(useHass())
+  const queryClient = useQueryClient()
   const [pageShown, setPageShown] = createSignal(document.visibilityState !== 'hidden')
   const visibility = () => setPageShown(document.visibilityState !== 'hidden')
   document.addEventListener('visibilitychange', visibility)
@@ -70,7 +75,7 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
         })
     }
   }
-  const stopped = (id: string) => { revision = undefined; setShown({ kind: 'off' }); keepImages(id, []) }
+  const stopped = (id: string) => { revision = undefined; setShown({ kind: 'off' }); keepImages(id, []); noteDeviceRead(queryClient, id, undefined) }
 
   const refresh = async (id: string) => {
     const at = epoch, mine = ++issued
@@ -84,6 +89,7 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
         revision = answer.revision
         setShown({ kind: 'pages', pages: answer.pages })
         keepImages(id, answer.pages)
+        noteDeviceRead(queryClient, id, answer.pages)
       }
     } catch (error) {
       if (at !== epoch || mine < applied) return
@@ -122,6 +128,7 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
     const at = epoch
     try {
       const result = await api.act(id, nodeKey, list, card, action, values)
+      countsChanged(queryClient)
       if (at !== epoch) return
       void refresh(id)
       return result

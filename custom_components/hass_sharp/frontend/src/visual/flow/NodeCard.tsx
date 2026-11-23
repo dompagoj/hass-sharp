@@ -469,6 +469,22 @@ export function NodeCard(props: NodeProps) {
                 {current().problems.length}
               </button>
             </Show>
+            <Show when={current().attention}>
+              {count => (
+                <button
+                  type="button"
+                  class="hs-card__badge hs-card__badge--attention nodrag nopan"
+                  aria-label={`${count()} waiting: show the Device tab`}
+                  title={`${count()} waiting`}
+                  on:click={(event: MouseEvent) => {
+                    event.stopPropagation()
+                    flow.showAttention(id)
+                  }}
+                >
+                  {count()}
+                </button>
+              )}
+            </Show>
             <Show when={current().next}>{pin => <Pin nodeId={id} pin={pin()} errors={pinErrors(pin(), pin().id)} describedBy={errorsId} />}</Show>
           </header>
           <Show when={rowIds().length || current().footer || current().entities}>

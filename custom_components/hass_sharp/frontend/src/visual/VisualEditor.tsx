@@ -520,6 +520,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   const adapterTabs = untrack(() => adapter.drawerTabs?.(context(choose)) ?? [])
   if (props.drawer && !['problems', 'code', 'runs', ...adapterTabs.map(tab => tab.id)].includes(props.drawer))
     batch(() => { setDrawerOpen(false); setDrawerTab('problems') })
+  // A C# node's badge of what its page waits on, which opens the adapter's tab for it.
+  const attention = untrack(() => adapter.attention?.(context(choose)))
 
   return (
     <section
@@ -622,6 +624,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             label={texts.canvasLabel}
             onBeforeDelete={beforeDelete}
             deviceEntities={adapter.savedEntities ? savedEntities()?.deviceEntities ?? {} : undefined}
+            attention={attention?.count}
+            onAttention={attention && (() => batch(() => { setDrawerTab(attention.tab); setDrawerOpen(true) }))}
           />
         </div>
         <Inspector

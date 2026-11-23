@@ -1107,7 +1107,7 @@ const devicePages = (fixture: Fixture) => {
   const requests: any[] = []
   const inner = fixture.callWS
   fixture.callWS = async (message: any) => {
-    if (message.type !== 'hass_sharp/device_ui') return inner(message)
+    if (message.type !== 'hass_sharp/device_ui' || message.request.operation === 'counts') return inner(message)
     requests.push(message.request)
     return { version: 1, ok: true, result: { running: true, revision: 'r1', pages: [
       { nodeKey: 'relay', title: 'Relay', attention: 0, lists: [{ id: 'schedules', title: 'Schedules', attention: false, empty: 'No schedules yet.', cards: [] }] },
@@ -1133,6 +1133,65 @@ it('offers a Device tab after Runs, and ?drawer=device opens the drawer on it wi
   await new Promise(resolve => setTimeout(resolve, 2100))
   expect(requests).toHaveLength(count)
   expectClean(root)
+})
+
+it('shows the cards the running definition waits on as the Device tab\'s count with the drawer closed, and a later count', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  const { root, fixture } = await openPlug(f => { f.controls.deviceCounts = { attention: { plug: { relay: 2 }, other: { lamp: 5 } }, stored: {} } })
+  const deviceTab = () => drawerTabs(root).find(tab => tab.textContent?.startsWith('Device'))!
+  await vi.waitFor(() => expect(deviceTab().textContent).toBe('Device2'))
+  expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
+  fixture.controls.deviceCounts = { attention: { plug: { relay: 1, power: 2 } }, stored: {} }
+  await vi.advanceTimersByTimeAsync(10_000)
+  await vi.waitFor(() => expect(deviceTab().textContent).toBe('Device3'))
+  // None waiting: the tab shows no count.
+  fixture.controls.deviceCounts = { attention: {}, stored: {} }
+  await vi.advanceTimersByTimeAsync(10_000)
+  await vi.waitFor(() => expect(deviceTab().textContent).toBe('Device'))
+})
+
+it('follows the Device tab\'s own read in its count while the tab is open, without waiting for the counts', async () => {
+  const { root } = setup('/entities/plug?drawer=device', fixture => {
+    fixture.entities.seed('plug', plugBody())
+    fixture.controls.deviceCounts = { attention: { plug: { relay: 1 } }, stored: {} }
+    const inner = fixture.callWS
+    fixture.callWS = async (message: any) => {
+      if (message.type !== 'hass_sharp/device_ui' || message.request.operation !== 'read') return inner(message)
+      return { version: 1, ok: true, result: { running: true, revision: 'r1', pages: [{ nodeKey: 'relay', title: 'Relay', attention: 4, lists: [] }] } }
+    }
+  })
+  const deviceTab = () => drawerTabs(root).find(tab => tab.textContent?.startsWith('Device'))!
+  await vi.waitFor(() => expect(deviceTab().textContent).toBe('Device4'))
+})
+
+it('shows on a C# device\'s and a C# entity\'s card the cards waiting on its page, and the badge opens the Device tab', async () => {
+  const { root } = await openPlug(f => {
+    f.entities.seed('plug', csharpPlug(), { liveEntities: csharpPlugLive })
+    // Keyed by node key: the C# device plug, the C# entity thermometer. The Entity node keyed plug has no page.
+    f.controls.deviceCounts = { attention: { plug: { plug: 3, thermometer: 1 } }, stored: {} }
+  })
+  const badge = (id: string) => card(root, id).querySelector<HTMLButtonElement>('.hs-card__badge--attention')
+  await vi.waitFor(() => expect(badge('code')?.textContent).toBe('3'))
+  expect(badge('code')!.getAttribute('aria-label')).toBe('3 waiting: show the Device tab')
+  expect(badge('thermo')!.textContent).toBe('1')
+  expect(badge('outlet')).toBeNull()
+  expect(badge('relay')).toBeNull()
+  expect(root.querySelector('.hs-drawer')!.classList).not.toContain('hs-drawer--open')
+  badge('code')!.click()
+  await vi.waitFor(() => expect(root.querySelector('.hs-drawer')!.classList).toContain('hs-drawer--open'))
+  const deviceTab = drawerTabs(root).find(tab => tab.textContent?.startsWith('Device'))!
+  expect(deviceTab.getAttribute('aria-selected')).toBe('true')
+  expect(deviceTab.textContent).toBe('Device4')
+})
+
+it('shows no count on the card of a node that is no C# device or C# entity, keyed like a page that waits', async () => {
+  const { root } = await openPlug(f => {
+    f.entities.seed('plug', plugBody())
+    f.controls.deviceCounts = { attention: { plug: { relay: 2 } }, stored: {} }
+  })
+  const deviceTab = () => drawerTabs(root).find(tab => tab.textContent?.startsWith('Device'))!
+  await vi.waitFor(() => expect(deviceTab().textContent).toBe('Device2'))
+  expect(root.querySelector('.hs-card__badge--attention')).toBeNull()
 })
 
 it('says in its Device tab that a definition never saved has no device pages yet', async () => {

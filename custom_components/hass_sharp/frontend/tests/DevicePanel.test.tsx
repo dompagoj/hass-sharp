@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createSignal } from 'solid-js'
 import { render } from 'solid-js/web'
+import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
 import { DevicePanel } from '../src/entities/DevicePanel'
-import type { DeviceActResult, DeviceCard, DeviceField, DevicePageData } from '../src/entities/deviceUi'
+import { deviceCountsQueryKey } from '../src/entities/deviceCounts'
+import { createDeviceCounts } from '../src/entities/deviceCounts'
+import type { DeviceActResult, DeviceCard, DeviceCounts, DeviceField, DevicePageData } from '../src/entities/deviceUi'
 
 // The Device tab's panel against an in-memory `hass_sharp/device_ui` backend: what it draws, how it polls, what it
 // keeps of what the person typed, and what a press sends.
 
 let dispose: (() => void) | undefined
+let client: QueryClient | undefined
 beforeEach(() => { vi.useFakeTimers() })
 afterEach(() => {
   dispose?.(); dispose = undefined
+  client?.clear(); client = undefined
   document.body.innerHTML = ''
   vi.useRealTimers()
   Reflect.deleteProperty(document, 'visibilityState')
@@ -44,6 +49,8 @@ function backend() {
     hold: undefined as Promise<unknown> | undefined,
     /** A `read` fails with this as Home Assistant's refusal. */
     readError: undefined as unknown,
+    /** What `counts` answers. */
+    counts: { attention: {}, stored: {} } as DeviceCounts,
   }
   const requests: any[] = []
   const ok = (result: unknown) => ({ version: 1, ok: true, result })
@@ -66,6 +73,7 @@ function backend() {
       if (!state.running) return { version: 1, ok: false, error: { code: 'not_running', detail: 'The entity definition is not running' } }
       return ok(state.act(request))
     }
+    if (request.operation === 'counts') return ok(structuredClone(state.counts))
     throw new Error(`Unexpected request ${JSON.stringify(message)}`)
   }
   /** A new revision of the pages, as the device draws it. */
@@ -74,18 +82,21 @@ function backend() {
 }
 type Backend = ReturnType<typeof backend>
 
-function mount(device: Backend = backend(), options: { definitionId?: string } = { definitionId: 'door' }) {
+/** The panel; with `counts`, beside a page's shared counts query, as the entity definition's editor has it. */
+function mount(device: Backend = backend(), options: { definitionId?: string; counts?: boolean } = { definitionId: 'door' }) {
   const host = document.createElement('div')
   host.className = 'hs-app'
   document.body.append(host)
   const [definitionId, setDefinitionId] = createSignal(options.definitionId)
   const [visible, setVisible] = createSignal(true)
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   dispose = render(() => (
-    <HassCtx.Provider value={{ callWS: device.callWS } as any}>
+    <QueryClientProvider client={client!}><HassCtx.Provider value={{ callWS: device.callWS } as any}>
       <DevicePanel definitionId={definitionId()} visible={visible()} />
-    </HassCtx.Provider>
+      {options.counts && (() => { createDeviceCounts(() => ({ callWS: device.callWS })); return null })()}
+    </HassCtx.Provider></QueryClientProvider>
   ), host)
-  return { host, device, setVisible, setDefinitionId }
+  return { host, device, setVisible, setDefinitionId, client: client! }
 }
 
 /** Lets the answers in flight arrive. */
@@ -471,4 +482,44 @@ it('takes any field key the device chose, an object member\'s name too', async (
   await settle()
   expect(acts(device)[0].values).toEqual(JSON.parse('{"constructor":"Ana","__proto__":"gate"}'))
   expect(Object.keys(acts(device)[0].values)).toEqual(['constructor', '__proto__'])
+})
+
+it('hands the attention of each read to the counts, none once the definition stops, and reads the counts again after a press', async () => {
+  const device = backend()
+  device.state.counts = { attention: { door: { faces: 2 }, garage: { car: 1 } }, stored: { door: ['faces'] } }
+  const { host, client } = mount(device, { definitionId: 'door', counts: true })
+  await settle()
+  const shared = () => client.getQueryData<DeviceCounts>([...deviceCountsQueryKey])
+  const countReads = () => device.requests.filter(r => r.operation === 'counts').length
+  expect(shared()).toEqual(device.state.counts)
+  expect(countReads()).toBe(1)
+
+  // A new revision: its pages' attention is the door's count at once, not 10 seconds later. The rest stays.
+  device.draw([doorPage([faceCard('f1'), faceCard('f2'), faceCard('f3')])])
+  await poll()
+  expect(shared()).toEqual({ attention: { door: { faces: 3 }, garage: { car: 1 } }, stored: { door: ['faces'] } })
+  expect(countReads()).toBe(1)
+  // Every card gone: no count for the door.
+  device.draw([doorPage([])])
+  await poll()
+  expect(shared()).toEqual({ attention: { garage: { car: 1 } }, stored: { door: ['faces'] } })
+
+  // A press answers: the counts are read again.
+  device.draw([doorPage([faceCard('f4')])])
+  await poll()
+  expect(shared()!.attention.door).toEqual({ faces: 1 })
+  button(card(host, 'unknown', 'f4')!, 'Dismiss').click()
+  await settle()
+  expect(countReads()).toBe(2)
+
+  // Not running: none for the door.
+  device.state.running = false
+  await poll()
+  expect(shared()!.attention).toEqual({ garage: { car: 1 } })
+})
+
+it('puts nothing into counts it has not read', async () => {
+  const { client } = mount()
+  await settle()
+  expect(client.getQueryData([...deviceCountsQueryKey])).toBeUndefined()
 })

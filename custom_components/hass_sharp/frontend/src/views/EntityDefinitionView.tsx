@@ -4,6 +4,7 @@ import { Button, Icon } from '../components/Controls'
 import { useHass } from '../context'
 import { entityAdapter, entityTexts } from '../entities/adapter'
 import { EntityApiError, entityApi, entityError } from '../entities/api'
+import { createDeviceCounts } from '../entities/deviceCounts'
 import type { EntityDocument } from '../entities/model'
 import { EditorView } from './VisualAutomationView'
 
@@ -26,8 +27,11 @@ export function EntityDefinitionView() {
   const navigate = useNavigate()
   // The graph editor's first read of the definition this page read is that read.
   let handed: EntityDocument | undefined
+  // What the device pages wait on the person with (an administrator's: only they see the pages).
+  const counts = hass.user?.is_admin ? createDeviceCounts(() => hass) : () => undefined
   const base = entityAdapter(hass, {
     handed: id => { const document = handed?.id === id ? handed : undefined; handed = undefined; return document },
+    counts,
   })
   // The address the editor's own save goes to (a first save, a copy) keeps the editor: nothing is read again. Only the
   // editor still shown says so: a save that answers after the page moved on changes nothing here.

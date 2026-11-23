@@ -1,4 +1,4 @@
-import { createComponent } from 'solid-js'
+import { createComponent, type Accessor } from 'solid-js'
 import type { HomeAssistant } from '../types'
 import type { EditorAdapter, EditorTexts } from '../visual/adapter'
 import type { VisualGraph } from '../visual/graph'
@@ -7,6 +7,8 @@ import { definitionsQueryKey, EntityApiError, entityApi, type EntitySaveResult }
 import { DefinitionOverview, liveEntitiesOf } from './DefinitionPanel'
 import { DefinitionRunNow } from './DefinitionRunNow'
 import { DevicePanel } from './DevicePanel'
+import { attentionOf, nodeAttention } from './deviceCounts'
+import type { DeviceCounts } from './deviceUi'
 import { icons } from '../visual/icons'
 import { copyNotice, entityRemoval, optionProblems, problemRow, renameDefinition, savedSecrets } from './definitionEdits'
 import { EntityHelp } from './EntityHelp'
@@ -70,11 +72,12 @@ const result = (saved: EntitySaveResult) => ({ ...saved, active: saved.document.
  * overview. Nothing else is run by hand: an entity's commands are tried from Home Assistant (ruling R1).
  *
  * The entity definition's page reads a definition before it opens this editor; `handed` gives this editor that read
- * for its first read of the definition (once), so it is not read twice.
+ * for its first read of the definition (once), so it is not read twice. `counts`, the page's shared device page counts,
+ * are what the Device tab's count and each C# node's badge show of the saved, running definition; without them, none.
  */
 export function entityAdapter(
   hass: Pick<HomeAssistant, 'callWS'>,
-  options: { handed?(id: string): EntityDocument | undefined } = {},
+  options: { handed?(id: string): EntityDocument | undefined; counts?: Accessor<DeviceCounts | undefined> } = {},
 ): EditorAdapter<EntityEditorDocument> {
   const api = entityApi(hass)
   return {
@@ -100,11 +103,17 @@ export function entityAdapter(
     queryKeys: [definitionsQueryKey],
     texts: entityTexts,
     runGroup: context => createComponent(DefinitionRunNow, { context }),
-    // The pages the running revision's C# nodes draw, read while the tab is shown.
+    // The pages the running revision's C# nodes draw, read while the tab is shown; its count, the cards they wait on.
     drawerTabs: context => [{
       id: 'device', label: 'Device', lazy: true,
+      get count() { const id = context.document?.id; return id ? attentionOf(options.counts?.(), id) : 0 },
       content: () => createComponent(DevicePanel, { get definitionId() { return context.document?.id }, get visible() { return context.drawerTab === 'device' } }),
     }],
+    // By the key of a node of the graph being edited: the cards its page in the running revision waits on.
+    attention: context => ({
+      count: nodeKey => { const id = context.document?.id; return id ? nodeAttention(options.counts?.(), id, nodeKey) : 0 },
+      tab: 'device',
+    }),
     overview: context => createComponent(DefinitionOverview, { context }),
     // An Entity node's or a C# entity's key is fixed once saved; the line under an Entity node's gives the entity id Home
     // Assistant gave it. So is a Device node's or a C# device's: the saved entities and devices are those the nodes of

@@ -42,6 +42,8 @@ export interface EditorDocument {
 export interface SavedEntities { keys: string[]; entityIds: Record<string, string>; deviceKeys: string[]; deviceEntities?: Record<string, DeviceEntity[]> }
 /** An entity a device's code added, as its card lists it: its name and the entity id Home Assistant gave it (none yet). */
 export interface DeviceEntity { name: string; entityId: string | null }
+/** A badge of a node's card, by the node's key ({@link EditorAdapter.attention}): its count, and the drawer tab it opens. */
+export interface NodeAttention { count(nodeKey: string): number; tab: string }
 
 /** What a save answers. */
 export interface EditorSaveResult<D extends EditorDocument = EditorDocument> {
@@ -237,6 +239,13 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
    * Asked once, when the editor opens; `?drawer=<id>` opens the drawer on one of them as on a tab of the editor's own.
    */
   drawerTabs?(context: EditorContext<D>): DrawerTab[]
+  /**
+   * What a C# device's or a C# entity's card shows as a badge beside its problems: `count` of its node's key (an entity
+   * definition's: the cards its running revision's page waits on the person with), shown when above 0, and the drawer
+   * tab (one of `drawerTabs`) that the badge opens. Asked once, when the editor opens; `count` is read where it is used,
+   * so it stays current. Without it (an automation), no card shows one.
+   */
+  attention?(context: EditorContext<D>): NodeAttention
   /** The help dialog, opened from the "⋯" menu (no Help item without it). */
   help?: Component<{ open: boolean; onClose(): void }>
 }

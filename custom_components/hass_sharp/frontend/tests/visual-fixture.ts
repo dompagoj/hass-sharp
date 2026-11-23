@@ -3,6 +3,7 @@ import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, Vi
 import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, RegisteredEntity } from '../src/entities/model'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
 import { bound } from '../src/entities/definitionEdits'
+import type { DeviceCounts } from '../src/entities/deviceUi'
 
 /** A value typed in on a step's input. */
 export const lit = (type: string, value: unknown) => ({ kind: 'literal' as const, type, value })
@@ -566,6 +567,8 @@ export function visualFixture(
     missingTypes: new Set<string>(),
     /** `type_definition` waits for this before it answers. */
     holdTypeDefinition: undefined as Promise<unknown> | undefined,
+    /** What the device pages' `counts` answers: by running definition, the cards waiting on each of its nodes. */
+    deviceCounts: { attention: {}, stored: {} } as DeviceCounts,
   }
   const entities = entitiesFixture(() => controls.generation)
   const makePreview = (_graph: VisualGraph): VisualPreview => ({
@@ -577,6 +580,8 @@ export function visualFixture(
   const callWS = async (message: any) => {
     calls.push(structuredClone(message))
     if (message.type === 'hass_sharp/entities') return entities.callWS(message)
+    if (message.type === 'hass_sharp/device_ui' && message.request?.operation === 'counts')
+      return { version: 1, ok: true, result: structuredClone(controls.deviceCounts) }
     if (message.type === 'hass_sharp/node_library') {
       const request = message.request
       if (request.operation === 'catalog')
