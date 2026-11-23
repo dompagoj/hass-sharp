@@ -38,6 +38,12 @@ static class SharpImageTests
         ControlCharacters();
         CopyLeavesTheOriginal();
         Fitted();
+        CropReturnsTheRectangle();
+        CropOutsideTheImageIsRefused();
+        ResizeGivesTheSize();
+        ResizeToNothingIsRefused();
+        CropAndResizeKeepDrawings();
+        CropOfAJpegLoadedImage();
         Limits();
         Truncated();
         Corrupted();
@@ -295,6 +301,99 @@ static class SharpImageTests
         Check(Throws<ArgumentException>(() => HassCameras.Size(15, 0), "a width of 15").Message.StartsWith("A picture's largest width is 16 to 8192 pixels, or 0 for any width, not 15", StringComparison.Ordinal)
             && Throws<ArgumentException>(() => HassCameras.Size(0, 8193), "a height of 8193").Message.StartsWith("A picture's largest height is 16 to 8192 pixels, or 0 for any height, not 8193", StringComparison.Ordinal), "a side outside 16 to 8192 is refused");
         Console.WriteLine("PASS sharp image: a JPEG is made to fit a width, a height or both, its aspect ratio kept and never larger, decoded by eighths and averaged down; one that fits or has drawings is itself");
+    }
+
+    // A 4 × 4 RGB picture whose pixel at x, y is (x, y, 4y + x): no two pixels alike.
+    static byte[] Numbered()
+    {
+        var rgb = new byte[4 * 4 * 3];
+        for (var y = 0; y < 4; y++)
+            for (var x = 0; x < 4; x++)
+                (rgb[(y * 4 + x) * 3], rgb[(y * 4 + x) * 3 + 1], rgb[(y * 4 + x) * 3 + 2]) = ((byte)x, (byte)y, (byte)(4 * y + x));
+        return rgb;
+    }
+
+    static void CropReturnsTheRectangle()
+    {
+        var rgb = Numbered();
+        var source = SharpImage.FromRgb(4, 4, rgb);
+        var crop = source.Crop(1, 1, 2, 2);
+        Check(crop != source && crop.Width == 2 && crop.Height == 2, $"Crop(1, 1, 2, 2) is 2 × 2, not {crop.Width} × {crop.Height}");
+        byte[] expected = [1, 1, 5, 2, 1, 6, 1, 2, 9, 2, 2, 10];
+        var pixels = crop.ToPixels();
+        Check(pixels.AsSpan().SequenceEqual(expected), "the crop has the four pixels of the rectangle: " + string.Join(", ", pixels));
+        Check(source.Width == 4 && source.Height == 4 && source.ToPixels().AsSpan().SequenceEqual(rgb), "the source keeps its 16 pixels");
+        Console.WriteLine("PASS sharp image: Crop(1, 1, 2, 2) of a 4 × 4 picture is a new 2 × 2 picture of exactly the rectangle's pixels, and the source keeps its 16");
+    }
+
+    // A refusal is a plain sentence: no parameter is named, by the exception or in its message.
+    static void Plain(ArgumentException error, string what)
+    {
+        Check(error.ParamName == null && !error.Message.Contains("Parameter", StringComparison.Ordinal)
+            && !error.Message.Contains("width", StringComparison.Ordinal) && !error.Message.Contains("height", StringComparison.Ordinal), $"{what}: the message names no parameter: {error.Message}");
+    }
+
+    static void CropOutsideTheImageIsRefused()
+    {
+        var source = SharpImage.FromRgb(4, 4, Numbered());
+        foreach (var (x, y, width, height) in new[] { (3, 0, 2, 1), (-1, 0, 1, 1), (0, 0, 0, 1), (0, 3, 1, 2), (0, 0, 1, -1), (int.MaxValue, 0, int.MaxValue, 1) })
+            Plain(Throws<ArgumentException>(() => source.Crop(x, y, width, height), $"Crop({x}, {y}, {width}, {height})"), $"Crop({x}, {y}, {width}, {height})");
+        Check(source.Crop(0, 0, 4, 4).ToPixels().AsSpan().SequenceEqual(Numbered()) && source.Crop(3, 3, 1, 1).ToPixels() is [3, 3, 15], "a rectangle up to the edges is taken");
+        Console.WriteLine("PASS sharp image: a crop reaching past an edge, starting before one, or of no width or height is refused by a plain sentence naming no parameter; one up to the edges is taken");
+    }
+
+    static void ResizeGivesTheSize()
+    {
+        var colour = SharpColor.FromRgb(30, 140, 220);
+        var resized = SharpImage.Blank(8, 4, colour).Resize(3, 5);
+        Check(resized.Width == 3 && resized.Height == 5, $"an 8 × 4 picture resized to 3 × 5 is 3 × 5, not {resized.Width} × {resized.Height}");
+        var pixels = new Pixels(3, 5, resized.ToPixels());
+        for (var y = 0; y < 5; y++)
+            for (var x = 0; x < 3; x++)
+                Check(pixels.Near(x, y, colour, 0), $"a picture of one colour keeps it when resized, at {x}, {y}: {pixels.At(x, y)}");
+
+        var ramp = SharpImage.FromRgb(2, 1, [0, 0, 0, 255, 255, 255]).Resize(4, 1).ToPixels();
+        Check(ramp.Length == 12 && ramp[0] < 64 && ramp[9] > 191, "a black-and-white picture resized wider goes from black to white: " + string.Join(", ", ramp));
+        for (var i = 0; i < 4; i++)
+            Check(ramp[i * 3] == ramp[i * 3 + 1] && ramp[i * 3] == ramp[i * 3 + 2] && (i == 0 || ramp[i * 3] >= ramp[(i - 1) * 3]), "the pixels in between are greys, each lighter than the one before: " + string.Join(", ", ramp));
+        Console.WriteLine("PASS sharp image: Resize gives exactly the size, a picture of one colour stays that colour, and black beside white resized wider goes from black to white through greys");
+    }
+
+    static void ResizeToNothingIsRefused()
+    {
+        var source = SharpImage.Blank(8, 8);
+        foreach (var (width, height) in new[] { (0, 5), (5, -1), (8193, 5), (5, 8193) })
+            Plain(Throws<ArgumentException>(() => source.Resize(width, height), $"Resize({width}, {height})"), $"Resize({width}, {height})");
+        Check(source.Resize(1, 1).Width == 1 && source.Resize(8192, 1).Width == 8192, "a side of 1 to 8192 is taken");
+        Console.WriteLine("PASS sharp image: resizing to a side of 0 or less, or over 8192, is refused by a plain sentence naming no parameter");
+    }
+
+    static void CropAndResizeKeepDrawings()
+    {
+        var source = SharpImage.Blank(40, 40).DrawRect(10, 10, 20, 20, SharpColor.Red, 2);
+        var crop = new Pixels(30, 30, source.Crop(5, 5, 30, 30).ToPixels());
+        Check(crop.Near(5, 15, SharpColor.Red, 0) && crop.Near(15, 5, SharpColor.Red, 0) && crop.Near(15, 15, SharpColor.Black, 0) && crop.Near(1, 1, SharpColor.Black, 0), "a rectangle drawn before the crop is in its pixels, where it was drawn");
+        var resized = new Pixels(20, 20, source.Resize(20, 20).ToPixels());
+        Check(resized.Near(10, 5, SharpColor.Red, 80) && resized.Near(10, 10, SharpColor.Black, 0) && resized.Near(1, 1, SharpColor.Black, 0), $"a rectangle drawn before the resize is in its pixels: {resized.At(10, 5)}");
+        Check(source.Drawings == 1 && source.Crop(0, 0, 40, 40).Drawings == 0, "the drawings are drawn into the new picture's pixels, and the source keeps its own");
+        Console.WriteLine("PASS sharp image: a rectangle drawn before Crop or Resize is in the pixels each returns, and the source keeps its drawing");
+    }
+
+    static void CropOfAJpegLoadedImage()
+    {
+        var jpeg = SharpImage.Blank(160, 120, SharpColor.Blue).DrawRect(40, 30, 80, 60, SharpColor.Yellow, 40).ToJpeg();
+        var crop = SharpImage.Load(jpeg).Crop(50, 40, 60, 40);
+        var pixels = Decode(crop.ToJpeg());
+        Check(pixels.Width == 60 && pixels.Height == 40 && pixels.Near(30, 20, SharpColor.Yellow), $"a crop of a loaded JPEG encodes to its own size, 60 × 40, not {pixels.Width} × {pixels.Height}");
+        var resized = Decode(SharpImage.Load(jpeg).Resize(32, 24).ToJpeg());
+        Check(resized.Width == 32 && resized.Height == 24 && resized.Near(16, 12, SharpColor.Yellow) && resized.Near(2, 2, SharpColor.Blue), "a resized loaded JPEG encodes to its new size");
+
+        // And of a picture made of YUV 4:2:0 planes: a grey one.
+        var yuv = SharpImage.FromYuv420(16, 16, Enumerable.Repeat((byte)128, 256).ToArray(), Enumerable.Repeat((byte)128, 64).ToArray(), Enumerable.Repeat((byte)128, 64).ToArray());
+        var yuvCrop = new Pixels(4, 6, yuv.Crop(2, 3, 4, 6).ToPixels());
+        var yuvResized = new Pixels(5, 7, yuv.Resize(5, 7).ToPixels());
+        Check(yuvCrop.Near(3, 5, Grey, 4) && yuvResized.Near(4, 6, Grey, 4), $"a YUV 4:2:0 picture crops and resizes: {yuvCrop.At(3, 5)}, {yuvResized.At(4, 6)}");
+        Console.WriteLine("PASS sharp image: a crop and a resize of a loaded JPEG encode to their own size and of a YUV 4:2:0 picture keep its pixels");
     }
 
     static void Limits()

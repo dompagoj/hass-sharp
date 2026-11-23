@@ -6,7 +6,8 @@ namespace HassSharp;
 /// A picture and the rectangles, circles and text to draw on it: a JPEG, a blank picture, or a frame of pixels in a pooled
 /// buffer (<see cref="PixelFrame"/>, whose size is the frame's) — a frame of a live feed or of a video (<see cref="SharpVideo"/>),
 /// or one made of pixels in code (<see cref="FromRgb"/>, <see cref="FromYuv420"/>, <see cref="Writer"/> and the others),
-/// kept in the layout it came in. <see cref="CopyPixels"/> reads any picture's pixels. <see cref="Load"/> keeps the bytes;
+/// kept in the layout it came in. <see cref="CopyPixels"/> reads any picture's pixels; <see cref="Crop"/> and
+/// <see cref="Resize"/> make a new picture of part of them or of them at another size. <see cref="Load"/> keeps the bytes;
 /// <see cref="DrawRect"/>, <see cref="DrawCircle"/> and <see cref="DrawText"/> add to a list and return the same image;
 /// <see cref="ToJpeg"/> decodes the picture, draws the list on it in order and encodes it once — and gives back the bytes
 /// it was loaded from when nothing was drawn, so a picture passed on unchanged needs no codec. Decoding and encoding need the system's libjpeg-turbo library
@@ -427,6 +428,105 @@ public sealed class SharpImage : IVisualSnapshot, IDisposable
         var pixels = GC.AllocateUninitializedArray<byte>(PixelsLength(format));
         CopyPixels(pixels, format);
         return pixels;
+    }
+
+    /// <summary>
+    /// A new picture of the rectangle of this one at <paramref name="x"/>, <paramref name="y"/>: its pixels in RGB, with the
+    /// drawings made so far drawn in, and no drawings of its own. This picture is left as it is. The new one is a frame of
+    /// pixels in a pooled buffer, which <see cref="Dispose"/> gives back.
+    /// </summary>
+    /// <param name="x">The rectangle's left edge, in pixels from the left of the picture.</param>
+    /// <param name="y">The rectangle's top edge, in pixels from the top of the picture.</param>
+    /// <param name="width">The rectangle's width in pixels, at least 1.</param>
+    /// <param name="height">The rectangle's height in pixels, at least 1.</param>
+    /// <exception cref="ArgumentException">The rectangle is less than a pixel wide or high, or reaches outside the picture; or the picture is over 40 megapixels.</exception>
+    /// <exception cref="InvalidOperationException">libjpeg-turbo is missing and a JPEG is to be decoded or a YUV 4:2:0 frame converted; or the frame was given back.</exception>
+    /// <exception cref="System.IO.InvalidDataException">The picture cannot be read.</exception>
+    public SharpImage Crop(int x, int y, int width, int height)
+    {
+        if (width < 1 || height < 1) throw new ArgumentException("A crop is at least 1 pixel wide and 1 pixel high");
+        ReadSize();
+        if (x < 0 || y < 0 || (long)x + width > this.width || (long)y + height > this.height)
+            throw new ArgumentException($"The rectangle to crop reaches outside the picture, which is {this.width} × {this.height} pixels");
+        return Remade(width, height, (rgb, to) =>
+        {
+            for (var row = 0; row < height; row++)
+                rgb.Slice(((y + row) * this.width + x) * 3, width * 3).CopyTo(to.Slice(row * width * 3, width * 3));
+        });
+    }
+
+    /// <summary>
+    /// A new picture of this one at exactly <paramref name="width"/> × <paramref name="height"/>, its aspect ratio not
+    /// kept: each pixel interpolated (bilinear) from the four of this picture nearest it, in RGB, with the drawings made
+    /// so far drawn in, and no drawings of its own. This picture is left as it is. The new one is a frame of pixels in a
+    /// pooled buffer, which <see cref="Dispose"/> gives back.
+    /// </summary>
+    /// <param name="width">Its width in pixels, 1–8192.</param>
+    /// <param name="height">Its height in pixels, 1–8192.</param>
+    /// <exception cref="ArgumentException">A side is outside 1–8192, or this picture or the new one is over 40 megapixels.</exception>
+    /// <exception cref="InvalidOperationException">libjpeg-turbo is missing and a JPEG is to be decoded or a YUV 4:2:0 frame converted; or the frame was given back.</exception>
+    /// <exception cref="System.IO.InvalidDataException">The picture cannot be read.</exception>
+    public SharpImage Resize(int width, int height)
+    {
+        CheckSize(width, height);
+        ReadSize();
+        return Remade(width, height, (rgb, to) => Bilinear(rgb, this.width, this.height, to, width, height));
+    }
+
+    delegate void Remap(ReadOnlySpan<byte> rgb, Span<byte> to);
+
+    // A new RGB frame of width × height whose pixels map writes from this picture's, rendered in RGB with its drawings.
+    SharpImage Remade(int width, int height, Remap map)
+    {
+        if ((long)this.width * this.height > MaxPixels) throw new ArgumentException("The picture is larger than 40 megapixels");
+        var length = this.width * this.height * 3;
+        var pixels = Rent(length);
+        PixelFrame? frame = null;
+        try
+        {
+            frame = PixelFrame.Rent(width, height, SharpPixelFormat.Rgb);
+            var rgb = pixels.AsSpan(0, length);
+            Render(rgb);
+            map(rgb, frame.Data.AsSpan(0, frame.Length));
+            return Of(frame);
+        }
+        catch
+        {
+            frame?.Release();
+            throw;
+        }
+        finally
+        {
+            Return(pixels);
+        }
+    }
+
+    // Packed RGB of width × height into to, of toWidth × toHeight: each pixel's centre placed on the source, and the four
+    // source pixels around it weighed by how near it is to each, the edges repeated beyond the picture.
+    static void Bilinear(ReadOnlySpan<byte> from, int width, int height, Span<byte> to, int toWidth, int toHeight)
+    {
+        double across = (double)width / toWidth, down = (double)height / toHeight;
+        for (var y = 0; y < toHeight; y++)
+        {
+            var sy = Math.Clamp((y + 0.5) * down - 0.5, 0, height - 1);
+            int top = (int)sy, bottom = Math.Min(top + 1, height - 1);
+            var fy = sy - top;
+            for (var x = 0; x < toWidth; x++)
+            {
+                var sx = Math.Clamp((x + 0.5) * across - 0.5, 0, width - 1);
+                int left = (int)sx, right = Math.Min(left + 1, width - 1);
+                var fx = sx - left;
+                int topLeft = (top * width + left) * 3, topRight = (top * width + right) * 3;
+                int bottomLeft = (bottom * width + left) * 3, bottomRight = (bottom * width + right) * 3;
+                var at = (y * toWidth + x) * 3;
+                for (var c = 0; c < 3; c++)
+                {
+                    var upper = from[topLeft + c] + (from[topRight + c] - from[topLeft + c]) * fx;
+                    var lower = from[bottomLeft + c] + (from[bottomRight + c] - from[bottomLeft + c]) * fx;
+                    to[at + c] = (byte)(upper + (lower - upper) * fy + 0.5);
+                }
+            }
+        }
     }
 
     // The picture in RGB with its drawings drawn on it, into rgb, of its size.
