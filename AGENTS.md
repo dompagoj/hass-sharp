@@ -31,8 +31,8 @@ through the real assembly and the five entity delegates.
 Without Home Assistant 2026.11 or later on the host, the MCP adapter tests skip (they need its
 `probatio` package) and so do the native class-trigger tests; an older Home Assistant, such as
 2025.12, still skips them.
-To run them against the local container's Home Assistant, copy `tests/python` and
-`tests/fixtures` into a temporary directory in the container, link
+To run them against the local container's Home Assistant, copy `tests/python`,
+`tests/fixtures` and `docs` into a temporary directory in the container, link
 `custom_components/hass_sharp` there to `/config/custom_components/hass_sharp`, and
 run the suite from that directory with `HASS_SHARP_TEST_ROOT` set to it; remove the
 directory afterwards.

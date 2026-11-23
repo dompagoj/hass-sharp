@@ -63,6 +63,7 @@ Non-goals
 - Entity types beyond the first ten (below), and the full feature surface of light and cover.
 - Device triggers, device actions and diagnostics.
 - A key-value store for user code beyond restored entity state.
+  Reversed by `2026-11-23-device-ui-design.md`: devices keep data through `Data` and `Shared`.
 - Reusable graph templates: a second graph-defined plug is a duplicate with other settings.
 
 Anti-goals

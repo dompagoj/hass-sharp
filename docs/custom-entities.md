@@ -882,7 +882,9 @@ they had (see [restored state](#http-downloads-and-restored-state)) unless
   for a service known only when the code runs.
 
 `Every`, `Track`, `Http` and `Files` work from `Setup()` on (start timers and tracks in
-`Start()`); in the constructor they throw.
+`Start()`); in the constructor they throw. `Ui`, `Data` and `Shared` work only from
+`Start()` on (see [A page for your device](#a-page-for-your-device) and
+[Keeping data](#keeping-data)).
 
 ### Follow another entity
 
@@ -954,7 +956,12 @@ color, size, background)` and `DrawCircle(x, y, radius, color, filled, thickness
 each of which returns the same image, and gives its bytes with `ToJpeg()`. A
 circle's `x` and `y` are its centre and its radius is 1 to 4096 pixels; it is an
 outline unless `filled` is true, and its line, like a rectangle's, is 1 to 50
-pixels thick (2 when not given) and drawn inwards from its edge. Colours are
+pixels thick (2 when not given) and drawn inwards from its edge.
+**`Crop(x, y, width, height)`** gives a new picture of a rectangle inside this one,
+and **`Resize(width, height)`** a new picture of exactly that size, 1 to 8192 pixels
+a side, its aspect ratio not kept; each draws in the drawings made so far and leaves
+the picture as it is, and the new one is a picture of pixels, as below: to cut a face
+out of a frame for a [device page](#a-page-for-your-device), for example. Colours are
 `SharpColor.Red` (the default), `Green`, `Blue`, `Yellow`, `Orange`, `White`,
 `Black` or `SharpColor.FromRgb(r, g, b)`. A picture is for one flow at a time: hand
 another thread a `Copy()`. Face and person detection for cameras is the People
@@ -1079,6 +1086,350 @@ public class BoxedDoor : SharpCamera
 }
 ```
 
+## A page for your device
+
+A C# device or a C# entity can keep a page in the HassSharp panel: lists of cards,
+each with a picture, a title, fields to fill in and buttons, whose handlers run in
+the class's code when someone presses them. It is not the device page Home Assistant
+shows: it is in the definition's editor, under **Device** in the bottom drawer,
+beside **Problems**, **Generated C#** and **Runs**. A device and the entities it adds
+share one page, their C# node's, and the tab lists each C# node's page under the
+node's name.
+
+- **What it shows** is the page of the *running* revision, not of unsaved changes.
+  The tab reads it every 2 seconds while it is open and the browser shows the panel,
+  and once more after each press. A definition that is off or failed shows "This
+  entity definition is not running. Its device pages show while it is on.", and one
+  never saved "Save this entity definition to see its device pages."
+- **What waits.** The cards of a list drawn with `attention: true` wait for the user.
+  Their number is on the **Device** tab, on a badge on the C# node's card on the
+  canvas, which opens the tab, and as "2 waiting" on the definition's card on the
+  **Entities** page, which opens the editor at the tab. The numbers are read every 10
+  seconds while the **Entities** page or an editor is shown.
+- **Who sees it.** Only administrators see device pages, their pictures and stored
+  data (see [Keeping data](#keeping-data)). None of it reaches the MCP tools.
+
+### Draw the page
+
+**`Ui`** is what the class draws its page with. It works from `Start()` on, and in
+timers, tracks, commands, actions and `Stop()`; in the constructor or `Setup()` it
+throws an `InvalidOperationException`: "SnapshotNamer is not running yet: use Ui from
+Start or later, not from Setup or the constructor.", as `Data` and `Shared` do (see
+[Keeping data](#keeping-data) for why). Once the definition has stopped, drawing
+throws an `ObjectDisposedException`.
+
+- **`Ui.List(id, title, cards, attention, empty)`** draws a list, or replaces the one
+  with that id, which keeps its place: lists show in the order they were first drawn.
+  `empty` is what the list shows when it has no cards (nothing when null). The list
+  takes what it needs of the cards as it is drawn, so changing a card afterwards
+  changes nothing.
+- **`Ui.Remove(id)`** removes a list, and returns whether there was one.
+
+Nothing of the page is stored: a save, a node library save or a restart makes a new
+instance of the class, with an empty page. Draw every list in `Start()` from what the
+class keeps (in [`Data`](#keeping-data), to outlast the instance), and again whenever
+that changes. `Ui` is safe to use from any thread.
+
+A card is `new UiCard(id)` followed by calls that each return the card:
+
+- **`Image(picture)`** shows a `SharpImage`, encoded to JPEG then with its drawings;
+  **`Image(jpeg)`** shows the bytes of a JPEG.
+- **`Text(title, detail)`** shows a title and, under it, an optional detail line.
+- **`Field(key, label, value, required, suggestions)`** adds a text field, which
+  shows `value` until the user changes it; `suggestions` are values the panel offers
+  as the user types.
+- **`Select(key, label, options, value, required)`** adds a field the user picks one
+  of its `options` in; a `value` given must be one of them.
+- **`Number(key, label, value, minimum, maximum, required)`** adds a number field;
+  `double.NaN`, the default, is no minimum or no maximum.
+- **`Toggle(key, label, value)`** adds an on-off field.
+- **`Action(label, handler, confirm, style)`** adds a button. A `confirm` text is a
+  question the panel asks before the press, with the label on its button. `style` is
+  `UiActionStyle.Default`, `Primary` (the card's main action) or `Danger` (one that
+  deletes or cannot be undone).
+
+Ids and keys:
+
+- A list's id is unique on the page, and a card's id unique in its list: each is 1 to
+  64 letters, digits, `_`, `.`, `:` and `-`, starting with a letter or a digit. Give a
+  card the id of the thing it shows, not its place in the list: what the user types
+  into a card stays through every redraw while the list has a card with that id (until
+  a press of the card is done), and a press names the card by it.
+- A field's key is 1 to 40 lower-case letters, digits and `_`, starting with a letter,
+  and unique on its card.
+- An action's id is made of its label: in lower case, each run of characters other
+  than letters and digits made one `_`, trimmed of `_`, so "Merge into…" is
+  `merge_into`. Two actions of one card need labels that make different ids.
+
+Limits: 20 lists on a page, 200 cards in a list, 8 fields and 4 actions on a card,
+500 characters for each text (a title, a detail line, a list's empty text, a label, a
+field's value, an option, a suggestion, a confirm text), and 1 MiB (1,048,576 bytes)
+for a card's JPEG. A list that breaks a limit or a rule above, such as two cards with
+one id, an option given twice or a number outside its own range, makes `Ui.List`
+throw an `ArgumentException` that says which, and the page stays as it was.
+
+### Buttons and their handlers
+
+A handler is a `Func<UiValues, Task>`, given the card's values when its button is
+pressed. `values["name"]` is a text field's value, or the option a select has picked
+(empty when there is none); `values.Number("count")` is a number field's (null when
+it has none); `values.Toggle("notify")` says whether an on-off field is on. A key
+the card has no field of that kind for throws a `KeyNotFoundException`.
+
+- **Checked first.** The panel, and then HassSharp again, refuses a press while a
+  required field is empty, a number is outside its minimum or maximum, or a select's
+  value is not one of its options, and says why on the card: "Name is required." A
+  required field is required by every button of its card, so a card with a button
+  that needs no value, such as Dismiss, leaves the field optional and checks it in
+  the handlers that need it.
+- **The card as drawn.** A press runs the handler of the card as it was last drawn.
+  When the class has removed that card, or its button, since, nothing runs, and the
+  card says "This changed meanwhile; the page was refreshed."
+- **One at a time.** The handlers of one page run one at a time, in the order the
+  presses came, beside the class's timers and tracks: guard what they share with
+  those. While a press runs, its card's buttons are disabled.
+- **30 seconds each.** A handler that takes longer is answered "The action did not
+  finish within 30 s.", and every press of the page is refused with "An earlier
+  action of this device is still running." until it ends. `Stop()` runs after every
+  handler has ended.
+- **Refusing.** A handler that throws `new UiRefusal("Name is taken.")` has its
+  message shown on the card. Any other exception shows "The action failed; see the
+  Home Assistant log.", and the log names the node and the button, never the values
+  sent.
+
+## Keeping data
+
+What a class keeps in its fields starts again at each save and restart. What it must
+keep, such as the names a user gave, goes in a store, which outlives both:
+
+- **`Data`** is the store private to its C# node, which a C# device shares with the
+  entities it adds.
+- **`Shared(name)`** is the store shared by every C# node that names it, of this
+  definition or another: what one writes, the others read.
+
+Both work from `Start()` on, and in timers, tracks, commands, actions and `Stop()`; in
+the constructor or `Setup()` they throw an `InvalidOperationException`. The reason: on
+a save or a node library save, the new revision's `Setup()` runs while the revision it
+replaces still runs and may still write, but that one has stopped before the new
+`Start()` runs, so a class always starts from what was written last. Once the
+definition has stopped, a store throws an `ObjectDisposedException`.
+
+A store (a `SharpData`) keeps values under keys:
+
+- **`Get<T>(key)`** and **`Set<T>(key, value)`** read and write a value as JSON, as
+  System.Text.Json does with its web defaults (property names in camelCase, read
+  regardless of case). `Get` gives the type's default when the key has no value, and
+  throws an `InvalidDataException` for one it cannot read as `T`.
+- **`GetBytes(key)`** and **`SetBytes(key, bytes)`** read and write bytes, such as a
+  JPEG; `GetBytes` gives null when the key has none. A key written as JSON is not read
+  as bytes, nor the other way round: that throws an `InvalidOperationException`.
+- **`Update<T>(key, change)`** reads the JSON value, gives it to `change` (the type's
+  default when there is none) and writes what `change` returns, as one step: no other
+  handle on the store reads or writes in between. It returns what it wrote. Keep
+  `change` short: it holds the store.
+- **`Remove(key)`** removes a value and returns whether there was one; **`Clear()`**
+  removes every value; **`Keys(prefix)`** gives the keys that start with `prefix`
+  (every key when it is left out), in ordinal order.
+- **`Changed(action)`** runs `action` after another C# node, of this definition or
+  another, wrote to the store, removed from it or cleared it; never after this node's
+  own changes. It runs as a track callback does, one run at a time, and changes while
+  it runs make one more run, not one each. It returns a handle that ends it when
+  disposed; it also ends when the definition stops.
+
+Use `Update` for every value that is read, changed and written back, above all in a
+shared store: two devices that each `Get` a list, add to it and `Set` it can lose one
+of the additions.
+
+A key is 1 to 200 characters: parts joined by `/`, each of lower-case letters,
+digits, `_`, `.` and `-`, starting with a letter or a digit, such as `people/ivan`. A
+shared store's name is 1 to 64 of the same characters, without `/`. The name is
+global: any C# code that names a store reads it, so a node library starts the names
+of its stores with its own name, as in `hass-sharp-vision.people`. Each write is on disk
+before it returns and is never half-written, even when Home Assistant stops during
+it: write when something changes, not on every frame. A value takes at most 8 MiB and
+a store at most 512 MiB; a write past either throws an `InvalidOperationException`
+and writes nothing.
+
+The stores are under `.storage/hass_sharp/data/`: a node's own in
+`devices/<definition id>/<node key>/`, a shared one in `shared/<name>/`.
+
+- **A node's own data** is deleted with its definition, and when the definition is
+  saved without that node, as the new revision starts. Turning the definition off,
+  a start that fails and a save that fails to compile keep it. Deleting a saved C#
+  device or C# entity whose code has stored data asks first in the editor.
+- **A shared store** stays until an administrator deletes it. **Stored data**, in the
+  **Entities** page's header, lists each shared store with its size and the
+  definitions that have it open, and deletes one after asking; it refuses while a
+  running definition has the store open, so turn that definition off first. A device
+  can also offer a button that calls `Clear()`.
+
+Stored data is part of Home Assistant's backups, with the rest of `.storage`, and so
+is in every copy of one. Face crops and face embeddings are biometric data: keep them
+in a store on the machine, not with an online service, and make sure the person can
+delete them, with a button of the device's own or in **Stored data**.
+
+### Example: name camera snapshots
+
+This C# device takes a snapshot of its **Camera** every 30 seconds and asks for a name
+for it. Its page has two lists. **Unnamed snapshots**, which wait for the user, each
+have their picture, a **Name** field that offers the names already given, **Save**
+and **Dismiss**. **Named** ones each have their picture, their name, a **Name**
+field, **Rename**, and **Delete**, which asks first. It keeps the 5 newest unnamed
+snapshots, at most 320 pixels wide, in its own `Data`, and moves each one named to the
+store `example.names`, shared by every Snapshot namer, so that a name given on one
+shows on the others.
+
+<!-- compiled: SnapshotNamer -->
+```csharp
+/// <summary>Takes a snapshot of a camera every 30 seconds and asks for a name for it; keeps the names given.</summary>
+public class SnapshotNamer : SharpDevice
+{
+    /// <summary>The camera to take snapshots of.</summary>
+    [Setting("Camera")]
+    public CameraEntity Camera { get; set; }
+
+    // Draw runs from the timer, from the handlers and from Changed, which can run at the same time.
+    readonly Lock drawing = new();
+    SharpVideo? video;
+
+    // Shared by every Snapshot namer: "names" maps a snapshot's id to its name, and "images/<id>" holds its JPEG.
+    SharpData Names => Shared("example.names");
+
+    /// <summary>Draws the page, redraws it when another device changes the names, and takes a snapshot every 30 seconds.</summary>
+    protected override Task Start()
+    {
+        video = SharpVideo.Open(Camera, new VideoOptions { MaxWidth = 320 });
+        Names.Changed(() =>
+        {
+            Draw();
+            return Task.CompletedTask;
+        });
+        Draw();
+        Every(TimeSpan.FromSeconds(30), Snap);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Closes the camera's feed.</summary>
+    protected override async Task Stop()
+    {
+        if (video != null) await video.DisposeAsync();
+    }
+
+    // Keeps the camera's next frame as a JPEG, and of the unnamed ones only the newest 5.
+    async Task Snap()
+    {
+        using var frame = await video!.NextFrameAsync(Stopping);
+        if (frame == null) return;
+        // A version 7 GUID starts with the time it was made, so the keys sort oldest first.
+        Data.SetBytes($"snapshots/{Guid.CreateVersion7():N}", frame.ToJpeg());
+        foreach (var old in Data.Keys("snapshots/").SkipLast(5)) Data.Remove(old);
+        Draw();
+    }
+
+    // Draws both lists from the stores, as nothing of the page is kept.
+    void Draw()
+    {
+        lock (drawing)
+        {
+            var names = Names.Get<Dictionary<string, string>>("names") ?? new();
+            var known = names.Values.Distinct().Order().ToArray();
+            var unnamed = Data.Keys("snapshots/").Select(key => key["snapshots/".Length..]);
+            Ui.List("unnamed", "Unnamed snapshots", unnamed.Select(id => Card(id, Data.GetBytes($"snapshots/{id}"))
+                    .Field("name", "Name", suggestions: known)
+                    .Action("Save", values => Save(id, values["name"]), style: UiActionStyle.Primary)
+                    .Action("Dismiss", _ => Dismiss(id))),
+                attention: true, empty: "Every snapshot has a name.");
+            Ui.List("named", "Named", names.OrderBy(pair => pair.Value).Take(200).Select(pair => Card(pair.Key, Names.GetBytes($"images/{pair.Key}"))
+                    .Text(pair.Value)
+                    .Field("name", "Name", pair.Value)
+                    .Action("Rename", values => Rename(pair.Key, values["name"]))
+                    .Action("Delete", _ => Delete(pair.Key), confirm: $"Delete the snapshot named {pair.Value}?", style: UiActionStyle.Danger)),
+                empty: "No snapshot has a name yet.");
+        }
+    }
+
+    // A card with its picture, or without one when the picture has gone meanwhile.
+    static UiCard Card(string id, byte[]? jpeg) => jpeg == null ? new UiCard(id) : new UiCard(id).Image(jpeg);
+
+    // Gives the snapshot its name: its picture goes to the shared store first, then its name.
+    Task Save(string id, string name)
+    {
+        var given = Given(name);
+        // A snapshot already named or dismissed has nothing left to save.
+        if (Data.GetBytes($"snapshots/{id}") is { } jpeg)
+        {
+            Names.SetBytes($"images/{id}", jpeg);
+            ChangeNames(names => names[id] = given);
+            Data.Remove($"snapshots/{id}");
+        }
+        Draw();
+        return Task.CompletedTask;
+    }
+
+    Task Dismiss(string id)
+    {
+        Data.Remove($"snapshots/{id}");
+        Draw();
+        return Task.CompletedTask;
+    }
+
+    Task Rename(string id, string name)
+    {
+        var given = Given(name);
+        // A snapshot another device deleted meanwhile stays deleted.
+        ChangeNames(names =>
+        {
+            if (names.ContainsKey(id)) names[id] = given;
+        });
+        Draw();
+        return Task.CompletedTask;
+    }
+
+    // Removes the name first, then the picture.
+    Task Delete(string id)
+    {
+        ChangeNames(names => names.Remove(id));
+        Names.Remove($"images/{id}");
+        Draw();
+        return Task.CompletedTask;
+    }
+
+    // Reads, changes and writes the names in one step, so that a change another device makes meanwhile is not lost.
+    void ChangeNames(Action<Dictionary<string, string>> change) =>
+        Names.Update<Dictionary<string, string>>("names", names =>
+        {
+            names ??= new();
+            change(names);
+            return names;
+        });
+
+    // The name typed, trimmed; the card shows the refusal when there is none.
+    static string Given(string name) =>
+        name.Trim() is { Length: > 0 } given ? given : throw new UiRefusal("Type a name first.");
+}
+```
+
+To try it, add a **C# device** node to an entity definition, open **Edit code**,
+replace the code with this and **Apply** it. Pick a camera in the node's **Camera**,
+save the definition and open the **Device** tab: the first snapshot shows as soon as
+the camera gives a frame, and another every 30 seconds. A second definition with the
+same code, on any camera, lists the same names under **Named**.
+
+- The page is drawn from the stores alone, in `Start()` and after each change, so it
+  is the same after a save or a restart.
+- The names are one value, `names`, a map from a snapshot's id to its name, and every
+  change to it goes through `Update`, so that a name one device gives while another
+  renames is not lost. A named snapshot's picture is written before its name and
+  removed after it, so no device lists a name whose picture is not there yet.
+- `Changed` redraws the page when another Snapshot namer changes the shared store. A
+  device's own changes do not run it, so its handlers redraw the page themselves.
+- A handler does nothing to a snapshot that is already named, dismissed or deleted,
+  as after a press on another device, and `Card` leaves out a picture that has gone.
+  `drawing` keeps the redraws from the timer, the handlers and `Changed` from drawing
+  over each other.
+- The **Name** field is not required, since **Dismiss** needs no name: **Save** and
+  **Rename** refuse an empty one with a `UiRefusal`, which the card shows.
+
 ## Import from GitHub
 
 A definition can also come from a public GitHub repository: **Add external**, on the
@@ -1156,7 +1507,8 @@ node's code does is not recorded: it has no steps to trace.
   MCP) creates its entities the first time it is turned on.
 - **Delete** is in a card's menu and, as **Delete entity definition**, at the bottom
   of the definition's form. Deleting removes the entities and the devices, the run
-  history and the entities' stored states, and cannot be undone.
+  history, the entities' stored states and what the definition's C# nodes keep in
+  `Data` (not a shared store; see [Keeping data](#keeping-data)), and cannot be undone.
 - An entity removed from a saved definition, or given another Type, is removed from
   Home Assistant when the saved definition next starts. So is an entity a C# device's
   code no longer adds, or a C# entity whose class now derives from another entity
@@ -1164,8 +1516,9 @@ node's code does is not recorded: it has no steps to trace.
 - Saving compiles the code of each C# node. A save is refused while that code has
   errors, or while the node's settings are out of date with its code: open **Edit
   code** and apply it. Replacing a running definition stops its classes and makes new
-  ones from the saved code: what a class keeps in its fields starts again, and its
-  entities take back their states.
+  ones from the saved code: what a class keeps in its fields starts again (what it
+  keeps in a store stays; see [Keeping data](#keeping-data)), and its entities take
+  back their states.
 - A node library save rebuilds every definition, as it rebuilds every automation,
   and is refused when it would break one that works.
 - An Entity node's state updates only for entities chosen on its steps' pins. An

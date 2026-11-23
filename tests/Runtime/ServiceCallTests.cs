@@ -44,6 +44,7 @@ static class ServiceCallTests
             Naming();
             ClassServices();
             TheGuidesClass();
+            DocumentedDevicePageCompiles();
             Targets();
             await Calling();
             await Cancelled();
@@ -246,6 +247,36 @@ static class ServiceCallTests
         var settings = node.Signature?["settings"]?.AsArray().Select(Brief).ToArray() ?? [];
         Check(settings.SequenceEqual(expected), "the guide's class has a required Source of sensor, an optional Light of light and a number Limit: " + string.Join(", ", settings));
         Console.WriteLine("PASS service calls: the class the custom entities guide shows compiles without a diagnostic, with a required sensor setting, an optional light setting and a number");
+    }
+
+    /// <summary>The code of the custom entities guide's csharp block right after the line <c>&lt;!-- compiled: <paramref name="name"/> --&gt;</c>.</summary>
+    internal static string GuideCode(string name)
+    {
+        var lines = File.ReadAllLines("docs/custom-entities.md");
+        var marker = Array.IndexOf(lines, $"<!-- compiled: {name} -->");
+        Check(marker >= 0, $"the guide marks no block <!-- compiled: {name} -->");
+        Check(marker + 1 < lines.Length && lines[marker + 1] == "```csharp", $"the marker of {name} is not right before a csharp block: " + (marker + 1 < lines.Length ? lines[marker + 1] : "none"));
+        var closing = Array.IndexOf(lines, "```", marker + 2);
+        Check(closing > marker, $"the block of {name} is not closed");
+        return string.Join("\n", lines[(marker + 2)..closing]);
+    }
+
+    // The C# device the custom entities guide shows under "Keeping data", read from its block marked
+    // <!-- compiled: SnapshotNamer -->: it compiles as a C# device with no diagnostic, warning included, and its signature
+    // is the device Snapshot namer with one required camera setting, Camera. DeviceUiHostTests runs it.
+    static void DocumentedDevicePageCompiles()
+    {
+        var provider = new DiagnosticsProvider();
+        var domains = EntitySchemaCatalog.Parse(Fixture("ha-entity-components.json")).Items.Select(p => KeyValuePair.Create(p.Key, (JsonObject)p.Value!));
+        Check(provider.UseEntitySchema([.. domains]).Accepted, "the entity classes were not installed");
+        var node = new NodeLibraryCompiler(provider).Preview([], [new CustomNodeSource("namer", GuideCode("SnapshotNamer"), "csharp_device")]).Snapshot.Custom["namer"];
+        var shown = string.Join(" | ", node.Diagnostics.Select(d => $"{d.Severity} {d.StartLine}:{d.StartColumn} {d.Message}"));
+        Check(node.Valid && node.Diagnostics.IsEmpty, "the guide's device compiles without a diagnostic: " + shown);
+        Check(node.Signature?["title"]?.GetValue<string>() == "Snapshot namer" && node.Signature?["domain"] == null, "the guide's device is the C# device Snapshot namer: " + node.Signature?.ToJsonString());
+        var settings = node.Signature?["settings"]?.AsArray().Select(setting =>
+            $"{setting?["key"]}|{setting?["label"]}|{setting?["type"]}|{setting?["domain"]?.GetValue<string>() ?? "-"}|{setting?["required"]?.GetValue<bool>() ?? false}").ToArray() ?? [];
+        Check(settings.SequenceEqual(["Camera|Camera|entity|camera|True"]), "the guide's device has one required camera setting, Camera: " + string.Join(", ", settings));
+        Console.WriteLine("PASS service calls: the device page example of the custom entities guide compiles as a C# device without a diagnostic, with a required camera setting");
     }
 
     static void Targets()

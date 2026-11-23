@@ -189,6 +189,7 @@ static class DeviceUiHostTests
             await StoppingWaitsForAPress();
             await AnAddedEntityDrawsOnItsDevicesPage();
             await AStoppedHostKeepsNoPage();
+            await TheGuidesSnapshotNamerRuns();
         }
         finally
         {
@@ -387,5 +388,56 @@ static class DeviceUiHostTests
         Check(host.UiAttention().Count == 0, "no attention once stopped");
         Check(host.UiImage("board", hash) == null, "no image once stopped");
         Console.WriteLine("PASS device ui host: a stopped host has no page, attention or image");
+    }
+
+    // The cards of a page's list, each as its id, its title and whether it has an image.
+    static (string Id, string? Title, string? Image)[] CardsOf(JsonObject page, string list) =>
+        [.. page["lists"]!.AsArray().Single(each => (string)each!["id"]! == list)!["cards"]!.AsArray()
+            .Select(card => ((string)card!["id"]!, (string?)card["title"], (string?)card["image"]))];
+
+    /// <summary>
+    /// The Snapshot namer the custom entities guide shows, as written there (<see cref="ServiceCallTests.GuideCode"/>), on
+    /// two definitions over one camera whose pictures are 640 pixels wide: each draws its first snapshot at once, at most
+    /// 320 wide and waiting; Save refuses an empty name, and a name saved moves the snapshot to Named on both, the other
+    /// redrawn by Changed; a second Save of that card answers changed; a rename on one shows on the other, and a delete on
+    /// the other empties Named on the first.
+    /// </summary>
+    static async Task TheGuidesSnapshotNamerRuns()
+    {
+        await using var rig = await Rig.Start("guide");
+        rig.Api.SetEntityDescriptions(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ha-entity-components.json")), started: true);
+        await rig.Api.RetriesDone();
+        var picture = SharpImage.Blank(640, 480, SharpColor.Blue).ToJpeg();
+        rig.Home.AnswerPictures = (_, camera, ok, fail) => { if (camera == "camera.door") ok(picture); else fail("No such camera"); };
+        var source = ServiceCallTests.GuideCode("SnapshotNamer");
+        var descriptor = new NodeLibraryCompiler(NodeLibraryFixture.EntityProvider).Preview([], [new CustomNodeSource("c", source, "csharp_device")]).Snapshot.Custom["c"];
+        Check(descriptor.Valid, "the guide's device compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
+        JsonObject Namer() => EntityNodeTests.CSharpDevice("namer", "namer", "Snapshot namer", new()
+        {
+            ["source"] = source, ["signature"] = descriptor.Signature!.DeepClone(),
+            ["arguments"] = new JsonObject { ["Camera"] = Lit("entity_id:camera", "camera.door") },
+        });
+
+        var door = await rig.Running("door", Definition("Door", Namer()));
+        JsonObject Page(DefinitionHost host) => host.UiPages().Single();
+        await EntityTestHome.Until(() => CardsOf(Page(door), "unnamed").Length == 1, "the first snapshot is drawn: " + Page(door).ToJsonString());
+        var (snapshot, _, image) = CardsOf(Page(door), "unnamed")[0];
+        Check(image != null && SharpImage.Load(door.UiImage("namer", image)!).Width == 320, "the snapshot's picture is 320 pixels wide");
+        Check(door.UiAttention()["namer"] == 1 && CardsOf(Page(door), "named").Length == 0, "the snapshot waits, and nothing is named yet: " + Page(door).ToJsonString());
+
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":"  "}"""))) == "refused: Type a name first.", "Save refuses an empty name");
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":" Ivan "}"""))) == "done", "Save of a name");
+        Check(CardsOf(Page(door), "unnamed").Length == 0 && CardsOf(Page(door), "named") is [(var named, "Ivan", not null)] && named == snapshot,
+            "the snapshot is named Ivan, with its picture: " + Page(door).ToJsonString());
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":"Marko"}"""))) == "changed", "a second Save of the card answers changed");
+
+        var hall = await rig.Running("hall", Definition("Hall", Namer()));
+        Check(CardsOf(Page(hall), "named") is [(var shared, "Ivan", not null)] && shared == snapshot, "another namer lists the name with its picture: " + Page(hall).ToJsonString());
+        Check(Answer(await door.UiAct("namer", "named", snapshot, "rename", Sent("""{"name":"Ana"}"""))) == "done", "Rename");
+        await EntityTestHome.Until(() => CardsOf(Page(hall), "named") is [(_, "Ana", _)], "the other namer shows the new name: " + Page(hall).ToJsonString());
+        Check(Answer(await hall.UiAct("namer", "named", snapshot, "delete", Sent("{}"))) == "done", "Delete");
+        await EntityTestHome.Until(() => CardsOf(Page(door), "named").Length == 0, "the first namer no longer lists it: " + Page(door).ToJsonString());
+        Check(CardsOf(Page(hall), "named").Length == 0, "nor the one that deleted it: " + Page(hall).ToJsonString());
+        Console.WriteLine("PASS device ui host: the guide's Snapshot namer draws a snapshot to name, saves, renames and deletes names, and two of them share the names");
     }
 }
