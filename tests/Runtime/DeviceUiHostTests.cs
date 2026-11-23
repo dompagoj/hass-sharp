@@ -21,7 +21,7 @@ static class DeviceUiHostTests
     // The device: Save renames an item and redraws, showing the name it got on seen; Dismiss, after a while, removes the
     // item and redraws, counting its runs on runs; Taken refuses; Break throws. Wait shows "waiting" on seen and waits on
     // the test's gate. Its Stop() notes that it ran.
-    const string BoardCode = """
+    internal const string BoardCode = """
         public class Board : SharpDevice
         {
             readonly Dictionary<string, string> items = new() { ["1"] = "Ana", ["2"] = "Marko" };
@@ -105,7 +105,7 @@ static class DeviceUiHostTests
     }
 
     /// <summary>A C# device node of the key, name and code, its signature the one the compiler derives from the code, as the editor stores it.</summary>
-    static JsonObject Device(string key, string name, string source)
+    internal static JsonObject Device(string key, string name, string source)
     {
         var descriptor = new NodeLibraryCompiler(Diagnostics).Preview([], [new CustomNodeSource("c", source, "csharp_device")]).Snapshot.Custom["c"];
         Check(descriptor.Valid, $"the code of {key} compiles: " + string.Join(" | ", descriptor.Diagnostics.Select(d => d.Message)));
@@ -114,7 +114,7 @@ static class DeviceUiHostTests
     }
 
     /// <summary>A definition of the C# device nodes.</summary>
-    static JsonObject Definition(string name, params JsonObject[] nodes) => new()
+    internal static JsonObject Definition(string name, params JsonObject[] nodes) => new()
     {
         ["name"] = name, ["settings"] = new JsonArray(),
         ["logic"] = new JsonObject { ["kind"] = "graph", ["graph"] = new JsonObject { ["version"] = 5, ["name"] = name, ["nodes"] = new JsonArray(nodes), ["edges"] = new JsonArray() } },
@@ -168,7 +168,7 @@ static class DeviceUiHostTests
     }
 
     // The cards of a page's list, by id, with their titles.
-    static string Cards(JsonObject page, string list) =>
+    internal static string Cards(JsonObject page, string list) =>
         string.Join(", ", page["lists"]!.AsArray().Single(each => (string)each!["id"]! == list)!["cards"]!.AsArray().Select(card => $"{card!["id"]}={card["title"]}"));
 
     static string Answer(UiActResult result) => result.Message == null ? result.Status : $"{result.Status}: {result.Message}";

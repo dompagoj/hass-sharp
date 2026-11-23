@@ -140,6 +140,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 
     /// <summary>The definition's id.</summary>
     public string DefinitionId => definition.Id;
+    /// <summary>What the definition is called.</summary>
+    public string DefinitionName => definition.Name;
     /// <summary>The definition's entities as Home Assistant registered them; empty until <see cref="PrepareAsync"/> ends.</summary>
     public IReadOnlyList<LiveEntity> Entities { get; private set; } = [];
     /// <summary><c>setup</c> until started, then <c>running</c>, or <c>failed</c> when a <c>Start()</c> threw; <c>stopped</c> once stopping.</summary>

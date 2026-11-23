@@ -31,6 +31,9 @@ internal sealed class EntityDirectory
     /// <summary>The started host of the definition; null when none is.</summary>
     public DefinitionHost? Host(string definitionId) { lock (gate) return hosts.GetValueOrDefault(definitionId); }
 
+    /// <summary>The started hosts, in no particular order.</summary>
+    public DefinitionHost[] Hosts() { lock (gate) return [.. hosts.Values]; }
+
     /// <summary>Enters the started host; again for one already entered (as an heir, see <see cref="Leave"/>) changes nothing.</summary>
     internal void Register(DefinitionHost host) { lock (gate) hosts[host.DefinitionId] = host; }
 
