@@ -213,6 +213,7 @@ static class DeviceUiHostTests
         {
             await UiIsRefusedBeforeStart();
             await AStartedDeviceHasItsPage();
+            await ALibraryClassNodeHasAPageAndData();
             await APressRunsTheHandlerWithItsValues();
             await AStalePressChangesNothing();
             await TwoPressesTakeTurns();
@@ -269,6 +270,25 @@ static class DeviceUiHostTests
         var next = await rig.Running("board", Definition("Board", Device("board", "Front board", BoardCode)), 1);
         Check(next != host && next.UiRevision != redrawn && next.UiRevision != before, $"the revision differs after a save: {next.UiRevision}, {redrawn}");
         Console.WriteLine("PASS device ui host: a started device has its page with its node's key and title, its attention, and a revision that changes with a redraw and a save");
+    }
+
+    // A library class node has its page and its data as a C# node of its class does: the relays library's hub, keyed hub
+    // (its node id another), draws its page under the key; its action runs; and its data counts a start for each save.
+    static async Task ALibraryClassNodeHasAPageAndData()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("page");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var definition = RelayHubFixture.Definition("Relays", [RelayHubFixture.Hub("front", "hub")]);
+        var host = await rig.Running("relays", definition);
+        var page = host.UiPages().Single();
+        Check((string)page["nodeKey"]! == "hub" && (string)page["title"]! == "Hub" && Cards(page, "relays") == "relay=Relay", "the hub's page is read under its key: " + page.ToJsonString());
+        Check(Answer(await host.UiAct("hub", "relays", "relay", "switch", Sent("{}"))) == "done", "the hub's action runs");
+        await EntityTestHome.Until(() => rig.Shown("relays:hub:relay", "is_on") == "true", "the action turned the switch on: " + rig.Shown("relays:hub:relay", "is_on"));
+        Check(rig.Stored("relays", "hub", "starts") == "j1", "the first start is counted in the hub's data: " + rig.Stored("relays", "hub", "starts"));
+        var next = await rig.Running("relays", definition, 1);
+        Check(next != host && rig.Stored("relays", "hub", "starts") == "j2", "the start after a save is counted in the same data: " + rig.Stored("relays", "hub", "starts"));
+        Check((string)next.UiPages().Single()["nodeKey"]! == "hub", "the next revision draws its page under the key");
+        Console.WriteLine("PASS device ui host: a library class node draws its page under its key, its action runs, and its data counts a start for each save");
     }
 
     static async Task APressRunsTheHandlerWithItsValues()

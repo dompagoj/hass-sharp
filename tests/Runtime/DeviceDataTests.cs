@@ -206,6 +206,7 @@ static class DeviceDataTests
             await DataGoesWithTheDefinition();
             await OffAndFailedKeepData();
             await AStoppedDefinitionsHandlesAreClosed();
+            await SwappingACSharpNodeForTheLibraryNodeKeepsEntitiesAndData();
         }
         finally
         {
@@ -348,5 +349,29 @@ static class DeviceDataTests
         Check(rig.Data.Shared().Single(store => store.Name == "test.closing").Users.Count == 0, "no definition uses the shared store once it was turned off");
         Check(rig.Data.DeleteShared("test.closing") && !Directory.Exists(rig.SharedStore("test.closing")), "the shared store is deleted once no definition uses it");
         Console.WriteLine("PASS device data: a stopped definition's handles are closed and its shared stores can be deleted");
+    }
+
+    // A C# device whose class derives the relays library's hub runs the hub's code; replaced by the library's hub node,
+    // of another node id and the same key, the definition keeps its device, its switch's unique id, its page and its data,
+    // which are keyed by the definition and the node's key.
+    static async Task SwappingACSharpNodeForTheLibraryNodeKeepsEntitiesAndData()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("swap");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        const string source = "public class MyHub : RelayHub { }";
+        var compiled = new NodeLibraryCompiler(Diagnostics).Preview([RelayHubFixture.Library], [new CustomNodeSource("c", source, "csharp_device")]).Snapshot.Custom["c"];
+        Check(compiled.Valid, "the C# device's code compiles: " + string.Join(" | ", compiled.Diagnostics.Select(d => d.Message)));
+        var mine = EntityNodeTests.CSharpDevice("mine", "hub", "Hub", new() { ["source"] = source, ["signature"] = compiled.Signature!.DeepClone(), ["arguments"] = new JsonObject { ["Address"] = Lit("string", "10.0.0.2") } });
+        var before = await rig.Running("swap", Definition("Swap", mine));
+        string Ids(DefinitionHost host) => string.Join(", ", host.Entities.Select(e => e.UniqueId));
+        string Class(DefinitionHost host) => host.Entity("swap:hub:relay")?.AddedTo?.GetType().FullName ?? "no device";
+        Check(Ids(before) == "swap:hub:relay" && Class(before) == "NodeLib.Custom_mine.MyHub", $"the C# device runs its class: {Ids(before)} {Class(before)}");
+        Check(rig.Stored("swap", "hub", "starts") == "j1", "the C# device's start is counted: " + rig.Stored("swap", "hub", "starts"));
+        var after = await rig.Running("swap", Definition("Swap", RelayHubFixture.Hub("library", "hub")), 1);
+        Check(Ids(after) == Ids(before) && Class(after) == "NodeLib.RelayHub", $"the library's hub runs, its switch's unique id the same: {Ids(after)} {Class(after)}");
+        Check(rig.Stored("swap", "hub", "starts") == "j2", "the library's hub counts on in the same data: " + rig.Stored("swap", "hub", "starts"));
+        Check(JsonNode.Parse(rig.Home.Syncs("swap").Last())!["devices"]!.AsArray().Single()!["key"]!.GetValue<string>() == "hub", "the device is reported under the same key");
+        Check((string)after.UiPages().Single()["nodeKey"]! == "hub", "its page is under the same key");
+        Console.WriteLine("PASS device data: a C# device deriving a library's hub, swapped for the hub's node of the same key, keeps its switch's unique id, its device, its page and its data");
     }
 }

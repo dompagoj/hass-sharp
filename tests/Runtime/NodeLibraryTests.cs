@@ -185,6 +185,131 @@ public static class NodeLibraryTests
         PinDepth(compiler);
         Console.WriteLine("PASS rich node libraries: a pin whose type nests more than 8 levels is refused before any conversion is classified");
         await RunReview(null);
+        await ALibrarySaveThatRemovesAUsedClassIsRefused();
+        await ALibrarySaveThatRemovesAUsedParameterIsRefused();
+        await ALibrarySaveThatRemovesAUsedSettingBehavesAsARemovedParameter();
+        await ALibrarySaveThatAddsARequiredSettingIsRefused();
+    }
+
+    // ---- A library save over a definition that uses a library class node ----
+
+    /// <summary>The definition the library save tests run: the relays library's hub keyed hub, its node id front, with these values.</summary>
+    static JsonObject Hubs(JsonObject? arguments = null) => RelayHubFixture.Definition("Relays", [RelayHubFixture.Hub("front", "hub", arguments)]);
+
+    /// <summary>
+    /// The refusal of a library save that breaks the definition <c>relays</c>, named as a library save names a definition
+    /// it would break, with a problem on the node <paramref name="node"/>; its problems' messages.
+    /// </summary>
+    static string[] Refused(JsonObject answer, string node, string what)
+    {
+        var named = answer["error"]?["detail"]?["definitions"]?.AsArray().SingleOrDefault(d => d?["id"]?.GetValue<string>() == "relays");
+        Check(answer["ok"]?.GetValue<bool>() == false && answer["error"]!["code"]!.GetValue<string>() == "validation" && named?["name"]?.GetValue<string>() == "Relays"
+            && named["diagnostics"]!.AsArray().Any(d => d!["nodeId"]?.GetValue<string>() == node && d["severity"]!.GetValue<int>() == 3),
+            $"{what}: the save is refused naming the definition: " + answer.ToJsonString());
+        return [.. named!["diagnostics"]!.AsArray().Where(d => d!["nodeId"]?.GetValue<string>() == node).Select(d => d!["message"]!.GetValue<string>())];
+    }
+
+    /// <summary>
+    /// The definition <c>relays</c> still runs the library as saved, after a refused save: its revision and host are as
+    /// they were, its switch is reported, and the hub's action still runs and flips it.
+    /// </summary>
+    static async Task StillRuns(RelayHubFixture.Rig rig, DefinitionHost host, string what)
+    {
+        var read = await rig.Read("relays");
+        Check(read["revision"]!.GetValue<long>() == 1 && read["status"]!.GetValue<string>() == "running" && read["currentRevisionActive"]!.GetValue<bool>(), $"{what}: the definition runs as it was: " + read.ToJsonString());
+        Check(rig.Scripts.Entities.Host("relays") == host && host.Status == "running" && host.Entities.Select(e => e.UniqueId).SequenceEqual(["relays:hub:relay"]),
+            $"{what}: the same host runs and reports the switch: {host.Status} " + string.Join(", ", host.Entities.Select(e => e.UniqueId)));
+        var flipped = rig.Shown("relays:hub:relay", "is_on") == "true" ? "false" : "true";
+        var answer = await host.UiAct("hub", "relays", "relay", "switch", new JsonObject());
+        Check(answer.Status == "done", $"{what}: the hub's action still runs: {answer.Status} {answer.Message}");
+        await EntityTestHome.Until(() => rig.Shown("relays:hub:relay", "is_on") == flipped, $"{what}: the action flipped the switch to {flipped}");
+    }
+
+    // A library save that takes away the class of a library class node a definition uses, or its [Node], is refused with
+    // the missing library node message, naming the definition; the definition keeps running on the library as saved.
+    static async Task ALibrarySaveThatRemovesAUsedClassIsRefused()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("class-gone");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var host = await rig.Running("relays", Hubs());
+        const string mark = "[Node(\"Relay hub\", Category = \"Relays\")]\n";
+        Check(RelayHubFixture.Code.Contains(mark, StringComparison.Ordinal), "the hub is marked [Node]");
+        foreach (var (what, code) in new[] { ("without the hub", RelayHubFixture.OtherCode), ("with the hub's [Node] removed", RelayHubFixture.Code.Replace(mark, "")) })
+        {
+            var messages = Refused(await rig.Library("relays", 1, code), "front", what);
+            Check(messages.SequenceEqual([VisualGraphValidator.Words.MissingLibraryNode]), $"{what}: the hub's node is told missing, and only that: " + string.Join(" | ", messages));
+            await StillRuns(rig, host, what);
+        }
+        Console.WriteLine("PASS rich node libraries: a library save that takes away a used class, or its [Node], is refused naming the definition, which keeps running");
+    }
+
+    // What a library save does today to a definition whose library step (here beside the relays library's hub, which makes
+    // its entities) has a value for a parameter the save removes: the step's value is for an input it no longer has, the
+    // definition would no longer be valid, and the save is refused naming it, as for any change that breaks a definition;
+    // the definition keeps running on the library as saved.
+    static async Task ALibrarySaveThatRemovesAUsedParameterIsRefused()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("parameter-gone");
+        const string steps = "public static class Steps { [Node(\"Note\")] public static void Note(string text = \"hello\", int times = 2) { } }";
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        await rig.Saved("steps", 0, steps);
+        var snapshot = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("steps", steps, 1)]).Snapshot;
+        var note = VisualGraphContract.CreateNode(snapshot.Methods.Values.Single().Kind, "note", snapshot);
+        Check(note["config"]!["arguments"]!["times"] is JsonObject, "the step has a value for times: " + note.ToJsonString());
+        var definition = RelayHubFixture.Definition("Relays", [RelayHubFixture.Hub("front", "hub"), VisualExecutionTests.N("start", "entity_setup"), note], [new JsonObject { ["id"] = "start:note", ["source"] = "start", ["target"] = "note" }]);
+        await rig.Running("relays", definition);
+        var answer = await rig.Library("steps", 1, steps.Replace(", int times = 2", ""));
+        var named = answer["error"]?["detail"]?["definitions"]?.AsArray().SingleOrDefault(d => d?["id"]?.GetValue<string>() == "relays");
+        Check(answer["ok"]?.GetValue<bool>() == false && answer["error"]!["code"]!.GetValue<string>() == "validation" && named?["name"]?.GetValue<string>() == "Relays",
+            "the save is refused naming the definition: " + answer.ToJsonString());
+        var problems = named!["diagnostics"]!.AsArray().Where(d => d!["nodeId"]?.GetValue<string>() == "note").Select(d => $"{d!["inputId"]} {d["message"]}").ToArray();
+        Check(problems.SequenceEqual(["times Unknown input times"]), "the step's value is for an input it no longer has: " + string.Join(" | ", problems));
+        var read = await rig.Read("relays");
+        Check(read["revision"]!.GetValue<long>() == 1 && read["status"]!.GetValue<string>() == "running", "the definition runs as it was: " + read.ToJsonString());
+        Console.WriteLine("PASS rich node libraries: a library save that removes a parameter a library step has a value for is refused naming the definition, which keeps running");
+    }
+
+    // A library save that removes a setting a library class node has a value for is handled as a removed parameter of a
+    // library step is (above): the node's value is for an input it no longer has, and the save is refused naming the
+    // definition, which keeps running on the library as saved.
+    static async Task ALibrarySaveThatRemovesAUsedSettingBehavesAsARemovedParameter()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("setting-gone");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var host = await rig.Running("relays", Hubs(new JsonObject { ["Address"] = VisualExecutionTests.Lit("string", "10.0.0.2"), ["PollEvery"] = VisualExecutionTests.Lit("number", 10) }));
+        const string poll = "    [Setting(\"Poll every\", Minimum = 1, Maximum = 60)] public double PollEvery { get; set; } = 5;\n";
+        Check(RelayHubFixture.Code.Contains(poll, StringComparison.Ordinal), "the hub has Poll every");
+        var answer = await rig.Library("relays", 1, RelayHubFixture.Code.Replace(poll, ""));
+        var problems = answer["error"]?["detail"]?["definitions"]?.AsArray().SingleOrDefault(d => d?["id"]?.GetValue<string>() == "relays")?["diagnostics"]?.AsArray()
+            .Where(d => d!["nodeId"]?.GetValue<string>() == "front").Select(d => $"{d!["inputId"]} {d["message"]}").ToArray() ?? [];
+        Refused(answer, "front", "Poll every removed");
+        Check(problems.SequenceEqual(["PollEvery Unknown input PollEvery"]), "the hub's value is for an input it no longer has: " + string.Join(" | ", problems));
+        await StillRuns(rig, host, "Poll every removed");
+        Console.WriteLine("PASS rich node libraries: a library save that removes a setting a library class node has a value for is refused naming the definition, as for a removed parameter");
+    }
+
+    // A library save that gives the class of a library class node a definition uses a new required setting without a
+    // default makes the definition invalid, so it is refused naming it; one with a default goes ahead, and the definition
+    // is rebuilt and runs the new code.
+    static async Task ALibrarySaveThatAddsARequiredSettingIsRefused()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("setting-added");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var host = await rig.Running("relays", Hubs());
+        const string constructor = "    public RelayHub()";
+        Check(RelayHubFixture.Code.Contains(constructor, StringComparison.Ordinal), "the hub has its constructor");
+        var messages = Refused(await rig.Library("relays", 1, RelayHubFixture.Code.Replace(constructor, "    [Setting] public string Room { get; set; }\n" + constructor)), "front", "a required Room");
+        Check(messages.SequenceEqual(["Room is required"]), "the hub's Room is told required: " + string.Join(" | ", messages));
+        await StillRuns(rig, host, "a required Room");
+        var saved = await rig.Saved("relays", 1, RelayHubFixture.Code.Replace(constructor, "    [Setting] public string Room { get; set; } = \"hall\";\n" + constructor));
+        var rebuilt = saved["definitions"]!.AsArray().SingleOrDefault(d => d!["id"]!.GetValue<string>() == "relays");
+        Check(rebuilt?["active"]?.GetValue<bool>() == true && rebuilt["document"]!["revision"]!.GetValue<long>() == 2, "the definition is rebuilt and runs: " + saved.ToJsonString());
+        var next = await rig.Started("relays");
+        var instance = next.Entity("relays:hub:relay")?.AddedTo ?? throw new Exception("the switch was added by no device");
+        Check(next != host && instance.GetType().GetProperty("Room")?.GetValue(instance) as string == "hall", "the new code runs, Room its default");
+        Check(rig.Stored("relays", "hub", "starts") == "j2", "the rebuilt hub counts on in its data: " + rig.Stored("relays", "hub", "starts"));
+        Check((await next.UiAct("hub", "relays", "relay", "switch", new JsonObject())).Status == "done", "the rebuilt hub's action runs");
+        Console.WriteLine("PASS rich node libraries: a library save that adds a required setting without a default is refused naming the definition; with a default it goes ahead and the definition runs the new code");
     }
     /// <summary>
     /// A pin type nested <paramref name="levels"/> levels deep: <c>int</c> is one level, and each list, array, tuple or

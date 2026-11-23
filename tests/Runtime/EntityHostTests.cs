@@ -134,6 +134,7 @@ static class EntityHostTests
             await Ordered();
             await RootEntity();
             await Settings();
+            await ALibraryClassNodeRuns();
             await StartFails();
             await SetupFails();
             await BadKeys();
@@ -297,6 +298,32 @@ static class EntityHostTests
         Check(created != null && Syncs().Length == 0 && !Recorded().Contains("device.Setup") && !Recorded().Contains("settings"),
             "the class was created, no setting applied, no Setup() run and nothing synced: " + string.Join(", ", Recorded()));
         Console.WriteLine("PASS entity host: a required setting with no value fails the start naming the node and the setting's label, before its Setup()");
+    }
+
+    // A library class node runs as a C# node of its class does, through a whole manager: the definition with the relays
+    // library's hub keyed hub (its node id another) starts; its device and its switch are reported under the node's key;
+    // the values typed for Address and Poll every are applied, and Token is the value of the secret Setting wired to it.
+    static async Task ALibraryClassNodeRuns()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("runs");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var hub = RelayHubFixture.Hub("front", "hub", new JsonObject { ["Address"] = Lit("string", "10.0.0.2"), ["PollEvery"] = Lit("number", 10) });
+        var token = new JsonObject { ["key"] = "token", ["type"] = "string", ["label"] = "Token", ["value"] = "s3cret", ["secret"] = true };
+        var host = await rig.Running("relays", RelayHubFixture.Definition("Relays", [hub, N("token", "setting", new { key = "token" })], [D("token", "front", "Token")], token));
+        var synced = JsonNode.Parse(rig.Home.Syncs("relays").Single())!;
+        var device = synced["devices"]!.AsArray().Single()!;
+        Check(device["key"]!.GetValue<string>() == "hub" && device["name"]!.GetValue<string>() == "Hub", "the hub's device is reported under its key and name: " + synced.ToJsonString());
+        var entity = synced["entities"]!.AsArray().Single()!;
+        Check(entity["uniqueId"]!.GetValue<string>() == "relays:hub:relay" && entity["domain"]!.GetValue<string>() == "switch" && entity["device"]!.GetValue<string>() == "hub",
+            "the hub's switch is reported as relays:hub:relay, on the hub: " + synced.ToJsonString());
+        Check(host.Entities.Select(e => e.UniqueId).SequenceEqual(["relays:hub:relay"]), "the host runs the switch: " + string.Join(", ", host.Entities.Select(e => e.UniqueId)));
+        var instance = host.Entity("relays:hub:relay")?.AddedTo ?? throw new Exception("the switch was added by no device");
+        object? Read(string property) => instance.GetType().GetProperty(property)!.GetValue(instance);
+        Check(instance.GetType().FullName == "NodeLib.RelayHub", "the device is the library's class itself: " + instance.GetType().FullName);
+        Check(Read("Address") as string == "10.0.0.2" && Read("PollEvery") is 10.0 && Read("Token") as string == "s3cret",
+            $"the settings are applied, Token from the secret Setting: {Read("Address")} {Read("PollEvery")} {(Read("Token") as string == "s3cret" ? "the secret" : "another value")}");
+        Check(!rig.Home.Logs().Any(line => line.Contains("s3cret", StringComparison.Ordinal)), "no log line has the secret");
+        Console.WriteLine("PASS entity host: a library class node runs as a C# node of its class: its device and switch reported under its key, its settings applied, a secret one from a secret Setting");
     }
 
     static async Task StartFails()
