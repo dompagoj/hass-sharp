@@ -1533,8 +1533,16 @@ export interface GraphAnalysis {
   /** The step outputs a value node reads, directly or through other value nodes: each once, in data wire order, depth first. */
   pureSources(pure: GraphNode): { node: GraphNode; port: string; output: OutputSpec }[]
 }
-/** The comparison rule of a node, given its resolved input types. Used by the validator and the connection index. */
-export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved: Record<string, string | undefined>, catalog: VisualCatalogSnapshot = nodeCatalog): GraphDiagnostic[] {
+/** Whether the node is a library step or class its node library no longer has: a `library:` kind the catalog lacks. */
+export const missingFromLibrary = (node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog) =>
+  typeof node.kind === 'string' && node.kind.startsWith('library:') && !Object.hasOwn(catalog.nodes, node.kind)
+/**
+ * The comparison rule of a node, given its resolved input types. Used by the validator and the connection index.
+ * `unknown` says which inputs are wired from a step gone from its node library (`missingFromLibrary`): the type of such
+ * a side is not known, and that step is reported alone.
+ */
+export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved: Record<string, string | undefined>, catalog: VisualCatalogSnapshot = nodeCatalog,
+  unknown: (input: string) => boolean = () => false): GraphDiagnostic[] {
   const rule = spec.comparison
   if (!rule) return []
   const errors: GraphDiagnostic[] = []
@@ -1543,9 +1551,9 @@ export function comparisonDiagnostics(node: GraphNode, spec: NodeSpec, resolved:
   const right = resolved[rule.rightInput]
   if (left && right && !(isAssignable(left, right, catalog) || isAssignable(right, left, catalog))) error('Both sides of the comparison must have the same type', rule.rightInput)
   // Ordering takes any number type on either side (number and every CLR number type); the run time widens both.
-  const ordered = (type: string | undefined) => type === rule.orderingType || (!!type && numeric(rootType(type, catalog), catalog))
-  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && (!ordered(left) || (!!right && !ordered(right))))
-    error(`Less-than and greater-than comparisons need ${typeLabel(rule.orderingType, catalog)} values`, !ordered(left) ? (rule.leftInput ?? rule.typeConfig) : rule.rightInput)
+  const ordered = (type: string | undefined, input: string | undefined) => type === rule.orderingType || (!!type && numeric(rootType(type, catalog), catalog)) || (!!input && unknown(input))
+  if (rule.orderingOperators.includes(text(node.config[rule.operatorConfig])) && (!ordered(left, rule.leftInput) || (!!right && !ordered(right, rule.rightInput))))
+    error(`Less-than and greater-than comparisons need ${typeLabel(rule.orderingType, catalog)} values`, !ordered(left, rule.leftInput) ? (rule.leftInput ?? rule.typeConfig) : rule.rightInput)
   return errors
 }
 /** Static validation only: evaluating data never schedules a producer. */
@@ -1586,7 +1594,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   /** Whether the node is a declaration (`isDeclaration`): a Device node, neither a step nor a value. */
   const declared = (node: GraphNode) => isDeclaration(node.kind, catalog)
   /** Whether the node is a library step or class its node library no longer has: a `library:` kind the catalog lacks. */
-  const missingLibraryNode = (node: GraphNode) => !nodeSpec(node.kind) && typeof node.kind === 'string' && node.kind.startsWith('library:')
+  const missingLibraryNode = (node: GraphNode) => missingFromLibrary(node, catalog)
   function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
     const b = scopes.get(target.id)
     return b !== undefined && visibleIn(source, b, port)
@@ -1657,7 +1665,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
         continue
       }
       const node = nodes.get(edge.source)!, port = flowPort(node, edge)
-      if (!executionPorts(node).includes(port)) error(node.id, 'Unknown execution port', undefined, port, 'port.unknownExecution')
+      // A step gone from its node library has no pins to know: it is reported as missing alone.
+      if (!executionPorts(node).includes(port) && !missingLibraryNode(node)) error(node.id, 'Unknown execution port', undefined, port, 'port.unknownExecution')
       if (outgoing.get(node.id)!.some(e => flowPort(node, e) === port)) error(node.id, 'Only one execution edge per port', undefined, port, 'port.executionTaken')
       if (nodes.get(edge.target)!.kind === 'trigger') error(edge.target, 'Trigger cannot have incoming execution edges', undefined, undefined, 'trigger.incoming')
       else if (isRoot(nodes.get(edge.target)!, catalog)) error(edge.target, words.rootIncoming(words.stepName(nodes.get(edge.target)!, catalog)), undefined, undefined, 'root.incoming')
@@ -1706,8 +1715,10 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     origin = { kind: 'edge', edge: dataIndex.get(edge)! }
     const source = nodes.get(edge.source)!, target = nodes.get(edge.target)!
     const output = dataOutputs(source)[edge.sourcePort], input = connectable(dataInputs(target, ownerOf(target))[edge.targetPort])
-    if (!output) error(source.id, 'Unknown data output port', undefined, edge.sourcePort, 'port.unknownOutput')
-    if (!input) error(target.id, words.unknownInput(edge.targetPort, target.kind), edge.targetPort, edge.targetPort, 'port.unknownInput')
+    // A step or class gone from its node library has no pins to know, and the type of a wire out of it is unknown: it is
+    // reported as missing alone, not for its wires, and nothing that reads it is judged by that wire.
+    if (!output && !missingLibraryNode(source)) error(source.id, 'Unknown data output port', undefined, edge.sourcePort, 'port.unknownOutput')
+    if (!input && !missingLibraryNode(target)) error(target.id, words.unknownInput(edge.targetPort, target.kind), edge.targetPort, edge.targetPort, 'port.unknownInput')
     // The first wire into an input is the one the step reads (C# keeps it too); a later one is only reported.
     if (incoming.has(key(target.id, edge.targetPort))) error(target.id, 'Only one data source per input', edge.targetPort, edge.targetPort, 'port.inputTaken')
     else incoming.set(key(target.id, edge.targetPort), edge)
@@ -1982,7 +1993,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     }
     if (spec.comparison) {
       origin = { kind: 'comparison', node: node.id }
-      for (const d of comparisonDiagnostics(node, spec, resolved, catalog)) error(d.nodeId, d.message, d.inputId)
+      const unknown = (port: string) => { const wire = incoming.get(key(node.id, port)); return wire !== undefined && missingLibraryNode(nodes.get(wire.source)!) }
+      for (const d of comparisonDiagnostics(node, spec, resolved, catalog, unknown)) error(d.nodeId, d.message, d.inputId)
       origin = graphOrigin
     }
     if (spec.dynamicInputs === 'service') {
@@ -2157,9 +2169,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
       else if (key.replace(blankEnds, '')) byKey.set(key, node)
     }
     const parent = (node: GraphNode) => { const key = viaDevice(node.config.via); return key === undefined ? undefined : byKey.get(key) }
+    // A class gone from its node library may have been the device a Part of names: it is reported as missing alone.
+    const gone = new Set([...nodes.values()].filter(missingLibraryNode).map(n => text(n.config.key)))
     for (const node of devices) {
       const name = words.stepName(node, catalog), named = viaDevice(node.config.via)
-      if (named !== undefined && !byKey.has(named)) error(node.id, words.viaUnknown(name, named), 'via', undefined, 'device.viaUnknown')
+      if (named !== undefined && !byKey.has(named) && !gone.has(named)) error(node.id, words.viaUnknown(name, named), 'via', undefined, 'device.viaUnknown')
       const seen = new Set<string>()
       for (let next = parent(node); next !== undefined && !seen.has(next.id); next = parent(next)) {
         seen.add(next.id)

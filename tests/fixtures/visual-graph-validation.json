@@ -17591,6 +17591,380 @@
     ]
   },
   {
+    "name": "a library step that is no longer in its node library, with step order and value wires in and out",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "c",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "library:gone:global%3A%3ANodeLib.Gone.Run",
+          "config": {
+            "arguments": {
+              "level": {
+                "kind": "literal",
+                "type": "number",
+                "value": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "y",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "yes"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "l:next:i",
+          "source": "l",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "i:true:y",
+          "source": "i",
+          "target": "y",
+          "port": "true"
+        },
+        {
+          "id": "c.value:l.value",
+          "kind": "data",
+          "source": "c",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "l.result:i.value",
+          "kind": "data",
+          "source": "l",
+          "target": "i",
+          "sourcePort": "result",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
+    "name": "a library step that is no longer in its node library, compared by a value node",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "l",
+          "kind": "library:gone:global%3A%3ANodeLib.Gone.Run",
+          "config": {
+            "arguments": {}
+          }
+        },
+        {
+          "id": "cmp",
+          "kind": "compare",
+          "config": {
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            },
+            "operator": "lt"
+          }
+        },
+        {
+          "id": "n",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "cmp2",
+          "kind": "compare",
+          "config": {
+            "left": {
+              "kind": "unset"
+            },
+            "right": {
+              "kind": "unset"
+            },
+            "operator": "gt"
+          }
+        },
+        {
+          "id": "i",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        },
+        {
+          "id": "j",
+          "kind": "if",
+          "config": {
+            "value": {
+              "kind": "unset"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "l:next:i",
+          "source": "l",
+          "target": "i",
+          "port": "next"
+        },
+        {
+          "id": "i:true:j",
+          "source": "i",
+          "target": "j",
+          "port": "true"
+        },
+        {
+          "id": "l.result:cmp.left",
+          "kind": "data",
+          "source": "l",
+          "target": "cmp",
+          "sourcePort": "result",
+          "targetPort": "left"
+        },
+        {
+          "id": "cmp.value:i.value",
+          "kind": "data",
+          "source": "cmp",
+          "target": "i",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "n.value:cmp2.left",
+          "kind": "data",
+          "source": "n",
+          "target": "cmp2",
+          "sourcePort": "value",
+          "targetPort": "left"
+        },
+        {
+          "id": "l.result:cmp2.right",
+          "kind": "data",
+          "source": "l",
+          "target": "cmp2",
+          "sourcePort": "result",
+          "targetPort": "right"
+        },
+        {
+          "id": "cmp2.value:j.value",
+          "kind": "data",
+          "source": "cmp2",
+          "target": "j",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
+    "name": "a library step that is no longer in its node library, with two wires into one pin and two out of one",
+    "graph": {
+      "version": 5,
+      "name": "Contract",
+      "nodes": [
+        {
+          "id": "t",
+          "kind": "trigger",
+          "config": {
+            "type": "manual"
+          }
+        },
+        {
+          "id": "a",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 1
+            }
+          }
+        },
+        {
+          "id": "b",
+          "kind": "constant",
+          "config": {
+            "type": "number",
+            "value": {
+              "kind": "literal",
+              "type": "number",
+              "value": 2
+            }
+          }
+        },
+        {
+          "id": "l",
+          "kind": "library:gone:global%3A%3ANodeLib.Gone.Run",
+          "config": {
+            "arguments": {}
+          }
+        },
+        {
+          "id": "x",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "x"
+            }
+          }
+        },
+        {
+          "id": "y",
+          "kind": "log",
+          "config": {
+            "value": {
+              "kind": "literal",
+              "type": "string",
+              "value": "y"
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "t:next:l",
+          "source": "t",
+          "target": "l",
+          "port": "next"
+        },
+        {
+          "id": "l:next:x",
+          "source": "l",
+          "target": "x",
+          "port": "next"
+        },
+        {
+          "id": "l:next:y",
+          "source": "l",
+          "target": "y",
+          "port": "next"
+        },
+        {
+          "id": "a.value:l.value",
+          "kind": "data",
+          "source": "a",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        },
+        {
+          "id": "b.value:l.value",
+          "kind": "data",
+          "source": "b",
+          "target": "l",
+          "sourcePort": "value",
+          "targetPort": "value"
+        }
+      ]
+    },
+    "valid": false,
+    "nodeId": "l",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "Only one data source per input",
+      "Only one execution edge per port",
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind",
+      "port.executionTaken",
+      "port.inputTaken"
+    ]
+  },
+  {
     "name": "custom node: a CLR list goes into another custom node's IEnumerable<object> pin when a third node names both (listed first)",
     "graph": {
       "version": 5,
@@ -48092,6 +48466,483 @@
     },
     "valid": false,
     "nodeId": "gone",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
+    "name": "library class node: a class no longer in its node library, with values typed into its settings",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              },
+              "PollEvery": {
+                "kind": "literal",
+                "type": "number",
+                "value": 90
+              }
+            }
+          }
+        }
+      ],
+      "edges": [],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
+    "name": "library class node: a class no longer in its node library, with a Setting wired into a setting",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "token",
+          "kind": "setting",
+          "config": {
+            "key": "token"
+          }
+        },
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "token.value:hub.Token",
+          "kind": "data",
+          "source": "token",
+          "target": "hub",
+          "sourcePort": "value",
+          "targetPort": "Token"
+        }
+      ],
+      "definition": {
+        "settings": [
+          {
+            "key": "token",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
+    "name": "library class node: an entity class no longer in its node library, on a Device node",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.RelayHub": {
+          "label": "Relay hub",
+          "category": "Relays",
+          "description": "A hub of relays.",
+          "declares": "device",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the device is called inside this definition and in its identity in Home Assistant."
+            },
+            "name": {
+              "type": "string",
+              "label": "Name",
+              "description": "The name Home Assistant shows for it."
+            },
+            "via": {
+              "type": "object",
+              "nullable": true,
+              "label": "Part of",
+              "description": "The device it is connected through, such as a hub: a Home Assistant device or another device of this definition."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {},
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay hub",
+            "description": "A hub of relays.",
+            "domain": null,
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false,
+                "required": true
+              },
+              {
+                "key": "Token",
+                "label": "Token",
+                "description": "",
+                "type": "string",
+                "secret": true
+              },
+              {
+                "key": "PollEvery",
+                "label": "Poll every",
+                "description": "",
+                "type": "number",
+                "secret": false,
+                "minimum": 1,
+                "maximum": 60
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "strip",
+          "kind": "device",
+          "config": {
+            "key": "strip",
+            "name": "Strip"
+          }
+        },
+        {
+          "id": "relay",
+          "kind": "library:relays:global%3A%3ANodeLib.Relay",
+          "config": {
+            "key": "relay",
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "strip.entities:relay.device",
+          "kind": "data",
+          "source": "strip",
+          "target": "relay",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "relay",
+    "contains": "This step is no longer in its node library; delete it and add it again from the node library",
+    "messages": [
+      "This step is no longer in its node library; delete it and add it again from the node library"
+    ],
+    "codes": [
+      "node.unknownKind"
+    ]
+  },
+  {
+    "name": "library class node: a device class no longer in its node library, that a Device node is part of",
+    "catalogPatch": {
+      "nodes": {
+        "library:relays:global%3A%3ANodeLib.Relay": {
+          "label": "Relay",
+          "category": "Custom",
+          "description": "One relay.",
+          "declares": "entity",
+          "declaration": true,
+          "documents": [
+            "entity"
+          ],
+          "minGraphVersion": 5,
+          "argumentStorage": "arguments",
+          "dynamicInputs": "settings",
+          "config": {
+            "key": {
+              "type": "string",
+              "label": "Key",
+              "description": "What the entity is called inside this definition and in its unique id."
+            },
+            "arguments": {
+              "type": "object",
+              "default": {},
+              "label": "Values",
+              "description": "The values given to its settings"
+            }
+          },
+          "inputs": {
+            "device": {
+              "types": [
+                "device"
+              ],
+              "structural": true,
+              "required": false,
+              "label": "Device",
+              "description": "The device the entity is on: connect the Entities pin of a Device node. Without one, it stands alone."
+            }
+          },
+          "outputs": {},
+          "execution": [],
+          "runtimeVersions": [
+            5
+          ],
+          "sourceId": "relays",
+          "classSignature": {
+            "title": "Relay",
+            "description": "One relay.",
+            "domain": "switch",
+            "settings": [
+              {
+                "key": "Address",
+                "label": "Address",
+                "description": "",
+                "type": "string",
+                "secret": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    "graph": {
+      "version": 5,
+      "name": "Relays",
+      "nodes": [
+        {
+          "id": "hub",
+          "kind": "library:relays:global%3A%3ANodeLib.RelayHub",
+          "config": {
+            "key": "hub",
+            "name": "Hub",
+            "via": null,
+            "arguments": {
+              "Address": {
+                "kind": "literal",
+                "type": "string",
+                "value": "10.0.0.2"
+              }
+            }
+          }
+        },
+        {
+          "id": "strip",
+          "kind": "device",
+          "config": {
+            "key": "strip",
+            "name": "Strip",
+            "via": {
+              "device": "hub"
+            }
+          }
+        },
+        {
+          "id": "relay",
+          "kind": "library:relays:global%3A%3ANodeLib.Relay",
+          "config": {
+            "key": "relay",
+            "arguments": {}
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "strip.entities:relay.device",
+          "kind": "data",
+          "source": "strip",
+          "target": "relay",
+          "sourcePort": "entities",
+          "targetPort": "device"
+        }
+      ],
+      "definition": {
+        "settings": []
+      }
+    },
+    "valid": false,
+    "nodeId": "hub",
     "contains": "This step is no longer in its node library; delete it and add it again from the node library",
     "messages": [
       "This step is no longer in its node library; delete it and add it again from the node library"

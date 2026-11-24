@@ -690,7 +690,8 @@ public static class VisualGraphValidator
                         continue;
                     }
                     var node = nodes[source]; var port = FlowPort(node, edge);
-                    if (!ExecutionPorts(node).Contains(port)) Error(source, "Unknown execution port", port: port, code: "port.unknownExecution");
+                    // A step gone from its node library has no pins to know: it is reported as missing alone.
+                    if (!ExecutionPorts(node).Contains(port) && !MissingLibraryNode(node)) Error(source, "Unknown execution port", port: port, code: "port.unknownExecution");
                     if (outgoing[source].Any(e => FlowPort(node, e) == port)) Error(source, "Only one execution edge per port", port: port, code: "port.executionTaken");
                     if (Kind(nodes[target]) == "trigger") Error(target, "Trigger cannot have incoming execution edges", code: "trigger.incoming");
                     else if (IsRoot(nodes[target], snapshot)) Error(target, Words.RootIncoming(Words.StepName(nodes[target], Spec(nodes[target]))), code: "root.incoming");
@@ -715,8 +716,10 @@ public static class VisualGraphValidator
                 var source = nodes[Text(edge, "source")]; var target = nodes[Text(edge, "target")];
                 var sp = Text(edge, "sourcePort"); var tp = Text(edge, "targetPort");
                 var output = DataOutputs(source)[sp]; var input = Connectable(DataInputs(target, Owner(target))[tp]);
-                if (output == null) Error(Id(source), "Unknown data output port", port: sp, code: "port.unknownOutput");
-                if (input == null) Error(Id(target), Kind(target) == "constant" && tp == "value" ? Words.IntoConstant : $"This value wire goes into {Words.PortLabel(null, tp)}, which this step does not have", tp, tp, "port.unknownInput");
+                // A step or class gone from its node library has no pins to know, and the type of a wire out of it is unknown:
+                // it is reported as missing alone, not for its wires, and nothing that reads it is judged by that wire.
+                if (output == null && !MissingLibraryNode(source)) Error(Id(source), "Unknown data output port", port: sp, code: "port.unknownOutput");
+                if (input == null && !MissingLibraryNode(target)) Error(Id(target), Kind(target) == "constant" && tp == "value" ? Words.IntoConstant : $"This value wire goes into {Words.PortLabel(null, tp)}, which this step does not have", tp, tp, "port.unknownInput");
                 if (!incoming.TryAdd((Id(target), tp), edge)) Error(Id(target), "Only one data source per input", tp, tp, "port.inputTaken");
                 if (output != null && input != null)
                 {
@@ -841,10 +844,12 @@ public static class VisualGraphValidator
                 if (Text(Config(node), "key") is var key && Words.Trimmed(key).Length > 0 && !byKey.TryAdd(key, node))
                     Error(Id(node), Words.DeviceKeyTaken(key, Words.StepName(byKey[key], Spec(byKey[key]))), "key", code: "definition.duplicateDevice");
             JsonObject? Parent(JsonObject node) => ViaDevice(Config(node)["via"]) is { } key && byKey.TryGetValue(key, out var parent) ? parent : null;
+            // A class gone from its node library may have been the device a Part of names: it is reported as missing alone.
+            var gone = nodes.Values.Where(MissingLibraryNode).Select(n => Text(Config(n), "key")).ToHashSet(StringComparer.Ordinal);
             foreach (var node in devices)
             {
                 var name = Words.StepName(node, Spec(node));
-                if (ViaDevice(Config(node)["via"]) is { } named && !byKey.ContainsKey(named)) Error(Id(node), Words.ViaUnknown(name, named), "via", code: "device.viaUnknown");
+                if (ViaDevice(Config(node)["via"]) is { } named && !byKey.ContainsKey(named) && !gone.Contains(named)) Error(Id(node), Words.ViaUnknown(name, named), "via", code: "device.viaUnknown");
                 var seen = new HashSet<string>(StringComparer.Ordinal);
                 for (var next = Parent(node); next != null && seen.Add(Id(next)); next = Parent(next))
                     if (ReferenceEquals(next, node)) { Error(Id(node), Words.ViaCycle(name), "via", code: "device.viaCycle"); break; }
@@ -1235,9 +1240,11 @@ public static class VisualGraphValidator
                 if (!string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right) && !CompatibleTypes(left, right) && !CompatibleTypes(right, left)) Error(id, "Both sides of the comparison must have the same type", rightInput);
                 // Ordering takes any number type on either side (number and every CLR number type); the run time widens both.
                 var orderingType = Text(comparison, "orderingType");
-                bool Ordered(string? type) => type == orderingType || !string.IsNullOrEmpty(type) && VisualTypes.Numeric(Root, VisualTypes.RootId(Root, type));
-                if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && (!Ordered(left) || !string.IsNullOrEmpty(right) && !Ordered(right)))
-                    Error(id, $"Less-than and greater-than comparisons need {Words.TypeLabel(Root, orderingType)} values", !Ordered(left) ? leftInput != "" ? leftInput : typeConfig : rightInput);
+                // A side wired from a step gone from its node library has a type no one knows: that step is reported alone.
+                bool Unknown(string input) => input != "" && incoming.TryGetValue((id, input), out var wire) && MissingLibraryNode(nodes[Text(wire, "source")]);
+                bool Ordered(string? type, string input) => type == orderingType || !string.IsNullOrEmpty(type) && VisualTypes.Numeric(Root, VisualTypes.RootId(Root, type)) || Unknown(input);
+                if (Strings(comparison["orderingOperators"]).Contains(Text(cfg, Text(comparison, "operatorConfig"))) && (!Ordered(left, leftInput) || !string.IsNullOrEmpty(right) && !Ordered(right, rightInput)))
+                    Error(id, $"Less-than and greater-than comparisons need {Words.TypeLabel(Root, orderingType)} values", !Ordered(left, leftInput) ? leftInput != "" ? leftInput : typeConfig : rightInput);
             }
             if (Text(spec, "dynamicInputs") == "service") { Service(node, spec, cfg, id); TargetRules(node, spec, cfg, id); }
             if (cfg.ContainsKey("output")) Error(id, Words.ExposedValue, "output");

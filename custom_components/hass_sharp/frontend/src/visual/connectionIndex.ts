@@ -12,6 +12,7 @@ import {
   isAssignable,
   isHub,
   isPure,
+  missingFromLibrary,
   nodeCatalog,
   serviceTargetDiagnostics,
   settingSourceError,
@@ -234,7 +235,12 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
     }
     if (spec.comparison && input) {
       const resolved = { ...analysis.resolved.get(targetId), [targetPort]: output?.type }
-      for (const d of comparisonDiagnostics(target, spec, resolved, catalog))
+      // A side still wired from a step gone from its node library is not judged, as the validator has it.
+      const unknown = (port: string) => {
+        const wire = port === targetPort ? undefined : analysis.data.find(e => e.target === targetId && e.targetPort === port)
+        return wire !== undefined && missingFromLibrary(analysis.nodes.get(wire.source)!, catalog)
+      }
+      for (const d of comparisonDiagnostics(target, spec, resolved, catalog, unknown))
         if (d.inputId === targetPort || !old.has(JSON.stringify(d))) messages.add(d.message)
     }
     // The service checks that a wired target or field changes: a target the service does not take, and a field named
@@ -271,7 +277,8 @@ function buildIndex(graph: Graph, catalog: VisualCatalogSnapshot): ConnectionInd
         compared.add(to.id)
         const resolved = { ...analysis.resolved.get(to.id) }
         for (const port of Object.keys(resolved)) { const wire = first.get(pairKey(to.id, port)); if (wire && changed(wire.source, wire.sourcePort)) resolved[port] = dataOutputs(analysis.nodes.get(wire.source)!, after)[wire.sourcePort]?.type }
-        for (const d of comparisonDiagnostics(to, toSpec, resolved, after)) if (!old.has(JSON.stringify(d))) found.push(d.message)
+        const unknown = (port: string) => { const wire = first.get(pairKey(to.id, port)); return wire !== undefined && missingFromLibrary(analysis.nodes.get(wire.source)!, after) }
+        for (const d of comparisonDiagnostics(to, toSpec, resolved, after, unknown)) if (!old.has(JSON.stringify(d))) found.push(d.message)
       }
     }
     return found

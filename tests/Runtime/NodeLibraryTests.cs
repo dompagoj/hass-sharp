@@ -226,21 +226,28 @@ public static class NodeLibraryTests
     }
 
     // A library save that takes away the class of a library class node a definition uses, or its [Node], is refused with
-    // the missing library node message, naming the definition; the definition keeps running on the library as saved.
+    // the missing library node message, naming the definition; the definition keeps running on the library as saved. The
+    // hub's Token is wired from a Setting: the hub is told missing and nothing is said of that wire, into a pin no one can
+    // know any more.
     static async Task ALibrarySaveThatRemovesAUsedClassIsRefused()
     {
         await using var rig = await RelayHubFixture.Rig.Start("class-gone");
         await rig.Saved("relays", 0, RelayHubFixture.Code);
-        var host = await rig.Running("relays", Hubs());
+        var token = new JsonObject { ["key"] = "token", ["type"] = "string", ["label"] = "Token", ["value"] = "s3cret", ["secret"] = true };
+        var host = await rig.Running("relays", RelayHubFixture.Definition("Relays", [RelayHubFixture.Hub("front", "hub"), VisualExecutionTests.N("token", "setting", new { key = "token" })],
+            [VisualExecutionTests.D("token", "front", "Token")], token));
         const string mark = "[Node(\"Relay hub\", Category = \"Relays\")]\n";
         Check(RelayHubFixture.Code.Contains(mark, StringComparison.Ordinal), "the hub is marked [Node]");
         foreach (var (what, code) in new[] { ("without the hub", RelayHubFixture.OtherCode), ("with the hub's [Node] removed", RelayHubFixture.Code.Replace(mark, "")) })
         {
-            var messages = Refused(await rig.Library("relays", 1, code), "front", what);
+            var answer = await rig.Library("relays", 1, code);
+            var messages = Refused(answer, "front", what);
             Check(messages.SequenceEqual([VisualGraphValidator.Words.MissingLibraryNode]), $"{what}: the hub's node is told missing, and only that: " + string.Join(" | ", messages));
+            var all = answer["error"]!["detail"]!["definitions"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "relays")!["diagnostics"]!.AsArray().Select(d => d!["message"]!.GetValue<string>()).ToArray();
+            Check(!all.Any(m => m.Contains("does not have", StringComparison.Ordinal)), $"{what}: nothing is said of the wire into Token: " + string.Join(" | ", all));
             await StillRuns(rig, host, what);
         }
-        Console.WriteLine("PASS rich node libraries: a library save that takes away a used class, or its [Node], is refused naming the definition, which keeps running");
+        Console.WriteLine("PASS rich node libraries: a library save that takes away a used class, or its [Node], is refused naming the definition, which keeps running; nothing is said of the Setting wired into its Token");
     }
 
     // What a library save does today to a definition whose library step (here beside the relays library's hub, which makes
