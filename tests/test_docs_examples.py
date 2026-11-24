@@ -247,7 +247,7 @@ class DocsExamplesTests(unittest.TestCase):
                 "`<definition>: <node name>: the setting <Label> has no value`",
             ),
             "entity-definitions.md": (
-                "type, secret, options?, minimum?, maximum?, domain?, required?}]}`",
+                "type, secret, options?, minimum?, maximum?, domain?, required?, default?}]}`",
                 "a setting's `type`, `secret`, `options`, `minimum`, `maximum`, `domain` or `required`",
                 "\"`{Definition}: {Name}: the setting {Label} has no value`\"",
             ),

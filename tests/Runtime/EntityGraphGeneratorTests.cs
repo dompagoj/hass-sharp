@@ -459,6 +459,21 @@ static class EntityGraphGeneratorTests
         Check(refreshed.Valid && refreshed.Diagnostics.Count == 0, "a signature differing in words only previews valid with no problem: " + Shown(refreshed.Diagnostics));
         var answered = refreshed.Graph!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "plug")!["config"]!["signature"];
         Check(JsonNode.DeepEquals(answered, compiled), "the preview's graph has the code's words: " + answered?.ToJsonString());
+        // A setting's default is for the editor to show: a stored signature without it (saved before signatures had
+        // defaults), or with another, is refreshed with the code's and is no problem, and the source is the same either
+        // way, since an unset setting keeps the value its class gives it.
+        var port = CSharp("csharp_device", "port", "port", "public class Port : SharpDevice\n{\n    [Setting] public int Number { get; set; } = 80;\n}");
+        var withDefault = port["config"]!["signature"]!.AsObject();
+        Check(withDefault["settings"]![0]!["default"]?.GetValue<int>() == 80, "the code's signature has the default: " + withDefault.ToJsonString());
+        var current = Previewed(Body([port], []));
+        foreach (var (what, change) in new (string, Action<JsonObject>)[] { ("no default", s => s.Remove("default")), ("another default", s => s["default"] = 8080) })
+        {
+            var older = (JsonObject)port.DeepClone(); change(older["config"]!["signature"]!["settings"]![0]!.AsObject());
+            var opened = Previewed(Body([older], []));
+            var shown = opened.Graph?["nodes"]?.AsArray().Single(n => n!["id"]!.GetValue<string>() == "port")!["config"]!["signature"];
+            Check(opened.Valid && opened.Diagnostics.Count == 0 && JsonNode.DeepEquals(shown, withDefault), $"a stored signature with {what} previews valid, refreshed with the code's: " + Shown(opened.Diagnostics) + " " + shown?.ToJsonString());
+            Check(current.Valid && opened.Source == current.Source, $"a stored signature with {what} gives the same source");
+        }
         // A node whose code does not compile is told that, and no value of it is checked.
         var broken = (JsonObject)plug.DeepClone();
         broken["config"]!["source"] = address.Replace("string Address", "Missing Address", StringComparison.Ordinal);

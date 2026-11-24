@@ -6,7 +6,7 @@ import { InputEditor } from '../InputEditor'
 import { ConstantType, retypeConstant } from '../constant'
 import { PropertyPicker } from '../selectProperty'
 import { icons } from '../icons'
-import { displayValue, keepsNull, valueSummary, widgetFor, withStates } from '../widgets'
+import { displayValue, keepsNull, settingDefault, valueSummary, widgetFor, withStates } from '../widgets'
 import { Pin } from './Pin'
 import { shownEntities } from '../../entities/model'
 import { durationLabel, traceStatusLabel, traceText, useFlow, type InputView, type PinView, type RowView, type TraceStatus } from './flowModel'
@@ -135,6 +135,8 @@ export function NodeCard(props: NodeProps) {
     const [expanded, setExpanded] = createSignal(false)
     const muted = () => input().mode === 'muted'
     const showEditor = () => canEdit() && (input().mode === 'value' || (muted() && expanded()))
+    // An unset class setting whose class gives it a default says it beside its label, muted; its editor says it once open.
+    const fallback = () => muted() && !showEditor() && !traced() ? settingDefault(input().spec) : undefined
     const expand = () => {
       // Queued before the button is replaced, so the editor has focus by the time `leave` looks.
       queueMicrotask(() => root.querySelector<HTMLElement>('.hs-card-editor :is(input, select, textarea, button)')?.focus())
@@ -272,6 +274,7 @@ export function NodeCard(props: NodeProps) {
               {input().pin.label}
             </button>
           </Show>
+          <Show when={fallback()}>{value => <span class="hs-pin-default" title={`Default ${value()}`}>{value()}</span>}</Show>
           <Show when={input().mode === 'connected'}>
             <span class="hs-source-chip" style={{ '--hs-pin-color': input().pin.color }} title={`Connected to ${input().source}`}>
               {input().source}

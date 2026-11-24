@@ -1,5 +1,5 @@
 import { createEffect, createSignal, createUniqueId, For, on, onCleanup, Show, type JSX } from 'solid-js'
-import type { JsonValue } from '../contract'
+import type { InputSpec, JsonValue } from '../contract'
 import type { ValueKind, Widget } from './model'
 
 export interface CommitOptions {
@@ -27,6 +27,22 @@ export interface WidgetProps {
    * type): it is shown here as text, and committing it, even unchanged, stores it as this editor's type.
    */
   stale?: boolean
+  /** What is shown in place of "Not set" while there is no value: what the input is then (`unsetWords`, "Default 0.5"). */
+  unset?: string
+}
+
+/**
+ * What a class's setting is when the node gives it no value, as its class says (`setting.default`): "0.5", "True", an
+ * enum's member, a text. Undefined when the class does not say, for an empty text (which shows nothing), and for a secret.
+ */
+export function settingDefault(input: InputSpec | undefined): string | undefined {
+  const value = input?.setting?.secret === true ? undefined : input?.setting?.default
+  return value === undefined || value === '' ? undefined : typeof value === 'boolean' ? (value ? 'True' : 'False') : String(value)
+}
+/** The words for an input without a value when they are not "Not set": a class setting's default, "Default 0.5". */
+export function unsetWords(input: InputSpec | undefined): string | undefined {
+  const value = settingDefault(input)
+  return value === undefined ? undefined : `Default ${value}`
 }
 
 export const describedBy = (...ids: (string | false | undefined)[]) => ids.filter(Boolean).join(' ') || undefined

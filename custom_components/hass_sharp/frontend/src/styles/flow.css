@@ -118,6 +118,7 @@
 .hs-app .hs-pin-cell--exec .hs-pin-label { font-weight: 600; }
 .hs-app .hs-card__row--footer .hs-pin-label { color: var(--hs-port-error); }
 .hs-app .hs-required { margin-left: 2px; color: var(--hs-danger); }
+.hs-app .hs-pin-default { overflow: hidden; max-width: 50%; color: var(--hs-muted); font: 11px/16px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-source-chip { overflow: hidden; max-width: 160px; padding: 2px 8px; border-radius: 6px; background: color-mix(in oklab, var(--hs-pin-color) 13%, var(--hs-surface)); color: color-mix(in oklab, var(--hs-pin-color) 62%, var(--hs-text)); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-card-editor { min-width: 0; max-width: 272px; cursor: auto; user-select: text; }
 .hs-app .hs-pin-value { display: flex; min-width: 0; max-width: 100%; }

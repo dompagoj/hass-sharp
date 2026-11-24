@@ -222,8 +222,8 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// <summary>
     /// Whether a C# entity's or C# device's stored signature has the settings its code gives in all that changes wires or
     /// values: the same domain, the same setting keys in the same order, and for each its type, secret flag, options,
-    /// range, entity domain and whether it is required. Its title, description and each setting's label and description
-    /// are not compared.
+    /// range, entity domain and whether it is required. Its title, description and each setting's label, description and
+    /// default (which only the editor shows: an unset setting keeps what its class gives it) are not compared.
     /// </summary>
     internal static bool SameSettings(JsonObject stored,JsonObject compiled) {
         if(!SameJson(stored["domain"],compiled["domain"])||stored["settings"] is not JsonArray mine||compiled["settings"] is not JsonArray theirs||mine.Count!=theirs.Count)return false;

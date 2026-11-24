@@ -101,13 +101,19 @@ definition envelope"), `storage` (the file could not be read or written) and
   `{key, name, via?, source, signature?, arguments?}`. `source` is one public class
   deriving from an entity class (whose domain is the entity's) or from `SharpDevice`;
   `signature` is `{title, description, domain, settings:[{key, label, description,
-  type, secret, options?, minimum?, maximum?, domain?, required?}]}`, required
+  type, secret, options?, minimum?, maximum?, domain?, required?, default?}]}`, required
   unless the request has `deriveSignatures: true`, which writes it from the code. A
   setting's `type` is
   `string`, `integer`, `number`, `boolean`, `enum` or `entity` (a property of type
   `Entity`, or of a domain's class such as `LightEntity`, whose `domain` is then
   written); `required: true` is written only for a string or entity property that is
-  not nullable and has no initializer. `arguments` holds a typed
+  not nullable and has no initializer. `default` is what the setting is when it is
+  given no value, written only when the code says: a constant initializer (a number,
+  `true` or `false`, a text that is not empty, an enum member's name), or `false`, `0`
+  or an enum's member of 0 for a `bool`, number or enum property without one; never
+  for a secret, an entity, or a property a constructor of the class sets. The editor
+  shows it; nothing stores it as a value, and a stored signature whose defaults
+  differ is not out of date. `arguments` holds a typed
   value per setting pin, `{kind:"literal", type, value}` (an entity setting's type
   `entity_id` or `entity_id:<domain>`, its value an entity id), keyed by the property's
   name, and a setting pin may instead take a data edge from a Setting step

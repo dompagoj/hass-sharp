@@ -3,7 +3,7 @@ import { Menu, type MenuItem } from '../components/Menu'
 import { isAssignable, nodeCatalog, type InputSpec, type JsonValue, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeLabel } from './typeLabels'
 import { constantTypeLabels } from './constant'
-import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, keepsNull, literalFor, valueKind, namesRegistryItems, registryNames, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
+import { commitLiteral, fitsWidget, initialValue, inlineWidget, jsonEqual, keepsNull, literalFor, valueKind, namesRegistryItems, registryNames, unsetWords, valueSummary, WidgetControl, widgetFor, type CommitOptions, type Widget } from './widgets'
 import { useRegistry } from '../registry'
 
 export interface InputEditorProps {
@@ -121,7 +121,8 @@ export function InputEditor(props: InputEditorProps) {
       </span>}>
         <Show when={!summary()} fallback={<Summary widget={shown()} value={literal()} />}>
           <WidgetControl widget={shown()} value={literal()} commit={commit} id={id} label={props.label} describedBy={describedBy()} required={props.input.required}
-            invalid={errors().length > 0} disabled={!!props.disabled} compact={props.variant === 'inline'} context={props.context} stale={stale()} />
+            invalid={errors().length > 0} disabled={!!props.disabled} compact={props.variant === 'inline'} context={props.context} stale={stale()}
+            unset={unsetWords(props.input)} />
           <Show when={storeAs()}>
             <button type="button" class="hs-button hs-button--secondary hs-store-as nodrag nopan" disabled={props.disabled}
               onClick={() => commit(literal())}>Store as {storeAsName()}</button>

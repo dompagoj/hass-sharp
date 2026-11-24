@@ -465,6 +465,15 @@ it('a C# entity and a C# device are declarations, and no rule takes either for a
   expect([one({ type: 'entity', domain: 'light', required: true }), one({ type: 'entity' }), one({ type: 'string', required: false })].every(wellFormedClassSignature)).toBe(true)
   for (const signature of [one({ type: 'string', domain: 'light' }), one({ type: 'entity', domain: 'Light Bulb' }), one({ type: 'entity', domain: '' }), one({ type: 'entity', domain: 5 }), one({ type: 'string', required: 'yes' })])
     expect(wellFormedClassSignature(signature), JSON.stringify(signature)).toBe(false)
+  // A setting's default is a text, a number or true or false, as VisualNodeCatalog.WellFormedClassSignature reads it; a
+  // signature without one, saved before signatures had them, is as well formed. The pin carries it under setting, never
+  // as its own default (which a new node would store).
+  expect([one({ type: 'number', default: 0.5 }), one({ type: 'boolean', default: true }), one({ type: 'string', default: 'hall' }), one({ type: 'enum', options: ['Low'], default: 'Low' })]
+    .every(wellFormedClassSignature)).toBe(true)
+  for (const signature of [one({ type: 'number', default: null }), one({ type: 'number', default: {} }), one({ type: 'number', default: [1] })])
+    expect(wellFormedClassSignature(signature), JSON.stringify(signature)).toBe(false)
+  const defaulted = { ...thermo, config: { ...thermo.config, signature: one({ type: 'number', default: 0.5 }) } }
+  expect(dataInputs(defaulted).A).toEqual({ types: ['number'], required: false, label: 'A', description: '', setting: { type: 'number', secret: false, default: 0.5 } })
   // Named by its class's title (a C# entity) or its name (a C# device).
   expect([words.stepName(thermo), words.stepName(plug), entityNodeName(thermo), entityNodeName(plug)]).toEqual(['Thermometer', 'Plug', 'Thermometer', 'Plug'])
   expect(words.stepName({ ...thermo, config: { ...thermo.config, signature: { ...thermo.config.signature as object, title: ' ' } } })).toBe('thermometer')

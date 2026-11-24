@@ -90,7 +90,8 @@ public static class VisualNodeCatalog
     /// that is a text or null, and <c>settings</c>, a list. Each setting has an identifier for its <c>key</c>, no key twice,
     /// a text <c>label</c> and <c>description</c>, a <c>type</c> of string, integer, number, boolean, enum or entity, a
     /// true/false <c>secret</c>, and may have <c>options</c>, a list of text, a number <c>minimum</c> and <c>maximum</c>,
-    /// a true/false <c>required</c> and, an entity only, a <c>domain</c> that is a domain's word (lower-case letters,
+    /// a true/false <c>required</c>, a <c>default</c> that is a text, a number or true or false (what it is when no value
+    /// is given, for the editor to show) and, an entity only, a <c>domain</c> that is a domain's word (lower-case letters,
     /// digits and underscores). Mirrored by <c>wellFormedClassSignature</c> in <c>contract.ts</c>.
     /// </summary>
     internal static bool WellFormedClassSignature(JsonNode? signature)
@@ -109,6 +110,8 @@ public static class VisualNodeCatalog
                 || setting.TryGetPropertyValue("minimum", out var minimum) && !Number(minimum)
                 || setting.TryGetPropertyValue("maximum", out var maximum) && !Number(maximum)
                 || setting.TryGetPropertyValue("required", out var required) && !Is<bool>(required)
+                || setting.TryGetPropertyValue("default", out var fallback)
+                    && !(fallback is JsonValue given && given.GetValueKind() is System.Text.Json.JsonValueKind.String or System.Text.Json.JsonValueKind.Number or System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
                 || setting.TryGetPropertyValue("domain", out var entityDomain) && (Text(setting, "type") != "entity" || entityDomain is not JsonValue d || !d.TryGetValue<string>(out var word) || !VisualTypes.Matches(word, "^[a-z0-9_]+$")))
                 return false;
         return true;
@@ -125,13 +128,14 @@ public static class VisualNodeCatalog
     /// <summary>
     /// The pin of a class's setting: of the setting's pin type (<see cref="SettingPinType"/>), required when the signature
     /// says so (else optional), labelled and described as the setting is, with the setting's type, secret flag, options,
-    /// range, entity domain and whether it is required under <c>setting</c>. Mirrored by <c>settingInput</c> in
+    /// range, entity domain, whether it is required and its default under <c>setting</c> (the default is for the editor to
+    /// show, never the pin's own <c>default</c>, which a new node would store). Mirrored by <c>settingInput</c> in
     /// <c>contract.ts</c>.
     /// </summary>
     static JsonObject SettingInput(JsonObject setting)
     {
         var about = new JsonObject { ["type"] = Text(setting, "type"), ["secret"] = setting["secret"]!.DeepClone() };
-        foreach (var member in new[] { "options", "minimum", "maximum", "domain", "required" }) if (setting.TryGetPropertyValue(member, out var value)) about[member] = value?.DeepClone();
+        foreach (var member in new[] { "options", "minimum", "maximum", "domain", "required", "default" }) if (setting.TryGetPropertyValue(member, out var value)) about[member] = value?.DeepClone();
         return new JsonObject
         {
             ["types"] = new JsonArray(JsonValue.Create(SettingPinType(setting))), ["required"] = setting["required"] is JsonValue r && r.TryGetValue<bool>(out var required) && required,

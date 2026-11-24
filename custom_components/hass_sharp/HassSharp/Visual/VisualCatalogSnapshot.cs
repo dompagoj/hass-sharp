@@ -106,6 +106,14 @@ public sealed record EntitySettingDescriptor(string Key, string Label, string? D
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool Required { get; init; }
+    /// <summary>
+    /// What the setting is when the node gives it no value, for the editor to show: a <c>bool</c>, a <c>long</c> (an
+    /// <c>integer</c>), a <c>double</c> (a <c>number</c>) or a text (a <c>string</c>, or an <c>enum</c>'s member). Null
+    /// when that is not known from the class's code, or is no value to show (see <c>SettingDefault</c> in the compiler).
+    /// Nothing reads it to give a setting a value: an unset setting keeps what its class gives it.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public object? Default { get; init; }
 }
 /// <summary>
 /// The device or entity class of a C# entity or C# device node's code (deriving <see cref="SharpDevice"/>, or a typed

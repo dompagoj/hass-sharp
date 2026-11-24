@@ -18,7 +18,7 @@ export function ToggleWidget(props: WidgetProps) {
     <input id={props.id} type="checkbox" role="switch" class="hs-switch" aria-label={props.label} checked={props.value === true}
       aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
       onChange={event => props.commit(event.currentTarget.checked)} />
-    <span class="hs-muted">{props.value === undefined ? 'Not set' : props.value === true ? 'True' : 'False'}</span>
+    <span class="hs-muted">{props.value === undefined ? props.unset ?? 'Not set' : props.value === true ? 'True' : 'False'}</span>
   </span>}>
     <span class="hs-widget-row">
       <DraftField id={props.id} label={props.label} text={displayValue(props.value)} placeholder="true or false" describedBy={props.describedBy} invalid={props.invalid}
@@ -46,12 +46,12 @@ export function ConstantWidget(props: WidgetProps) {
 export function NumberWidget(props: WidgetProps) {
   const unit = () => props.widget.unit
   const value = () => typeof props.value === 'number' ? props.value : undefined
-  const shown = () => value() === undefined ? 'Not set' : `${value()}${unit() ? ' ' + unit() : ''}`
+  const shown = () => value() === undefined ? props.unset ?? 'Not set' : `${value()}${unit() ? ' ' + unit() : ''}`
   const session = dragSession(() => props.id, (v, o) => props.commit(v, o))
   const decimal = useDecimalSeparator()
   return <Show when={props.widget.slider} fallback={<span class="hs-widget-row">
     <DraftField id={props.id} label={props.label} inputmode={decimalMode(props.widget.min)} text={value() === undefined ? displayValue(props.value) : String(value())}
-      placeholder="Not set" describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} force={props.stale}
+      placeholder={props.unset ?? 'Not set'} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} force={props.stale}
       initialError={props.stale && !Number.isFinite(parseNumber(displayValue(props.value), decimal()) ?? Number.NaN) ? numberMessage(displayValue(props.value), decimal()) : undefined}
       commit={text => {
         const parsed = parseNumber(text, decimal())
@@ -84,7 +84,7 @@ export function TextWidget(props: WidgetProps) {
   return <>
     <Show when={props.widget.multiple} fallback={
       <DraftField id={props.id} label={props.label} text={displayValue(props.value)} multiline={props.widget.multiline} list={suggestions()}
-        placeholder={textPlaceholder(props.value)} shortcutHint={!props.compact} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
+        placeholder={props.value === undefined && props.unset ? props.unset : textPlaceholder(props.value)} shortcutHint={!props.compact} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled}
         force={props.stale} commit={text => { props.commit(emptyText(props, text)) }} />}>
       <ListWidget {...props} add={add => <DraftField id={props.id} label={`Add to ${props.label}`} text="" placeholder="Add…" clearOnCommit list={suggestions()} describedBy={props.describedBy}
         invalid={props.invalid} disabled={props.disabled} commit={text => { if (text.trim()) add(text) }} />} />
@@ -124,7 +124,7 @@ export function OptionSelect(props: {
 
 export function SelectWidget(props: WidgetProps) {
   const options = () => props.widget.options ?? []
-  return <Show when={props.widget.multiple} fallback={<OptionSelect id={props.id} label={props.label} options={options()} value={props.value}
+  return <Show when={props.widget.multiple} fallback={<OptionSelect id={props.id} label={props.label} options={options()} value={props.value} placeholder={props.unset}
     onSelect={v => props.commit(v)} describedBy={props.describedBy} invalid={props.invalid} disabled={props.disabled} />}>
     <ListWidget {...props} labelFor={item => options().find(o => jsonEqual(o.value, item))?.label ?? displayValue(item)}
       add={add => <OptionSelect id={props.id} label={`Add to ${props.label}`} placeholder="Add…" value={undefined} describedBy={props.describedBy}

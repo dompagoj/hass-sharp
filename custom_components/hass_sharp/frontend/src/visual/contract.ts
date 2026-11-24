@@ -43,8 +43,8 @@ export interface InputSpec {
   connectable?: boolean; wireOnly?: boolean; structural?: boolean; picture?: boolean; nullable?: boolean; hasDefaultValue?: boolean; label?: string; types: string[]; required: boolean; description?: string; default?: unknown; min?: number; max?: number; integer?: boolean
   enum?: JsonValue[]; enumLabels?: string[]; pattern?: string; minItems?: number; maxItems?: number; step?: number; unit?: string
   selector?: Record<string, unknown>; advanced?: boolean; section?: string | null; example?: JsonValue
-  /** A class node's setting pin (see `settingInput`): the setting's own type, secret flag, options, range, entity domain and whether it is required. */
-  setting?: { type: ClassSetting['type']; secret: boolean; options?: string[]; minimum?: number; maximum?: number; domain?: string; required?: boolean }
+  /** A class node's setting pin (see `settingInput`): the setting's own type, secret flag, options, range, entity domain, whether it is required and its default. */
+  setting?: { type: ClassSetting['type']; secret: boolean; options?: string[]; minimum?: number; maximum?: number; domain?: string; required?: boolean; default?: ClassSetting['default'] }
 }
 /**
  * An output pin. `when` names a boolean config key; the output exists only while it is true. `propertyOf` names an
@@ -627,8 +627,10 @@ export const hasCode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === '
 /**
  * One setting of a class node's class, as the compiler writes it: one of its `[Setting]` properties. An `entity` setting
  * (an entity handle, given by its id) of a domain's class has that `domain`; `required` is written only when true.
+ * `default` is what the setting is when the node gives it no value, as the class's code says (a constant initializer,
+ * or a bool's, number's or enum's own), written only when the code says it: for the editor to show, never stored.
  */
-export interface ClassSetting { key: string; label: string; description: string; type: 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'entity'; secret: boolean; options?: string[]; minimum?: number; maximum?: number; domain?: string; required?: boolean }
+export interface ClassSetting { key: string; label: string; description: string; type: 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'entity'; secret: boolean; options?: string[]; minimum?: number; maximum?: number; domain?: string; required?: boolean; default?: string | number | boolean }
 /**
  * What a class node's class gives, as the compiler writes it into a C# node's `config.signature` and a library class's
  * entry (`NodeSpec.classSignature`): its title, its description, its entity's type (an entity class's) and its settings.
@@ -653,8 +655,9 @@ export function settingPinType(setting: ClassSetting): string | undefined {
  * Whether a class node's signature is one the compiler writes: a text `title` and `description`, a `domain` that is a
  * text or null, and `settings`, a list. Each setting has an identifier for its `key`, no key twice, a text `label` and
  * `description`, a `type` of string, integer, number, boolean, enum or entity, a true/false `secret`, and may have
- * `options`, a list of text, a number `minimum` and `maximum`, a true/false `required` and, an entity only, a `domain`
- * that is a domain's word (lower-case letters, digits and underscores). Mirrors `VisualNodeCatalog.WellFormedClassSignature`.
+ * `options`, a list of text, a number `minimum` and `maximum`, a true/false `required`, a `default` that is a text, a
+ * number or true or false and, an entity only, a `domain` that is a domain's word (lower-case letters, digits and
+ * underscores). Mirrors `VisualNodeCatalog.WellFormedClassSignature`.
  */
 export function wellFormedClassSignature(signature: unknown): signature is ClassSignature {
   if (!record(signature) || typeof signature.title !== 'string' || typeof signature.description !== 'string') return false
@@ -669,6 +672,7 @@ export function wellFormedClassSignature(signature: unknown): signature is Class
     if (Object.hasOwn(setting, 'options') && !(Array.isArray(setting.options) && setting.options.every(o => typeof o === 'string'))) return false
     for (const bound of ['minimum', 'maximum']) if (Object.hasOwn(setting, bound) && typeof setting[bound] !== 'number') return false
     if (Object.hasOwn(setting, 'required') && typeof setting.required !== 'boolean') return false
+    if (Object.hasOwn(setting, 'default') && !['string', 'number', 'boolean'].includes(typeof setting.default)) return false
     if (Object.hasOwn(setting, 'domain') && (setting.type !== 'entity' || typeof setting.domain !== 'string' || !matches(setting.domain, '^[a-z0-9_]+$'))) return false
   }
   return true
@@ -687,11 +691,12 @@ export function classSignature(node: GraphNode, catalog: VisualCatalogSnapshot =
 /**
  * The pin of a class's setting: of the setting's pin type (`settingPinType`), required when the signature says so (else
  * optional), labelled and described as the setting is, with the setting's type, secret flag, options, range, entity
- * domain and whether it is required under `setting`. Mirrors `VisualNodeCatalog.SettingInput`.
+ * domain, whether it is required and its default under `setting` (the default is for the editor to show, never the
+ * pin's own `default`, which a new node would store). Mirrors `VisualNodeCatalog.SettingInput`.
  */
 function settingInput(setting: ClassSetting): InputSpec {
   const about: NonNullable<InputSpec['setting']> = { type: setting.type, secret: setting.secret }
-  for (const member of ['options', 'minimum', 'maximum', 'domain', 'required'] as const) if (Object.hasOwn(setting, member)) (about as Record<string, unknown>)[member] = structuredClone(setting[member])
+  for (const member of ['options', 'minimum', 'maximum', 'domain', 'required', 'default'] as const) if (Object.hasOwn(setting, member)) (about as Record<string, unknown>)[member] = structuredClone(setting[member])
   return { types: [settingPinType(setting)!], required: setting.required === true, label: setting.label, description: setting.description, setting: about }
 }
 /** The signature of a Custom C# node when its kind takes its pins from one and it is well formed; else undefined. */

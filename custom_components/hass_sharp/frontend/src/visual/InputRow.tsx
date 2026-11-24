@@ -4,7 +4,7 @@ import { Glyph } from './Glyph'
 import type { InputView } from './flow/flowModel'
 import { inputValue, resolveTypeSpec, setInput, words, type GraphNode, type InputSpec, type Operand, type VisualCatalogSnapshot } from './contract'
 import { typeColor, typeIsList, typeLabel } from './typeLabels'
-import type { Widget } from './widgets'
+import { unsetWords, type Widget } from './widgets'
 import { csharpText, CSharpTypeText } from './typeDefinition'
 import { rangeHint } from '../entities/model'
 
@@ -128,7 +128,7 @@ export interface RowContext {
   fallback(): HTMLElement | null | undefined
 }
 
-/** One input: label and type chip, then its editor, a "From …" pill when connected, or "Not set". */
+/** One input: label and type chip, then its editor, a "From …" pill when connected, or "Not set" (a class setting's default when it has one). */
 export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
   const ctx = row.ctx
   const input = () => ctx.input(row.port)
@@ -217,7 +217,8 @@ export function InputRow(row: { port: string; ctx: RowContext } & FieldRow) {
       </Show>
       <Show when={muted()}>
         <div class="hs-insp-unset">
-          <span class="hs-muted">Not set</span>
+          {/* A class's setting says what it is without a value, when its class says so ("Default 0.5"). */}
+          <span class="hs-muted">{unsetWords(inputSpec()) ?? 'Not set'}</span>
           <button type="button" class="hs-button hs-button--ghost" aria-label={`Set ${label()}`} aria-describedby={unsetHint() ? hintId : undefined}
             onClick={() => { if (row.setValue) change(structuredClone(row.setValue)); else setSetting(true); ctx.focus(row.port) }}>Set value</button>
         </div>

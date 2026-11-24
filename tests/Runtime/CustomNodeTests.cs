@@ -57,6 +57,7 @@ static class CustomNodeTests
             Contract();
             ClassTemplates();
             ClassSignatures();
+            SettingDefaults();
             LibraryBaseSettings();
             ClassTitles();
             AMarkedLibraryClassIsAStep();
@@ -232,25 +233,25 @@ static class CustomNodeTests
               {"key": "Area", "label": "Area", "description": "", "type": "string", "secret": false},
               {"key": "Host", "label": "Host", "description": "Where it answers.", "type": "string", "secret": false},
               {"key": "Token", "label": "Token", "description": "", "type": "string", "secret": true},
-              {"key": "Interval", "label": "Poll interval", "description": "", "type": "integer", "secret": false, "minimum": 1, "maximum": 3600},
-              {"key": "Gain", "label": "Gain", "description": "How strong it is.", "type": "number", "secret": false, "minimum": 0.5},
-              {"key": "Count", "label": "Count", "description": "", "type": "integer", "secret": false},
-              {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false},
-              {"key": "Speed", "label": "Speed", "description": "", "type": "enum", "secret": false, "options": ["Low", "High"]}]}
+              {"key": "Interval", "label": "Poll interval", "description": "", "type": "integer", "secret": false, "minimum": 1, "maximum": 3600, "default": 30},
+              {"key": "Gain", "label": "Gain", "description": "How strong it is.", "type": "number", "secret": false, "minimum": 0.5, "default": 1},
+              {"key": "Count", "label": "Count", "description": "", "type": "integer", "secret": false, "default": 0},
+              {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false, "default": false},
+              {"key": "Speed", "label": "Speed", "description": "", "type": "enum", "secret": false, "options": ["Low", "High"], "default": "High"}]}
             """);
         Check(VisualGenerator.SameJson(expected, compiled.Signature), "an entity's settings, base classes first, with their types, secret flag, options and ranges: " + compiled.Signature?.ToJsonString());
         Check(VisualNodeCatalog.WellFormedClassSignature(compiled.Signature), "the signature is well formed: " + compiled.Signature?.ToJsonString());
         Check(!compiled.Signature!.ToJsonString().Contains("hunter2") && !Messages(compiled.Diagnostics).Contains("hunter2"), "a secret's initial value is in neither the signature nor a diagnostic");
         // An int setting without a range keeps an int's.
         var plain = ClassCompiled("csharp_device", "public class Box : SharpDevice\n{\n    [Setting] public int Channel { get; set; }\n}");
-        Check(plain.Valid && VisualGenerator.SameJson(plain.Signature!["settings"]![0], JsonNode.Parse("""{"key": "Channel", "label": "Channel", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647}""")),
+        Check(plain.Valid && VisualGenerator.SameJson(plain.Signature!["settings"]![0], JsonNode.Parse("""{"key": "Channel", "label": "Channel", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647, "default": 0}""")),
             "an int setting without a range has an int's: " + plain.Signature?.ToJsonString());
         // A long with a Maximum alone has that side only (a long has no range of its own); an int whose Minimum is NaN, as
         // none, keeps an int's.
         var sided = ClassCompiled("csharp_device", "public class Box : SharpDevice\n{\n    [Setting(Maximum = 10)] public long Count { get; set; }\n    [Setting(Minimum = double.NaN)] public int Plain { get; set; }\n}");
         Check(sided.Valid && VisualGenerator.SameJson(sided.Signature!["settings"], JsonNode.Parse("""
-            [{"key": "Count", "label": "Count", "description": "", "type": "integer", "secret": false, "maximum": 10},
-             {"key": "Plain", "label": "Plain", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647}]
+            [{"key": "Count", "label": "Count", "description": "", "type": "integer", "secret": false, "maximum": 10, "default": 0},
+             {"key": "Plain", "label": "Plain", "description": "", "type": "integer", "secret": false, "minimum": -2147483648, "maximum": 2147483647, "default": 0}]
             """)), "a long's Maximum alone, and an int's NaN Minimum as none: " + Messages(sided.Diagnostics) + " " + sided.Signature?.ToJsonString());
         // A camera is an entity of the camera domain; a device has none, and the entity classes beside it are its own helpers.
         var camera = ClassCompiled("csharp_entity", "public class Doorbell : SharpCamera { }");
@@ -263,7 +264,7 @@ static class CustomNodeTests
         // An entity class of a node library is used by deriving from it in a node's code: its settings come first.
         var library = new NodeLibrarySource("plugs", "public abstract class HttpRelay : SharpSwitch\n{\n    [Setting(\"Address\")] public string Address { get; set; } = \"\";\n}", 1);
         var derived = ClassCompiled("csharp_entity", "public class Kitchen : HttpRelay\n{\n    [Setting] public bool Loud { get; set; }\n}", libraries: [library]);
-        Check(derived.Valid && VisualGenerator.SameJson(derived.Signature, JsonNode.Parse("""{"title": "Kitchen", "description": "", "domain": "switch", "settings": [{"key": "Address", "label": "Address", "description": "", "type": "string", "secret": false}, {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false}]}""")),
+        Check(derived.Valid && VisualGenerator.SameJson(derived.Signature, JsonNode.Parse("""{"title": "Kitchen", "description": "", "domain": "switch", "settings": [{"key": "Address", "label": "Address", "description": "", "type": "string", "secret": false}, {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false, "default": false}]}""")),
             "a C# entity derives from a library's entity class, its settings first: " + Messages(derived.Diagnostics) + " " + derived.Signature?.ToJsonString());
         // A setting can be an entity handle: type entity, with the domain of a domain's class (none for Entity). A string or
         // a handle that is not nullable and has no initializer is required; a nullable one, one with an initializer and a
@@ -282,8 +283,8 @@ static class CustomNodeTests
             """{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"light","required":true}""",
             """{"key":"Any","label":"Any","description":"","type":"entity","secret":false}""",
             """{"key":"Host","label":"Host","description":"","type":"string","secret":false,"required":true}""",
-            """{"key":"Zone","label":"Zone","description":"","type":"string","secret":false}""",
-            """{"key":"Rate","label":"Rate","description":"","type":"number","secret":false}""",
+            """{"key":"Zone","label":"Zone","description":"","type":"string","secret":false,"default":"UTC"}""",
+            """{"key":"Rate","label":"Rate","description":"","type":"number","secret":false,"default":0}""",
         ];
         Check(lamp.Valid && lamp.Signature!["settings"]!.AsArray().Select(s => s!.ToJsonString()).SequenceEqual(entries),
             "an entity setting has its domain, and a string or entity setting without a ? or an initializer is required: " + Messages(lamp.Diagnostics) + " " + lamp.Signature?["settings"]?.ToJsonString());
@@ -298,6 +299,103 @@ static class CustomNodeTests
         Check(!VisualGenerator.SameSettings(light, Signed("""{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"light"}""")), "a setting that is no longer required is a change of settings");
         Check(!VisualGenerator.SameSettings(light, Signed("""{"key":"Light","label":"Light","description":"","type":"entity","secret":false,"domain":"sensor","required":true}""")), "a setting of another domain is a change of settings");
         Console.WriteLine("PASS class signatures: title, summary, domain, and each setting's type, secret flag, options and range, a library base's first; a secret's value is never shown; an entity setting's domain and a required setting");
+    }
+
+    // A setting's default is the value its property keeps when the node gives it none, for the editor to show: its
+    // initializer when that is a constant (a number, true or false, a text, an enum's member, a negative, a cast or a sum of
+    // constants), a bool's, a number's or an enum's own for a plain one without an initializer. There is none for an
+    // initializer that is not a constant, an empty text, a number JSON has none for, a nullable one or a required one
+    // without an initializer, a secret, an entity, a property a constructor of the class sets, or one whose getter is
+    // its own code. A library class's signature has them as a C# node's does, a base class's too, and each setting's pin
+    // carries its default.
+    static void SettingDefaults()
+    {
+        const string source = """
+            public enum Speed { Low, High }
+            public static class Limits { public const double Step = 0.25; }
+            public class Fan : SharpSwitch
+            {
+                [Setting] public double CheckEvery { get; set; } = 0.5;
+                [Setting] public bool Boxes { get; set; } = true;
+                [Setting] public int Interval { get; set; } = 30;
+                [Setting] public double Gain { get; set; } = 1;
+                [Setting] public int Offset { get; set; } = -3;
+                [Setting] public long Big { get; set; } = (long)5;
+                [Setting] public double Stepped { get; set; } = Limits.Step * 2;
+                [Setting] public string Room { get; set; } = "hall";
+                [Setting] public Speed Speed { get; set; } = Speed.High;
+                [Setting] public Speed? Maybe { get; set; } = Speed.High;
+                [Setting] public int? Some { get; set; } = 4;
+                [Setting] public bool Loud { get; set; }
+                [Setting] public long Count { get; set; }
+                [Setting] public Speed Plain { get; set; }
+                [Setting] public string Blank { get; set; } = "";
+                [Setting] public int? None { get; set; }
+                [Setting] public string? Note { get; set; }
+                [Setting] public string Host { get; set; }
+                [Setting] public double Root { get; set; } = Math.Sqrt(2);
+                [Setting] public string Folder { get; set; } = System.IO.Path.Combine("a", "b");
+                [Setting] public double Unknown { get; set; } = double.NaN;
+                [Setting] public int? Nothing { get; set; } = null;
+                [Setting(Secret = true)] public string Token { get; set; } = "hunter2";
+                [Setting(Secret = true)] public int Pin { get; set; } = 1234;
+                [Setting] public Entity? Lamp { get; set; }
+                [Setting] public double Level { get; set; } = 2;
+                [Setting] public int Steps { get; set; } = 1;
+                [Setting] public double Kept { get => kept; set => kept = value; }
+                double kept = 0.5;
+                public Fan() { Level = 3; this.Steps++; }
+            }
+            """;
+        var compiled = ClassCompiled("csharp_entity", source);
+        Check(compiled.Valid, "the fan compiles: " + Messages(compiled.Diagnostics));
+        var settings = compiled.Signature!["settings"]!.AsArray().OfType<JsonObject>().ToArray();
+        string Default(string key) => settings.Single(s => VisualNodeCatalog.Text(s, "key") == key).TryGetPropertyValue("default", out var value) ? value?.ToJsonString() ?? "null" : "none";
+        var expected = new Dictionary<string, string>
+        {
+            ["CheckEvery"] = "0.5", ["Boxes"] = "true", ["Interval"] = "30", ["Gain"] = "1", ["Offset"] = "-3", ["Big"] = "5", ["Stepped"] = "0.5",
+            ["Room"] = "\"hall\"", ["Speed"] = "\"High\"", ["Maybe"] = "\"High\"", ["Some"] = "4", ["Loud"] = "false", ["Count"] = "0", ["Plain"] = "\"Low\"",
+            ["Blank"] = "none", ["None"] = "none", ["Note"] = "none", ["Host"] = "none", ["Root"] = "none", ["Folder"] = "none", ["Unknown"] = "none", ["Nothing"] = "none",
+            ["Token"] = "none", ["Pin"] = "none", ["Lamp"] = "none", ["Level"] = "none", ["Steps"] = "none", ["Kept"] = "none",
+        };
+        foreach (var (key, value) in expected) Check(Default(key) == value, $"the default of {key} is {value}: {Default(key)}");
+        Check(settings.Single(s => VisualNodeCatalog.Text(s, "key") == "Host")["required"]?.GetValue<bool>() == true, "a required setting stays required, with no default");
+        Check(VisualNodeCatalog.WellFormedClassSignature(compiled.Signature), "a signature with defaults is well formed: " + compiled.Signature!.ToJsonString());
+        Check(!compiled.Signature.ToJsonString().Contains("hunter2") && !compiled.Signature.ToJsonString().Contains("1234"), "a secret's initial value is not in the signature");
+        // The default is on the setting's pin, beside its type; a setting without one has none there.
+        var node = new JsonObject { ["id"] = "fan", ["kind"] = "csharp_entity", ["config"] = new JsonObject { ["key"] = "fan", ["signature"] = compiled.Signature.DeepClone(), ["arguments"] = new JsonObject() } };
+        var pins = VisualNodeCatalog.DataInputs(node);
+        Check(JsonNode.DeepEquals(pins["CheckEvery"]!["setting"], JsonNode.Parse("""{"type":"number","secret":false,"default":0.5}""")) && pins["CheckEvery"]!["default"] == null
+            && pins["Root"]!["setting"]!.AsObject().ContainsKey("default") == false,
+            "a setting's pin carries its default under setting, and not as a pin's default: " + pins["CheckEvery"]!.ToJsonString());
+        // A default that is not a text, a number or true or false is no signature's.
+        foreach (var odd in new JsonNode?[] { null, new JsonObject(), new JsonArray(1) })
+        {
+            var signature = compiled.Signature.DeepClone().AsObject();
+            signature["settings"]![0]!["default"] = odd;
+            Check(!VisualNodeCatalog.WellFormedClassSignature(signature), "a default of " + (odd?.ToJsonString() ?? "null") + " is not well formed");
+        }
+        // A library's class and a class deriving a library's: their settings' defaults, the base's too, unless the derived
+        // class's constructor sets it.
+        var library = new NodeLibrarySource("faces", """
+            /// <summary>Sees people.</summary>
+            [Node("People detector")]
+            public class PeopleDetector : SharpBinarySensor
+            {
+                [Setting("Check every")] public double CheckEvery { get; set; } = 0.5;
+                [Setting("Boxes on the camera")] public bool BoxesOnTheCamera { get; set; } = true;
+                [Setting("Stay on for", Minimum = 0)] public double StayOnFor { get; set; } = 10;
+            }
+            """, 1);
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([library],
+            [new CustomNodeSource("c", "public class Hall : PeopleDetector\n{\n    public Hall() { StayOnFor = 30; }\n}", "csharp_entity")]);
+        Check(preview.Valid, "the library and the node compile: " + Messages(preview.Diagnostics));
+        var detector = preview.Snapshot.Catalog["nodes"]!.AsObject().Select(n => n.Value).Single(n => VisualNodeCatalog.Text(n, "label") == "People detector")!;
+        string Defaults(JsonNode? signature) => string.Join(",", signature!["settings"]!.AsArray().Select(s => $"{VisualNodeCatalog.Text(s, "key")}={s!["default"]?.ToJsonString() ?? "none"}"));
+        Check(Defaults(detector["classSignature"]) == "CheckEvery=0.5,BoxesOnTheCamera=true,StayOnFor=10", "a library class's settings have their defaults: " + Defaults(detector["classSignature"]));
+        Check(Defaults(preview.Snapshot.Custom["c"].Signature) == "CheckEvery=0.5,BoxesOnTheCamera=true,StayOnFor=none",
+            "a class deriving it has the base's defaults, but none for one its constructor sets: " + Defaults(preview.Snapshot.Custom["c"].Signature));
+        Console.WriteLine("PASS class signatures: a setting's default is its constant initializer, or a bool's, number's or enum's own, and none where that is not what an unset setting keeps; it is on the setting's pin");
     }
 
     // A C# node whose class derives a concrete class of a node library has that class's [Setting]s in its signature, the
@@ -321,8 +419,8 @@ static class CustomNodeTests
             {"title": "Kitchen", "description": "", "domain": null, "settings": [
               {"key": "Server", "label": "Server address", "description": "", "type": "string", "secret": false},
               {"key": "Checksum", "label": "Checksum", "description": "", "type": "string", "secret": true},
-              {"key": "Retries", "label": "Retries", "description": "", "type": "integer", "secret": false, "minimum": 1, "maximum": 2147483647},
-              {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false}]}
+              {"key": "Retries", "label": "Retries", "description": "", "type": "integer", "secret": false, "minimum": 1, "maximum": 2147483647, "default": 3},
+              {"key": "Loud", "label": "Loud", "description": "", "type": "boolean", "secret": false, "default": false}]}
             """)), "a C# device deriving a library's device has its settings, the library's first: " + Messages(kitchen.Diagnostics) + " " + kitchen.Signature?.ToJsonString());
 
         var broken = new NodeLibrarySource("broken", "public class Odd : SharpDevice\n{\n    [Setting] public DateTime When { get; set; }\n    [Setting] public bool On { get; set; }\n}", 1);

@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace HassSharp;
 
@@ -188,7 +189,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         var models = new Dictionary<SyntaxTree, SemanticModel>();
         SemanticModel Model(SyntaxTree tree) => models.TryGetValue(tree, out var model) ? model : models[tree] = compilation.GetSemanticModel(tree);
         ISymbol? DeclaredAt(Location location) => location.SourceTree is { } tree ? DeclaredSymbolAt(Model(tree), location, cancellationToken) : null;
-        var classes = new EntityClasses(frameworkAssembly, EntityPin, (location, message) => Report(location, message), cancellationToken);
+        var classes = new EntityClasses(frameworkAssembly, EntityPin, (location, message) => Report(location, message), cancellationToken, Model);
         // The [Setting] properties the class of a C# entity or C# device node takes, by key: the host sets only these.
         var nodeSettings = new Dictionary<SyntaxTree, IReadOnlyDictionary<string, IPropertySymbol>>();
         // A required setting's nullability warning (UnsetRequiredSetting) is dropped in a library's code (a library's class
@@ -937,9 +938,31 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 var index = settings.FindIndex(s => s.Key == found.Key);
                 if (index >= 0) settings[index] = found; else settings.Add(found);
             }
+        // A constructor runs after the initializers: a setting one of the class's sets has no default the code shows.
+        var constructors = BaseTypes(type).Prepend(type).OfType<INamedTypeSymbol>().SelectMany(t => t.InstanceConstructors)
+            .SelectMany(c => c.DeclaringSyntaxReferences).Select(r => r.GetSyntax(read.CancellationToken)).OfType<ConstructorDeclarationSyntax>().ToArray();
+        for (var i = 0; i < settings.Count; i++)
+            if (settings[i].Default != null && constructors.Any(c => Assigns(c, settings[i].Key))) settings[i] = settings[i] with { Default = null };
         var summary = DocText(Documentation(type, read.CancellationToken)?.Element("summary"), reference => read.SettingLabel(type, reference));
         var title = type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, read.Node))?.ConstructorArguments.FirstOrDefault().Value as string;
         return new(kind.Domain, string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]);
+    }
+
+    /// <summary>
+    /// Whether a constructor's code may set the property <paramref name="name"/>: it assigns to that name, alone or after
+    /// <c>this.</c> or <c>base.</c>, or steps it with <c>++</c> or <c>--</c>. Read by name, so a local of that name counts too.
+    /// </summary>
+    static bool Assigns(ConstructorDeclarationSyntax constructor, string name)
+    {
+        bool Named(ExpressionSyntax target) => target is IdentifierNameSyntax identifier && identifier.Identifier.ValueText == name
+            || target is MemberAccessExpressionSyntax { Expression: ThisExpressionSyntax or BaseExpressionSyntax } member && member.Name.Identifier.ValueText == name;
+        return constructor.DescendantNodes().Any(n => n switch
+        {
+            AssignmentExpressionSyntax assignment => Named(assignment.Left),
+            PrefixUnaryExpressionSyntax step when step.IsKind(SyntaxKind.PreIncrementExpression) || step.IsKind(SyntaxKind.PreDecrementExpression) => Named(step.Operand),
+            PostfixUnaryExpressionSyntax step when step.IsKind(SyntaxKind.PostIncrementExpression) || step.IsKind(SyntaxKind.PostDecrementExpression) => Named(step.Operand),
+            _ => false,
+        });
     }
 
     /// <summary>
@@ -948,7 +971,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     /// where the property is written), whether a definition can create a class, and its kind and domain.
     /// </summary>
     /// <param name="entityPin">The pin of an entity handle's type (<c>entity_id</c>, <c>entity_id:light</c>); null for any other type.</param>
-    sealed class EntityClasses(IAssemblySymbol hassSharp, Func<ITypeSymbol, string?> entityPin, Action<Location, string> report, CancellationToken cancellationToken)
+    /// <param name="model">The semantic model of a tree of the compile, which a setting's initializer is read in; without it no setting has a default.</param>
+    sealed class EntityClasses(IAssemblySymbol hassSharp, Func<ITypeSymbol, string?> entityPin, Action<Location, string> report, CancellationToken cancellationToken,
+        Func<SyntaxTree, SemanticModel>? model = null)
     {
         internal readonly INamedTypeSymbol? Component = hassSharp.GetTypeByMetadataName("HassSharp.SharpComponent");
         internal readonly INamedTypeSymbol? Device = hassSharp.GetTypeByMetadataName("HassSharp.SharpDevice");
@@ -980,6 +1005,52 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             if (kind is not ("string" or "entity") || property.Type.NullableAnnotation != NullableAnnotation.NotAnnotated) return false;
             var declarations = property.DeclaringSyntaxReferences.Select(r => r.GetSyntax(cancellationToken)).ToArray();
             return declarations.Length > 0 && declarations.All(d => d is PropertyDeclarationSyntax { Initializer: null });
+        }
+
+        /// <summary>
+        /// What a setting is when the node gives it no value, as the class's code says before any of it runs: the
+        /// constant its property's initializer has (a number, true or false, a text, an enum's member, or a negative, cast
+        /// or sum of constants), read by the compiler, never by creating the class; without an initializer, a <c>bool</c>'s,
+        /// a number's or an enum's own (false, 0, its member of 0), which the host leaves it at. Null for a property whose
+        /// getter is its own code or that has no syntax here, an initializer that is not a constant, a nullable or reference
+        /// type without an initializer (null, or required), an entity, an empty text, a number JSON has none for, a whole
+        /// number past what the editor holds exactly, and an enum's value that no member has. A constructor that sets the
+        /// property is <see cref="DescribeEntityType"/>'s to see: it knows the class.
+        /// </summary>
+        object? SettingDefault(IPropertySymbol property, (string Kind, ImmutableArray<string> Options, double? Minimum, double? Maximum, string? Domain) shape)
+        {
+            if (model == null || shape.Kind == "entity" || property.DeclaringSyntaxReferences is not [var reference]
+                || reference.GetSyntax(cancellationToken) is not PropertyDeclarationSyntax { ExpressionBody: null, AccessorList: { } accessors } declaration
+                || accessors.Accessors.FirstOrDefault(a => a.IsKind(SyntaxKind.GetAccessorDeclaration)) is not { Body: null, ExpressionBody: null }) return null;
+            object? value;
+            if (declaration.Initializer is { } initializer)
+            {
+                if (model(declaration.SyntaxTree).GetOperation(initializer, cancellationToken) is not IPropertyInitializerOperation { Value: var operation }) return null;
+                // A value of a nullable type is converted to it, which is no constant: the value converted is.
+                while (operation is IConversionOperation { ConstantValue.HasValue: false, Type.OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } conversion) operation = conversion.Operand;
+                if (!operation.ConstantValue.HasValue) return null;
+                value = operation.ConstantValue.Value;
+            }
+            else if (property.Type.IsValueType && property.Type.OriginalDefinition.SpecialType != SpecialType.System_Nullable_T) value = shape.Kind == "boolean" ? false : 0;
+            else return null;
+            // The largest whole number a double, and so the editor, holds exactly.
+            const long exact = 9007199254740991;
+            switch (shape.Kind, value)
+            {
+                case ("boolean", bool flag): return flag;
+                case ("string", string text) when text.Length > 0: return text;
+                case ("integer", sbyte or byte or short or ushort or int or uint or long or ulong):
+                    var whole = Convert.ToDecimal(value, System.Globalization.CultureInfo.InvariantCulture);
+                    return whole is >= -exact and <= exact ? (long)whole : null;
+                case ("number", sbyte or byte or short or ushort or int or uint or long or ulong or float or double or decimal):
+                    var number = Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+                    return double.IsFinite(number) ? number : null;
+                case ("enum", sbyte or byte or short or ushort or int or uint or long or ulong):
+                    var member = Convert.ToDecimal(value, System.Globalization.CultureInfo.InvariantCulture);
+                    return Scalar(property.Type).GetMembers().OfType<IFieldSymbol>()
+                        .FirstOrDefault(f => f.IsConst && f.ConstantValue != null && Convert.ToDecimal(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == member)?.Name;
+                default: return null;
+            }
         }
 
         /// <summary>
@@ -1049,7 +1120,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                     if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"), reference => SettingLabel(type, reference));
                     settings.Add(new(property.Name, LabelOf(attribute, property), string.IsNullOrWhiteSpace(description) ? null : description,
                         shape.Kind, secret, shape.Options)
-                        { Minimum = range.Minimum, Maximum = range.Maximum, Domain = shape.Domain, Required = Required(property, shape.Kind) });
+                        { Minimum = range.Minimum, Maximum = range.Maximum, Domain = shape.Domain, Required = Required(property, shape.Kind), Default = secret ? null : SettingDefault(property, shape) });
                 }
             }
         }
@@ -1165,6 +1236,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 // A domain's entity class only, and required only when it is: a signature without either reads as before.
                 if (s.Domain != null) entry["domain"] = s.Domain;
                 if (s.Required) entry["required"] = true;
+                // What an unset setting is, for the editor to show; none when the code does not say (see SettingDefault).
+                if (s.Default != null) entry["default"] = JsonSerializer.SerializeToNode(s.Default);
                 return (JsonNode?)entry;
             })]),
         };

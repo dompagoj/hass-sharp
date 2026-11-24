@@ -847,6 +847,34 @@ describe('devices in the right panel', () => {
       expect(argument(node, 'Fast')).toEqual(lit('boolean', true))
     })
 
+    it('shows what an unset setting is when the class has a default, in place of Not set, then the value typed; Not set without one', async () => {
+      const defaulted = [setting('CheckEvery', 'number', { label: 'Check every', default: 0.5 }), setting('Boxes', 'boolean', { default: true }),
+        setting('Mode', 'enum', { options: ['eco', 'comfort'], default: 'comfort' }), setting('Room', 'string', { default: 'hall' }), setting('Ratio', 'number'),
+        setting('Quiet', 'boolean', { default: false })]
+      const graph = add(devices(), 'csharp_entity', 'fan', { key: 'fan', signature: { title: 'Fan', description: '', domain: 'switch', settings: defaulted } })
+      const { el, node } = mount(graph, 'fan')
+      const unset = (key: string) => settingRow(el, key).querySelector('.hs-insp-unset .hs-muted')?.textContent
+      expect(['CheckEvery', 'Boxes', 'Mode', 'Room', 'Ratio', 'Quiet'].map(unset)).toEqual(['Default 0.5', 'Default True', 'Default comfort', 'Default hall', 'Not set', 'Default False'])
+      // Set value opens each editor, still without a value: each says the default where it would say Not set.
+      for (const key of ['CheckEvery', 'Boxes', 'Mode', 'Room', 'Ratio']) settingRow(el, key).querySelector<HTMLButtonElement>(`button[aria-label="Set ${key === 'CheckEvery' ? 'Check every' : key}"]`)!.click()
+      const input = (key: string) => settingRow(el, key).querySelector<HTMLInputElement>('input:not([type="checkbox"])')!
+      await vi.waitFor(() => expect(input('CheckEvery')).not.toBeNull())
+      expect([input('CheckEvery').placeholder, input('Room').placeholder, input('Ratio').placeholder]).toEqual(['Default 0.5', 'Default hall', 'Not set'])
+      expect(settingRow(el, 'Boxes').querySelector('.hs-widget-row .hs-muted')!.textContent).toBe('Default True')
+      expect(settingRow(el, 'Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false)
+      const mode = settingRow(el, 'Mode').querySelector('select')!
+      expect([...mode.options].filter(o => o.disabled).map(o => o.textContent)).toEqual(['Default comfort'])
+      // Shown, never stored: the node still has no value for any of them.
+      expect(node().config.arguments ?? {}).toEqual({})
+      // Typed in, the value is the setting's, and shown as typed.
+      typeInto(input('CheckEvery'), '2')
+      expect(argument(node, 'CheckEvery')).toEqual(lit('number', 2))
+      expect(input('CheckEvery').value).toBe('2')
+      settingRow(el, 'Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!.click()
+      expect(argument(node, 'Boxes')).toEqual(lit('boolean', true))
+      expect(settingRow(el, 'Boxes').querySelector('.hs-widget-row .hs-muted')!.textContent).toBe('True')
+    })
+
     it('an entity setting picks an entity, a light only for a LightEntity; a required one shows its editor and its problem while empty', async () => {
       const lights = { ...registry, entities: [...registry.entities, registryEntity('light.kitchen', 'Kitchen'), registryEntity('light.porch', 'Porch')] }
       const entitySettings = [setting('Lamp', 'entity', { domain: 'light', required: true }), setting('Source', 'entity')]

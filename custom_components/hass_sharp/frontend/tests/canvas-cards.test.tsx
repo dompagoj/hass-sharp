@@ -1475,6 +1475,31 @@ describe('the C# entity and C# device cards', () => {
     expect([...row('Mode').querySelector('select')!.options].filter(o => !o.disabled).map(o => o.textContent)).toEqual(['eco', 'comfort'])
   })
 
+  it('shows an unset setting\'s default beside its name, muted, and nothing beside one without a default, with a value or opened', async () => {
+    const defaulted = [setting('CheckEvery', 'number', { default: 0.5 }), setting('Boxes', 'boolean', { default: true }), setting('Mode', 'enum', { options: ['eco', 'comfort'], default: 'comfort' }),
+      setting('Port', 'integer'), setting('Room', 'string', { default: 'hall' }), setting('Token', 'string', { secret: true })]
+    const graph = add(nodes(), 'csharp_device', 'fan', { key: 'fan', name: 'Fan', signature: signature('Fan', null, defaulted), arguments: { Room: lit('string', 'porch') } })
+    const shown = (el: Element) => Object.fromEntries([...card(el, 'fan').querySelectorAll<HTMLElement>('[data-input-id]')]
+      .map(row => [row.dataset.inputId, row.querySelector<HTMLElement>('.hs-pin-default') && [row.querySelector('.hs-pin-default')!.textContent, row.querySelector('.hs-pin-default')!.getAttribute('title')]]))
+    const defaults = { CheckEvery: ['0.5', 'Default 0.5'], Boxes: ['True', 'Default True'], Mode: ['comfort', 'Default comfort'], Port: null, Room: null, Token: null }
+    // Read-only, as on a canvas that cannot be edited.
+    const readOnly = host()
+    dispose = render(() => <FlowAdapter graph={graph} onSelect={() => {}} />, readOnly)
+    expect(shown(readOnly)).toEqual(defaults)
+    expect(card(readOnly, 'fan').querySelector('[data-input-id="Room"] .hs-value-chip')!.textContent).toBe('porch')
+    dispose()
+    // Editable: beside the Set button, which keeps the label alone; opened, the editor says it instead.
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} />), el)
+    expect(shown(el)).toEqual(defaults)
+    const row = (port: string) => card(el, 'fan').querySelector(`[data-input-id="${port}"]`)!
+    expect(row('CheckEvery').querySelector('button.hs-pin-set')!.textContent).toBe('CheckEvery')
+    row('CheckEvery').querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+    await vi.waitFor(() => expect(row('CheckEvery').querySelector('input')).not.toBeNull())
+    expect(row('CheckEvery').querySelector('.hs-pin-default')).toBeNull()
+    expect(row('CheckEvery').querySelector('input')!.placeholder).toBe('Default 0.5')
+  })
+
   it('marks a required entity setting as other required inputs are, shows its problem while empty, and picks a light for a LightEntity', async () => {
     const el = host()
     const entitySettings = [setting('Lamp', 'entity', { domain: 'light', required: true }), setting('Source', 'entity')]
