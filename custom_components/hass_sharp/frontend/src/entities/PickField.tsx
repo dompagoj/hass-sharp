@@ -111,8 +111,11 @@ export function PickField(props: {
     if (open()) for (const option of seen()) { const shown = byId().get(option)?.image; if (shown) hashes.add(shown) }
     return [...hashes]
   }, [], { equals: sameList })
-  createEffect(() => props.options.want(owner, pictures()))
-  onCleanup(() => props.options.want(owner, []))
+  // Taken now: the cleanup runs as the field's card, list or page goes, when reading a prop would go through a <Show>
+  // whose condition no longer holds and throw.
+  const { want } = props.options
+  createEffect(() => want(owner, pictures()))
+  onCleanup(() => want(owner, []))
 
   const show = () => {
     if (open()) return

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { ErrorBoundary } from 'solid-js'
 import { render } from 'solid-js/web'
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { HassCtx } from '../src/context'
@@ -7,11 +8,13 @@ import type { DeviceActResult, DeviceCard, DeviceField, DeviceOption, DeviceOpti
 
 // A card's pick field on the Device tab, against an in-memory `hass_sharp/device_ui` backend: the button on the card,
 // its dialog (search, keyboard, the form of a new one), the pictures it asks for, what survives a refresh, and what a
-// press sends.
+// press sends; and that nothing breaks when a card, an option, a list or a page goes.
 
+/** What the panel threw while drawing, as an error boundary around it sees it. */
+let reported: unknown[] = []
 let dispose: (() => void) | undefined
 let client: QueryClient | undefined
-beforeEach(() => { vi.useFakeTimers() })
+beforeEach(() => { vi.useFakeTimers(); reported = [] })
 afterEach(() => {
   dispose?.(); dispose = undefined
   client?.clear(); client = undefined
@@ -72,14 +75,19 @@ function backend() {
 }
 type Backend = ReturnType<typeof backend>
 
-function mount(device: Backend) {
+/** The panel, inside an error boundary that keeps what it catches in `reported`; with `bare`, without one. */
+function mount(device: Backend, options: { bare?: boolean } = {}) {
   const host = document.createElement('div')
   host.className = 'hs-app'
   document.body.append(host)
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   dispose = render(() => (
     <QueryClientProvider client={client!}><HassCtx.Provider value={{ callWS: device.callWS } as any}>
-      <DevicePanel definitionId="door" visible />
+      {options.bare ? <DevicePanel definitionId="door" visible /> : (
+        <ErrorBoundary fallback={error => { reported.push(error); return <p>The panel broke.</p> }}>
+          <DevicePanel definitionId="door" visible />
+        </ErrorBoundary>
+      )}
     </HassCtx.Provider></QueryClientProvider>
   ), host)
   return host
@@ -559,4 +567,180 @@ it('gives the search, the list and its rows their roles', async () => {
   expect(listbox().getAttribute('aria-label')).toBe('Person options')
   expect(rows().map(row => row.id).every(Boolean)).toBe(true)
   expect(rows()).toHaveLength(4)
+})
+
+// What goes: a card, an option, a list or a page, as a press or another device's change takes it from the page. The
+// panel draws the next revision without it and keeps everything else as it was, and nothing throws.
+
+const note = (value = ''): DeviceField => ({ key: 'note', label: 'Note', type: 'text', value, required: false })
+const withNote = (id: string, field: DeviceField = pick()) => faceCard(id, field, { fields: [note(), field] })
+const without = (...gone: string[]): DeviceOptionSet => ({ id: 'people', items: people().items.filter(option => !gone.includes(option.id)) })
+/** Nothing thrown, to the boundary around the panel or to the panel's own, which would say so on its failure line. */
+const drewQuietly = (host: Element) => {
+  expect(reported).toEqual([])
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+}
+const noteInput = (within: Element) => within.querySelector<HTMLInputElement>('input[aria-label="Note"]')!
+
+it('loses a card that goes, and an option, and keeps the other card as it was', async () => {
+  const device = backend()
+  device.state.images = { h1: 'AAAA' }
+  device.state.pages = [doorPage([withNote('f1', pick({ value: 'p1' })), withNote('f2')])]
+  const host = mount(device)
+  await settle()
+  await settle()
+  const f2 = card(host, 'f2')
+  type(noteInput(f2), 'by the door')
+  await open(f2)
+  rows()[1].click()
+  await settle()
+  device.draw([doorPage([withNote('f2')], [without('p3')])])
+  await poll()
+  drewQuietly(host)
+  expect(card(host, 'f1')).toBeNull()
+  expect(host.querySelector('h4')!.textContent).toBe('Unknown faces (1)')
+  expect(card(host, 'f2')).toBe(f2)
+  expect(noteInput(f2).value).toBe('by the door')
+  expect(pickButton(f2).textContent).toContain('Ana Horvat')
+  // The next revision is drawn too.
+  device.draw([doorPage([withNote('f2'), withNote('f4')], [without('p3')])])
+  await poll()
+  expect(card(host, 'f4')).not.toBeNull()
+  drewQuietly(host)
+})
+
+it('shows nothing chosen when the option chosen goes, and the press is refused or answers changed', async () => {
+  const device = backend()
+  device.state.images = { h1: 'AAAA' }
+  device.state.pages = [doorPage([faceCard('f1', pick({ value: 'p1', required: true })), faceCard('f2')])]
+  const host = mount(device)
+  await settle()
+  await settle()
+  const f1 = card(host, 'f1'), f2 = card(host, 'f2')
+  expect(pickButton(f1).querySelector('img')).not.toBeNull()
+  await open(f2)
+  rows()[0].click()
+  await settle()
+  // Ivan is deleted on another detector: the device draws the set without him, and the field's value as none.
+  device.draw([doorPage([faceCard('f1', pick({ value: null, required: true })), faceCard('f2')], [without('p1')])])
+  await poll()
+  drewQuietly(host)
+  for (const shown of [f1, f2]) {
+    expect(pickButton(shown).textContent).toContain('Choose…')
+    expect(pickButton(shown).querySelector('img')).toBeNull()
+  }
+  button(f1, 'Save').click()
+  await settle()
+  expect(acts(device)).toEqual([])
+  expect(field(f1).textContent).toContain('Person is required.')
+  // A press sent before the panel learnt of it: the device answers changed.
+  await open(f2)
+  rows()[1].click()
+  await settle()
+  device.state.act = () => ({ status: 'changed' })
+  button(f2, 'Save').click()
+  await settle()
+  expect(acts(device).map(r => r.values)).toEqual([{ person: { picked: 'p3' } }])
+  expect(f2.textContent).toContain('This changed meanwhile; the page was refreshed.')
+})
+
+it('closes the dialog of a card that goes', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([withNote('f1', pick({ value: 'p1' })), withNote('f2')])]
+  const host = mount(device)
+  await settle()
+  type(noteInput(card(host, 'f2')), 'kept')
+  await open(card(host, 'f1'))
+  type(search(), 'ana')
+  device.draw([doorPage([withNote('f2')])])
+  await poll()
+  drewQuietly(host)
+  expect(dialog()).toBeNull()
+  expect(card(host, 'f1')).toBeNull()
+  expect(noteInput(card(host, 'f2')).value).toBe('kept')
+})
+
+it('drops an option that goes from an open dialog, which keeps its text', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([withNote('f1', pick({ value: 'p1' })), withNote('f2')])]
+  const host = mount(device)
+  await settle()
+  await open(card(host, 'f1'))
+  const shown = dialog()!
+  type(search(), 'horvat')
+  device.draw([doorPage([withNote('f1', pick({ value: 'p1' })), withNote('f2')], [without('p2')])])
+  await poll()
+  drewQuietly(host)
+  expect(dialog()).toBe(shown)
+  expect(search().value).toBe('horvat')
+  expect(titles()).toEqual(['Ivan Horvat'])
+})
+
+it('drops a list that goes, with its cards\' pick fields', async () => {
+  const device = backend()
+  const twoLists = (more: boolean): DevicePageData => ({
+    ...doorPage([withNote('f1', pick({ value: 'p1' }))]),
+    lists: [
+      { id: 'unknown', title: 'Unknown faces', attention: true, empty: null, cards: [withNote('f1', pick({ value: 'p1' }))] },
+      ...(more ? [{ id: 'people', title: 'People', attention: false, empty: null, cards: [withNote('k1', pick({ value: 'p2' }))] }] : []),
+    ],
+  })
+  device.state.pages = [twoLists(true)]
+  const host = mount(device)
+  await settle()
+  type(noteInput(card(host, 'f1')), 'kept')
+  device.draw([twoLists(false)])
+  await poll()
+  drewQuietly(host)
+  expect(host.querySelector('[data-list-id="people"]')).toBeNull()
+  expect(noteInput(card(host, 'f1')).value).toBe('kept')
+})
+
+it('drops the page of a node that goes, with its pick fields', async () => {
+  const device = backend()
+  const porch: DevicePageData = { ...doorPage([withNote('q1', pick({ value: 'p2' }))]), nodeKey: 'porch', title: 'Porch people' }
+  device.state.pages = [doorPage([withNote('f1', pick({ value: 'p1' }))]), porch]
+  const host = mount(device)
+  await settle()
+  type(noteInput(card(host, 'f1')), 'kept')
+  device.draw([doorPage([withNote('f1', pick({ value: 'p1' }))])])
+  await poll()
+  drewQuietly(host)
+  expect(host.textContent).not.toContain('Porch people')
+  expect(card(host, 'q1')).toBeNull()
+  expect(noteInput(card(host, 'f1')).value).toBe('kept')
+})
+
+it('does not take a revision whose pages it could not draw: it says so and reads them again', async () => {
+  const device = backend()
+  // The next revision, r2, has a list the panel throws on until it is mended.
+  let broken = true
+  const extra = { id: 'extra', attention: false, empty: null, cards: [], get title() { if (broken) throw new Error('A list that cannot be drawn.'); return 'Extra' } }
+  const inner = device.callWS
+  const reads: (string | undefined)[] = []
+  device.callWS = async (message: any) => {
+    if (message.request.operation !== 'read' || device.state.revision !== 'r2') return inner(message)
+    reads.push(message.request.knownRevision)
+    if (message.request.knownRevision === 'r2') return { version: 1, ok: true, result: { running: true, revision: 'r2', unchanged: true } }
+    return { version: 1, ok: true, result: { running: true, revision: 'r2', pages: [{ ...doorPage(), lists: [...doorPage().lists, extra] }] } }
+  }
+  const failed = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const host = mount(device, { bare: true })
+  await settle()
+  expect(card(host, 'f1')).not.toBeNull()
+  device.state.revision = 'r2'
+  await poll()
+  expect(host.querySelector('[role="alert"]')!.textContent).toBe('The device page could not be drawn. It is read again in a moment.')
+  expect(failed).toHaveBeenCalled()
+  // Still r1: the next read asks for the pages again.
+  await poll()
+  expect(reads).toEqual(['r1', 'r1'])
+  broken = false
+  await poll()
+  expect(reads).toEqual(['r1', 'r1', 'r1'])
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+  expect(host.querySelector('[data-list-id="extra"]')!.textContent).toContain('Extra')
+  await poll()
+  expect(reads.at(-1)).toBe('r2')
+  failed.mockRestore()
 })

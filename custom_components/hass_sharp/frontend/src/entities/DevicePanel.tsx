@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, Match, on, onCleanup, Show, Switch, untrack } from 'solid-js'
+import { createEffect, createMemo, createSignal, createUniqueId, ErrorBoundary, For, Match, on, onCleanup, Show, Switch, untrack } from 'solid-js'
 import { useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
@@ -24,6 +24,8 @@ type Press = (nodeKey: string, list: string, card: string, action: string, value
 
 /** The button of each action style. */
 const variants = { default: 'secondary', primary: 'primary', danger: 'danger' } as const
+/** What the failure line says when a read's pages could not be drawn. */
+const drawFailure = 'The device page could not be drawn. It is read again in a moment.'
 const notRunning = (error: unknown) => error instanceof EntityApiError && error.code === 'not_running'
 
 /**
@@ -61,6 +63,8 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
     return next
   })
   let revision: string | undefined
+  // While the pages' error boundary shows nothing for pages it could not draw: what draws them again.
+  let redraw: (() => void) | undefined
   // The definition shown; a new one, or disposal, ends every answer still to come for the one before.
   let epoch = 0
   let current: string | undefined
@@ -104,10 +108,20 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
       setFailure()
       if (!answer.running) stopped(id)
       else if ('pages' in answer) {
+        // A read counts once its pages are drawn whole; else `revision` stays, so the next read answers them again and
+        // they are drawn afresh.
+        const again = redraw
+        redraw = undefined
+        try {
+          setShown({ kind: 'pages', pages: answer.pages })
+          again?.()
+          keepImages(id, answer.pages)
+          noteDeviceRead(queryClient, id, answer.pages)
+        } catch (error) {
+          drawFailed(error)
+        }
+        if (redraw) { setFailure(drawFailure); return }
         revision = answer.revision
-        setShown({ kind: 'pages', pages: answer.pages })
-        keepImages(id, answer.pages)
-        noteDeviceRead(queryClient, id, answer.pages)
       }
     } catch (error) {
       if (at !== epoch || mine < applied) return
@@ -124,6 +138,7 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
       current = id
       epoch++
       revision = undefined
+      redraw = undefined
       requested.clear()
       setImages(new Map())
       setShown({ kind: 'reading' })
@@ -159,6 +174,14 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
   }
 
   const pages = createMemo(() => { const now = shown(); return now.kind === 'pages' ? now.pages : undefined })
+  // What threw while the pages were drawn (in a computation, or a cleanup as a card goes) is caught by the error boundary
+  // around them, so the rest of the update completes: one that reached `setShown`'s caller would leave the computations
+  // it had queued stale, never to run again, and the tab would show the pages it had until the browser's page reloads.
+  const drawFailed = (error: unknown, reset: () => void = () => {}) => {
+    console.error('HassSharp could not draw the device page.', error)
+    redraw = reset
+    return undefined
+  }
   return (
     <div class="hs-device">
       <Show when={props.definitionId} fallback={<p class="hs-drawer__empty">Save this entity definition to see its device pages.</p>}>
@@ -172,13 +195,15 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
           </Match>
           <Match when={pages()}>
             {all => (
-              <For each={all().map(page => page.nodeKey)}>
-                {nodeKey => (
-                  <Show when={all().find(page => page.nodeKey === nodeKey)}>
-                    {page => <PageSection page={page()} images={images()} press={press} want={want} />}
-                  </Show>
-                )}
-              </For>
+              <ErrorBoundary fallback={drawFailed}>
+                <For each={all().map(page => page.nodeKey)}>
+                  {nodeKey => (
+                    <Show when={all().find(page => page.nodeKey === nodeKey)}>
+                      {page => <PageSection page={page()} images={images()} press={press} want={want} />}
+                    </Show>
+                  )}
+                </For>
+              </ErrorBoundary>
             )}
           </Match>
         </Switch>
@@ -194,10 +219,13 @@ function PageSection(props: {
   press: Press
   want(owner: object, nodeKey: string, hashes: readonly string[]): void
 }) {
+  // A field lets go of its pictures as it goes, maybe with this page: what that reads must not be the page's accessor,
+  // which throws once its <Show> no longer has the page. The page's <For> keys it by node key, so it never changes.
+  const nodeKey = props.page.nodeKey
   const options: PickOptions = {
     get sets() { return props.page.options ?? [] },
     get images() { return props.images },
-    want: (owner, hashes) => props.want(owner, props.page.nodeKey, hashes),
+    want: (owner, hashes) => props.want(owner, nodeKey, hashes),
   }
   return (
     <section class="hs-device__page">
