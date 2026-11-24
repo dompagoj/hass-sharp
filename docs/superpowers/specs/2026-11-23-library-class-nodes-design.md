@@ -234,3 +234,19 @@ Live check in a throwaway `hass_wt` container on port 5002 (never the `hass` con
 tools): save a library with a marked device class that draws a page; drop it on a new definition, set its settings,
 save; its entities appear and its page works; restart and re-save keep its data; replace a C# device node deriving
 from the same class with the library node under the same key and confirm the entities and data are kept.
+
+## As built: added after the plan
+
+Decided by the controller while the owner was away (the night of 2026-11-23/24), for the owner to confirm.
+
+- **The right panel names a library class node's library by its name** and opens it; the `catalog` answer carries
+  the libraries' names for that.
+- **A step or class gone from its library is reported as that alone**, not also for each wire into the pins it no
+  longer has, and gets no "unreachable" beside it.
+- **A library save takes a class's new settings into the C# nodes that derive from it.** The rebuild writes each C#
+  entity's and C# device's settings from its code as compiled with the new libraries, its code, values and wires
+  untouched; the save is refused only for a new required setting without a value, or a removed one that a node
+  still sets or has a wire for, as for the class's own node. A definition's own save still asks for edited code to
+  be applied. Found by hass-sharp-vision 1.1.0, whose People detector gained six settings.
+- **A node's description shows what its documentation refers to**: a setting or pin by its label, any other member
+  by its short name, where it left a gap before.

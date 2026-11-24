@@ -335,3 +335,33 @@ datasets and embeddings used for it are not committed.
   detector recognises the same person and shows the same People list; learned samples appear and one can be removed;
   merge and delete work; with both definitions off, the Stored data dialog deletes the people; the log holds no name
   or image data; check time with four faces is measured and reported.
+
+## As built: where it departs from the design above
+
+Decided by the controller while the owner was away (the night of 2026-11-23/24), for the owner to confirm. The
+reasons and the evidence are in hass-sharp-vision's `docs/calibration.md` and README.
+
+- **Defaults stricter than the design's per-pair rules.** A match at 0.50 with a margin of 0.10, a suggestion from
+  0.40, learning from 0.60 with a margin of 0.15; faces from 16 px between the eyes, learned from 24 px; the
+  alignment's fit at most 7. The calibration measured that a face is compared with every sample of everyone, so a
+  stranger crosses a per-pair line far more often than the pair rate says. *Match score* moves the suggestion and
+  learning lines with it, a tenth either side.
+- **An interrupted delete, merge or add leaves no face data behind.** A note per person (`unfinished/<id>`) lets the
+  next list on the store finish it.
+- **A removed learned sample is not learned again at once.** The person's record keeps when a learned sample was
+  last added or removed, and learning waits 10 minutes from that.
+- **Two faces of one frame are two people.** A group takes one face of a check; groups of one check stay apart for
+  good; a group seen in a frame with a named person, or apart from the group that was named as them, is known not
+  to be that person: a match with them does not remove it, and a face more alike to it than to them goes to it. A
+  person's name goes to one face of a frame, the best match. Found live: two different men of the test photo score
+  0.52 to 0.56, over the default match score.
+- **The page.** Times are relative ("5 minutes ago") and the page is drawn again once a minute; with three or more
+  people the Merge question cannot name the person chosen in the field; an unreadable or newer store says why its
+  list is empty.
+- **With *Detect people* off the person model is not run but is still loaded**: the native detector opens both
+  models in one call, and not loading one is an ABI change.
+- **The recogniser opens in the background** after the definition has started, and is tried again at most every 10
+  minutes after a failure.
+- **Needed in HassSharp, found by this work:** a library save takes a class's new settings into the C# nodes that
+  derive from it (without it, 1.1.0 could not be imported over a stored 1.0.x definition), and a node's description
+  shows a member its documentation refers to by name.
