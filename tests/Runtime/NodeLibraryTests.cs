@@ -184,6 +184,8 @@ public static class NodeLibraryTests
         Console.WriteLine("PASS rich node libraries: Roslyn discovery, docs, signatures, conversion, snapshots and graph validation");
         PinDepth(compiler);
         Console.WriteLine("PASS rich node libraries: a pin whose type nests more than 8 levels is refused before any conversion is classified");
+        ADescriptionShowsWhatItRefersToByName();
+        AClassDescriptionShowsASettingItRefersToByItsLabel();
         await RunReview(null);
         await ALibrarySaveThatRemovesAUsedClassIsRefused();
         await ALibrarySaveThatRemovesAUsedParameterIsRefused();
@@ -195,6 +197,114 @@ public static class NodeLibraryTests
         await ALibrarySaveTakesANewSettingIntoADerivingDefinitionThatIsOff();
         await ADefinitionsOwnSaveOfAStaleSignatureIsStillRefused();
         await ALibrarySaveTakesANewSettingIntoACSharpEntityThatDerivesTheClass();
+    }
+
+    // ---- What a description refers to ----
+
+    /// <summary>
+    /// A library whose documentation refers to members, types, parameters and words in each form XML documentation has:
+    /// a <c>[Node]</c> method, and a <c>[Node]</c> device class deriving a base class with a setting of its own.
+    /// </summary>
+    const string ReferringSource = """
+        public record Face(string Name);
+        public class PeopleList { }
+        public class Box<T> { }
+        public static class Faces
+        {
+            /// <summary>
+            /// <para>Counts the faces of <paramref name="frame"/> that the <see cref="PeopleList"/> does not know, as
+            /// <see cref="Face"/> values.</para>
+            /// <para>See <see href="https://example.com/faces">the faces guide</see> or <see href="https://example.com/more"/>.</para>
+            /// </summary>
+            /// <param name="frame">The frame, its faces found by <see cref="Find(string, CancellationToken)"/>; <see langword="null"/> for none.</param>
+            /// <param name="limit">At most this many, <c>0</c> for no limit, each in a <see cref="Box{T}"/>.</param>
+            /// <param name="cancellationToken">Stops the count.</param>
+            /// <returns>How many faces of <paramref name="frame"/> are strangers, as <see cref="Face">a face each</see>.</returns>
+            [Node("Strangers")]
+            public static int Strangers(string? frame, [Port("At most")] int limit = 0, CancellationToken cancellationToken = default) => 0;
+            /// <summary>The faces of <paramref name="frame"/>, of no <typeparamref name="T"/>; <paramref name="cancellationToken"/> is not a pin.</summary>
+            /// <param name="frame">The frame, as <seealso cref="Strangers"/> takes it.</param>
+            /// <param name="cancellationToken">Stops the search.</param>
+            [Node("Find")]
+            public static string[] Find(string frame, CancellationToken cancellationToken = default) => [];
+        }
+        /// <summary>A watcher of frames.</summary>
+        public abstract class Watcher : SharpDevice
+        {
+            /// <summary>How many seconds pass between two frames.</summary>
+            [Setting("Look every")] public double Every { get; set; } = 1;
+        }
+        /// <summary>
+        /// Reports whether one is seen (held on for <see cref="StayOnFor"/> after the last), looking every
+        /// <see cref="Watcher.Every"/> seconds, against the <see cref="PeopleList"/> every People detector shares, its
+        /// <see cref="Seen"/> made by <see cref="PeopleDetector()"/>.
+        /// </summary>
+        [Node("People detector", Category = "People")]
+        public class PeopleDetector : Watcher
+        {
+            /// <summary>Whether one is seen.</summary>
+            public bool Seen { get; private set; }
+            /// <summary>The camera to watch, a frame every <see cref="Watcher.Every"/> seconds, held for <see cref="StayOnFor"/>.</summary>
+            [Setting] public string Camera { get; set; } = "";
+            /// <summary>How long one is held on for after the last time one is seen; <c>0</c> for not at all.</summary>
+            [Setting("Stay on for", Minimum = 0)] public double StayOnFor { get; set; } = 10;
+            /// <summary>Makes a detector that sees no one.</summary>
+            public PeopleDetector() { }
+        }
+        """;
+
+    /// <summary>The words of a catalog entry's text <paramref name="entry"/>, checked to read as plain sentences: no gap a reference left.</summary>
+    static string Plain(JsonNode? entry, string what)
+    {
+        var text = entry?.GetValue<string>() ?? "";
+        Check(text.Length > 0 && !text.Contains("()") && !text.Contains("  ") && !text.Contains(" ,") && !text.Contains(" ;") && !text.Contains(" .") && text == text.Trim(),
+            $"{what} reads as a plain sentence: \"{text}\"");
+        return text;
+    }
+
+    // A [Node] method's summary, parameter and return texts show each reference in them: a member or type by its short
+    // name, a parameter by its pin's label (by its name when it is no pin), a link by its words or else its address, a
+    // keyword as itself; text and code as they are, the paragraphs one space apart.
+    static void ADescriptionShowsWhatItRefersToByName()
+    {
+        var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("faces", ReferringSource, 1)]);
+        Check(preview.Valid, "the library compiles: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        var nodes = preview.Snapshot.Catalog["nodes"]!;
+        var strangers = nodes[preview.Snapshot.Methods.Values.Single(m => m.Method.Name == "Strangers").Kind]!;
+        var summary = Plain(strangers["description"], "the method's summary");
+        Check(summary == "Counts the faces of Frame that the PeopleList does not know, as Face values. See the faces guide or https://example.com/more.",
+            "a summary names its references: " + summary);
+        var frame = Plain(strangers["inputs"]!["frame"]!["description"], "a parameter's text");
+        Check(frame == "The frame, its faces found by Find; null for none.", "a parameter's text names a method by its name and a keyword as itself: " + frame);
+        var limit = Plain(strangers["inputs"]!["limit"]!["description"], "a parameter's text");
+        Check(limit == "At most this many, 0 for no limit, each in a Box.", "a parameter's text keeps its code and names a generic type without its arity: " + limit);
+        var returns = Plain(strangers["outputs"]!["result"]!["description"], "the return's text");
+        Check(returns == "How many faces of Frame are strangers, as a face each.", "the return's text names a parameter by its pin's label and gives a see's own words: " + returns);
+        var find = nodes[preview.Snapshot.Methods.Values.Single(m => m.Method.Name == "Find").Kind]!;
+        var findSummary = Plain(find["description"], "the second method's summary");
+        Check(findSummary == "The faces of Frame, of no T; cancellationToken is not a pin.", "a type parameter is named, and a parameter that is no pin by its name: " + findSummary);
+        var findFrame = Plain(find["inputs"]!["frame"]!["description"], "a parameter's text");
+        Check(findFrame == "The frame, as Strangers takes it.", "a seealso names its member: " + findFrame);
+        Console.WriteLine("PASS rich node libraries: a node's description, parameter and return texts show each member, type, parameter, link and keyword they refer to by name, leaving no gap");
+    }
+
+    // A [Node] class's summary and its settings' summaries show a setting they refer to by its label, one of a base class
+    // too, and any other member by its name: "held on for Stay on for after the last", not "held on for after the last".
+    static void AClassDescriptionShowsASettingItRefersToByItsLabel()
+    {
+        var preview = new NodeLibraryCompiler(new DiagnosticsProvider()).Preview([new NodeLibrarySource("faces", ReferringSource, 1)]);
+        Check(preview.Valid, "the library compiles: " + string.Join("; ", preview.Diagnostics.Select(d => d.Message)));
+        var detector = preview.Snapshot.Catalog["nodes"]!.AsObject().Select(n => n.Value).Single(n => VisualNodeCatalog.Text(n, "label") == "People detector")!;
+        var summary = Plain(detector["description"], "the class's summary");
+        Check(summary == "Reports whether one is seen (held on for Stay on for after the last), looking every Look every seconds, against the PeopleList every People detector shares, its Seen made by PeopleDetector.",
+            "a class's summary names a setting by its label, a base class's too, and other members by their names: " + summary);
+        Check(VisualNodeCatalog.Text(detector["classSignature"], "description") == summary, "the class signature has the same summary: " + detector["classSignature"]!.ToJsonString());
+        var settings = detector["classSignature"]!["settings"]!.AsArray();
+        var camera = Plain(settings.Single(s => VisualNodeCatalog.Text(s, "key") == "Camera")!["description"], "a setting's summary");
+        Check(camera == "The camera to watch, a frame every Look every seconds, held for Stay on for.", "a setting's summary names the settings it refers to by their labels: " + camera);
+        var stay = Plain(settings.Single(s => VisualNodeCatalog.Text(s, "key") == "StayOnFor")!["description"], "a setting's summary");
+        Check(stay == "How long one is held on for after the last time one is seen; 0 for not at all.", "a setting's summary without references is as it was: " + stay);
+        Console.WriteLine("PASS rich node libraries: a class's summary and its settings' summaries show a setting they refer to by its label, a base class's too, and other members by name");
     }
 
     // ---- A library save over a definition that uses a library class node ----

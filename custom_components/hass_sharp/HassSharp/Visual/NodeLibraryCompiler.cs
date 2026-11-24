@@ -279,6 +279,13 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             ITypeSymbol? result = method.ReturnsVoid ? null : awaitResult ? ((INamedTypeSymbol)returnType).TypeArguments.FirstOrDefault() : returnType;
             if (pure && result == null) { Report(declaration.Identifier.GetLocation(), "A value node (Pure = true) must return a value"); return null; }
             var doc = Documentation(method, cancellationToken);
+            // A parameter the documentation refers to is shown by its pin's label; one that is no pin (a token, the node's
+            // context) by its name.
+            string? PinLabel(XElement reference) =>
+                reference.Name.LocalName == "paramref" && method.Parameters.FirstOrDefault(p => p.Name == (string?)reference.Attribute("name")) is { } named
+                && named.Type.ToDisplayString() != "System.Threading.CancellationToken" && !SymbolEqualityComparer.Default.Equals(named.Type, nodeContext)
+                    ? PortLabel(named.GetAttributes()) ?? InWords(named.Name) : null;
+            string DocText(XElement? element) => NodeLibraryCompiler.DocText(element, PinLabel);
             var outputs = new JsonObject();
             ImmutableArray<NodeOutputDescriptor> outputPorts = [];
             if (result is INamedTypeSymbol { IsTupleType: true } tuple)
@@ -717,7 +724,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
     }).ToArray());
     static string PropertyDescription(ISymbol member, CancellationToken cancellationToken)
     {
-        static XElement? Parse(string? xml) { try { return string.IsNullOrWhiteSpace(xml) ? null : XElement.Parse(xml); } catch (System.Xml.XmlException) { return null; } }
+        static XElement? Parse(string? xml) { try { return string.IsNullOrWhiteSpace(xml) ? null : XElement.Parse(xml, LoadOptions.PreserveWhitespace); } catch (System.Xml.XmlException) { return null; } }
         if (DocText(Parse(member.GetDocumentationCommentXml(cancellationToken: cancellationToken))?.Element("summary")) is { Length: > 0 } own) return own;
         return DocText(Parse(member.ContainingType.GetDocumentationCommentXml(cancellationToken: cancellationToken))?.Elements("param").FirstOrDefault(e => (string?)e.Attribute("name") == member.Name));
     }
@@ -781,7 +788,8 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         ValidMethod(method) && IsTask(method.ReturnType) && method.Parameters is [{ RefKind: RefKind.None, IsParams: false } parameter] && SymbolEqualityComparer.Default.Equals(parameter.Type, context);
     static XElement? Documentation(ISymbol symbol, CancellationToken cancellationToken)
     {
-        try { return XElement.Parse(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>"); } catch (System.Xml.XmlException) { return null; }
+        // The white space between two elements is kept: it parts their words.
+        try { return XElement.Parse(symbol.GetDocumentationCommentXml(cancellationToken: cancellationToken) ?? "<member/>", LoadOptions.PreserveWhitespace); } catch (System.Xml.XmlException) { return null; }
     }
 
     /// <summary>
@@ -929,7 +937,7 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                 var index = settings.FindIndex(s => s.Key == found.Key);
                 if (index >= 0) settings[index] = found; else settings.Add(found);
             }
-        var summary = DocText(Documentation(type, read.CancellationToken)?.Element("summary"));
+        var summary = DocText(Documentation(type, read.CancellationToken)?.Element("summary"), reference => read.SettingLabel(type, reference));
         var title = type.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, read.Node))?.ConstructorArguments.FirstOrDefault().Value as string;
         return new(kind.Domain, string.IsNullOrWhiteSpace(title) ? InWords(type.Name) : title, summary.Length == 0 ? null : summary, [.. settings]);
     }
@@ -986,6 +994,19 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
             && property.GetAttributes().Any(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, Setting))
             && SettingType(property.Type, entityPin) is { } shape && Required(property, shape.Kind);
 
+        /// <summary>
+        /// The label of the setting a reference in the documentation of <paramref name="type"/> names by its <c>cref</c> (a
+        /// <c>[Setting]</c> property of the class or of a class it derives), as its entry gives it; null for any other.
+        /// </summary>
+        internal string? SettingLabel(ITypeSymbol type, XElement reference) =>
+            (string?)reference.Attribute("cref") is { } cref
+            && BaseTypes(type).Prepend(type).SelectMany(t => t.OriginalDefinition.GetMembers().OfType<IPropertySymbol>()).FirstOrDefault(p => p.GetDocumentationCommentId() == cref) is { } property
+            && property.GetAttributes().FirstOrDefault(a => SymbolEqualityComparer.Default.Equals(a.AttributeClass, Setting)) is { } attribute
+                ? LabelOf(attribute, property) : null;
+        /// <summary>A setting's label: its <c>[Setting]</c>'s text, else its property's name.</summary>
+        static string LabelOf(AttributeData attribute, IPropertySymbol property) =>
+            attribute.ConstructorArguments.FirstOrDefault().Value is string label && !string.IsNullOrWhiteSpace(label) ? label : property.Name;
+
         /// <summary>Reads the <c>[Setting]</c> properties of each class not read yet: one a setting cannot be is reported and left out.</summary>
         internal void CheckSettings(IEnumerable<INamedTypeSymbol> classes)
         {
@@ -1024,10 +1045,9 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
                         continue;
                     }
                     if (Range(attribute, property.Type, shape, location) is not { } range) continue;
-                    var label = attribute.ConstructorArguments.FirstOrDefault().Value as string;
                     var description = attribute.NamedArguments.FirstOrDefault(a => a.Key == "Description").Value.Value as string;
-                    if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"));
-                    settings.Add(new(property.Name, string.IsNullOrWhiteSpace(label) ? property.Name : label, string.IsNullOrWhiteSpace(description) ? null : description,
+                    if (string.IsNullOrWhiteSpace(description)) description = DocText(Documentation(property, cancellationToken)?.Element("summary"), reference => SettingLabel(type, reference));
+                    settings.Add(new(property.Name, LabelOf(attribute, property), string.IsNullOrWhiteSpace(description) ? null : description,
                         shape.Kind, secret, shape.Options)
                         { Minimum = range.Minimum, Maximum = range.Maximum, Domain = shape.Domain, Required = Required(property, shape.Kind) });
                 }
@@ -1169,7 +1189,11 @@ public sealed class NodeLibraryCompiler(DiagnosticsProvider diagnostics, Generat
         };
         return kind == null ? null : (kind, ImmutableArray<string>.Empty, null, null, null);
     }
-    static string DocText(XElement? element) => element == null ? "" : string.Join(" ", element.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    /// <summary>
+    /// The words of a documentation element, as <see cref="TypeDefinitions.Words"/> gives them: a reference by its name,
+    /// or by the label <paramref name="label"/> gives for it; empty for none.
+    /// </summary>
+    static string DocText(XElement? element, Func<XElement, string?>? label = null) => element == null ? "" : TypeDefinitions.Words(element, label);
     static string Category(ITypeSymbol type) => LiteralKind(type) switch { "boolean" => "Boolean", "number" or "integer" => "Number", "string" or "enum" => "String", "array" => "Array", _ => type is IArrayTypeSymbol ? "Array" : "Object" };
     static bool CanLiteral(ITypeSymbol type) => LiteralKind(type) != null;
     internal static string? LiteralKind(ITypeSymbol type)

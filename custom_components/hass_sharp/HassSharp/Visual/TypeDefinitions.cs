@@ -394,25 +394,43 @@ internal static class TypeDefinitions
         return found;
     }
     /// <summary>
-    /// A summary as one line of words: a <c>see</c> by its own words, or without any by the last part of what it names; a
-    /// <c>paramref</c> by its name.
+    /// A summary as one line of words: a <c>see</c> by its own words, or without any by the short name of what it names
+    /// (<see cref="ShortName"/>) or else by its address; a <c>paramref</c> or <c>typeparamref</c> by its name; a
+    /// <c>langword</c> as itself; a paragraph apart from the words around it. <paramref name="label"/> gives, for a
+    /// reference without words of its own, the label to show instead of its name (a setting's, a pin's), or null for none.
     /// </summary>
-    internal static string Words(XElement summary)
+    internal static string Words(XElement summary, Func<XElement, string?>? label = null)
     {
         var words = new StringBuilder();
         foreach (var node in summary.DescendantNodes())
         {
             // Text is words wherever it is, a see's own (<see cref="X">the entity state</see>) too.
             if (node is XText text) words.Append(text.Value);
+            else if (node is XElement { Name.LocalName: "para" }) words.Append(' ');
             else if (node is XElement { Name.LocalName: "see" or "seealso" or "paramref" or "typeparamref" } element && !element.Nodes().Any())
-            {
-                var target = (string?)element.Attribute("cref") ?? (string?)element.Attribute("name") ?? (string?)element.Attribute("langword") ?? "";
-                var bare = target.Contains(':') ? target[(target.IndexOf(':') + 1)..] : target;
-                var parenthesis = bare.IndexOf('(');
-                if (parenthesis >= 0) bare = bare[..parenthesis];
-                words.Append(bare[(bare.LastIndexOf('.') + 1)..].Replace('{', '<').Replace('}', '>'));
-            }
+                words.Append(label?.Invoke(element) ?? ((string?)element.Attribute("cref") is { } cref ? ShortName(cref)
+                    : (string?)element.Attribute("name") ?? (string?)element.Attribute("langword") ?? (string?)element.Attribute("href") ?? ""));
         }
         return string.Join(' ', words.ToString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    /// <summary>
+    /// The short name of what a documentation id names (<c>P:NodeLib.PeopleDetector.StayOnFor</c>,
+    /// <c>T:NodeLib.Box`1</c>, <c>M:NodeLib.Faces.Find(System.String)</c>): its last part, without parameters or generic
+    /// arity; a constructor by its type's name.
+    /// </summary>
+    static string ShortName(string cref)
+    {
+        var bare = cref.Contains(':') ? cref[(cref.IndexOf(':') + 1)..] : cref;
+        var parenthesis = bare.IndexOf('(');
+        if (parenthesis >= 0) bare = bare[..parenthesis];
+        var last = bare[(bare.LastIndexOf('.') + 1)..];
+        if (last is "#ctor" or "#cctor" && bare.LastIndexOf('.') is > 0 and var dot)
+        {
+            var type = bare[..dot];
+            last = type[(type.LastIndexOf('.') + 1)..];
+        }
+        var arity = last.IndexOf('`');
+        return (arity >= 0 ? last[..arity] : last).Replace('{', '<').Replace('}', '>');
     }
 }
