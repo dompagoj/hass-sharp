@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
-import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, settingPinType, stateInputs, structural, validateGraph, withGraphTypes, words, type ClassSetting } from '../src/visual/contract'
+import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, settingPinType, stateInputs, structural, validateGraph, withGraphTypes, words, type ClassSetting, type Graph, type GraphNode, type NodeSpec, type VisualCatalogSnapshot } from '../src/visual/contract'
+import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
 import { addConnected } from '../src/visual/flow/autoConnect'
@@ -236,6 +237,114 @@ it('a dropped C# entity or C# device is keyed past the keys it shares, and has n
   const wired = addConnected(hall, 'csharp_entity', { x: 0, y: 0 }, { nodeId: 'hall', handle: 'data:entities', type: 'source' }, nodeCatalog, 'c')!.graph
   expect(wired.nodes.find(n => n.id === 'c')!.config.key).toBe('sensor')
   expect(deviceNodeOf(wired, 'c')).toBe('hall')
+})
+
+// The relays library's two classes, as the compiler writes their entries: taken from the shared fixture, which the C#
+// suite holds to the compiler's, so they cannot drift from them.
+const relaysCase = (fixtureCases as unknown as { name: string; graph: unknown; catalogPatch?: { nodes: Record<string, NodeSpec> } }[])
+  .find(c => c.name === 'library class node: a hub, and a relay on a Device node, are valid')!
+const hubKind = 'library:relays:global%3A%3ANodeLib.RelayHub', relayKind = 'library:relays:global%3A%3ANodeLib.Relay'
+/** The built-in catalog with the relays library's classes, or with `entries` in their place. */
+const withLibrary = (entries: Record<string, NodeSpec> = relaysCase.catalogPatch!.nodes): VisualCatalogSnapshot =>
+  ({ ...nodeCatalog, nodes: { ...nodeCatalog.nodes, ...structuredClone(entries) } })
+/** The relay hub's entry as `changes` make it, under `kind`. */
+const hubEntry = (kind: string, changes: Partial<NodeSpec>): Record<string, NodeSpec> => ({ [kind]: { ...relaysCase.catalogPatch!.nodes[hubKind], ...changes } })
+
+it('a library class node has its class\'s settings and no code', () => {
+  const catalog = withLibrary(), spec = catalog.nodes[hubKind]
+  const hub: GraphNode = { id: 'hub', kind: hubKind, config: { key: 'hub', name: 'Hub', arguments: {} } }
+  expect([isClassNode(spec), hasCode(spec)]).toEqual([true, false])
+  expect(classSignature(hub, catalog)).toBe(spec.classSignature)
+  expect(Object.keys(dataInputs(hub, undefined, catalog))).toEqual(['Address', 'Token', 'PollEvery'])
+  // Code and a signature its config holds (hand-edited, or left by a converted C# node) change nothing: its settings are
+  // its entry's, and the validator says nothing of either.
+  const stale: GraphNode = { ...hub, config: { ...hub.config, source: 'public class Old : SharpDevice { }', signature: { title: 'Old', description: '', domain: null, settings: [{ key: 'Old', label: 'Old', description: '', type: 'string', secret: false }] } } }
+  expect(classSignature(stale, catalog)).toBe(spec.classSignature)
+  expect(Object.keys(dataInputs(stale, undefined, catalog))).toEqual(['Address', 'Token', 'PollEvery'])
+  const graph = (node: GraphNode) => ({ ...empty(), nodes: [{ ...node, config: { ...node.config, arguments: { Address: lit('string', '10.0.0.2') } } }] })
+  expect(validateGraph(graph(stale), catalog)).toEqual([])
+  // An entry whose settings cannot be read gives none, never its config's; nor is that the node's unreadable settings,
+  // which only a C# node's code, applied again, could write.
+  const broken = withLibrary(hubEntry(hubKind, { classSignature: { title: 5 } as never }))
+  expect([classSignature(stale, broken), Object.keys(dataInputs(stale, undefined, broken))]).toEqual([undefined, []])
+  expect(validateGraph(graph(stale), broken).map(d => d.code)).not.toContain('csharp.signature')
+  // A C# device node has its code and its config's signature, as before.
+  const device = addGraphNode(empty(), 'csharp_device', 'd', catalog).nodes[0], deviceSpec = catalog.nodes.csharp_device
+  expect([isClassNode(deviceSpec), hasCode(deviceSpec)]).toEqual([true, true])
+  expect(classSignature(device, catalog)).toBe(device.config.signature)
+  expect(Object.keys(dataInputs(device, undefined, catalog))).toEqual(['Address'])
+})
+
+it('dropping a library device names and keys it by its title', () => {
+  const catalog = withLibrary()
+  let graph = addGraphNode(empty(), hubKind, 'a', catalog)
+  graph = addGraphNode(graph, hubKind, 'b', catalog)
+  expect(graph.nodes.map(n => [n.config.key, n.config.name])).toEqual([['relay_hub', 'Relay hub'], ['relay_hub_2', 'Relay hub']])
+  // No code, no signature and no label: its settings are its entry's, and it is named by its device.
+  const [a, b] = graph.nodes
+  expect(a).not.toHaveProperty('label')
+  expect(Object.keys(a.config).sort()).toEqual(['arguments', 'key', 'name'])
+  expect(a.config.arguments).toEqual({})
+  expect(a.config.arguments).not.toBe(b.config.arguments)
+  // Keyed past every device key, a Device node's too, and not past an entity's.
+  const keyed = add(add(empty(), 'device', 'd', { key: 'relay_hub' }), 'entity', 'e', { key: 'relay_hub_2' })
+  expect(addGraphNode(keyed, hubKind, 'h', catalog).nodes.at(-1)!.config.key).toBe('relay_hub_2')
+})
+
+it('dropping a library entity keys it by its title', () => {
+  const catalog = withLibrary()
+  let graph = addGraphNode(empty(), relayKind, 'a', catalog)
+  graph = add(graph, 'entity', 'e', { key: 'relay_2', domain: 'switch', name: 'Spare' })
+  graph = addGraphNode(graph, relayKind, 'b', catalog)
+  const [a, , b] = graph.nodes
+  expect([a.config.key, b.config.key]).toEqual(['relay', 'relay_3'])
+  // It has no name of its own (its class names its entity), no code, no signature and no label.
+  expect(Object.keys(a.config).sort()).toEqual(['arguments', 'key'])
+  expect(a).not.toHaveProperty('label')
+  // An Entity node is keyed past its key, as past a C# entity's.
+  expect(entityKeyHolders(graph, catalog).map(h => h.key)).toEqual(['relay', 'relay_2', 'relay_3'])
+})
+
+it('a title that makes no key falls back', () => {
+  // A title is made a key as an entity's name is: accents and what is no letter go, as do digits it starts with.
+  const titled = (title: string) => withLibrary({ ...hubEntry(hubKind, { label: title }), [relayKind]: { ...relaysCase.catalogPatch!.nodes[relayKind], label: title } })
+  const dropped = (title: string, kind: string) => addGraphNode(empty(), kind, 'n', titled(title)).nodes[0].config
+  expect([dropped('2 Relays!', hubKind).key, dropped('Détecteur', hubKind).key, dropped('Détecteur', relayKind).key]).toEqual(['relays', 'detecteur', 'detecteur'])
+  // One that keeps no letter makes none: a device is keyed device, as a Device node is, and named by its title; an
+  // entity by its domain, as a C# entity is.
+  for (const title of ['2024', '日本語', '!!!']) {
+    expect(dropped(title, hubKind), title).toEqual({ key: 'device', name: title, arguments: {} })
+    expect(dropped(title, relayKind), title).toEqual({ key: 'switch', arguments: {} })
+  }
+  let graph = addGraphNode(add(empty(), 'device', 'd'), hubKind, 'h', titled('2024'))
+  graph = addGraphNode(graph, relayKind, 'r', titled('2024'))
+  expect(graph.nodes.map(n => n.config.key)).toEqual(['device', 'device_2', 'switch'])
+})
+
+it('two libraries\' classes of one title drop as two nodes with two keys', () => {
+  const first = 'library:a:global%3A%3ANodeLib.FirstHub', second = 'library:b:global%3A%3ANodeLib.SecondHub'
+  const catalog = withLibrary({ ...hubEntry(first, { sourceId: 'a' }), ...hubEntry(second, { sourceId: 'b' }) })
+  const graph = addGraphNode(addGraphNode(empty(), first, 'a', catalog), second, 'b', catalog)
+  expect(graph.nodes.map(n => [n.kind, n.config.key, n.config.name])).toEqual([[first, 'relay_hub', 'Relay hub'], [second, 'relay_hub_2', 'Relay hub']])
+  expect(validateGraph({ ...graph, nodes: graph.nodes.map(n => ({ ...n, config: { ...n.config, arguments: { Address: lit('string', '10.0.0.2') } } })) }, catalog)).toEqual([])
+})
+
+it('a library device and a library entity are listed as their C# kinds are', () => {
+  // A hub, a Strip Device node and a relay on the strip.
+  const catalog = withLibrary(), graph = relaysCase.graph as Graph
+  expect(declaredEntities(graph, catalog)).toEqual([])
+  expect(declaredDevices(graph, catalog)).toEqual([{ nodeId: 'hub', device: { key: 'hub', name: 'Hub', via: null, csharp: true } }, { nodeId: 'strip', device: { key: 'strip', name: 'Strip' } }])
+  expect(derivedDevices(graph, catalog)).toEqual([{ key: 'strip', name: 'Strip' }, { key: 'hub', name: 'Hub', csharp: true }])
+  expect(definitionDeviceKeys(graph, catalog)).toEqual(['hub', 'strip'])
+  expect(csharpEntities(graph, catalog)).toEqual([{ key: 'relay', domain: 'switch', name: null, device: 'strip', csharp: true }])
+  expect(listedEntities(graph, catalog)).toEqual([{ key: 'relay', domain: 'switch', name: null, device: 'strip', csharp: true }])
+  // Each is named as a C# node is: the hub by its name, the relay by its class's title.
+  expect(graph.nodes.map(n => entityNodeName(n, catalog))).toEqual(['Hub', 'Strip', 'Relay'])
+  // A kind that declares one and is no class node, nor an Entity or Device node, is still refused.
+  const odd = withLibrary({ ...relaysCase.catalogPatch!.nodes, odd: { ...relaysCase.catalogPatch!.nodes[relayKind], dynamicInputs: undefined } })
+  const withOdd = { ...graph, nodes: [...graph.nodes, { id: 'o', kind: 'odd', config: { key: 'odd' } }] }
+  expect(() => declaredEntities(withOdd, odd)).toThrow('The kind odd declares an entity that no list knows how to describe')
+  expect(csharpEntities(withOdd, odd).map(e => e.key)).toEqual(['relay'])
 })
 
 /** A Thermometer C# entity, a Plug C# device, a lamp Entity node and a Hall Device node the thermometer is on. */

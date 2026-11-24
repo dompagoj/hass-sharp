@@ -61,7 +61,7 @@ export interface OutputSpec { label?: string; type: string; description?: string
  * gives it the pins of the type its own `config.domain` names (see `declaredDomain`). `declaration` (a Device node's): the
  * node is neither a step nor a value (see `isDeclaration`).
  */
-export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities or devices. */ declares?: 'entity' | 'device'; declaration?: boolean; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
+export interface NodeSpec { root?: boolean; /** A node of the kind declares one of its definition's entities or devices. */ declares?: 'entity' | 'device'; declaration?: boolean; documents?: GraphDocument[]; singleton?: boolean; sourceId?: string; argumentStorage?: 'arguments'; label: string; category: string; description: string; minGraphVersion: number; config: Record<string, ConfigSpec>; inputs: Record<string, InputSpec>; outputs: Record<string, OutputSpec>; execution?: string[]; executionLabels?: Record<string, string>; pure?: boolean; keywords?: string[]; scopePorts?: string[]; requiredExecution?: string[]; dynamicExecution?: string; dynamicInputs?: string; dynamicOutputs?: string; /** A node library's class's settings, on its kind's entry (`library:…`): its nodes take them in place of a signature of their own (`classSignature`). */ classSignature?: ClassSignature; comparison?: { leftInput?: string; typeConfig?: string; rightInput: string; operatorConfig: string; orderingOperators: string[]; orderingType: string } }
 /** A public instance property or field a value of a C# type has, inherited ones included, as the compiler lists it. */
 export interface PropertySpec { name: string; type: string; nullable: boolean; description?: string }
 /**
@@ -268,14 +268,15 @@ const declaringNodes = (graph: unknown, what: 'entity' | 'device', catalog: Visu
   (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record).filter(node => nodeSpec(node.kind, catalog)?.declares === what)
 /**
  * The entities the graph's Entity nodes declare, each with its node's id, in the order of the graph's `nodes`; none for
- * a graph of the wrong shape. A C# entity's entity is its code's, which no list carries yet. Every kind that declares an
- * entity is named here on purpose: one this does not know is refused, never copied as it is (its config may hold code).
+ * a graph of the wrong shape. A class node's entity (a C# entity's, a library's entity class's) is its class's, which no
+ * list carries yet: a class node is listed for reading only (`csharpEntities`). Every other kind that declares an entity
+ * is named here on purpose: one this does not know is refused, never copied as it is (its config may hold code).
  * Mirrors `VisualNodeCatalog.DeclaredEntities`.
  */
 export function declaredEntities(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; entity: Record<string, unknown> }[] {
   return declaringNodes(graph, 'entity', catalog).flatMap(node => {
+    if (isClassNode(nodeSpec(node.kind, catalog))) return []
     if (node.kind === 'entity') return [{ nodeId: text(node.id), entity: entityDescription(node as unknown as GraphNode) }]
-    if (node.kind === 'csharp_entity') return []
     throw new Error(`The kind ${text(node.kind)} declares an entity that no list knows how to describe`)
   })
 }
@@ -296,15 +297,16 @@ export function definitionEntityKeys(graph: unknown, catalog: VisualCatalogSnaps
 /**
  * The devices the graph's device nodes declare (a kind with `declares: 'device'`), each with its node's id, in the order
  * of the graph's `nodes`: a Device node's the members of a device its config has (`deviceMembers`), as it has them, and
- * no other; a C# device's the key, name and Part of its config has, as it has them, marked `csharp`, and never its code,
- * settings or their values. Each is empty of what its config does not have, all of it when the config is not an object.
- * None for a graph of the wrong shape. A declaring kind this does not know is refused, as in `declaredEntities`. Only
- * this sets `csharp`, for a node of the C# device kind. Mirrors `VisualNodeCatalog.DeclaredDevices`.
+ * no other; a class node's (a C# device's, a library's device class's) the key, name and Part of its config has, as it
+ * has them, marked `csharp`, and never its code, settings or their values. Each is empty of what its config does not
+ * have, all of it when the config is not an object. None for a graph of the wrong shape. Any other declaring kind this
+ * does not know is refused, as in `declaredEntities`. Only this sets `csharp`, for a class node. Mirrors
+ * `VisualNodeCatalog.DeclaredDevices`.
  */
 export function declaredDevices(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): { nodeId: string; device: Record<string, unknown> }[] {
   return declaringNodes(graph, 'device', catalog).map(node => {
+    if (isClassNode(nodeSpec(node.kind, catalog))) return { nodeId: text(node.id), device: { ...picked(node.config, csharpDeviceMembers), csharp: true } }
     if (node.kind === 'device') return { nodeId: text(node.id), device: picked(node.config, deviceMembers()) }
-    if (node.kind === 'csharp_device') return { nodeId: text(node.id), device: { ...picked(node.config, csharpDeviceMembers), csharp: true } }
     throw new Error(`The kind ${text(node.kind)} declares a device that no list knows how to describe`)
   })
 }
@@ -313,7 +315,7 @@ export function declaredDevices(graph: unknown, catalog: VisualCatalogSnapshot =
  * manufacturer… Part of), whatever a graph's own catalog says. Mirrors `VisualNodeCatalog.DeviceMembers`.
  */
 const deviceMembers = () => Object.keys(nodeCatalog.nodes.device?.config ?? {})
-/** The members of a C# device's config its device lists: its code gives the rest. */
+/** The members of a C# device's config, or a library device class's, its device lists: its class gives the rest. */
 const csharpDeviceMembers = ['key', 'name', 'via']
 /** A copy of the `members` the config has, as it has them and in its own order; empty when it is not an object. */
 const picked = (config: unknown, members: readonly string[]): Record<string, unknown> =>
@@ -350,11 +352,13 @@ export const slug = (name: string) =>
   name.toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '').replace(/[^a-z0-9]+/g, '_').replace(/^[_-]+|[_-]+$/g, '')
 /** The text without `_` or `-` at its end. */
 export const trimSeparators = (text: string) => text.replace(/[_-]+$/, '')
-/** An entity key from a name: it starts with a letter and has at most 40 characters; `entity` when the name gives none. */
-export const entityKey = (name: string) => {
+/** The key a name gives: it starts with a letter and has at most 40 characters; undefined when the name gives none. */
+const nameKey = (name: string): string | undefined => {
   const key = trimSeparators(slug(name).replace(/^[^a-z]+/, '').slice(0, 40))
-  return new RegExp(words.entityKeyPattern).test(key) ? key : 'entity'
+  return new RegExp(words.entityKeyPattern).test(key) ? key : undefined
 }
+/** An entity key from a name: it starts with a letter and has at most 40 characters; `entity` when the name gives none. */
+export const entityKey = (name: string) => nameKey(name) ?? 'entity'
 /**
  * A device's key as the definition's devices list it: a text that is not blank once trimmed, as given; undefined for
  * none (blank, absent or not a text), when the device is no device of the list and an entity on it is on none.
@@ -397,17 +401,16 @@ const derivedEntities = (graph: unknown, catalog: VisualCatalogSnapshot): Catalo
 export interface ListedCSharpEntity { key?: unknown; domain: string | null; name: null; device: string | null; csharp: true }
 /**
  * The entities the graph's C# entities declare, as a definition lists them for reading (its stored document and its
- * answers, never the catalog's `definition`, whose entities steps name): for each node of the C# entity kind, in the
- * order of the graph's `nodes`, its config's key as given (none when it has none), the domain its signature gives
- * (`classSignature`; null when that cannot be read), no name (its code names it, else its title, as it runs), the key
- * of the Device node it is on or null, and `csharp`, set here by the node's kind alone, never read from its config.
- * Never its code, signature, settings or their values. Mirrors `VisualNodeCatalog.CSharpEntities`.
+ * answers, never the catalog's `definition`, whose entities steps name): for each class node that declares an entity
+ * (a C# entity, a library's entity class), in the order of the graph's `nodes`, its config's key as given (none when it
+ * has none), the domain its signature gives (`classSignature`: a library class's its entry's; null when that cannot be
+ * read), no name (its class names it, else its title, as it runs), the key of the Device node it is on or null, and
+ * `csharp`, set here by the node's kind alone, never read from its config. Never its code, signature, settings or their
+ * values. Mirrors `VisualNodeCatalog.CSharpEntities`.
  */
 export function csharpEntities(graph: unknown, catalog: VisualCatalogSnapshot = nodeCatalog): ListedCSharpEntity[] {
-  const spec = nodeSpec('csharp_entity', catalog)
-  if (spec?.declares !== 'entity') return []
   const nodes = graphNodes(graph)
-  return (record(graph) && Array.isArray(graph.nodes) ? graph.nodes as unknown[] : []).filter(record).filter(node => node.kind === 'csharp_entity').map(node => {
+  return declaringNodes(graph, 'entity', catalog).filter(node => isClassNode(nodeSpec(node.kind, catalog))).map(node => {
     const device = deviceNodeOf(graph, text(node.id), catalog)
     return {
       ...picked(node.config, ['key']),
@@ -611,18 +614,25 @@ export function wellFormedSignature(signature: unknown): signature is CustomSign
  */
 export const isHub = (spec: NodeSpec | undefined) => spec?.root === true && spec.declares === 'entity'
 /**
- * Whether the kind is a class node (`dynamicInputs: 'settings'`, a C# entity or a C# device): its code is one class, and
- * its pins after its kind's own are the class's settings (`classSignature`). Mirrors `VisualNodeCatalog.IsClassNode`.
+ * Whether the kind is a class node (`dynamicInputs: 'settings'`, a C# entity, a C# device or a library's class): it is
+ * one class, and its pins after its kind's own are the class's settings (`classSignature`). Mirrors
+ * `VisualNodeCatalog.IsClassNode`.
  */
 export const isClassNode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === 'settings'
-/** Whether a node of the kind holds C# code: a Custom C# step or a class node. Mirrors `VisualNodeCatalog.HasCode`. */
-export const hasCode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === 'custom' || spec?.dynamicInputs === 'settings'
+/**
+ * Whether a node of the kind holds C# code: a Custom C# step, or a class node whose entry has no `classSignature` (a C#
+ * entity or C# device; a library's class is the library's code). Mirrors `VisualNodeCatalog.HasCode`.
+ */
+export const hasCode = (spec: NodeSpec | undefined) => spec?.dynamicInputs === 'custom' || spec?.dynamicInputs === 'settings' && spec.classSignature == null
 /**
  * One setting of a class node's class, as the compiler writes it: one of its `[Setting]` properties. An `entity` setting
  * (an entity handle, given by its id) of a domain's class has that `domain`; `required` is written only when true.
  */
 export interface ClassSetting { key: string; label: string; description: string; type: 'string' | 'integer' | 'number' | 'boolean' | 'enum' | 'entity'; secret: boolean; options?: string[]; minimum?: number; maximum?: number; domain?: string; required?: boolean }
-/** What a class node's code gives, as the compiler writes it into `config.signature`: its title, its description, its entity's type (a C# entity's) and its settings. */
+/**
+ * What a class node's class gives, as the compiler writes it into a C# node's `config.signature` and a library class's
+ * entry (`NodeSpec.classSignature`): its title, its description, its entity's type (an entity class's) and its settings.
+ */
 export interface ClassSignature { title: string; description: string; domain: string | null; settings: ClassSetting[] }
 /**
  * The pin type of a class's setting, from its `type` (and an entity's `domain`): text for a string or an enum, a number
@@ -665,12 +675,13 @@ export function wellFormedClassSignature(signature: unknown): signature is Class
 }
 /**
  * A class node's signature, when the node's kind is a class node's (`isClassNode`), its signature is well formed
- * (`wellFormedClassSignature`) and no setting has the key of one of its kind's own pins; else undefined. Mirrors
- * `VisualNodeCatalog.ClassSignature`.
+ * (`wellFormedClassSignature`) and no setting has the key of one of its kind's own pins; else undefined. A library
+ * class's is its kind's entry's (`classSignature`), whatever the node's config holds; a C# entity's or C# device's is
+ * its config's. Mirrors `VisualNodeCatalog.ClassSignature`.
  */
 export function classSignature(node: GraphNode, catalog: VisualCatalogSnapshot = nodeCatalog): ClassSignature | undefined {
   const spec = nodeSpec(node.kind, catalog)
-  const signature = isClassNode(spec) && record(node.config) ? node.config.signature : undefined
+  const signature: unknown = !isClassNode(spec) ? undefined : spec!.classSignature != null ? spec!.classSignature : record(node.config) ? node.config.signature : undefined
   return wellFormedClassSignature(signature) && !signature.settings.some(s => Object.hasOwn(spec!.inputs ?? {}, s.key)) ? signature : undefined
 }
 /**
@@ -1574,6 +1585,8 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   const pure = (node: GraphNode) => isPure(node, catalog)
   /** Whether the node is a declaration (`isDeclaration`): a Device node, neither a step nor a value. */
   const declared = (node: GraphNode) => isDeclaration(node.kind, catalog)
+  /** Whether the node is a library step or class its node library no longer has: a `library:` kind the catalog lacks. */
+  const missingLibraryNode = (node: GraphNode) => !nodeSpec(node.kind) && typeof node.kind === 'string' && node.kind.startsWith('library:')
   function visible(source: GraphNode, target: GraphNode, port: OutputSpec) {
     const b = scopes.get(target.id)
     return b !== undefined && visibleIn(source, b, port)
@@ -1617,7 +1630,7 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     if (!record(node) || typeof node.id !== 'string' || !node.id || !record(node.config)) { error(null, 'Each node requires id and config', undefined, undefined, 'node.invalid'); continue }
     if (nodes.has(node.id)) error(node.id, 'Duplicate node id', undefined, undefined, 'node.duplicate')
     else nodes.set(node.id, node)
-    if (!nodeSpec(node.kind)) error(node.id, typeof node.kind === 'string' && node.kind.startsWith('library:') ? words.missingLibraryNode : 'Unknown node kind', undefined, undefined, 'node.unknownKind')
+    if (!nodeSpec(node.kind)) error(node.id, missingLibraryNode(node) ? words.missingLibraryNode : 'Unknown node kind', undefined, undefined, 'node.unknownKind')
   }
   for (const id of nodes.keys()) outgoing.set(id, [])
   const dataIndex = new Map<DataEdge, number>()
@@ -1682,10 +1695,11 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
   if (document === 'automation' && ![...nodes.values()].some(n => n.kind === 'trigger')) error(null, 'At least one trigger is required', undefined, undefined, 'graph.noTrigger')
   roots.forEach(n => scope(n.id, []))
   // A value node is never reached by execution; it is a warning when nothing reads it. Nor is a declaration (a Device
-  // node), which never runs.
+  // node), which never runs. A node whose library step or class is gone is reported as missing only: a class node never
+  // takes a step order wire, and connecting a step that no longer exists would not help.
   for (const [id, node] of nodes)
     if (pure(node)) { if (!data.some(e => e.source === id)) { errors.push({ nodeId: id, message: words.unused(words.stepName(node, catalog)), severity: 2, code: 'pure.unused' }); origins.push(origin) } }
-    else if (!scopes.has(id) && !declared(node)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
+    else if (!scopes.has(id) && !declared(node) && !missingLibraryNode(node)) error(id, words.unreachable(words.stepName(node, catalog)), undefined, undefined, 'node.unreachable')
   const incoming = new Map<string, DataEdge>()
   const key = (node: string, port: string) => JSON.stringify([node, port])
   for (const edge of data) {
@@ -1980,8 +1994,9 @@ export function analyzeGraph(value: unknown, catalog: VisualCatalogSnapshot = no
     }
     if (Object.hasOwn(node.config, 'output')) error(node.id, words.exposedValue, 'output')
     if (spec.dynamicInputs === 'custom' && record(node.config.signature) && !wellFormedSignature(node.config.signature)) error(node.id, words.malformedSignature, 'source', undefined, 'custom.signature')
-    // A class node whose settings cannot be read has no setting pins; its code, applied again, writes them.
-    if (isClassNode(spec) && record(node.config.signature) && !classSignature(node, catalog)) error(node.id, words.unreadableSettings, 'signature', undefined, 'csharp.signature')
+    // A C# node whose settings cannot be read has no setting pins; its code, applied again, writes them. A library class
+    // node's settings are its kind's entry's: a signature its config holds is never read.
+    if (isClassNode(spec) && hasCode(spec) && record(node.config.signature) && !classSignature(node, catalog)) error(node.id, words.unreadableSettings, 'signature', undefined, 'csharp.signature')
     if (node.kind === 'trigger') {
       const type = node.config.type ?? spec.config.type.default
       const required = type === 'ha' ? ['trigger'] : type === 'entity' ? ['entity'] : type === 'daily' ? ['time','timeZone'] : type === 'once' ? ['at'] : []
@@ -2288,10 +2303,15 @@ export function addGraphNode(graph: Graph, kind: string, id: string, catalog: Vi
   // Entity node names no other: it is named after its type, and keyed by that name past every key the definition has.
   // A Device node is named Device, keyed past the keys of the graph's devices (not its entities': apart from them). A C#
   // entity is keyed past the entity keys by its class's type (it has no name: its code names its entity); a C# device is
-  // keyed as a Device node is, and named by its class's title.
-  const signature = isClassNode(spec) && wellFormedClassSignature(config.signature) ? config.signature : undefined
-  const named = isClassNode(spec) && spec.declares === 'entity' ? { key: freeKey(entityKey(signature?.domain ?? ''), definitionEntityKeys(graph, catalog)) }
-    : isClassNode(spec) && spec.declares === 'device' ? { name: signature?.title || 'Device', key: freeKey('device', definitionDeviceKeys(graph, catalog)) }
+  // keyed as a Device node is, and named by its class's title. A library's class (a class node without code) is keyed
+  // past the same keys by its title (its entry's label) when that gives a key, else as a C# node of its kind is; a
+  // library's device class is named by its title.
+  const library = isClassNode(spec) && !hasCode(spec)
+  const signature = !isClassNode(spec) ? undefined : library ? (wellFormedClassSignature(spec.classSignature) ? spec.classSignature : undefined)
+    : wellFormedClassSignature(config.signature) ? config.signature : undefined
+  const title = library ? text(spec.label) : signature?.title, titleKey = library ? nameKey(title ?? '') : undefined
+  const named = isClassNode(spec) && spec.declares === 'entity' ? { key: freeKey(titleKey ?? entityKey(signature?.domain ?? ''), definitionEntityKeys(graph, catalog)) }
+    : isClassNode(spec) && spec.declares === 'device' ? { name: title || 'Device', key: freeKey(titleKey ?? 'device', definitionDeviceKeys(graph, catalog)) }
     : spec.declares === 'entity' ? ownEntity(graph, text(config.domain), catalog)
     : spec.declares === 'device' ? { name: 'Device', key: freeKey('device', definitionDeviceKeys(graph, catalog)) }
     : spec.documents?.includes('entity') && graphDocument(graph) === 'entity' ? prefilled(kind, spec, definitionCatalog(catalog, graph)) : {}
