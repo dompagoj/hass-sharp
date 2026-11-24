@@ -10,6 +10,7 @@ import type { VisualPreview } from '../src/visual/api'
 import { addGraphNode, graphDocument, nodeCatalog } from '../src/visual/contract'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
 import { add, empty, visualFixture } from './visual-fixture'
+import { relaysGraph, withRelays } from './relays-library'
 import { automationAdapter } from '../src/visual/automationAdapter'
 import { entityAdapter } from '../src/entities/adapter'
 import type { DeviceCounts } from '../src/entities/deviceUi'
@@ -409,7 +410,7 @@ it('the entity definition\'s adapter asks before a C# node with stored data of t
   const graph = addGraphNode(addGraphNode(empty(), 'csharp_device', 'cam', nodeCatalog), 'csharp_entity', 'count', nodeCatalog)
   const context = (document: unknown) => ({ document }) as unknown as EditorContext
   const ask = (ids: string[], document: unknown) => adapter.removal!(graph, ids, nodeCatalog, context(document))
-  expect(ask(['cam'], { id: 'desk', graph })).toEqual({ title: 'Delete its stored data too?', body: 'Plug has stored data. It is deleted when you save the entity definition without this node.' })
+  expect(ask(['cam'], { id: 'desk', graph })).toEqual({ title: 'Delete its stored data too?', body: 'Plug has stored data. It is deleted when you save the entity definition without a node keyed device.' })
   // Another definition's stored data is none of this one's.
   expect(ask(['count'], { id: 'desk', graph })).toBeUndefined()
   // Never saved, or its counts not read yet: only what it asked before.
@@ -418,6 +419,19 @@ it('the entity definition\'s adapter asks before a C# node with stored data of t
   expect(ask(['cam'], { id: 'desk', graph })).toBeUndefined()
   // Without counts (an editor that has none): the same.
   expect(entityAdapter({ callWS: async () => ({}) }).removal!(graph, ['cam'], nodeCatalog, context({ id: 'desk', graph }))).toBeUndefined()
+})
+
+it('the entity definition\'s adapter asks before a library class node with stored data is deleted, as before a C# node', () => {
+  const counts: DeviceCounts = { attention: {}, stored: { relays: ['hub'] } }
+  const adapter = entityAdapter({ callWS: async () => ({}) }, { counts: () => counts })
+  const catalog = withRelays(), graph = relaysGraph()
+  const context = { document: { id: 'relays', graph } } as unknown as EditorContext
+  expect(adapter.removal!(graph, ['hub'], catalog, context)).toEqual({
+    title: 'Delete its stored data too?', body: 'Hub has stored data. It is deleted when you save the entity definition without a node keyed hub.',
+  })
+  // The relay has none; nor has the hub to an editor without its library, which cannot tell what it is.
+  expect(adapter.removal!(graph, ['relay'], catalog, context)).toBeUndefined()
+  expect(adapter.removal!(graph, ['hub'], nodeCatalog, context)).toBeUndefined()
 })
 
 it('the entity definition\'s adapter answers its saved entities\' keys and the entity ids Home Assistant gave them', () => {

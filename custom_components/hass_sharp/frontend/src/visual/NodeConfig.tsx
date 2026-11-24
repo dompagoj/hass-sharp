@@ -23,7 +23,7 @@ import { numberMessage, parseNumber, useDecimalSeparator } from './widgets/numbe
 import { stateField, WidgetControl } from './widgets'
 import type { VisualDiagnostic } from './api'
 import type { SavedEntities } from './adapter'
-import { stateValueRow, stepInputRows, stepPickers, type StepPickerContext } from '../entities/NodePickers'
+import { stateValueRow, stepInputRows, stepPicker, type StepPickerContext } from '../entities/NodePickers'
 import { FieldErrors } from '../entities/formFields'
 
 type Options = { coalesce?: string }
@@ -33,8 +33,6 @@ const operators: Record<string, string> = { eq: 'is equal to', ne: 'is not equal
 const ownConfig = new Set(['carry', 'exports', 'branches'])
 const kindConfig: Record<string, string[]> = {
   service: ['service', 'fields', 'returnResponse'], custom: ['source', 'signature', 'arguments'], select_property: ['property'], object_create: ['fields'], array_create: ['items'], loop_result: ['values'],
-  // An entity definition's steps choose its entities, their commands and its settings with pickers of their own.
-  ...Object.fromEntries(Object.entries(stepPickers).map(([kind, picker]) => [kind, picker.keys])),
 }
 const own = <T,>(map: Record<string, T>, key: string) => (Object.hasOwn(map, key) ? map[key] : undefined)
 /** What the stored data shows in place of a value typed into a secret setting. */
@@ -86,8 +84,12 @@ export function NodeConfig(props: NodeConfigProps) {
   const kind = () => props.node.kind
   /** What the node declares (an entity, a device): it is named by it, so its header edits that name, not a label of the node. */
   const declares = () => spec()?.declares
-  /** A C# entity's code names its entity: its header shows the class's title (`nodeTitle`), with nothing to type in. */
+  /** An entity class (a C# entity's, a library's) names its entity: its header shows the class's title (`nodeTitle`), with nothing to type in. */
   const codeNamed = () => declares() === 'entity' && isClassNode(spec())
+  /** The section of an entity definition's step (its entity, its setting; a class node's key, device or Part of), if it has one. */
+  const picker = () => stepPicker(kind(), spec())
+  /** The node library a class node without code comes from, by its id; undefined for any other node. */
+  const library = () => (isClassNode(spec()) && !hasCode(spec()) ? spec()!.sourceId ?? '' : undefined)
   const nameLabel = () => (declares() === 'device' ? 'Device name' : declares() ? 'Entity name' : 'Node label')
   const kindLabel = () => spec()?.label ?? words.key(kind())
   /** A Custom C# node's pins, title and description, as its code gives them. */
@@ -248,7 +250,8 @@ export function NodeConfig(props: NodeConfigProps) {
   const configFields = createMemo(() => {
     // A trigger's whole configuration is TriggerConfig's.
     if (kind() === 'trigger') return []
-    const edited = new Set([...ownConfig, ...(kindConfig[kind()] ?? [])])
+    // An entity definition's steps choose its entities, their commands and its settings with pickers of their own.
+    const edited = new Set([...ownConfig, ...(own(kindConfig, kind()) ?? []), ...(picker()?.keys ?? [])])
     return Object.entries(spec()?.config ?? {}).filter(([name]) => {
       if (edited.has(name) || (spec()?.argumentStorage === 'arguments' && name === 'arguments')) return false
       // An attribute name matters only while the node reads an attribute.
@@ -348,10 +351,16 @@ export function NodeConfig(props: NodeConfigProps) {
               if (result.notice) props.onNotice?.(result.notice)
             }} />
         </Show>
-        {/* A Custom C# step's code comes first; a C# entity's or C# device's after its key and device, right above its settings. */}
+        {/* A Custom C# step's code comes first; a C# entity's or C# device's after its key and device, right above its
+            settings. A library's class has no code: in its place, the node library it comes from. */}
         <Show when={hasCode(spec()) && !isClassNode(spec())}>{code()}</Show>
-        <Show when={own(stepPickers, kind())}>{picker => <Dynamic component={picker().Section} ctx={pickers} />}</Show>
-        <Show when={isClassNode(spec())}>{code()}</Show>
+        <Show when={picker()}>{picker => <Dynamic component={picker().Section} ctx={pickers} />}</Show>
+        <Show when={hasCode(spec()) && isClassNode(spec())}>{code()}</Show>
+        <Show when={library() !== undefined}>
+          <div class="hs-insp-field">
+            <small class="hs-field-hint hs-insp-library">{library() ? `From the node library ${library()}.` : 'From a node library.'}</small>
+          </div>
+        </Show>
         <For each={configFields()}>{name => <ConfigField name={name} rule={spec()!.config[name]} />}</For>
         <Show when={kind() === 'parallel'}><Branches ctx={structure} /></Show>
         <Show when={kind() === 'object_create'}><ObjectFields ctx={structure} /></Show>

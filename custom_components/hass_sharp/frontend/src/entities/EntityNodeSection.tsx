@@ -151,7 +151,7 @@ export function EntityKeyField(props: { ctx: StepPickerContext }) {
             if (value === key()) return
             const problem = keyProblem(value, others())
             if (problem) return problem
-            ctx.onGraphChange(renameEntityKey(ctx.graph(), key(), value, ctx.node().id))
+            ctx.onGraphChange(renameEntityKey(ctx.graph(), key(), value, ctx.node().id, ctx.catalog()))
           }} />
       </Show>
     </At>

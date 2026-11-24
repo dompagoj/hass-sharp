@@ -1,13 +1,14 @@
 import { expect, it } from 'vitest'
 import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, settingPinType, stateInputs, structural, validateGraph, withGraphTypes, words, type ClassSetting, type Graph, type GraphNode, type NodeSpec, type VisualCatalogSnapshot } from '../src/visual/contract'
-import fixtureCases from '../../../../tests/fixtures/visual-graph-validation.json'
+import { hubKind, relayKind, relaysCase, relaysGraph, withRelays } from './relays-library'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
 import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
 import { addConnected } from '../src/visual/flow/autoConnect'
 import { connectionIndex } from '../src/visual/connectionIndex'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
-import { editorGraph, newGraphDefinition, renameEntityKey } from '../src/entities/model'
+import { cardEntities, draftGraph, editorGraph, newGraphDefinition, renameEntityKey } from '../src/entities/model'
+import { entityAdapter } from '../src/entities/adapter'
 import { entityRemoval, renameDefinition } from '../src/entities/definitionEdits'
 import { refitNotice, retypeNode } from '../src/entities/refit'
 import { add, empty, lit } from './visual-fixture'
@@ -239,14 +240,8 @@ it('a dropped C# entity or C# device is keyed past the keys it shares, and has n
   expect(deviceNodeOf(wired, 'c')).toBe('hall')
 })
 
-// The relays library's two classes, as the compiler writes their entries: taken from the shared fixture, which the C#
-// suite holds to the compiler's, so they cannot drift from them.
-const relaysCase = (fixtureCases as unknown as { name: string; graph: unknown; catalogPatch?: { nodes: Record<string, NodeSpec> } }[])
-  .find(c => c.name === 'library class node: a hub, and a relay on a Device node, are valid')!
-const hubKind = 'library:relays:global%3A%3ANodeLib.RelayHub', relayKind = 'library:relays:global%3A%3ANodeLib.Relay'
 /** The built-in catalog with the relays library's classes, or with `entries` in their place. */
-const withLibrary = (entries: Record<string, NodeSpec> = relaysCase.catalogPatch!.nodes): VisualCatalogSnapshot =>
-  ({ ...nodeCatalog, nodes: { ...nodeCatalog.nodes, ...structuredClone(entries) } })
+const withLibrary = (entries?: Record<string, NodeSpec>): VisualCatalogSnapshot => withRelays(nodeCatalog, entries)
 /** The relay hub's entry as `changes` make it, under `kind`. */
 const hubEntry = (kind: string, changes: Partial<NodeSpec>): Record<string, NodeSpec> => ({ [kind]: { ...relaysCase.catalogPatch!.nodes[hubKind], ...changes } })
 
@@ -345,6 +340,55 @@ it('a library device and a library entity are listed as their C# kinds are', () 
   const withOdd = { ...graph, nodes: [...graph.nodes, { id: 'o', kind: 'odd', config: { key: 'odd' } }] }
   expect(() => declaredEntities(withOdd, odd)).toThrow('The kind odd declares an entity that no list knows how to describe')
   expect(csharpEntities(withOdd, odd).map(e => e.key)).toEqual(['relay'])
+})
+
+/** The relays graph with a token typed into its hub's secret Token, beside its Address (not secret). */
+const typedToken = () => {
+  const graph = relaysGraph()
+  const hub = graph.nodes.find(n => n.id === 'hub')!
+  ;(hub.config.arguments as Record<string, unknown>).Token = lit('string', 'r3lay-t0ken')
+  return graph
+}
+
+it('a value typed into a library class\'s secret setting is left out of a draft and an export, by the live catalog', () => {
+  const catalog = withLibrary(), graph = typedToken()
+  // The entity definition's drafts, its Export graph and its Graph JSON view all take the graph as its adapter's draft gives it.
+  for (const draft of [draftGraph(graph, catalog), entityAdapter({ callWS: async () => ({}) }).draft!(graph, catalog)]) {
+    expect(JSON.stringify(draft)).not.toContain('r3lay-t0ken')
+    // Its other values are kept, and so is the rest of its config.
+    expect(draft.nodes.find(n => n.id === 'hub')!.config).toEqual({ key: 'hub', name: 'Hub', via: null, arguments: { Address: lit('string', '10.0.0.2') } })
+    expect(draft.nodes.find(n => n.id === 'relay')).toEqual(graph.nodes.find(n => n.id === 'relay'))
+  }
+  // The graph itself keeps it.
+  expect(JSON.stringify(graph)).toContain('r3lay-t0ken')
+  // A value typed into a setting that is not secret is kept.
+  const relay = graph.nodes.find(n => n.id === 'relay')!
+  const typed = updateNode(graph, 'relay', { config: { ...relay.config, arguments: { Address: lit('string', '7') } } })
+  expect(draftGraph(typed, catalog).nodes.find(n => n.id === 'relay')!.config.arguments).toEqual({ Address: lit('string', '7') })
+})
+
+it('a library entity\'s key is renamed where a C# entity\'s is', () => {
+  const catalog = withLibrary(), graph = relaysGraph()
+  const renamed = renameEntityKey(graph, 'relay', 'outlet', 'relay', catalog)
+  expect(renamed.nodes.find(n => n.id === 'relay')!.config.key).toBe('outlet')
+  // Its key is an entity key: a rename of another to it is refused, as to a C# entity's.
+  const lamp = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  expect(renameEntityKey(lamp, 'lamp', 'relay', 'lamp', catalog)).toBe(lamp)
+  // A device's key is no entity key, as a C# device's is not: its Key field renames it (see the right panel's tests).
+  expect(renameEntityKey(graph, 'hub', 'bridge', 'hub', catalog)).toBe(graph)
+})
+
+it('a definition\'s entities list a library entity by its class\'s title, and a library device\'s in its node\'s place', () => {
+  // The hub, the strip, the relay and then a C# device (key device): the hub's entities come before the C# device's.
+  const graph = addGraphNode(relaysGraph(), 'csharp_device', 'plug', withLibrary())
+  const live = (uniqueId: string, name: string | null) => ({ uniqueId, key: uniqueId, domain: 'switch', name, entityId: `switch.${uniqueId.replaceAll(':', '_')}` })
+  const item = {
+    id: 'relays', entities: [{ key: 'relay', domain: 'switch', name: null, device: 'strip', csharp: true as const }], registeredEntities: [],
+    liveEntities: [live('relays:device:outlet', 'Outlet'), live('relays:hub:channel', 'Channel'), live('relays:relay', null)], logic: { kind: 'graph' as const, graph },
+  }
+  expect(cardEntities(item, withLibrary()).map(e => [e.name, e.device ?? null])).toEqual([['Relay', null], ['Channel', 'hub'], ['Outlet', 'device']])
+  // Without its library, neither is known: the relay is named by its key, and the hub's entities come last, as those of a node that is gone.
+  expect(cardEntities(item).map(e => [e.name, e.device ?? null])).toEqual([['relay', null], ['Outlet', 'device'], ['Channel', 'hub']])
 })
 
 /** A Thermometer C# entity, a Plug C# device, a lamp Entity node and a Hall Device node the thermometer is on. */
@@ -1014,18 +1058,18 @@ it('deleting Entity nodes says how many steps use them, and "these entities" onl
 
 /** A saved definition's C# device Plug (key `device`, node `cam`) and C# entity Thermometer (key `sensor`, node `count`). */
 const csharpNodes = () => addGraphNode(addGraphNode(empty(), 'csharp_device', 'cam', nodeCatalog), 'csharp_entity', 'count', nodeCatalog)
-const storedQuestion = (name: string) => ({ title: 'Delete its stored data too?', body: `${name} has stored data. It is deleted when you save the entity definition without this node.` })
+const storedQuestion = (name: string, key: string) => ({ title: 'Delete its stored data too?', body: `${name} has stored data. It is deleted when you save the entity definition without a node keyed ${key}.` })
 
 it('removing a C# node with stored data asks first', () => {
   const saved = csharpNodes()
-  expect(entityRemoval(saved, ['cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual(storedQuestion('Plug'))
-  expect(entityRemoval(saved, ['count'], nodeCatalog, { saved, keys: ['device', 'sensor'] })).toEqual(storedQuestion('Thermometer'))
+  expect(entityRemoval(saved, ['cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual(storedQuestion('Plug', 'device'))
+  expect(entityRemoval(saved, ['count'], nodeCatalog, { saved, keys: ['device', 'sensor'] })).toEqual(storedQuestion('Thermometer', 'sensor'))
   // Named as its card is now; its stored data is by the key it was saved with.
   const renamed = updateNode(saved, 'cam', { config: { ...saved.nodes[0].config, name: 'Driveway camera' } })
-  expect(entityRemoval(renamed, ['cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual(storedQuestion('Driveway camera'))
+  expect(entityRemoval(renamed, ['cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual(storedQuestion('Driveway camera', 'device'))
   // Both at once.
   expect(entityRemoval(saved, ['cam', 'count'], nodeCatalog, { saved, keys: ['device', 'sensor'] })).toEqual({
-    title: 'Delete its stored data too?', body: 'Plug and Thermometer have stored data. It is deleted when you save the entity definition without these nodes.',
+    title: 'Delete its stored data too?', body: 'Plug and Thermometer have stored data. It is deleted when you save the entity definition without nodes keyed device and sensor.',
   })
 })
 
@@ -1044,12 +1088,31 @@ it('removing a C# node without stored data does not ask', () => {
   expect(entityRemoval(lamp, ['lamp'], nodeCatalog, { saved: lamp, keys: ['lamp'] })).toBeUndefined()
 })
 
+it('removing a library class node with stored data asks as for a C# node, and says its data stays with a node of its key', () => {
+  const catalog = withLibrary(), saved = relaysGraph()
+  expect(entityRemoval(saved, ['hub'], catalog, { saved, keys: ['hub'] })).toEqual(storedQuestion('Hub', 'hub'))
+  expect(entityRemoval(saved, ['relay'], catalog, { saved, keys: ['relay'] })).toEqual(storedQuestion('Relay', 'relay'))
+  // Its data is by the key it was saved with, whatever key it has now.
+  const hub = saved.nodes.find(n => n.id === 'hub')!
+  const rekeyed = updateNode(saved, 'hub', { config: { ...hub.config, key: 'bridge', name: 'Bridge' } })
+  expect(entityRemoval(rekeyed, ['hub'], catalog, { saved, keys: ['hub'] })).toEqual(storedQuestion('Bridge', 'hub'))
+  // None stored, or a node added since: nothing to ask.
+  expect(entityRemoval(saved, ['hub'], catalog, { saved, keys: ['relay'] })).toBeUndefined()
+  const added = addGraphNode(saved, hubKind, 'more', catalog)
+  expect(entityRemoval(added, ['more'], catalog, { saved, keys: ['relay_hub'] })).toBeUndefined()
+  // A C# device and a library one at once.
+  const both = addGraphNode(saved, 'csharp_device', 'cam', catalog)
+  expect(entityRemoval(both, ['cam', 'hub'], catalog, { saved: both, keys: ['device', 'hub'] })).toEqual({
+    title: 'Delete its stored data too?', body: 'Hub and Plug have stored data. It is deleted when you save the entity definition without nodes keyed hub and device.',
+  })
+})
+
 it('removing a node that steps still use and a C# node that has data shows both reasons', () => {
   let saved = add(csharpNodes(), 'entity', 'lamp', { key: 'lamp', domain: 'switch', name: 'Lamp' })
   saved = add(saved, 'set_entity_state', 'set', { entity: 'lamp' })
   expect(entityRemoval(saved, ['lamp', 'cam'], nodeCatalog, { saved, keys: ['device'] })).toEqual({
     title: 'Delete its stored data too?',
-    body: 'Plug has stored data. It is deleted when you save the entity definition without this node. 1 step uses this entity. It will show a problem until you change or remove it.',
+    body: 'Plug has stored data. It is deleted when you save the entity definition without a node keyed device. 1 step uses this entity. It will show a problem until you change or remove it.',
   })
   // Each reason alone, as before.
   expect(entityRemoval(saved, ['lamp'], nodeCatalog, { saved, keys: ['device'] })).toEqual({ title: 'Delete this entity?', body: '1 step uses this entity. It will show a problem until you change or remove it.' })

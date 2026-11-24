@@ -4,7 +4,7 @@ import { definitionNames, TriggerSummary, type TriggerNames } from '../../compon
 import { Glyph } from '../Glyph'
 import { SheetBar, SheetPeek } from '../Inspector'
 import { TypeChip } from '../InputRow'
-import { isDeclaration, isPure, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
+import { hasCode, isClassNode, isDeclaration, isPure, type Graph, type GraphNode, type VisualCatalogSnapshot } from '../contract'
 import { durationLabel, execLabel, nodeTitle, traceStatusLabel, traceText } from '../flow/flowModel'
 import { icons, nodeIdentity } from '../icons'
 import { focusSoon } from '../soon'
@@ -15,9 +15,16 @@ import { hiddenReason, inputLabel, inputOption, inputOrder, inputSource, outputL
 import { useLoadedRegistry } from '../../registry'
 import { statusIcon } from './Timeline'
 
-/** What a run's panel says of a declaration, by its kind: it is no step, so it never ran. */
-const declarationNote = (kind: string) =>
-  kind === 'csharp_entity' ? 'A C# entity is not a step: it does not run.' : kind === 'csharp_device' ? 'A C# device is not a step: it does not run.' : 'A device is not a step: it does not run.'
+/**
+ * What a run's panel says of a declaration, by its kind's catalog entry: it is no step, so it never ran. A C# entity or
+ * C# device says so; a library's class by what it declares, as a Device node does.
+ */
+const declarationNote = (kind: string, catalog: VisualCatalogSnapshot) => {
+  const spec = Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined
+  const entity = spec?.declares === 'entity'
+  if (isClassNode(spec) && hasCode(spec)) return entity ? 'A C# entity is not a step: it does not run.' : 'A C# device is not a step: it does not run.'
+  return entity ? 'An entity is not a step: it does not run.' : 'A device is not a step: it does not run.'
+}
 
 export const runTime = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '—')
 export const runDuration = (ms: number | null | undefined) => (ms === null || ms === undefined ? '—' : durationLabel(ms))
@@ -203,7 +210,7 @@ function StepValues(props: {
       </Show>
       <Show when={props.model && props.event} fallback={
         <p class="hs-insp-note">
-          {declaration() ? declarationNote(props.node.kind)
+          {declaration() ? declarationNote(props.node.kind, props.catalog)
             : !props.model ? 'No values were recorded for this run.'
             : pure() ? (runs().length && !whole() ? `Not used in ${frameLabel()}: no step read this value there.` : 'Not used: no step read this value.')
               : runs().length && !whole() ? `This step did not run in ${frameLabel()}.` : 'This step did not run.'}

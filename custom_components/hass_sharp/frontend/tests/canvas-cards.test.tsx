@@ -9,6 +9,7 @@ import { HassCtx } from '../src/context'
 import * as contract from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, createGraphHistory, updateNode, type VisualGraph } from '../src/visual/graph'
 import { add, empty, visualFixture } from './visual-fixture'
+import { relaysGraph, withRelays } from './relays-library'
 import { Timeline } from '../src/visual/trace/Timeline'
 import { nodeSummary } from '../src/visual/nodeSummary'
 import { chipValue, flowTrace, traceModel } from '../src/visual/trace/traceModel'
@@ -1559,6 +1560,63 @@ describe('the C# entity and C# device cards', () => {
       expect(drawn.querySelector('.hs-card__trace'), id).toBeNull()
       expect(el.querySelector(`[data-id="${id}"]`)!.getAttribute('aria-label'), id).not.toContain('Run:')
     }
+  })
+})
+
+describe('the library class node cards', () => {
+  const card = (el: Element, id: string) => el.querySelector(`[data-id="${id}"] .hs-card`)!
+  const rowLabels = (el: Element, id: string) => [...card(el, id).querySelectorAll('.hs-card__body [data-input-id]')].map(row => [row.getAttribute('data-input-id'), row.querySelector('.hs-pin-label')!.textContent])
+  /** The relays graph, its hub's config with `hub` in it, and a C# device Plug (key device). */
+  const graph = (hub: Record<string, unknown> = {}) => {
+    const base = relaysGraph(), node = base.nodes.find(n => n.id === 'hub')!
+    const withHub = updateNode(base, 'hub', { config: { ...node.config, ...hub } })
+    return contract.addGraphNode(withHub, 'csharp_device', 'plug', withRelays())
+  }
+
+  it('a library device card is a C# device\'s without code: its settings, its entities, its waiting count, and no code button', async () => {
+    const el = host()
+    const edits: string[] = []
+    dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withRelays()} onSelect={() => {}} onChange={() => {}} onEditCode={id => edits.push(id)}
+      deviceEntities={{}} attention={key => (key === 'hub' ? 2 : 0)} />), el)
+    const hub = card(el, 'hub')
+    expect(hub.querySelector('.hs-card__title')!.textContent).toBe('Hub')
+    expect(hub.querySelector('.hs-card__summary')!.textContent).toBe('Relay hub · hub')
+    // Its required Address is marked as a required input is.
+    expect(rowLabels(el, 'hub')).toEqual([['Address', 'Address*'], ['Token', 'Token'], ['PollEvery', 'Poll every']])
+    expect(hub.querySelector('[data-input-id="Address"] .hs-required')!.getAttribute('title')).toBe('Required')
+    expect(hub.querySelector('.hs-card__none')!.textContent).toBe('Its entities appear here after it has started once')
+    expect(hub.querySelector('.hs-card__badge--attention')!.textContent).toBe('2')
+    expect(hub.querySelector('.hs-card__code')).toBeNull()
+    // A double-click on it opens no code; the C# device beside it still has its code button.
+    hub.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    expect(edits).toEqual([])
+    expect(card(el, 'plug').querySelector('.hs-card__code')!.getAttribute('aria-label')).toBe('Edit code of Plug')
+    expect(card(el, 'plug').querySelector('.hs-card__summary')!.textContent).toBe('C# device · device')
+  })
+
+  it('a library device card holding code in its config (a hand-edited file) still has no code button and opens no code', () => {
+    const el = host()
+    const edits: string[] = []
+    dispose = render(() => providers(() => <FlowAdapter graph={graph({ source: 'public class Old : SharpDevice { }' })} catalog={withRelays()} onSelect={() => {}} onChange={() => {}}
+      onEditCode={id => edits.push(id)} />), el)
+    expect(card(el, 'hub').querySelector('.hs-card__code')).toBeNull()
+    card(el, 'hub').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    expect(edits).toEqual([])
+    expect(el.innerHTML).not.toContain('class Old')
+  })
+
+  it('a library entity card is a C# entity\'s without code: titled by its class, its type and key, the Device pin in its header', () => {
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={graph()} catalog={withRelays()} onSelect={() => {}} onChange={() => {}} onEditCode={() => {}} attention={() => 1} />), el)
+    const relay = card(el, 'relay')
+    expect(relay.querySelector('.hs-card__title')!.textContent).toBe('Relay')
+    expect(relay.querySelector('.hs-card__summary')!.textContent).toBe('Switch · relay')
+    expect(relay.querySelector('.hs-card__head [data-handleid="data:device"].target')!.getAttribute('aria-label')).toBe('Device, connected to Strip')
+    expect(rowLabels(el, 'relay')).toEqual([['Address', 'Address']])
+    expect(relay.querySelector('.hs-card__code')).toBeNull()
+    // Its page's count, as a C# entity's; it is no device, so it lists no entities.
+    expect(relay.querySelector('.hs-card__badge--attention')!.textContent).toBe('1')
+    expect(relay.querySelector('.hs-card__entities, .hs-card__none')).toBeNull()
   })
 })
 

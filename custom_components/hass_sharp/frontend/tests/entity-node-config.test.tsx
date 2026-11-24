@@ -15,6 +15,7 @@ import { HassCtx } from '../src/context'
 import type { SavedEntities } from '../src/visual/adapter'
 import type { VisualDiagnostic } from '../src/visual/api'
 import { add, empty, lit } from './visual-fixture'
+import { hubKind, relayKind, withRelays } from './relays-library'
 
 // The steps of an entity definition name its entities (each an Entity node) and its settings by key; the inspector
 // offers them by name, and a key the definition no longer has stays shown, marked missing.
@@ -961,6 +962,66 @@ describe('devices in the right panel', () => {
       expect(device.node().config.key).toBe('desk')
       // A device that is part of it follows.
       expect(configOf(device.history.graph(), 'bridge').via).toEqual({ device: 'desk' })
+    })
+  })
+
+  describe('a library device and a library entity', () => {
+    const main = (el: Element) => el.querySelector('.hs-inspector .hs-insp-main')!
+    const fieldLabels = (el: Element) => [...main(el).querySelectorAll('label.hs-insp-field__label')].map(label => label.textContent)
+    const order = (el: Element) => [...main(el).querySelectorAll(':scope > [data-input-id], :scope > div > [data-input-id], :scope > section')].map(e => e.getAttribute('data-input-id') ?? e.getAttribute('aria-label'))
+    const settingKeys = (el: Element) => [...el.querySelectorAll<HTMLElement>('.hs-inspector section[aria-label="Settings"] > [data-input-id]')].map(row => row.dataset.inputId)
+    const buttons = (el: Element) => [...el.querySelectorAll<HTMLButtonElement>('.hs-inspector button')].map(b => b.textContent?.trim())
+    /** The devices above, the relays library's hub (node bank, key relay_hub) and its relay (node channel, key relay_2), the Hall plug part of the hub. */
+    const libraryNodes = (hub: Record<string, unknown> = {}) => {
+      let graph = addGraphNode(addGraphNode(devices(), hubKind, 'bank', withRelays()), relayKind, 'channel', withRelays())
+      graph = updateNode(graph, 'bank', { config: { ...configOf(graph, 'bank'), ...hub } })
+      return updateNode(graph, 'plug', { config: { ...configOf(graph, 'plug'), via: { device: 'relay_hub' } } })
+    }
+
+    it('a library device is named in the header, has its Key, Part of and settings, says its library, and offers no code', () => {
+      const { el, node, history } = mount(libraryNodes(), 'bank', withRelays(), { onEditCode: () => {} })
+      expect(el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!.value).toBe('Relay hub')
+      expect(el.querySelector('.hs-inspector .hs-insp-kind')!.textContent).toContain('Relay hub')
+      expect(fieldLabels(el)).toEqual(['Key', 'Part of'])
+      expect(order(el)).toEqual(['key', 'via', 'Settings'])
+      expect(el.querySelector('.hs-inspector section[aria-label="Settings"] h3')!.textContent).toBe('Settings')
+      expect(settingKeys(el)).toEqual(['Address', 'Token', 'PollEvery'])
+      for (const key of ['source', 'signature', 'arguments', 'name', 'device']) expect(el.querySelector(`.hs-inspector .hs-insp-main [data-input-id="${key}"]`), key).toBeNull()
+      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library relays.')
+      expect(buttons(el)).not.toContain('Edit code')
+      expect(el.querySelector('.hs-inspector')!.textContent).not.toContain('come from the code')
+      // Its key is renamed as a C# device's: the device that is part of it follows.
+      typeInto(control(el, 'Key'), 'bank')
+      expect(node().config.key).toBe('bank')
+      expect(configOf(history.graph(), 'plug').via).toEqual({ device: 'bank' })
+    })
+
+    it('a library device whose config holds code (a hand-edited file) still offers no code', () => {
+      const edits: string[] = []
+      const { el } = mount(libraryNodes({ source: 'public class Old : SharpDevice { }' }), 'bank', withRelays(), { onEditCode: id => edits.push(id) })
+      expect(buttons(el)).not.toContain('Edit code')
+      expect(el.querySelector('.hs-inspector [data-input-id="source"]')).toBeNull()
+      // Only its stored data, under Advanced, shows what the file holds.
+      expect(main(el).innerHTML).not.toContain('class Old')
+      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library relays.')
+      expect(edits).toEqual([])
+    })
+
+    it('a library entity is named by its class in the header, has its Key and Device, says its library, and offers no code', () => {
+      const { el, node, history } = mount(libraryNodes(), 'channel', withRelays(), { onEditCode: () => {} })
+      expect(el.querySelector('.hs-inspector .hs-insp-head input')).toBeNull()
+      expect(el.querySelector('.hs-inspector .hs-insp-title')!.textContent).toBe('Relay')
+      expect(fieldLabels(el)).toEqual(['Key', 'Device'])
+      expect(order(el)).toEqual(['key', 'device', 'Settings'])
+      expect(settingKeys(el)).toEqual(['Address'])
+      expect(field(el, 'device').querySelector('.hs-field-hint')!.textContent).toBe("An entity on a device is listed on that device's page. None: it stands alone.")
+      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library relays.')
+      expect(buttons(el)).not.toContain('Edit code')
+      // Its key is an entity key, renamed as a C# entity's; the Device select wires it.
+      typeInto(control(el, 'Key'), 'channel')
+      expect(node().config.key).toBe('channel')
+      pick(select(el, 'device'), 'hub')
+      expect(history.graph().edges.filter(e => e.kind === 'data' && e.target === 'channel')).toEqual([{ id: expect.any(String), kind: 'data', source: 'hub', sourcePort: 'entities', target: 'channel', targetPort: 'device' }])
     })
   })
 })

@@ -1,5 +1,5 @@
 import { createMemo, createUniqueId, Show, type Component, type JSX } from 'solid-js'
-import { definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityTypeLabel, firstStateValue, booleanStateValue, withFirstStateValue, type GraphNode, type Operand, type VisualCatalogSnapshot } from '../visual/contract'
+import { definitionEntities, definitionEntity, definitionSettings, entityChoices, entityDomain, entityTypeLabel, firstStateValue, booleanStateValue, withFirstStateValue, isClassNode, type GraphNode, type NodeSpec, type Operand, type VisualCatalogSnapshot } from '../visual/contract'
 import { graphTypes } from '../visual/connectionIndex'
 import { entityStateContext } from '../visual/entityStateContext'
 import type { VisualGraph } from '../visual/graph'
@@ -152,11 +152,13 @@ function SettingPicker(props: { ctx: StepPickerContext }) {
 const EntitySection: Component<{ ctx: StepPickerContext }> = props => <EntityPicker ctx={props.ctx} />
 const SettingSection: Component<{ ctx: StepPickerContext }> = props => <SettingPicker ctx={props.ctx} />
 
+/** A section of the right panel: the config keys it edits (which the inspector's generic settings leave out), and the section. */
+export interface StepPicker { keys: string[]; Section: Component<{ ctx: StepPickerContext }> }
 /**
  * The pickers of an entity definition's steps, by kind: the config keys each section edits (which the inspector's
- * generic settings leave out) and the section.
+ * generic settings leave out) and the section. A class node's is by what it declares (`stepPicker`).
  */
-export const stepPickers: Record<string, { keys: string[]; Section: Component<{ ctx: StepPickerContext }> }> = {
+export const stepPickers: Record<string, StepPicker> = {
   set_entity_state: { keys: ['entity'], Section: EntitySection },
   set_entity_available: { keys: ['entity'], Section: EntitySection },
   setting: { keys: ['key'], Section: SettingSection },
@@ -164,11 +166,22 @@ export const stepPickers: Record<string, { keys: string[]; Section: Component<{ 
   entity: { keys: ['key', 'domain', 'name', 'icon', 'deviceClass', 'entityCategory', 'enabledByDefault', 'options', 'history', 'arguments'], Section: EntityNodeSection },
   // A Device node: its whole device but its name (the header's).
   device: { keys: ['key', 'name', ...deviceFields.map(field => field.member), 'via'], Section: DeviceNodeSection },
-  // A C# entity: its key and device; its code (Edit code), its class's signature and its settings (its inputs) are shown
-  // apart, and its class names it.
-  csharp_entity: { keys: ['key', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
-  // A C# device: its key and Part of; its name is the header's, and its code, signature and settings are shown apart.
-  csharp_device: { keys: ['key', 'name', 'via', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
+}
+/**
+ * The pickers of a class node (a C# entity or C# device, a node library's entity or device class), by what it declares.
+ * An entity class: its key and device; its code (Edit code, a C# node's), its class's signature and its settings (its
+ * inputs) are shown apart, and its class names it. A device class: its key and Part of; its name is the header's, and
+ * its code, signature and settings are shown apart. A library class has no code: a `source` or `signature` its config
+ * holds (a hand-edited file) is never shown.
+ */
+const classPickers: Record<'entity' | 'device', StepPicker> = {
+  entity: { keys: ['key', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
+  device: { keys: ['key', 'name', 'via', 'source', 'signature', 'arguments'], Section: CSharpNodeSection },
+}
+/** The picker of a node of `kind`, whose catalog entry is `spec`: a class node's by what it declares, else its kind's own, if any. */
+export function stepPicker(kind: string, spec: NodeSpec | undefined): StepPicker | undefined {
+  if (isClassNode(spec)) return spec!.declares ? classPickers[spec!.declares] : undefined
+  return Object.hasOwn(stepPickers, kind) ? stepPickers[kind] : undefined
 }
 
 /** Under a Set state's value, when its type has more than one: what leaving it empty does. */

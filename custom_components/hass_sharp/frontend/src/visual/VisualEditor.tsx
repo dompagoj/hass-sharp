@@ -341,11 +341,12 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   }
   /**
    * Writes the code and what it gives as one undo step, and says which values and wires no longer fit: a Custom C#
-   * step's pins, or a C# entity's or C# device's settings.
+   * step's pins, or a C# entity's or C# device's settings. Nothing for a node whose kind holds no code (a library's
+   * class: its settings are its catalog entry's).
    */
   const applyCode = (id: string, source: string, signature: CustomSignature | ClassSignature) => {
     const node = graph().nodes.find(n => n.id === id)
-    if (!node) return
+    if (!node || !hasCode(specOf(node.kind))) return
     let notice: string | undefined
     if (isClassNode(specOf(node.kind))) {
       const result = applyClassCode(graph(), id, source, signature as ClassSignature, session.catalog())
@@ -491,7 +492,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
   onCleanup(() => editor.removeEventListener('keydown', cardEnter, true))
 
   const download = () => {
-    const url = URL.createObjectURL(new Blob([serializeGraph(adapter.draft ? adapter.draft(graph()) : graph())], { type: 'application/json' }))
+    const url = URL.createObjectURL(new Blob([serializeGraph(adapter.draft ? adapter.draft(graph(), session.catalog()) : graph())], { type: 'application/json' }))
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.download = texts.exportFileName
@@ -679,7 +680,7 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
             label: 'Generated C#',
             content: () => (
               // The graph as a draft keeps it: a definition's typed secrets are not shown here either.
-              <CodePanel graph={adapter.draft ? adapter.draft(graph()) : graph()} preview={session.preview()} previewError={session.previewError()} onRetry={session.retryPreview}
+              <CodePanel graph={adapter.draft ? adapter.draft(graph(), session.catalog()) : graph()} preview={session.preview()} previewError={session.previewError()} onRetry={session.retryPreview}
                 view={codeView()} onViewChange={setCodeView} sourceLine={sourceLine()} selectedId={selectedId()}
                 onSelectLine={(line, nodeId) => {
                   // The line's step; a line of the shared C# belongs to none.

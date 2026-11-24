@@ -9,6 +9,7 @@ import {
   executionLabel,
   executionPorts,
   inputValue,
+  isClassNode,
   isDeclaration,
   isPure,
   isRoot,
@@ -237,23 +238,32 @@ export interface ViewContext {
   names?: SummaryNames
   /** A connection the adapter just refused, shown on its pin. */
   rejected?: { nodeId: string; handle: string; message: string }
-  /** The entities Home Assistant has of each C# device, by its key; undefined on a canvas that does not show them. */
+  /** The entities Home Assistant has of each device class (a C# device, a library's), by its key; undefined on a canvas that does not show them. */
   deviceEntities?: Readonly<Record<string, readonly DeviceEntity[]>>
-  /** What the page of each C# device and C# entity waits on the person with, by its key; undefined on a canvas that does not show it. */
+  /** What the page of each class node (a C# device or C# entity, a library's class) waits on the person with, by its key; undefined on a canvas that does not show it. */
   attention?: (nodeKey: string) => number
 }
-/** What a C# device's card lists of Home Assistant's entities for it: those of its key, none before it has started once. */
+/** The node's catalog entry, when it is a class node's (a C# device or C# entity, a node library's class); else undefined. */
+const classSpec = (node: GraphNode, ctx: ViewContext) => {
+  const spec = Object.hasOwn(ctx.catalog.nodes, node.kind) ? ctx.catalog.nodes[node.kind] : undefined
+  return isClassNode(spec) ? spec : undefined
+}
+/**
+ * What a device class's card (a C# device's, a library's device class's) lists of Home Assistant's entities for it:
+ * those of its key, none before it has started once.
+ */
 const ownEntities = (node: GraphNode, ctx: ViewContext): DeviceEntity[] | undefined => {
-  if (node.kind !== 'csharp_device' || !ctx.deviceEntities) return undefined
+  if (classSpec(node, ctx)?.declares !== 'device' || !ctx.deviceEntities) return undefined
   const key = text(node.config.key)
   return key && Object.hasOwn(ctx.deviceEntities, key) ? [...ctx.deviceEntities[key]] : []
 }
 
-/** The kinds whose node has a page of its own (its code draws it), and so a count of what it waits on. */
-const pageKinds = ['csharp_device', 'csharp_entity']
-/** What a C# device's or a C# entity's page waits on the person with, when above 0; undefined for any other node. */
+/**
+ * What the page of a class node (a C# device or C# entity, a library's class: its class draws it) waits on the person
+ * with, when above 0; undefined for any other node.
+ */
 const ownAttention = (node: GraphNode, ctx: ViewContext): number | undefined => {
-  if (!pageKinds.includes(node.kind) || !ctx.attention) return undefined
+  if (!classSpec(node, ctx) || !ctx.attention) return undefined
   const key = text(node.config.key)
   const count = key ? ctx.attention(key) : 0
   return count > 0 ? count : undefined

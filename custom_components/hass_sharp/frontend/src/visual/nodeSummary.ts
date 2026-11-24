@@ -1,4 +1,4 @@
-import { classSignature, customSignature, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityIdDomain, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
+import { classSignature, customSignature, hasCode, isClassNode, dataInputs, dataOutputs, definitionCatalog, definitionEntity, definitionSettings, entityIdDomain, entityTypeLabel, inputValue, nodeCatalog, words, type Graph, type GraphNode, type ServicesSection, type VisualCatalogSnapshot } from './contract'
 import { domainWords, typeLabel } from './typeLabels'
 import { stateField, stateLabel } from './widgets/states'
 import { entityStateContext } from './entityStateContext'
@@ -183,6 +183,18 @@ function triggerText(ctx: Context): string | undefined {
 function kindText(ctx: Context): string | undefined {
   const { node, catalog } = ctx
   const config = node.config
+  const spec = Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind] : undefined
+  // A class node, by its catalog entry. An entity class (a C# entity, a library's): the type its class derives from and
+  // its key, as an Entity node (its class's title is its title). A device class: what it is (C# device, or a library
+  // class's title) and its key (its name is its title).
+  if (isClassNode(spec)) {
+    const key = text(config.key)
+    if (spec!.declares === 'entity') {
+      const domain = text(classSignature(node, catalog)?.domain)
+      return [domain ? entityTypeLabel(catalog, domain) : '', key].filter(Boolean).join(' · ') || undefined
+    }
+    if (spec!.declares === 'device') return key ? `${hasCode(spec) ? 'C# device' : text(spec!.label) || 'Device'} · ${key}` : undefined
+  }
   switch (node.kind) {
     case 'trigger': return triggerText(ctx)
     case 'service': {
@@ -255,13 +267,6 @@ function kindText(ctx: Context): string | undefined {
     }
     // A Device node: its key (its name is its title).
     case 'device': { const key = text(config.key); return key ? `Device · ${key}` : undefined }
-    // A C# entity: the type its class derives from and its key, as an Entity node (its class's title is its title).
-    case 'csharp_entity': {
-      const domain = text(classSignature(node, catalog)?.domain), key = text(config.key)
-      return [domain ? entityTypeLabel(catalog, domain) : '', key].filter(Boolean).join(' · ') || undefined
-    }
-    // A C# device: its key (its name is its title).
-    case 'csharp_device': { const key = text(config.key); return key ? `C# device · ${key}` : undefined }
     // A setting by its label; never its value, which may be a secret.
     case 'setting': {
       const key = text(config.key)

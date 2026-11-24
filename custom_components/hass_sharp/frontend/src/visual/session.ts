@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, onCleanup } from 'solid-js'
+import { batch, createEffect, createMemo, createSignal, onCleanup, untrack } from 'solid-js'
 import type { HomeAssistant } from '../types'
 import { createGraphHistory, serializeGraph, type VisualGraph } from './graph'
 import { visualApi, visualError, type VisualDiagnostic, type VisualDocument, type VisualPreview } from './api'
@@ -65,8 +65,6 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
   const api = visualApi(hass)
   const adapter = options.adapter ?? (automationAdapter(hass) as unknown as EditorAdapter<D>)
   const conflictMessage = adapter.texts.conflictMessage
-  /** The graph as a draft keeps it. */
-  const toDraft = (graph: VisualGraph) => (adapter.draft ? adapter.draft(graph) : graph)
   const history = createGraphHistory(initial)
   const [libraryCatalog, setCatalog] = createSignal<VisualCatalogSnapshot>(nodeCatalog)
   // C4: the services section never enters the catalog root; it is attached to the snapshot the editor validates with.
@@ -75,6 +73,8 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
     const base = libraryCatalog(), section = services()
     return section ? { ...base, services: section } : base
   })
+  /** The graph as a draft keeps it, by the live catalog (a node library's class's secret settings are its entry's). */
+  const toDraft = (graph: VisualGraph) => (adapter.draft ? adapter.draft(graph, untrack(catalog)) : graph)
   const [catalogGeneration, setCatalogGeneration] = createSignal<string>()
   const [catalogReady, setCatalogReady] = createSignal(false)
   const [catalogError, setCatalogError] = createSignal<string>()

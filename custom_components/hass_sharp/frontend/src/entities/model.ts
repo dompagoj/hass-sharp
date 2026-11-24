@@ -1,4 +1,4 @@
-import { addGraphNode, classSignature, declaredEntities, entityKey, entityKeyHolders, slug, trimSeparators, type ClassSetting, type Graph, type GraphDefinition, type JsonValue } from '../visual/contract'
+import { addGraphNode, classSignature, declaredEntities, entityKey, entityKeyHolders, hasCode, isClassNode, nodeCatalog, slug, trimSeparators, type ClassSetting, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { HomeAutomation, SourceRange } from '../visual/api'
 
 /**
@@ -183,22 +183,28 @@ function uniqueIdTail(definitionId: string, uniqueId: string): { key: string; de
  * A definition's entities: those it registered while running (or failed), else Home Assistant's entity registry's,
  * which keeps them while it is off or not loaded; a C# device's entities have neither before it has run. Whether Home
  * Assistant has one disabled always comes from the registry. Each is named by its name (its own, else the one the
- * definition gives it: an Entity node's, else a C# entity's class's title), else its key, else its entity id; a C#
- * device's entity by its own name, else its key. The entities the definition declares come first, then each C#
- * device's, in the order of its nodes (one whose node is gone last); in each, enabled ones come first, each group by
- * name.
+ * definition gives it: an Entity node's, else an entity class's title), else its key, else its entity id; a device
+ * class's entity by its own name, else its key. The entities the definition declares come first, then each device
+ * class's, in the order of its nodes (one whose node is gone last); in each, enabled ones come first, each group by
+ * name. A class node is a C# entity or C# device, or a node library's entity or device class, by `catalog`: a
+ * library's is known only to the live catalog, and without it is listed as a node that is gone.
  */
-export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'> & { logic?: HomeDefinition['logic'] }): CardEntity[] {
+export function cardEntities(item: Pick<HomeDefinition, 'id' | 'entities' | 'liveEntities' | 'registeredEntities'> & { logic?: HomeDefinition['logic'] }, catalog: VisualCatalogSnapshot = nodeCatalog): CardEntity[] {
   const graphNodes = Array.isArray(item.logic?.graph?.nodes) ? item.logic.graph.nodes : []
-  const csharpNodes = graphNodes.filter(node => node.kind === 'csharp_entity' || node.kind === 'csharp_device')
+  const specOf = (node: (typeof graphNodes)[number]) => (typeof node?.kind === 'string' && Object.hasOwn(catalog.nodes, node.kind) ? catalog.nodes[node.kind] : undefined)
+  // The class nodes (C# entities and C# devices, a library's entity and device classes) by the catalog, which knows a
+  // library's only when it is the live one: without it, a library's class is not known here.
+  const classNodes = graphNodes.filter(node => isClassNode(specOf(node)))
   const keyOf = (node: (typeof graphNodes)[number]) => (typeof node.config?.key === 'string' ? node.config.key : undefined)
-  // A C# entity's stored name is null (its class names it): its class's title, as its node shows it.
-  const titles = new Map(csharpNodes.filter(node => node.kind === 'csharp_entity').map(node => {
-    const title = (node.config?.signature as { title?: unknown } | undefined)?.title
+  // An entity class's stored name is null (its class names it): its class's title, as its node shows it (a C# entity's
+  // signature's, a library class's entry's).
+  const titles = new Map(classNodes.filter(node => specOf(node)!.declares === 'entity').map(node => {
+    const spec = specOf(node)!
+    const title = ((hasCode(spec) ? node.config?.signature : spec.classSignature) as { title?: unknown } | undefined)?.title
     return [keyOf(node), typeof title === 'string' ? title : undefined] as const
   }))
   const declared = new Map((item.entities ?? []).map(entity => [entity.key, entity.name || (entity.csharp === true ? titles.get(entity.key) : undefined)]))
-  const deviceOrder = csharpNodes.filter(node => node.kind === 'csharp_device').map(keyOf).filter((key): key is string => key !== undefined)
+  const deviceOrder = classNodes.filter(node => specOf(node)!.declares === 'device').map(keyOf).filter((key): key is string => key !== undefined)
   const registry = new Map(item.registeredEntities.map(entry => [entry.uniqueId, entry]))
   const entity = (uniqueId: string, name: string | null | undefined, domain: string, entityId: string | null, disabled: boolean): CardEntity => {
     const { key, device } = uniqueIdTail(item.id, uniqueId)
@@ -289,20 +295,21 @@ export function definitionBody(graph: Graph): DefinitionBody {
 
 /**
  * The graph a browser draft keeps: every secret setting without its value (`hasValue` as stored), and of the definition
- * nothing else (not a device an earlier build's draft kept); every C# node without a value typed into a secret setting
- * pin (one a hand-made or pasted graph may hold: the validators refuse it, and a Setting gives it). Never changes its
- * argument.
+ * nothing else (not a device an earlier build's draft kept); every class node (a C# node, a node library's class)
+ * without a value typed into a secret setting pin (one a hand-made or pasted graph may hold: the validators refuse it,
+ * and a Setting gives it). Its settings are read from `catalog`, the live one: a library class's are its entry's, which
+ * the built-in catalog does not have. Never changes its argument.
  */
-export function draftGraph(graph: Graph): Graph {
-  const nodes = Array.isArray(graph.nodes) ? graph.nodes.map(withoutTypedSecrets) : graph.nodes
+export function draftGraph(graph: Graph, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes.map(node => withoutTypedSecrets(node, catalog)) : graph.nodes
   if (!record(graph.definition)) return { ...graph, nodes }
   const definition = editorDefinition(graph)
   const settings = (definition.settings ?? []).map(setting => (setting.secret ? { ...setting, value: null } : setting))
   return { ...graph, nodes, definition: { settings } as unknown as GraphDefinition }
 }
-/** A C# node without the values typed into its secret settings' pins, by its class signature; any other node as it is. */
-function withoutTypedSecrets(node: Graph['nodes'][number]): Graph['nodes'][number] {
-  const secrets = new Set(classSignature(node)?.settings.filter(setting => setting.secret).map(setting => setting.key))
+/** A class node without the values typed into its secret settings' pins, by its class's signature in `catalog`; any other node as it is. */
+function withoutTypedSecrets(node: Graph['nodes'][number], catalog: VisualCatalogSnapshot): Graph['nodes'][number] {
+  const secrets = new Set(classSignature(node, catalog)?.settings.filter(setting => setting.secret).map(setting => setting.key))
   const config = node.config as Record<string, unknown> | undefined
   const typed = record(config?.arguments) ? Object.entries(config.arguments) : []
   const secret = ([key, value]: [string, unknown]) => secrets.has(key) && record(value) && value.kind === 'literal'
@@ -348,18 +355,20 @@ export function definitionId(name: string, taken: string[]): string {
 export const definitionEntityKinds: readonly string[] = ['set_entity_state', 'set_entity_available']
 
 /**
- * Renames the entity the Entity node or C# entity `nodeId` declares, and every step whose `entity` names an Entity node's
- * ({@link definitionEntityKinds}; no step names a C# entity). The same graph when that node does not declare `from`, `to`
- * is not an entity key, or another entity already has it. The steps stay with `from` while another node keeps it (two
- * nodes declared the same key).
+ * Renames the entity the Entity node or entity class (a C# entity, a library's entity class) `nodeId` declares, and
+ * every step whose `entity` names an Entity node's ({@link definitionEntityKinds}; no step names an entity class's). The
+ * same graph when that node does not declare `from`, `to` is not an entity key, or another entity already has it. The
+ * steps stay with `from` while another node keeps it (two nodes declared the same key). What each node declares is read
+ * from `catalog`.
  */
-export function renameEntityKey(graph: Graph, from: string, to: string, nodeId: string): Graph {
+export function renameEntityKey(graph: Graph, from: string, to: string, nodeId: string, catalog: VisualCatalogSnapshot = nodeCatalog): Graph {
   if (!record(graph.definition) || from === to || !entityKeyPattern.test(to)) return graph
-  const declared = declaredEntities(graph)
-  // A C# entity's key is an entity key too: none is given another's.
-  const keys = entityKeyHolders(graph).map(d => d.key)
+  const declared = declaredEntities(graph, catalog)
+  // An entity class's key is an entity key too: none is given another's.
+  const keys = entityKeyHolders(graph, catalog).map(d => d.key)
   const hub = declared.some(d => d.nodeId === nodeId && (d.entity.key ?? '') === from)
-  const csharp = graph.nodes.some(node => node.id === nodeId && node.kind === 'csharp_entity' && (record(node.config) ? node.config.key ?? '' : '') === from)
+  const spec = (kind: string) => (Object.hasOwn(catalog.nodes, kind) ? catalog.nodes[kind] : undefined)
+  const csharp = graph.nodes.some(node => node.id === nodeId && isClassNode(spec(node.kind)) && spec(node.kind)!.declares === 'entity' && (record(node.config) ? node.config.key ?? '' : '') === from)
   if ((!hub && !csharp) || keys.includes(to)) return graph
   const follow = hub && from !== '' && keys.filter(key => key === from).length === 1
   return {

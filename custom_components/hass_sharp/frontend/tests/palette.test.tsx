@@ -6,6 +6,7 @@ import { catalogPalette, createGraph, type VisualGraph } from '../src/visual/gra
 import { FlowAdapter } from '../src/visual/FlowAdapter'
 import { nodeCatalog } from '../src/visual/contract'
 import { add, empty } from './visual-fixture'
+import { hubKind, relayKind, withRelays } from './relays-library'
 
 // The steps only an entity definition's graph takes: an automation's step library and quick-add never offer them.
 const entityOnly = ['entity', 'device', 'csharp_entity', 'csharp_device', 'entity_setup', 'set_entity_state', 'set_entity_available', 'setting', 'download_file', 'camera_frame', 'video_frame', 'image_draw_rect', 'image_draw_text']
@@ -70,6 +71,24 @@ it('quick-add in an entity definition lists its steps and every automation step'
   const offered = quickAddItems(root)
   for (const kind of entityKinds) expect(offered, kind).toContain(label(kind))
   expect(offered.has('Show frame')).toBe(false)
+})
+
+it('the step library of an entity definition offers a node library\'s classes under their categories, and an automation\'s none', () => {
+  const root = host()
+  /** The step library's groups, each by its heading, with its items' names and descriptions. */
+  const groups = () => new Map([...root.querySelectorAll('.hs-lib__group')].map(group => [group.querySelector('.hs-lib__category')!.textContent,
+    [...group.querySelectorAll('.hs-lib__item')].map(item => [item.getAttribute('aria-label'), item.querySelector('small')?.textContent])]))
+  dispose = render(() => <NodeLibraryPanel document="entity" catalog={withRelays()} collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
+  expect(groups().get('Relays')).toEqual([['Relay hub', 'A hub of relays.']])
+  expect(groups().get('Custom')).toContainEqual(['Relay', 'One relay.'])
+  dispose()
+  dispose = render(() => <NodeLibraryPanel catalog={withRelays()} collapsed={false} onCollapsedChange={() => {}} onPreview={() => {}} onQuickAdd={() => {}} />, root)
+  expect(groups().has('Relays')).toBe(false)
+  expect([...groups().values()].flat().map(([name]) => name)).not.toContain('Relay')
+  expect([...groups().values()].flat().map(([name]) => name)).not.toContain('Relay hub')
+  // Nor does quick-add offer them to an automation; an entity definition's offers both.
+  expect(catalogPalette(withRelays()).map(item => item.kind)).not.toContain(hubKind)
+  expect(catalogPalette(withRelays(), 'entity').map(item => item.kind)).toEqual(expect.arrayContaining([hubKind, relayKind]))
 })
 
 it.each([

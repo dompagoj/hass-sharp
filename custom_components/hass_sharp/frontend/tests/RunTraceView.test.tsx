@@ -7,6 +7,7 @@ import { EntityRunTraceView, RunTraceView } from '../src/views/RunTraceView'
 import { AppRoutes } from '../src/App'
 import type { DefinitionBody } from '../src/entities/model'
 import { visualFixture } from './visual-fixture'
+import { hubKind, relayKind, withRelays } from './relays-library'
 import { flowMethod, nodeCatalog, type Graph } from '../src/visual/contract'
 import { addNode, connectNodes, createGraph, updateNode } from '../src/visual/graph'
 import type { RunTrace, RunTraceResponse, TraceEvent } from '../src/types'
@@ -779,6 +780,28 @@ it('says a C# entity or C# device of a definition\'s run is not a step, draws it
     await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe(title))
     expect(panel(root).querySelector('.hs-insp-note')!.textContent).toBe(sentence)
     expect(panel(root).textContent).not.toContain('did not run')
+  }
+})
+
+it('says a library device or entity of a definition\'s run is not a step, draws it as outside the run, and offers no code', async () => {
+  // The relays library's hub and relay, in the run's graph and catalog.
+  const withLibrary = <T extends Graph>(graph: T): T => ({
+    ...graph,
+    nodes: [...graph.nodes,
+      { id: 'bank', kind: hubKind, config: { key: 'bank', name: 'Bank', arguments: { Address: lit('string', '10.0.0.2') } }, position: { x: 60, y: 700 } },
+      { id: 'channel', kind: relayKind, config: { key: 'channel', arguments: {} }, position: { x: 60, y: 900 } }],
+  })
+  const base = definitionResponse()
+  const { root } = mountDefinition(async () => ({ ...base, snapshot: { ...base.snapshot!, catalog: withRelays(), graph: withLibrary(storedGraph()) } }))
+  await vi.waitFor(() => expect(steps(root)).toHaveLength(3))
+  for (const [id, title, sentence] of [['bank', 'Bank', 'A device is not a step: it does not run.'], ['channel', 'Relay', 'An entity is not a step: it does not run.']] as const) {
+    const drawn = () => card(root, id).querySelector('.hs-card')!
+    expect(drawn().classList, id).not.toContain('hs-card--unreached')
+    expect(drawn().querySelector('.hs-card__trace'), id).toBeNull()
+    expect(drawn().querySelector('.hs-card__code'), id).toBeNull()
+    drawn().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await vi.waitFor(() => expect(panel(root).querySelector('.hs-trace-node__title')?.textContent).toBe(title))
+    expect(panel(root).querySelector('.hs-insp-note')!.textContent).toBe(sentence)
   }
 })
 

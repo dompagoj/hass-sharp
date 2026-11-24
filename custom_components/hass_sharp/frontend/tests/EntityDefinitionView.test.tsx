@@ -9,6 +9,7 @@ import { nodeCatalog } from '../src/visual/contract'
 import { newGraphDefinition, type DefinitionBody } from '../src/entities/model'
 import { entityAdapter } from '../src/entities/adapter'
 import { visualFixture } from './visual-fixture'
+import { hubKind, withRelays } from './relays-library'
 import { icons } from '../src/visual/icons'
 import { dropStep, libraryItem } from './library'
 
@@ -1184,6 +1185,73 @@ it('shows on a C# device\'s and a C# entity\'s card the cards waiting on its pag
   expect(deviceTab.textContent).toBe('Device4')
 })
 
+/** The plug with the relays library's hub (key hub); with `token`, its Token holds a value typed in (a hand-made file). */
+const libraryPlug = (token?: string): DefinitionBody => {
+  const body = plugBody()
+  const graph = body.logic.kind === 'graph' ? body.logic.graph : undefined
+  const literal = (value: string) => ({ kind: 'literal', type: 'string', value })
+  const values = { Address: literal('10.0.0.2'), ...(token ? { Token: literal(token) } : {}) }
+  return { ...body, logic: { kind: 'graph', graph: { ...graph!, nodes: [...graph!.nodes,
+    { id: 'hub', kind: hubKind, config: { key: 'hub', name: 'Hub', via: null, arguments: values }, position: { x: 400, y: 100 } }] } } }
+}
+/** The page on the plug with the hub, its node library in the catalog. */
+const openLibraryPlug = (prepare?: (fixture: Fixture) => void) =>
+  openPlug(f => { f.entities.seed('plug', libraryPlug()); prepare?.(f) }, visualFixture({ catalog: withRelays() }))
+
+it('shows on a library device\'s card the cards waiting on its page, by its key, and counts them on the Device tab; it has no code', async () => {
+  const { root } = await openLibraryPlug(f => { f.controls.deviceCounts = { attention: { plug: { hub: 2 } }, stored: {} } })
+  const badge = () => card(root, 'hub').querySelector<HTMLButtonElement>('.hs-card__badge--attention')
+  await vi.waitFor(() => expect(badge()?.textContent).toBe('2'))
+  expect(badge()!.getAttribute('aria-label')).toBe('2 waiting: show the Device tab')
+  expect(drawerTabs(root).find(tab => tab.textContent?.startsWith('Device'))!.textContent).toBe('Device2')
+  expect(card(root, 'hub').querySelector('.hs-card__code')).toBeNull()
+  expect(card(root, 'hub').querySelector('.hs-card__title')!.textContent).toBe('Hub')
+})
+
+it('leaves a value typed into a library device\'s secret setting out of the draft, the Graph JSON view and Export graph', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  // The typed secret is a problem the page shows, not a reason to keep it.
+  const { root } = setup('/entities/plug', f => f.entities.seed('plug', libraryPlug('r3lay-t0ken')), visualFixture({ catalog: withRelays() }))
+  await vi.waitFor(() => expect(root.querySelector('.hs-save-chip__text')?.textContent).toBe('1 problem'))
+  await vi.waitFor(() => expect(card(root, 'hub')).not.toBeNull())
+  await renameRelay(root, 'Main relay')
+  await vi.advanceTimersByTimeAsync(600)
+  const key = 'hass-sharp:draft:u1/entity:plug'
+  await vi.waitFor(() => expect(localStorage.getItem(key)).toContain('Main relay'))
+  expect(localStorage.getItem(key)).not.toContain('r3lay-t0ken')
+  // Its value that is no secret is kept.
+  expect(localStorage.getItem(key)).toContain('10.0.0.2')
+  expect(JSON.stringify(json(root))).not.toContain('r3lay-t0ken')
+  const blobs: Blob[] = []
+  vi.stubGlobal('URL', Object.assign(Object.create(URL), { createObjectURL: (blob: Blob) => { blobs.push(blob); return 'blob:graph' }, revokeObjectURL() {} }))
+  const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  button(root, 'More actions').click()
+  ;[...root.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].find(b => b.textContent === 'Export graph')!.click()
+  const exported = await blobs[0].text()
+  expect(exported).toContain('Main relay')
+  expect(exported).toContain('10.0.0.2')
+  expect(exported).not.toContain('r3lay-t0ken')
+  anchorClick.mockRestore()
+  // The page goes away with its changes unsaved.
+  dispose!(); dispose = undefined
+  expect(localStorage.getItem(key)).not.toContain('r3lay-t0ken')
+})
+
+it('asks before a saved library device with stored data is deleted, naming the key its data stays with', async () => {
+  const { root, fixture } = await openLibraryPlug(f => { f.controls.deviceCounts = { attention: {}, stored: { plug: ['hub'] } } })
+  await vi.waitFor(() => expect(fixture.calls.some(c => c.type === 'hass_sharp/device_ui' && c.request.operation === 'counts')).toBe(true))
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const canvas = root.querySelector<HTMLElement>('.hs-flow')!
+  await selectNode(root, 'hub')
+  canvas.focus()
+  press(canvas, 'Delete')
+  await vi.waitFor(() => expect(document.querySelector('dialog[open]')).not.toBeNull())
+  const dialog = document.querySelector<HTMLDialogElement>('dialog[open]')!
+  expect(dialog.querySelector('h2')!.textContent).toBe('Delete its stored data too?')
+  expect(dialog.textContent).toContain('Hub has stored data. It is deleted when you save the entity definition without a node keyed hub.')
+  button(dialog, 'Cancel').click()
+})
+
 it('asks before a saved C# device with stored data is deleted, and deletes a C# entity without any at once', async () => {
   const { root, fixture } = await openPlug(f => {
     f.entities.seed('plug', csharpPlug(), { liveEntities: csharpPlugLive })
@@ -1199,7 +1267,7 @@ it('asks before a saved C# device with stored data is deleted, and deletes a C# 
   await vi.waitFor(() => expect(document.querySelector('dialog[open]')).not.toBeNull())
   const dialog = document.querySelector<HTMLDialogElement>('dialog[open]')!
   expect(dialog.querySelector('h2')!.textContent).toBe('Delete its stored data too?')
-  expect(dialog.textContent).toContain('Code plug has stored data. It is deleted when you save the entity definition without this node.')
+  expect(dialog.textContent).toContain('Code plug has stored data. It is deleted when you save the entity definition without a node keyed plug.')
   button(dialog, 'Cancel').click()
   expect(card(root, 'code')).not.toBeNull()
   await selectNode(root, 'thermo')

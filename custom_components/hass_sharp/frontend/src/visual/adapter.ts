@@ -184,8 +184,11 @@ export interface EditorAdapter<D extends EditorDocument = EditorDocument> {
   starter(name: string): VisualGraph
   /** The step selected when the editor opens, if any. */
   initialSelection?: string
-  /** The graph as a draft keeps it in this browser, and as Export graph downloads it (an entity definition drops its secret values). */
-  draft?(graph: VisualGraph): VisualGraph
+  /**
+   * The graph as a draft keeps it in this browser, and as Export graph and the Graph JSON view show it (an entity
+   * definition drops its secret values). `catalog` is the editor's live catalog: what a node library's node is.
+   */
+  draft?(graph: VisualGraph, catalog: VisualCatalogSnapshot): VisualGraph
   /**
    * The graph the editor goes on with once `sent` has been saved as `document`, in its place and without an undo step
    * (an entity definition's typed secrets become saved ones). Without it, `sent`.

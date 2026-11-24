@@ -1038,7 +1038,10 @@ export const FlowAdapter: Component<FlowAdapterProps> = props => {
   const released = () => {
     pointerHeld = false
   }
-  /** Whether the node's code can be opened: a node with code (a Custom C# step, a C# entity, a C# device), on a page that has the code editor. */
+  /**
+   * Whether the node's code can be opened: a node whose kind holds code (a Custom C# step, a C# entity, a C# device; by
+   * its catalog entry, so never a library's class, whatever its config holds), on a page that has the code editor.
+   */
   const hasCode = (id: string) => {
     const kind = graph().nodes.find(n => n.id === id)?.kind
     return !!props.onEditCode && !!kind && Object.hasOwn(catalog().nodes, kind) && kindHasCode(catalog().nodes[kind])

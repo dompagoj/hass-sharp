@@ -1,4 +1,4 @@
-import { blankEnds, declaredEntities, entityNodeName, entityTypeLabel, freeKey, words, type ConfigSpec, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
+import { blankEnds, declaredEntities, entityNodeName, entityTypeLabel, freeKey, isClassNode, words, type ConfigSpec, type Graph, type GraphDefinition, type JsonValue, type VisualCatalogSnapshot } from '../visual/contract'
 import type { VisualDiagnostic } from '../visual/api'
 import type { VisualGraph } from '../visual/graph'
 import { definitionEntityKinds, entityKey, entityKeyPattern, maskedSetting, renameEntityKey, type DefinitionEntity, type DefinitionSetting, type EditorDefinition, type EntityDocument } from './model'
@@ -51,16 +51,20 @@ export const maskedSecret = (setting: DefinitionSetting) => setting.secret === t
 export const stepsUsingEntity = (graph: VisualGraph, key: string, except: ReadonlySet<string> = new Set()) =>
   graph.nodes.filter(node => definitionEntityKinds.includes(node.kind) && node.config?.entity === key && !except.has(node.id))
 
-/** The kinds whose node keeps data of its own (its code's `Data`), by the node's key as saved. */
-const storingKinds = ['csharp_device', 'csharp_entity']
+/**
+ * Whether a node of the kind keeps data of its own (its class's `Data`), by the node's key as saved: a class node (a C#
+ * device or C# entity, a node library's device or entity class), by its catalog entry.
+ */
+const storing = (kind: unknown, catalog: VisualCatalogSnapshot) => typeof kind === 'string' && Object.hasOwn(catalog.nodes, kind) && isClassNode(catalog.nodes[kind])
 
 /**
  * What deleting the steps `ids` asks first: when among them are Entity nodes whose entities steps left behind still
- * name (a key no other Entity node gives), as those steps would then show a problem; and when among them are C#
- * devices or C# entities that have stored data. `stored` is what the saved definition has: its graph as saved, and the
- * keys of its nodes with stored data. A node holds some when the saved graph has it, by its id, with one of those keys;
- * a node added since, or a definition never saved (no `stored`), has none. When both apply, both are said, under the
- * stored data's title. Undefined when neither does: the steps are deleted at once.
+ * name (a key no other Entity node gives), as those steps would then show a problem; and when among them are class
+ * nodes (C# devices or C# entities, a node library's classes) that have stored data. `stored` is what the saved
+ * definition has: its graph as saved, and the keys of its nodes with stored data. A node holds some when the saved
+ * graph has it, by its id, with one of those keys; a node added since, or a definition never saved (no `stored`), has
+ * none. When both apply, both are said, under the stored data's title. Undefined when neither does: the steps are
+ * deleted at once.
  */
 export function entityRemoval(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot, stored?: { saved: Graph; keys: readonly string[] }): { title: string; body: string } | undefined {
   const steps = stepsRemoval(graph, ids, catalog), data = storedRemoval(graph, ids, catalog, stored)
@@ -89,19 +93,24 @@ function stepsRemoval(graph: Graph, ids: string[], catalog: VisualCatalogSnapsho
   }
 }
 
-/** What deleting `ids` asks of its C# nodes that have stored data, if any: each named as its card is now. */
+/**
+ * What deleting `ids` asks of its class nodes that have stored data, if any: each named as its card is now. The data is
+ * kept by the key the node was saved with, so it goes only when the definition is saved without a node of that key: a
+ * node given that key before the save (another class taking its place) keeps it.
+ */
 function storedRemoval(graph: Graph, ids: string[], catalog: VisualCatalogSnapshot, stored: { saved: Graph; keys: readonly string[] } | undefined): { title: string; body: string } | undefined {
   if (!stored?.keys.length) return
   const deleted = new Set(ids)
-  const holding = stored.saved.nodes.filter(node => deleted.has(node.id) && storingKinds.includes(node.kind) && typeof node.config?.key === 'string' && stored.keys.includes(node.config.key))
+  const holding = stored.saved.nodes.filter(node => deleted.has(node.id) && storing(node.kind, catalog) && typeof node.config?.key === 'string' && stored.keys.includes(node.config.key))
   const names = holding.map(saved => {
     const node = graph.nodes.find(n => n.id === saved.id)
-    return entityNodeName(node && storingKinds.includes(node.kind) ? node : saved, catalog) ?? saved.id
+    return entityNodeName(node && storing(node.kind, catalog) ? node : saved, catalog) ?? saved.id
   })
   if (!names.length) return
+  const keys = holding.map(saved => saved.config.key as string)
   const body = names.length === 1
-    ? `${names[0]} has stored data. It is deleted when you save the entity definition without this node.`
-    : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} have stored data. It is deleted when you save the entity definition without these nodes.`
+    ? `${names[0]} has stored data. It is deleted when you save the entity definition without a node keyed ${keys[0]}.`
+    : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} have stored data. It is deleted when you save the entity definition without nodes keyed ${keys.slice(0, -1).join(', ')} and ${keys.at(-1)}.`
   return { title: 'Delete its stored data too?', body }
 }
 
