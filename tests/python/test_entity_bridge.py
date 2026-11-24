@@ -14,7 +14,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 DOMAIN = 'hass_sharp'
 ENTRY = 'entry1'
@@ -1562,6 +1562,53 @@ class EntityBridgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(binary(NS(config=NS(components={'ffmpeg'}))))
             ffmpeg.get_ffmpeg_manager = Mock(side_effect=ValueError('ffmpeg component not initialized'))
             self.assertIsNone(binary(NS(config=NS(components={'ffmpeg'}))))
+
+    def test_media_folders_are_home_assistants_media_dirs_as_dotnet_takes_them(self):
+        folders = load('entity_bridge', {'HomeAssistantError': HomeAssistantError, 'DOMAIN': DOMAIN,
+                                         'logger': Mock()})['media_folders']
+        # Each entry's name to its folder, by name: .NET prefers local, else the first by name.
+        hass = NS(config=NS(media_dirs={'recordings': Path('/mnt/recordings'), 'local': '/media', 'blank': ''}))
+        self.assertEqual(folders(hass), '{"local": "/media", "recordings": "/mnt/recordings"}')
+        self.assertEqual(json.loads(folders(NS(config=NS(media_dirs={})))), {})
+        self.assertEqual(json.loads(folders(NS(config=NS(media_dirs=None)))), {})
+
+    async def test_setup_hands_the_media_folders_to_dotnet_as_it_makes_the_manager(self):
+        """async_setup gives the manager Home Assistant's media folders before anything else can use it."""
+        tree = ast.parse(Path('custom_components/hass_sharp/__init__.py').read_text())
+        setup = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'async_setup')
+        for argument in setup.args.args:
+            argument.annotation = None
+        setup.body = [n for n in setup.body if not isinstance(n, ast.ImportFrom)]
+        module = ast.Module(body=[setup], type_ignores=[])
+        made = []
+
+        class Manager:
+            def __init__(self, path):
+                self.path, self.folders = path, []
+                made.append(self)
+
+            def SetMediaFolders(self, text):
+                self.folders.append(text)
+        stored = []
+        hass = NS(config=NS(path=lambda part: f'/config/{part}', media_dirs={'local': '/media'}),
+                  http=NS(async_register_static_paths=AsyncMock()),
+                  async_add_executor_job=AsyncMock(side_effect=lambda fn, *args: fn(*args)))
+        env = {'AwesomeVersion': lambda version: tuple(int(p) for p in version.split('.')), 'HA_VERSION': '2026.11.0',
+               'logger': Mock(), 'initialize_dotnet_runtime': lambda: True, 'HassSharpManager': Manager,
+               'StaticPathConfig': lambda *args: args, 'frontend': NS(add_extra_js_url=Mock()),
+               'os': NS(path=NS(join=lambda *parts: '/'.join(parts)), stat=lambda path: NS(st_mtime_ns=1)), 'ROOT_DIR': '/hass_sharp',
+               'utils': NS(set_hass_sharp_manager=lambda h, manager: stored.append(list(manager.folders))),
+               'websocket': NS(register_websocket_routes=Mock()),
+               'media_folders': lambda h: load('entity_bridge', {'HomeAssistantError': HomeAssistantError, 'DOMAIN': DOMAIN,
+                                                                 'logger': Mock()})['media_folders'](h)}
+        exec(compile(module, '<setup>', 'exec'), env)
+        with patch.dict(sys.modules, {'clr': NS(AddReference=Mock())}):
+            self.assertTrue(await env['async_setup'](hass, {}))
+        manager, = made
+        self.assertEqual(manager.path, '/config/')
+        self.assertEqual(manager.folders, ['{"local": "/media"}'])
+        # Before the manager is shared: nothing reaches it without its media folders.
+        self.assertEqual(stored, [['{"local": "/media"}']])
 
 
 class PlatformModulesTest(unittest.IsolatedAsyncioTestCase):

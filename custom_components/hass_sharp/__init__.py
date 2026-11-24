@@ -102,6 +102,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType):
         hass, f"/hass-sharp-static/hass-sharp.js?v={os.stat(frontend_asset).st_mtime_ns}"
     )
     hass_sharp = await hass.async_add_executor_job(HassSharpManager, hass.config.path(""))
+    # Where the C# nodes keep their media files (SharpMedia); Home Assistant's media_dirs stay as they are until it restarts.
+    from .entity_bridge import media_folders
+
+    hass_sharp.SetMediaFolders(media_folders(hass))
     utils.set_hass_sharp_manager(hass, hass_sharp)
 
     websocket.register_websocket_routes(hass, hass_sharp)

@@ -114,6 +114,14 @@ def _allowed_folders(hass):
     return sorted(str(folder) for folder in folders if folder)
 
 
+def media_folders(hass):
+    """Home Assistant's media folders, its media_dirs, as the JSON object .NET takes (`SetMediaFolders`): each entry's
+    name to its folder, by name; an entry without a folder is left out. The C# nodes keep their media files in the entry
+    `local`, else in the first by name, which Home Assistant serves at `/media/<entry>/...`."""
+    entries = hass.config.media_dirs or {}
+    return json.dumps({str(name): str(folder) for name, folder in sorted(entries.items()) if name and folder})
+
+
 def _dotnet_bytes(data):
     """A System.Byte[] holding `data`: allocated by .NET and filled through a memoryview, which copies at once; the
     implicit conversion of `bytes` copies element by element (spike rule 16)."""
