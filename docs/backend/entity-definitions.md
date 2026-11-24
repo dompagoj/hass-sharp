@@ -112,8 +112,9 @@ definition envelope"), `storage` (the file could not be read or written) and
   `true` or `false`, a text that is not empty, an enum member's name), or `false`, `0`
   or an enum's member of 0 for a `bool`, number or enum property without one; never
   for a secret, an entity, or a property a constructor of the class sets. The editor
-  shows it; nothing stores it as a value, and a stored signature whose defaults
-  differ is not out of date. `arguments` holds a typed
+  shows it, and starts from it when the user chooses to give the setting a value;
+  nothing stores it by itself, and a stored signature whose defaults differ is not
+  out of date. `arguments` holds a typed
   value per setting pin, `{kind:"literal", type, value}` (an entity setting's type
   `entity_id` or `entity_id:<domain>`, its value an entity id), keyed by the property's
   name, and a setting pin may instead take a data edge from a Setting step
