@@ -233,7 +233,25 @@ One `SharpSensor("recognised", "Recognised")` for each detector, added with the 
 - `last_recognised` and `last_recognised_at` after a restart: each detector keeps its own, by person id, in its own
   `Data`, written once for each visit. The people list's "last seen at" is not used for it: it names only the
   camera that saw the person last, and is written at most once a minute.
-- Not restored (`RestoreState = false`): after a restart the state is `Nobody` until a check says otherwise.
+- Not restored (`RestoreState = false`): after a restart it is unavailable until a check has looked with the face
+  model open, then `Nobody` until someone is recognised; so an automation on a change from `Nobody` does not fire
+  for a restart.
+
+## As built
+
+- A pick field's page data names its set with `set` (the design proposed `options`, which a select field already
+  uses for its list).
+- **Merge into** starts empty and is not required: a required field would stop the card's Save (a rename). Merge
+  with nothing chosen is refused: "Choose a person in Merge into first."
+- `PeopleList.Named(name)` went: every lookup is by id. `PeopleList.Named(id, at, camera)` is new and means
+  something else: naming an unknown face is a sighting of its person at the face's last sighting, written at once,
+  so a person just made does not read "not seen yet".
+- The People detector has `protected virtual DateTimeOffset Now`, the checks' clock, which the tests replace.
+- The panel draws the pages inside an error boundary and counts a read only once its pages are drawn: found by the
+  live check, where a card going froze the Device tab (a clean-up read a property through a part of the page that
+  was gone).
+- In the dialog the mouse moves the active row, so one row is highlighted; on the card's button the chosen one's
+  title and detail are a line each.
 
 ### Documentation
 
