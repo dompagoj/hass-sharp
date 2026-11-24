@@ -80,6 +80,10 @@ export interface InspectorProps {
   onQuickAdd?(): void
   /** The saved document's entities as Home Assistant has them, for the panel of a step that declares one. */
   savedEntities?: SavedEntities
+  /** The saved node libraries' names, by id: a library class node's panel names its library by it. */
+  libraries?: Readonly<Record<string, string>>
+  /** Opens a node library (a library class node's panel links its library's name to it). */
+  onOpenLibrary?(id: string): void
   /**
    * Asked before steps are deleted (Delete in the panel): `proceed` deletes them, and is not called when the page
    * decides against it. Without it, steps are deleted at once.
@@ -210,7 +214,8 @@ export function Inspector(props: InspectorProps) {
                 onChange={(config, options) => props.commit(updateNode(props.graph, id, { config }), options)}
                 onGraphChange={props.commit} onSelect={selectAndFocus}
                 onDuplicate={() => duplicate([id])} onDelete={() => remove([id])}
-                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} onNotice={props.onNotice} savedEntities={props.savedEntities} />
+                onEditCode={props.onEditCode ? () => props.onEditCode?.(id) : undefined} onNotice={props.onNotice} savedEntities={props.savedEntities}
+                libraries={props.libraries} onOpenLibrary={props.onOpenLibrary} />
             )
           }}
         </Show>

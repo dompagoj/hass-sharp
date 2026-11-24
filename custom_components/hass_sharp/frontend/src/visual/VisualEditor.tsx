@@ -656,6 +656,8 @@ export function VisualEditor<D extends EditorDocument = VisualDocument>(props: {
           onEditCode={editCode}
           onNotice={text => flow?.notify(text, { keep: true })}
           savedEntities={savedEntities()}
+          libraries={session.libraries()}
+          onOpenLibrary={props.onOpenLibrary && (id => props.onOpenLibrary?.(id))}
           onBeforeDelete={beforeDelete}
         />
       </div>

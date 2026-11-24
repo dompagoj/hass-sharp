@@ -39,6 +39,16 @@ export async function firstSave<T>(newId: () => string | Promise<string>, save: 
   }
 }
 
+/** The libraries' names of a catalog answer: each id whose name is a text, none from an answer without them (an older server). */
+const libraryNames = (names: unknown): Record<string, string> =>
+  names && typeof names === 'object' && !Array.isArray(names)
+    ? Object.fromEntries(Object.entries(names).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+    : {}
+const sameNames = (a: Readonly<Record<string, string>>, b: Readonly<Record<string, string>>) => {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && a[key] === b[key])
+}
+
 /**
  * Owns graph/source pairs and their revisions. Never generates or persists source locally. The document is read,
  * checked, saved and named through `adapter` (default: an automation's, {@link automationAdapter}); the node catalog
@@ -76,6 +86,11 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
   /** The graph as a draft keeps it, by the live catalog (a node library's class's secret settings are its entry's). */
   const toDraft = (graph: VisualGraph) => (adapter.draft ? adapter.draft(graph, untrack(catalog)) : graph)
   const [catalogGeneration, setCatalogGeneration] = createSignal<string>()
+  /**
+   * The saved node libraries' names, by id, as the catalog answer gives them beside the catalog (never in it): what a
+   * library class node's right panel calls its library. Read again with every catalog refresh, so a rename shows.
+   */
+  const [libraries, setLibraries] = createSignal<Readonly<Record<string, string>>>({}, { equals: sameNames })
   const [catalogReady, setCatalogReady] = createSignal(false)
   const [catalogError, setCatalogError] = createSignal<string>()
   const [document, setDocument] = createSignal<D>()
@@ -156,6 +171,7 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
           setCatalog(result.catalog)
           setCatalogGeneration(result.generation)
         }
+        setLibraries(libraryNames(result.libraries))
         setCatalogReady(true)
         setCatalogError(undefined)
       })
@@ -574,6 +590,7 @@ export function createVisualSession<D extends EditorDocument = VisualDocument>(
     catalog,
     catalogGeneration,
     catalogError,
+    libraries,
     refreshCatalog,
     diagnostics,
     document,

@@ -592,7 +592,8 @@ export function visualFixture(
         return {
           version: 1,
           ok: true,
-          result: { catalog: controls.catalog, generation: controls.generation, ...(controls.services ? { servicesGeneration: controls.services.servicesGeneration } : {}), saved: true, valid: true, diagnostics: [] },
+          result: { catalog: controls.catalog, generation: controls.generation, ...(controls.services ? { servicesGeneration: controls.services.servicesGeneration } : {}), saved: true, valid: true, diagnostics: [],
+            libraries: Object.fromEntries([...libraries.values()].map(document => [document.id, document.name])) },
         }
       if (request.operation === 'services') {
         if (controls.servicesError || !controls.services) throw new Error('Services offline')

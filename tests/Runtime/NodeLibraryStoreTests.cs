@@ -19,6 +19,7 @@ static class NodeLibraryStoreTests
     public static async Task Run()
     {
         await RunOrderingReview();
+        await CatalogNamesItsLibraries();
         var previous = HassPath.HassConfiguration;
         var path = Path.Combine(Path.GetTempPath(), "library-store-" + Guid.NewGuid());
         var log = PyInterop.Log; PyInterop.Log = (_, _) => { };
@@ -118,6 +119,35 @@ static class NodeLibraryStoreTests
             Console.WriteLine("PASS node-library persistence/revisions/dependencies/concurrency/activation identity/catalog generations/recovery");
         }
         finally { await manager.UnloadAsync(); PyInterop.Log=log; HassPath.HassConfiguration=previous; }
+    }
+    /// <summary>
+    /// The catalog answer lists, beside the catalog and never in it, each saved library's name by its id: a library class
+    /// node's library is among them, and a rename is in the next answer.
+    /// </summary>
+    static async Task CatalogNamesItsLibraries()
+    {
+        var previous = HassPath.HassConfiguration;
+        var log = PyInterop.Log; PyInterop.Log = (_, _) => { };
+        var manager = new HassSharpManager(Path.Combine(Path.GetTempPath(), "library-names-" + Guid.NewGuid()));
+        try
+        {
+            await manager.Init();
+            static string Names(JsonNode answer) => (answer["libraries"] as JsonObject)?.ToJsonString() ?? "none";
+            Check(Names(Result(await Request(manager, new { operation = "catalog" }))) == "{}", "with no library saved, the catalog answer names none");
+            Result(await Request(manager, new { operation = "save", id = CustomNodeTests.Relays.Id, name = "Relays", source = CustomNodeTests.Relays.Source, expectedRevision = 0 }));
+            Result(await Request(manager, new { operation = "save", id = "shared", name = "Shared.cs", source = "public static class Nodes { }", expectedRevision = 0 }));
+            var catalog = Result(await Request(manager, new { operation = "catalog" }));
+            Check(Names(catalog) == """{"relays":"Relays","shared":"Shared.cs"}""", "the catalog answer names each saved library by its id: " + Names(catalog));
+            var hub = catalog["catalog"]!["nodes"]![CustomNodeTests.HubKind]!;
+            Check(VisualNodeCatalog.Text(hub, "sourceId") is { } library && catalog["libraries"]![library]?.GetValue<string>() == "Relays", "a library class node's library is among them: " + hub.ToJsonString());
+            Check(!catalog["catalog"]!["nodes"]!.AsObject().Any(n => n.Value is JsonObject entry && entry.ContainsKey("libraries")) && !catalog["catalog"]!.AsObject().ContainsKey("libraries"), "the names are beside the catalog, not in it");
+            Result(await Request(manager, new { operation = "save", id = CustomNodeTests.Relays.Id, name = "Relay boards", source = CustomNodeTests.Relays.Source, expectedRevision = 1 }));
+            var renamed = Result(await Request(manager, new { operation = "catalog" }));
+            Check(Names(renamed) == """{"relays":"Relay boards","shared":"Shared.cs"}""", "a renamed library is named by its new name: " + Names(renamed));
+            Check(renamed["generation"]!.GetValue<string>() != catalog["generation"]!.GetValue<string>(), "a rename is a new generation, which an open editor reads again");
+            Console.WriteLine("PASS node-library catalog: the answer names each saved library by its id beside the catalog, a library class node's among them, and follows a rename");
+        }
+        finally { await manager.UnloadAsync(); PyInterop.Log = log; HassPath.HassConfiguration = previous; }
     }
     [RuntimeSuite("--node-library-ordering-review", RunByDefault = false)]
     public static async Task RunOrderingReview(string? scenario = null)

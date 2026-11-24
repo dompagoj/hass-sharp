@@ -545,11 +545,11 @@ title (see [A class as a node](node-libraries.md#a-class-as-a-node)). Its node i
 device or a C# entity node without code: the same card, the same **Key**, **Device
 name** and **Part of** for a device or **Device** pin for an entity, the class's
 settings as its inputs, a page and data of its own kept under its key, and no
-**Edit code**. The right panel names the library it comes from: "From the node
-library relays." A dropped one is keyed by its title (`relay_hub` for **Relay hub**, then
-`relay_hub_2`). What this section says of a C# device or a C# entity holds for it,
-except what is about its code. To change what the class does, derive from it in a C#
-node's code instead.
+**Edit code**. The right panel names the library it comes from, a link that opens
+it: "From the node library Relays.cs." A dropped one is keyed by its title
+(`relay_hub` for **Relay hub**, then `relay_hub_2`). What this section says of a C#
+device or a C# entity holds for it, except what is about its code. To change what the
+class does, derive from it in a C# node's code instead.
 
 ### Write the code
 

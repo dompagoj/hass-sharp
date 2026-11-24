@@ -951,9 +951,10 @@ Once the library is saved, an entity definition's step list has **Relay hub** un
   `<summary>` is its description.
 - **The node.** It is drawn and edited as a C# device or a C# entity node is (see
   [C# nodes](custom-entities.md#c-nodes)), without code: there is no **Edit code**,
-  and the right panel says which library it comes from ("From the node library
-  relays."). A device class's node has a **Key**, a **Device name** and **Part of**;
-  an entity class's has a **Key** and a **Device** pin. Its inputs are the class's
+  and the right panel names the library it comes from, a link that opens it
+  ("From the node library Relays.cs." for a library saved as `Relays.cs`). A
+  device class's node has a **Key**, a **Device name** and **Part of**; an entity
+  class's has a **Key** and a **Device** pin. Its inputs are the class's
   `[Setting]` properties, a base class's first, and each takes a value typed into
   the node, a Setting step or nothing, as a C# node's settings do (see
   [Settings as inputs](custom-entities.md#settings-as-inputs)). Here **Address** is

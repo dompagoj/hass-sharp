@@ -129,7 +129,7 @@ export function visualApi(hass: Pick<HomeAssistant, 'callWS'>) {
   return {
     /** `servicesGeneration` tells the session when to refetch `services()` (C4). */
     catalog: () =>
-      library<{ catalog: VisualCatalogSnapshot; generation: string; servicesGeneration?: string; saved: true; valid: boolean; diagnostics: VisualDiagnostic[] }>('catalog'),
+      library<{ catalog: VisualCatalogSnapshot; generation: string; servicesGeneration?: string; saved: true; valid: boolean; diagnostics: VisualDiagnostic[]; libraries?: Record<string, string> }>('catalog'),
     /** Contract C4. Never part of the catalog root; attach it as `catalog.services`. */
     services: () => library<ServicesSection>('services'),
     /** Contract C9. Not enveloped, like `run_history`. */

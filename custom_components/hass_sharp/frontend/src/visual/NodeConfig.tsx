@@ -56,6 +56,10 @@ export interface NodeConfigProps {
   onNotice?(text: string): void
   /** The saved document's entities as Home Assistant has them (an Entity node's saved key and entity id). */
   savedEntities?: SavedEntities
+  /** The saved node libraries' names, by id: what a library class node's panel calls its library. */
+  libraries?: Readonly<Record<string, string>>
+  /** Opens a node library, by its id: a library class node's library's name links to it. */
+  onOpenLibrary?(id: string): void
 }
 
 /**
@@ -90,6 +94,8 @@ export function NodeConfig(props: NodeConfigProps) {
   const picker = () => stepPicker(kind(), spec())
   /** The node library a class node without code comes from, by its id; undefined for any other node. */
   const library = () => (isClassNode(spec()) && !hasCode(spec()) ? spec()!.sourceId ?? '' : undefined)
+  /** That library's name, when the saved libraries' names have it: never its id, which says nothing to the person. */
+  const libraryName = () => { const id = library(), names = props.libraries; return id && names && Object.hasOwn(names, id) && names[id] ? names[id] : undefined }
   const nameLabel = () => (declares() === 'device' ? 'Device name' : declares() ? 'Entity name' : 'Node label')
   const kindLabel = () => spec()?.label ?? words.key(kind())
   /** A Custom C# node's pins, title and description, as its code gives them. */
@@ -358,7 +364,14 @@ export function NodeConfig(props: NodeConfigProps) {
         <Show when={hasCode(spec()) && isClassNode(spec())}>{code()}</Show>
         <Show when={library() !== undefined}>
           <div class="hs-insp-field">
-            <small class="hs-field-hint hs-insp-library">{library() ? `From the node library ${library()}.` : 'From a node library.'}</small>
+            <small class="hs-field-hint hs-insp-library">
+              <Show when={libraryName()} fallback="From a node library.">{name => <>
+                From the node library{' '}
+                <Show when={props.onOpenLibrary} fallback={name()}>
+                  <button type="button" class="hs-insp-link" onClick={() => props.onOpenLibrary?.(library()!)}>{name()}</button>
+                </Show>.
+              </>}</Show>
+            </small>
           </div>
         </Show>
         <For each={configFields()}>{name => <ConfigField name={name} rule={spec()!.config[name]} />}</For>

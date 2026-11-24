@@ -193,6 +193,30 @@ it('ignores in-flight old catalogs and cleans up library/focus listeners',async(
  listeners.mockRestore();removed.mockRestore()
 })
 
+it('keeps the node libraries\' names the catalog answer gives, and follows a rename on the next refresh', async () => {
+  let answer: Record<string, unknown> = { catalog: nodeCatalog, generation: 'one', saved: true, valid: true, diagnostics: [], libraries: { relays: 'Relays' } }
+  const hass = { callWS: async (message: any) => (message.type === 'hass_sharp/node_library' ? ok(answer) : ok(preview())) } as any
+  const session = createRoot(d => { dispose = d; return createVisualSession(hass, graph()) })
+  expect(session.libraries()).toEqual({})
+  await vi.waitFor(() => expect(session.libraries()).toEqual({ relays: 'Relays' }))
+  // A library renamed in the panel: its save tells every open editor, which reads the names again.
+  answer = { ...answer, generation: 'two', libraries: { relays: 'Relay boards' } }
+  window.dispatchEvent(new Event('hass-sharp-libraries-changed'))
+  await vi.waitFor(() => expect(session.libraries()).toEqual({ relays: 'Relay boards' }))
+  // The names follow even when the catalog's generation does not change.
+  answer = { ...answer, libraries: { relays: 'Relays', other: 'Other' } }
+  await session.refreshCatalog()
+  expect(session.libraries()).toEqual({ relays: 'Relays', other: 'Other' })
+  // An answer without names (an older server), or with names that are no text, names none.
+  answer = { ...answer, libraries: { relays: 7 } }
+  await session.refreshCatalog()
+  expect(session.libraries()).toEqual({})
+  const { libraries: _names, ...older } = answer
+  answer = older
+  await session.refreshCatalog()
+  expect(session.libraries()).toEqual({})
+})
+
 it('does not lose a pending rebuilt-revision check when a same-generation catalog refresh overlaps it', async () => {
   let savedGeneration = 'one', savedRevision = 2
   let finishFirstRead: ((value: unknown) => void) | undefined

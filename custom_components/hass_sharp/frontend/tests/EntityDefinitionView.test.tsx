@@ -1208,6 +1208,23 @@ it('shows on a library device\'s card the cards waiting on its page, by its key,
   expect(card(root, 'hub').querySelector('.hs-card__title')!.textContent).toBe('Hub')
 })
 
+it('names a library device\'s node library by its name in the right panel, which opens the library, asking first about unsaved changes', async () => {
+  const library = { id: 'relays', name: 'Relay boards', revision: 1, source: '' }
+  const { root, history } = await openPlug(f => f.entities.seed('plug', libraryPlug()), visualFixture({ catalog: withRelays(), libraries: [library] }))
+  await renameRelay(root, 'Main relay')
+  await selectNode(root, 'hub')
+  const line = () => inspector(root).querySelector('.hs-insp-library')!
+  await vi.waitFor(() => expect(line().textContent).toBe('From the node library Relay boards.'))
+  line().querySelector<HTMLButtonElement>('button')!.click()
+  await vi.waitFor(() => expect(document.querySelector('dialog[open]')?.textContent).toContain('Unsaved changes'))
+  button(document.querySelector('dialog[open]')!, 'Keep editing').click()
+  expect(history.get()).toBe('/entities/plug')
+  line().querySelector<HTMLButtonElement>('button')!.click()
+  await vi.waitFor(() => expect(document.querySelector('dialog[open]')?.textContent).toContain('Unsaved changes'))
+  button(document.querySelector('dialog[open]')!, 'Discard changes').click()
+  await vi.waitFor(() => expect(history.get()).toBe('/libraries?file=relays'))
+})
+
 it('leaves a value typed into a library device\'s secret setting out of the draft, the Graph JSON view and Export graph', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   // The typed secret is a problem the page shows, not a reason to keep it.

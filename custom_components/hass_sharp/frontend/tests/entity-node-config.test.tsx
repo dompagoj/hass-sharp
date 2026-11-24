@@ -62,7 +62,7 @@ const registry = {
 }
 
 /** The inspector of one node over a graph history, as the editor wires them, with Home Assistant's `registry` (default: the one above). */
-function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[]; onEditCode?: (id: string) => void; registry?: unknown } = {}) {
+function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: { saved?: SavedEntities; diagnostics?: VisualDiagnostic[]; onEditCode?: (id: string) => void; registry?: unknown; libraries?: Record<string, string>; onOpenLibrary?: (id: string) => void } = {}) {
   const el = document.createElement('div')
   el.className = 'hs-app'
   document.body.append(el)
@@ -75,7 +75,8 @@ function mount(graph: VisualGraph, id: string, catalog = nodeCatalog, options: {
     <QueryClientProvider client={client!}>
       <HassCtx.Provider value={hass as any}>
         <Inspector graph={history.graph()} catalog={catalog} diagnostics={options.diagnostics ?? []} commit={history.commit} onNotice={text => notices.push(text)}
-          selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} savedEntities={options.saved} onEditCode={options.onEditCode} />
+          selected={history.graph().nodes.find(n => n.id === selected())} selectedIds={[id]} savedEntities={options.saved} onEditCode={options.onEditCode}
+          libraries={options.libraries} onOpenLibrary={options.onOpenLibrary} />
       </HassCtx.Provider>
     </QueryClientProvider>
   ), el)
@@ -979,7 +980,7 @@ describe('devices in the right panel', () => {
     }
 
     it('a library device is named in the header, has its Key, Part of and settings, says its library, and offers no code', () => {
-      const { el, node, history } = mount(libraryNodes(), 'bank', withRelays(), { onEditCode: () => {} })
+      const { el, node, history } = mount(libraryNodes(), 'bank', withRelays(), { onEditCode: () => {}, libraries: { relays: 'Relays' } })
       expect(el.querySelector<HTMLInputElement>('.hs-inspector input[aria-label="Device name"]')!.value).toBe('Relay hub')
       expect(el.querySelector('.hs-inspector .hs-insp-kind')!.textContent).toContain('Relay hub')
       expect(fieldLabels(el)).toEqual(['Key', 'Part of'])
@@ -987,7 +988,9 @@ describe('devices in the right panel', () => {
       expect(el.querySelector('.hs-inspector section[aria-label="Settings"] h3')!.textContent).toBe('Settings')
       expect(settingKeys(el)).toEqual(['Address', 'Token', 'PollEvery'])
       for (const key of ['source', 'signature', 'arguments', 'name', 'device']) expect(el.querySelector(`.hs-inspector .hs-insp-main [data-input-id="${key}"]`), key).toBeNull()
-      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library relays.')
+      // Its library is named by its name, not its id; with nothing to open it, the name is no button.
+      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library Relays.')
+      expect(main(el).querySelector('.hs-insp-library button')).toBeNull()
       expect(buttons(el)).not.toContain('Edit code')
       expect(el.querySelector('.hs-inspector')!.textContent).not.toContain('come from the code')
       // Its key is renamed as a C# device's: the device that is part of it follows.
@@ -1003,19 +1006,26 @@ describe('devices in the right panel', () => {
       expect(el.querySelector('.hs-inspector [data-input-id="source"]')).toBeNull()
       // Only its stored data, under Advanced, shows what the file holds.
       expect(main(el).innerHTML).not.toContain('class Old')
-      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library relays.')
+      // No name known (the libraries' names not read yet, or the library gone): the line names none, and never its id.
+      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From a node library.')
       expect(edits).toEqual([])
     })
 
     it('a library entity is named by its class in the header, has its Key and Device, says its library, and offers no code', () => {
-      const { el, node, history } = mount(libraryNodes(), 'channel', withRelays(), { onEditCode: () => {} })
+      const opened: string[] = []
+      const { el, node, history } = mount(libraryNodes(), 'channel', withRelays(), { onEditCode: () => {}, libraries: { relays: 'Relay boards', other: 'Other' }, onOpenLibrary: id => opened.push(id) })
       expect(el.querySelector('.hs-inspector .hs-insp-head input')).toBeNull()
       expect(el.querySelector('.hs-inspector .hs-insp-title')!.textContent).toBe('Relay')
       expect(fieldLabels(el)).toEqual(['Key', 'Device'])
       expect(order(el)).toEqual(['key', 'device', 'Settings'])
       expect(settingKeys(el)).toEqual(['Address'])
       expect(field(el, 'device').querySelector('.hs-field-hint')!.textContent).toBe("An entity on a device is listed on that device's page. None: it stands alone.")
-      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library relays.')
+      // The library's name opens it.
+      expect(main(el).querySelector('.hs-insp-library')!.textContent).toBe('From the node library Relay boards.')
+      const open = main(el).querySelector<HTMLButtonElement>('.hs-insp-library button.hs-insp-link')!
+      expect(open.textContent).toBe('Relay boards')
+      open.click()
+      expect(opened).toEqual(['relays'])
       expect(buttons(el)).not.toContain('Edit code')
       // Its key is an entity key, renamed as a C# entity's; the Device select wires it.
       typeInto(control(el, 'Key'), 'channel')

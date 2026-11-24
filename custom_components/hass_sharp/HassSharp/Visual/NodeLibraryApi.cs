@@ -130,7 +130,9 @@ public partial class HassSharpManager
             var request = ApiRequest.Parse(requestJson);
             var operation = RequiredString(request, "operation");
             var saved = SavedLibraries();
-            if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics });
+            // Beside the catalog, never in it: each saved library's name by its id, what the panel calls a library class node's library.
+            if (operation == "catalog") return Success(new { catalog = saved.Preview.Snapshot.Catalog, generation = saved.Generation, servicesGeneration = ServiceSchemas.Generation, saved = true, valid = saved.Preview.Valid, diagnostics = saved.Preview.Diagnostics,
+                libraries = saved.Documents.ToDictionary(d => d.Id, d => d.Name, StringComparer.Ordinal) });
             if (operation == "list") return Success(new { documents = saved.Documents, generation = saved.Generation });
             if (operation == "service_ports") return Success(ServicePorts(RequiredString(request, "service"), AuthoringSnapshot(saved.Preview.Snapshot)));
             // The C# definition of a type a pin carries: from the saved libraries' compile, or, for a type a Custom C# node
