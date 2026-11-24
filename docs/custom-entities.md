@@ -1176,6 +1176,14 @@ A card is `new UiCard(id)` followed by calls that each return the card:
   (a person is not merged into themselves). `add` is a form for a new one instead of an
   option: `new UiForm(title)` with up to 4 fields, added with `Field`, `Select`,
   `Number` and `Toggle` as a card's are. Without `add` the user can only choose.
+  The button shows the option chosen, "Choose…" when there is none, or the new one's
+  text fields with a **New** mark. In the dialog, typing filters the options by title
+  and detail; it lists at most 50 at a time and counts the rest ("70 more: type to
+  narrow"). The arrow keys and Enter choose, as a click does, and Escape closes it
+  with nothing changed. With `add`, its last row, "+ " and the form's title, shows the
+  form, its first text field holding what was typed in the search box; **Use** checks
+  it as a press checks a card and chooses the new one, and **Back** returns to the
+  list. The choice is sent with the card's next press.
 - **`Action(label, handler, confirm, style, validate)`** adds a button. A `confirm`
   text is a question the panel asks before the press, with the label on its button.
   `style` is `UiActionStyle.Default`, `Primary` (the card's main action) or `Danger`

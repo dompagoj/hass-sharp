@@ -3,20 +3,29 @@ import { EntityApiError, homeAssistantError } from './api'
 
 /**
  * A field of a card as its device drew it: a text, a select (one of `options`, or the empty text for nothing chosen),
- * a number (null when empty) or an on/off toggle. `options`, `suggestions`, `minimum` and `maximum` are absent when it
- * has none.
+ * a number (null when empty), an on/off toggle, or a pick field (the id of an option of the page's set `set`, or null
+ * for none). `options`, `suggestions`, `minimum` and `maximum` are absent when it has none. A pick field's `except` is
+ * the options of the set it does not offer, and `add` the form of a new one, when it allows one: its fields are texts,
+ * selects, numbers and toggles.
  */
 export interface DeviceField {
   key: string
   label: string
-  type: 'text' | 'select' | 'number' | 'toggle'
+  type: 'text' | 'select' | 'number' | 'toggle' | 'pick'
   value: string | number | boolean | null
   options?: string[]
   suggestions?: string[]
   minimum?: number
   maximum?: number
+  set?: string
+  except?: string[]
+  add?: { title: string; fields: DeviceField[] }
   required: boolean
 }
+/** An option a pick field chooses from: its picture by SHA-256 (fetched with `image`, as a card's), its title and detail. */
+export interface DeviceOption { id: string; image: string | null; title: string; detail: string | null }
+/** A set of options drawn once for a page, which its cards' pick fields name by `id`. */
+export interface DeviceOptionSet { id: string; items: DeviceOption[] }
 /**
  * A button of a card; with `confirm`, the panel asks that before it sends the press. With `validate` false, a press is
  * not checked against the card's fields and sends none of their values. An answer without `validate` (an older
@@ -27,8 +36,8 @@ export interface DeviceAction { id: string; label: string; style: 'default' | 'p
 export interface DeviceCard { id: string; image: string | null; title: string | null; detail: string | null; fields: DeviceField[]; actions: DeviceAction[] }
 /** A list of a page, its cards in the order first drawn; `empty` is what it says without cards. */
 export interface DeviceList { id: string; title: string; attention: boolean; empty: string | null; cards: DeviceCard[] }
-/** The page of one C# node of a running definition. */
-export interface DevicePageData { nodeKey: string; title: string; attention: number; lists: DeviceList[] }
+/** The page of one C# node of a running definition; an older backend's page has no `options`, which reads as none. */
+export interface DevicePageData { nodeKey: string; title: string; attention: number; lists: DeviceList[]; options?: DeviceOptionSet[] }
 /**
  * `read`'s answer: not running (off, failed, still starting or unknown), the pages unchanged since the revision the
  * panel has, or the pages of a newer revision.
@@ -72,7 +81,7 @@ export function deviceUiApi(hass: Pick<HomeAssistant, 'callWS'>) {
     /** The running definition's pages, or `unchanged` when its revision is still `knownRevision`. */
     read: (definitionId: string, knownRevision?: string) =>
       request<DeviceRead>('read', { definitionId, ...(knownRevision === undefined ? {} : { knownRevision }) }),
-    /** The JPEG a current card of the node's page shows, as a `data:` URL; `not_found` once no card shows it. */
+    /** The JPEG a current card or option of the node's page shows, as a `data:` URL; `not_found` once none shows it. */
     image: async (definitionId: string, nodeKey: string, hash: string): Promise<string> => {
       const { jpeg } = await request<{ jpeg: string }>('image', { definitionId, nodeKey, hash })
       if (typeof jpeg !== 'string' || !base64.test(jpeg)) throw new EntityApiError('internal', 'The device page answered an image that cannot be shown.')

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, Match, onCleanup, Show, Switch, untrack } from 'solid-js'
+import { createEffect, createMemo, createSignal, createUniqueId, For, Match, on, onCleanup, Show, Switch, untrack } from 'solid-js'
 import { useQueryClient } from '@tanstack/solid-query'
 import { Button } from '../components/Controls'
 import { Dialog } from '../components/Dialog'
@@ -9,11 +9,13 @@ import { EntityApiError, entityError } from './api'
 import { countsChanged, noteDeviceRead } from './deviceCounts'
 import { deviceUiApi, type DeviceActResult, type DeviceCard, type DeviceField, type DeviceList, type DevicePageData } from './deviceUi'
 import { FieldErrors, SelectField, SwitchField, TextField } from './formFields'
+import { PickField, pickChoice, sameList, type FormValue, type PickChoice, type PickOptions } from './PickField'
 
 /** How often the open tab reads the pages. */
 const pollMs = 2000
 
-type FieldValue = DeviceField['value']
+/** A field's value: as drawn, or as the person changed it; a pick field's is its choice. */
+type FieldValue = DeviceField['value'] | PickChoice
 /** What the panel shows of the definition: nothing read yet, not running, or the pages of its running revision. */
 type Shown = { kind: 'reading' } | { kind: 'off' } | { kind: 'pages'; pages: DevicePageData[] }
 /** How a press ended for its card: the device's answer, or why it could not be sent. */
@@ -30,7 +32,8 @@ const notRunning = (error: unknown) => error instanceof EntityApiError && error.
  * list a heading with its card count, and each card its image, texts, fields and buttons. A card, and what the person
  * changed in its fields, stays as long as a card of that list and id is drawn: a refresh never re-creates it, so what
  * is typed, focus and the caret survive. A press names its card by the ids drawn. Everything the device drew is shown
- * as text; an image only as the `data:` URL built from its JPEG, fetched once per hash while a card shows it. Each read
+ * as text; an image only as the `data:` URL built from its JPEG, fetched once per hash while a card shows it, or a pick
+ * field shows it as an option (the one chosen, or a row its open dialog has rendered). Each read
  * hands its pages' attention to the page's shared counts (none once not running), and each press that answers makes
  * them stale.
  */
@@ -47,6 +50,16 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
   // By hash: the data URL, or null for an image the device no longer shows.
   const [images, setImages] = createSignal<ReadonlyMap<string, string | null>>(new Map())
   const requested = new Set<string>()
+  // The option pictures each pick field shows, by the field (an object of its own), with its page's node key.
+  const [shownOptions, setShownOptions] = createSignal<ReadonlyMap<object, { nodeKey: string; hashes: readonly string[] }>>(new Map())
+  const want = (owner: object, nodeKey: string, hashes: readonly string[]) => setShownOptions(now => {
+    const was = now.get(owner)
+    if (hashes.length ? was?.nodeKey === nodeKey && sameList(was.hashes, hashes) : !was) return now
+    const next = new Map(now)
+    if (hashes.length) next.set(owner, { nodeKey, hashes })
+    else next.delete(owner)
+    return next
+  })
   let revision: string | undefined
   // The definition shown; a new one, or disposal, ends every answer still to come for the one before.
   let epoch = 0
@@ -59,6 +72,9 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
     const wanted = new Map<string, string>()
     for (const page of pages) for (const list of page.lists) for (const card of list.cards)
       if (card.image && !wanted.has(card.image)) wanted.set(card.image, page.nodeKey)
+    const nodeKeys = new Set(pages.map(page => page.nodeKey))
+    for (const { nodeKey, hashes } of untrack(shownOptions).values())
+      if (nodeKeys.has(nodeKey)) for (const hash of hashes) if (!wanted.has(hash)) wanted.set(hash, nodeKey)
     for (const hash of [...requested]) if (!wanted.has(hash)) requested.delete(hash)
     setImages(cached => [...cached.keys()].every(hash => wanted.has(hash)) ? cached : new Map([...cached].filter(([hash]) => wanted.has(hash))))
     for (const [hash, nodeKey] of wanted) {
@@ -75,6 +91,8 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
         })
     }
   }
+  // A pick field that shows other pictures (its dialog opened or closed, another option chosen) asks for them at once.
+  createEffect(on(shownOptions, () => { const now = shown(); if (current && now.kind === 'pages') keepImages(current, now.pages) }, { defer: true }))
   const stopped = (id: string) => { revision = undefined; setShown({ kind: 'off' }); keepImages(id, []); noteDeviceRead(queryClient, id, undefined) }
 
   const refresh = async (id: string) => {
@@ -157,7 +175,7 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
               <For each={all().map(page => page.nodeKey)}>
                 {nodeKey => (
                   <Show when={all().find(page => page.nodeKey === nodeKey)}>
-                    {page => <PageSection page={page()} images={images()} press={press} />}
+                    {page => <PageSection page={page()} images={images()} press={press} want={want} />}
                   </Show>
                 )}
               </For>
@@ -170,14 +188,24 @@ export function DevicePanel(props: { definitionId: string | undefined; visible: 
 }
 
 /** A node's page: its title, then its lists. */
-function PageSection(props: { page: DevicePageData; images: ReadonlyMap<string, string | null>; press: Press }) {
+function PageSection(props: {
+  page: DevicePageData
+  images: ReadonlyMap<string, string | null>
+  press: Press
+  want(owner: object, nodeKey: string, hashes: readonly string[]): void
+}) {
+  const options: PickOptions = {
+    get sets() { return props.page.options ?? [] },
+    get images() { return props.images },
+    want: (owner, hashes) => props.want(owner, props.page.nodeKey, hashes),
+  }
   return (
     <section class="hs-device__page">
       <h3 class="hs-device__title">{props.page.title}</h3>
       <For each={props.page.lists.map(list => list.id)}>
         {listId => (
           <Show when={props.page.lists.find(list => list.id === listId)}>
-            {list => <ListSection nodeKey={props.page.nodeKey} list={list()} images={props.images} press={props.press} />}
+            {list => <ListSection nodeKey={props.page.nodeKey} list={list()} images={props.images} options={options} press={props.press} />}
           </Show>
         )}
       </For>
@@ -186,7 +214,7 @@ function PageSection(props: { page: DevicePageData; images: ReadonlyMap<string, 
 }
 
 /** A list: its title and card count, then its cards or its `empty` text. */
-function ListSection(props: { nodeKey: string; list: DeviceList; images: ReadonlyMap<string, string | null>; press: Press }) {
+function ListSection(props: { nodeKey: string; list: DeviceList; images: ReadonlyMap<string, string | null>; options: PickOptions; press: Press }) {
   return (
     <section class="hs-device__list" classList={{ 'hs-device__list--attention': props.list.attention }} data-list-id={props.list.id}>
       <h4 class="hs-device__list-title">{props.list.title} ({props.list.cards.length})</h4>
@@ -197,7 +225,7 @@ function ListSection(props: { nodeKey: string; list: DeviceList; images: Readonl
               <Show when={props.list.cards.find(card => card.id === cardId)}>
                 {card => (
                   <DeviceCardView nodeKey={props.nodeKey} listId={props.list.id} card={card()}
-                    image={card().image ? props.images.get(card().image!) ?? undefined : undefined} press={props.press} />
+                    image={card().image ? props.images.get(card().image!) ?? undefined : undefined} options={props.options} press={props.press} />
                 )}
               </Show>
             )}
@@ -209,16 +237,32 @@ function ListSection(props: { nodeKey: string; list: DeviceList; images: Readonl
 }
 
 const emptyValue = (field: DeviceField, value: FieldValue) =>
-  field.type === 'number' ? value === null : field.type === 'toggle' ? false : typeof value !== 'string' || value.trim() === ''
-/** A field's value as a press sends it: a text or a choice as text, a number or null, a toggle as true or false. */
-const sentValue = (field: DeviceField, value: FieldValue) =>
-  field.type === 'number' ? (typeof value === 'number' ? value : null) : field.type === 'toggle' ? value === true : typeof value === 'string' ? value : ''
+  field.type === 'number' || field.type === 'pick' ? value === null : field.type === 'toggle' ? false : typeof value !== 'string' || value.trim() === ''
+/**
+ * A field's value as a press sends it: a text or a choice as text, a number or null, a toggle as true or false, a pick
+ * field's `{picked: id}`, `{new: {key: value}}` with each of its form's fields, or null for none (sent: a pick field left
+ * out reads as the device drew it).
+ */
+const sentValue = (field: DeviceField, value: FieldValue): unknown => {
+  if (field.type !== 'pick')
+    return field.type === 'number' ? (typeof value === 'number' ? value : null) : field.type === 'toggle' ? value === true : typeof value === 'string' ? value : ''
+  const choice = value as PickChoice
+  if (!choice) return null
+  if ('picked' in choice) return { picked: choice.picked }
+  return { new: Object.fromEntries((field.add?.fields ?? []).map(form => [form.key, sentValue(form, choice.new.has(form.key) ? choice.new.get(form.key)! : form.value)])) }
+}
+/** Why a field's value cannot be sent, as HassSharp says it: empty while required, or a number outside its range. */
+const fieldProblem = (field: DeviceField, value: FieldValue) =>
+  field.required && emptyValue(field, value) ? `${field.label} is required.`
+    : field.type === 'number' && typeof value === 'number' && field.minimum !== undefined && value < field.minimum ? `${field.label} must be at least ${field.minimum}.`
+      : field.type === 'number' && typeof value === 'number' && field.maximum !== undefined && value > field.maximum ? `${field.label} must be at most ${field.maximum}.`
+        : undefined
 
 /**
  * A card: its image, title, detail, fields and buttons, and what its last press said. What the person changed in a
  * field wins over the device's value until the card goes, or a press of it answers done.
  */
-function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCard; image: string | undefined; press: Press }) {
+function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCard; image: string | undefined; options: PickOptions; press: Press }) {
   let root!: HTMLLIElement
   // By field key (any text a device chose: a map, never an object's members).
   const [edits, setEdits] = createSignal<ReadonlyMap<string, FieldValue>>(new Map())
@@ -229,7 +273,11 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
   let disposed = false
   onCleanup(() => { disposed = true })
 
-  const valueOf = (field: DeviceField) => (edits().has(field.key) ? edits().get(field.key)! : field.value)
+  // A pick field's choice only while its set has the option, or its form is there: one that went is none.
+  const valueOf = (field: DeviceField): FieldValue => {
+    const value = edits().has(field.key) ? edits().get(field.key)! : field.value
+    return field.type === 'pick' ? pickChoice(field, value, props.options.sets) : value
+  }
   const edit = (key: string, value: FieldValue) => {
     setEdits(current => new Map(current).set(key, value))
     if (missing().has(key)) setMissing(current => new Set([...current].filter(k => k !== key)))
@@ -257,7 +305,7 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
     if (empty.length) {
       setMissing(new Set(empty))
       const first = [...root.querySelectorAll<HTMLElement>('[data-field]')].find(el => el.dataset.field === empty[0])
-      first?.querySelector<HTMLElement>('input, select')?.focus()
+      first?.querySelector<HTMLElement>('input, select, button')?.focus()
       return
     }
     // A press that goes ahead, one that does not validate too, clears the marks an earlier stopped press left.
@@ -277,7 +325,7 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
             <For each={props.card.fields.map(field => field.key)}>
               {key => (
                 <Show when={props.card.fields.find(field => field.key === key)}>
-                  {field => <CardField field={field()} value={valueOf(field())} missing={missing().has(key)} edited={edits().has(key)} onEdit={value => edit(key, value)} />}
+                  {field => <CardField field={field()} value={valueOf(field())} missing={missing().has(key)} edited={edits().has(key)} options={props.options} onEdit={value => edit(key, value)} />}
                 </Show>
               )}
             </For>
@@ -317,17 +365,26 @@ function DeviceCardView(props: { nodeKey: string; listId: string; card: DeviceCa
 
 /**
  * A field of a card in the definition form's controls, a required one marked as the form marks one (the hint
- * "Required.", and a text's placeholder). A text records each keystroke, so what is typed counts at once; a number
- * holds its value from the first keystroke until its text is taken (on blur or Enter), so a refresh does not replace
- * the text being typed.
+ * "Required.", and a text's placeholder), or of a pick field's form, with the `problem` its **Use** found. A text
+ * records each keystroke, so what is typed counts at once; a number holds its value from the first keystroke until its
+ * text is taken (on blur or Enter), so a refresh does not replace the text being typed. A pick field is a
+ * {@link PickField} over its page's `options`.
  */
-function CardField(props: { field: DeviceField; value: FieldValue; missing: boolean; edited: boolean; onEdit(value: FieldValue): void }) {
+function CardField(props: {
+  field: DeviceField
+  value: FieldValue
+  missing: boolean
+  problem?: string
+  edited: boolean
+  options?: PickOptions
+  onEdit(value: FieldValue): void
+}) {
   const id = createUniqueId(), hintId = `${id}-hint`, errorsId = `${id}-errors`, listId = `${id}-suggestions`
   // A toggle is never empty: nothing to mark.
   const hint = () => (props.field.required && props.field.type !== 'toggle' ? 'Required.' : undefined)
   // Only a change of the value reaches the control: a new revision with the same value leaves it alone.
   const value = createMemo(() => props.value)
-  const errors = createMemo(() => (props.missing ? [`${props.field.label} is required.`] : []), undefined, { equals: (a, b) => a.join('\n') === b.join('\n') })
+  const errors = createMemo(() => (props.missing ? [`${props.field.label} is required.`] : props.problem ? [props.problem] : []), undefined, { equals: (a, b) => a.join('\n') === b.join('\n') })
   const text = () => (typeof value() === 'string' ? value() as string : '')
   const choices = createMemo(() => [
     { value: '', label: props.field.required ? 'Choose…' : 'None' },
@@ -367,6 +424,15 @@ function CardField(props: { field: DeviceField; value: FieldValue; missing: bool
         <div class="hs-device-card__field">
           <SwitchField name={props.field.key} label={props.field.label} checked={value() === true} onChange={checked => props.onEdit(checked)} />
         </div>
+      </Match>
+      <Match when={props.field.type === 'pick' && props.options}>
+        {options => (
+          <div class="hs-device-card__field">
+            {/* Edited: the form holds its values from the moment it shows, so no refresh replaces a number typed in it. */}
+            <PickField field={props.field} choice={value() as PickChoice} options={options()} hint={hint()} errors={errors()} onChoose={props.onEdit} problem={fieldProblem}
+              Field={form => <CardField field={form.field} value={form.value} missing={false} problem={form.problem} edited onEdit={value => form.onEdit(value as FormValue)} />} />
+          </div>
+        )}
       </Match>
     </Switch>
   )
