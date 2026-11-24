@@ -580,3 +580,63 @@ it('reads a decimal comma as the decimal point when the number has no point, and
   type(seconds, '2,5'); blur(seconds)
   expect(delay.changes).toEqual([{ operand: { kind: 'literal', type: 'object', value: { hours: 0, minutes: 0, seconds: 2.5 } } }])
 })
+
+/** A class node's setting pin, as `settingInput` makes it: of its pin type, with the setting under `setting`. */
+const settingSpec = (type: NonNullable<InputSpec['setting']>['type'], about: Partial<NonNullable<InputSpec['setting']>> = {}): InputSpec =>
+  spec([type === 'integer' ? 'number' : type === 'enum' ? 'string' : type], { label: 'Setting', setting: { type, secret: false, ...about } })
+/** What choosing Value from the mode menu of a fresh editor of the input stores. */
+const chosenValue = (input: InputSpec) => {
+  const { host, changes } = remount({ input, label: 'Setting' })
+  openMenu(host, 'Setting mode'); menuItem(host, 'Value').click()
+  return changes.map(c => c.operand)
+}
+
+it('starts a class setting from its class\'s default when Value is chosen: a number, a whole number, a switch and a member', () => {
+  expect([
+    settingSpec('number', { default: 0.5 }), settingSpec('integer', { default: 5, minimum: 1, maximum: 10 }), settingSpec('boolean', { default: true }),
+    settingSpec('boolean', { default: false }), settingSpec('enum', { options: ['eco', 'comfort'], default: 'comfort' }),
+  ].map(chosenValue)).toEqual([
+    [{ kind: 'literal', type: 'number', value: 0.5 }], [{ kind: 'literal', type: 'number', value: 5 }], [{ kind: 'literal', type: 'boolean', value: true }],
+    [{ kind: 'literal', type: 'boolean', value: false }], [{ kind: 'literal', type: 'string', value: 'comfort' }],
+  ])
+})
+
+it('starts a class setting as before without a default, and a text setting with one still stores nothing until typed', () => {
+  expect([
+    settingSpec('number'), settingSpec('integer', { minimum: 1, maximum: 10 }), settingSpec('boolean'), settingSpec('enum', { options: ['eco', 'comfort'] }),
+    // A secret's default is never used, nor one the setting's editor cannot hold (a fraction for a whole number, a member it does not have).
+    settingSpec('number', { default: 0.5, secret: true }), settingSpec('integer', { default: 1.5 }), settingSpec('enum', { options: ['eco', 'comfort'], default: 'away' }),
+    // A text field opens empty, with the default as its placeholder: nothing is stored until something is typed.
+    settingSpec('string', { default: 'hall' }),
+    // An input that is not a class's setting starts as it did.
+    spec(['number'], { label: 'Setting' }), spec(['boolean'], { label: 'Setting' }),
+  ].map(chosenValue)).toEqual([
+    [{ kind: 'literal', type: 'number', value: 0 }], [{ kind: 'literal', type: 'number', value: 1 }], [{ kind: 'literal', type: 'boolean', value: false }],
+    [{ kind: 'literal', type: 'string', value: 'eco' }], [{ kind: 'literal', type: 'number', value: 0 }], [{ kind: 'literal', type: 'number', value: 0 }],
+    [{ kind: 'literal', type: 'string', value: 'eco' }], [], [{ kind: 'literal', type: 'number', value: 0 }], [{ kind: 'literal', type: 'boolean', value: false }],
+  ])
+})
+
+it('draws an unset switch setting at its default, and its first click stores the opposite of what is drawn', () => {
+  const { host, changes } = mount({ input: settingSpec('boolean', { default: true }), label: 'Boxes' })
+  const toggle = () => q<HTMLInputElement>(host, 'input[role="switch"]')
+  // Drawn on, still without a value: it says so, and nothing is stored by showing it.
+  expect(toggle().checked).toBe(true)
+  expect(q(host, '.hs-widget-row .hs-muted').textContent).toBe('Default True')
+  expect(changes).toEqual([])
+  toggle().click()
+  expect(changes.map(c => c.operand)).toEqual([{ kind: 'literal', type: 'boolean', value: false }])
+  expect(toggle().checked).toBe(false)
+  expect(q(host, '.hs-widget-row .hs-muted').textContent).toBe('False')
+  // A default of False is drawn off, and its first click stores True.
+  const off = remount({ input: settingSpec('boolean', { default: false }), label: 'Quiet' })
+  expect(q<HTMLInputElement>(off.host, 'input[role="switch"]').checked).toBe(false)
+  q<HTMLInputElement>(off.host, 'input[role="switch"]').click()
+  expect(off.changes.map(c => c.operand)).toEqual([{ kind: 'literal', type: 'boolean', value: true }])
+  // Without a default, for a secret, or for a switch that is not a class setting, it is drawn off as before.
+  for (const input of [settingSpec('boolean'), settingSpec('boolean', { default: true, secret: true }), spec(['boolean'])]) {
+    const plain = remount({ input, label: 'Enabled' })
+    expect(q<HTMLInputElement>(plain.host, 'input[role="switch"]').checked).toBe(false)
+    expect(q(plain.host, '.hs-widget-row .hs-muted').textContent).toBe('Not set')
+  }
+})

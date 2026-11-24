@@ -1,6 +1,6 @@
 import { createEffect, createSignal, createUniqueId, For, on, onCleanup, Show, type JSX } from 'solid-js'
 import type { InputSpec, JsonValue } from '../contract'
-import type { ValueKind, Widget } from './model'
+import { settingDefaultValue, type ValueKind, type Widget } from './model'
 
 export interface CommitOptions {
   /** Changes of one drag share this key, so the parent can merge them into one undo step. */
@@ -29,6 +29,8 @@ export interface WidgetProps {
   stale?: boolean
   /** What is shown in place of "Not set" while there is no value: what the input is then (`unsetWords`, "Default 0.5"). */
   unset?: string
+  /** What the input is while there is no value (a class setting's default, `settingDefaultValue`): a switch is drawn at it. */
+  unsetValue?: JsonValue
 }
 
 /**
@@ -36,7 +38,7 @@ export interface WidgetProps {
  * enum's member, a text. Undefined when the class does not say, for an empty text (which shows nothing), and for a secret.
  */
 export function settingDefault(input: InputSpec | undefined): string | undefined {
-  const value = input?.setting?.secret === true ? undefined : input?.setting?.default
+  const value = settingDefaultValue(input)
   return value === undefined || value === '' ? undefined : typeof value === 'boolean' ? (value ? 'True' : 'False') : String(value)
 }
 /** The words for an input without a value when they are not "Not set": a class setting's default, "Default 0.5". */

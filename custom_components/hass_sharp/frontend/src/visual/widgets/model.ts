@@ -279,15 +279,29 @@ export function durationValue(widget: Widget, previous: JsonValue | undefined, s
   return widget.days ? { days, ...rest } : rest
 }
 
+/**
+ * What a class's setting is when the node gives it no value, as its class says (`setting.default`): a text, a number or
+ * true or false. Undefined when the class does not say, and for a secret. Shown (`settingDefault`), never stored by itself.
+ */
+export function settingDefaultValue(input: InputSpec | undefined): string | number | boolean | undefined {
+  return input?.setting?.secret === true ? undefined : input?.setting?.default
+}
+
 /** The value a newly chosen "Value" mode starts with, or undefined when the user must enter one first. */
 export function initialValue(widget: Widget, input: InputSpec, catalog: VisualCatalogSnapshot = nodeCatalog): JsonValue | undefined {
   // A default is an operand for catalog inputs and service fields alike; its value is used when the input accepts it.
   const fallback = input.default
   if (record(fallback) && fallback.kind === 'literal' && fallback.value !== undefined && validForInput(input, fallback.value as JsonValue, catalog)) return structuredClone(fallback.value as JsonValue)
+  // A class's setting starts from its class's default where the widget would start from a value of its own, when the
+  // widget can hold it (a whole number for an integer, one of an enum's members); a text still starts empty.
+  const given = settingDefaultValue(input)
   switch (widget.kind) {
-    case 'toggle': return false
-    case 'number': return Math.min(Math.max(0, widget.min ?? 0), widget.max ?? Number.POSITIVE_INFINITY)
-    case 'select': case 'constant': return widget.multiple ? undefined : widget.options?.[0]?.value
+    case 'toggle': return typeof given === 'boolean' ? given : false
+    case 'number': {
+      const start = typeof given === 'number' && (!widget.whole || Number.isInteger(given)) ? given : 0
+      return Math.min(Math.max(start, widget.min ?? start), widget.max ?? Number.POSITIVE_INFINITY)
+    }
+    case 'select': case 'constant': return widget.multiple ? undefined : (widget.options?.find(o => given !== undefined && jsonEqual(o.value, given)) ?? widget.options?.[0])?.value
     case 'color': return [255, 255, 255]
     case 'duration': return durationValue(widget, undefined, 0)
     default: return undefined

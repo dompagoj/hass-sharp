@@ -14,8 +14,10 @@ const trueFalse = (text: string) => /^(true|false)$/i.test(text.trim()) ? text.t
 export function ToggleWidget(props: WidgetProps) {
   // A stored value that is not true or false (see `stale`) is shown as typed, to be typed again as true or false: the switch
   // could only show it as False, and flipping it twice to store it would be two changes.
+  // Without a value it is drawn at what the input then is (a class setting's default), so its first click stores the
+  // opposite of what is drawn.
   return <Show when={props.stale} fallback={<span class="hs-widget-row">
-    <input id={props.id} type="checkbox" role="switch" class="hs-switch" aria-label={props.label} checked={props.value === true}
+    <input id={props.id} type="checkbox" role="switch" class="hs-switch" aria-label={props.label} checked={(props.value ?? props.unsetValue) === true}
       aria-describedby={props.describedBy} aria-invalid={props.invalid || undefined} disabled={props.disabled}
       onChange={event => props.commit(event.currentTarget.checked)} />
     <span class="hs-muted">{props.value === undefined ? props.unset ?? 'Not set' : props.value === true ? 'True' : 'False'}</span>

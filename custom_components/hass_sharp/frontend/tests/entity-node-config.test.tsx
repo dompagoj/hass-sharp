@@ -861,7 +861,8 @@ describe('devices in the right panel', () => {
       await vi.waitFor(() => expect(input('CheckEvery')).not.toBeNull())
       expect([input('CheckEvery').placeholder, input('Room').placeholder, input('Ratio').placeholder]).toEqual(['Default 0.5', 'Default hall', 'Not set'])
       expect(settingRow(el, 'Boxes').querySelector('.hs-widget-row .hs-muted')!.textContent).toBe('Default True')
-      expect(settingRow(el, 'Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false)
+      // The switch is drawn at the default it says.
+      expect(settingRow(el, 'Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(true)
       const mode = settingRow(el, 'Mode').querySelector('select')!
       expect([...mode.options].filter(o => o.disabled).map(o => o.textContent)).toEqual(['Default comfort'])
       // Shown, never stored: the node still has no value for any of them.
@@ -870,9 +871,30 @@ describe('devices in the right panel', () => {
       typeInto(input('CheckEvery'), '2')
       expect(argument(node, 'CheckEvery')).toEqual(lit('number', 2))
       expect(input('CheckEvery').value).toBe('2')
+      // Its first click changes what the setting is: drawn on, it stores False.
       settingRow(el, 'Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!.click()
-      expect(argument(node, 'Boxes')).toEqual(lit('boolean', true))
-      expect(settingRow(el, 'Boxes').querySelector('.hs-widget-row .hs-muted')!.textContent).toBe('True')
+      expect(argument(node, 'Boxes')).toEqual(lit('boolean', false))
+      expect(settingRow(el, 'Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false)
+      expect(settingRow(el, 'Boxes').querySelector('.hs-widget-row .hs-muted')!.textContent).toBe('False')
+    })
+
+    it('Value in a setting\'s menu starts it from its class\'s default, and as before without one', async () => {
+      const defaulted = [setting('CheckEvery', 'number', { label: 'Check every', default: 0.5 }), setting('Boxes', 'boolean', { default: true }),
+        setting('Mode', 'enum', { options: ['eco', 'comfort'], default: 'comfort' }), setting('Ratio', 'number'), setting('Quiet', 'boolean')]
+      const graph = add(devices(), 'csharp_entity', 'fan', { key: 'fan', signature: { title: 'Fan', description: '', domain: 'switch', settings: defaulted } })
+      const { el, node } = mount(graph, 'fan')
+      const labels: Record<string, string> = { CheckEvery: 'Check every' }
+      for (const key of ['CheckEvery', 'Boxes', 'Mode', 'Ratio', 'Quiet']) {
+        settingRow(el, key).querySelector<HTMLButtonElement>(`button[aria-label="Set ${labels[key] ?? key}"]`)!.click()
+        await vi.waitFor(() => expect(settingRow(el, key).querySelector(`button[aria-label="${labels[key] ?? key} mode"]`)).not.toBeNull())
+      }
+      // Opened, nothing is stored yet.
+      expect(node().config.arguments ?? {}).toEqual({})
+      for (const key of ['CheckEvery', 'Boxes', 'Mode', 'Ratio', 'Quiet']) {
+        settingRow(el, key).querySelector<HTMLButtonElement>(`button[aria-label="${labels[key] ?? key} mode"]`)!.click()
+        ;[...settingRow(el, key).querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Value')!.click()
+      }
+      expect(node().config.arguments).toEqual({ CheckEvery: lit('number', 0.5), Boxes: lit('boolean', true), Mode: lit('string', 'comfort'), Ratio: lit('number', 0), Quiet: lit('boolean', false) })
     })
 
     it('an entity setting picks an entity, a light only for a LightEntity; a required one shows its editor and its problem while empty', async () => {

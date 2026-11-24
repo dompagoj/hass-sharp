@@ -1500,6 +1500,35 @@ describe('the C# entity and C# device cards', () => {
     expect(row('CheckEvery').querySelector('input')!.placeholder).toBe('Default 0.5')
   })
 
+  it('opens an unset switch setting at its default without storing it, and Value in a card\'s menu starts a setting from its default', async () => {
+    const defaulted = [setting('CheckEvery', 'number', { default: 0.5 }), setting('Boxes', 'boolean', { default: true }), setting('Mode', 'enum', { options: ['eco', 'comfort'], default: 'comfort' }),
+      setting('Port', 'integer', { minimum: 1, maximum: 65535 })]
+    const [current, setCurrent] = createSignal(add(nodes(), 'csharp_device', 'fan', { key: 'fan', name: 'Fan', signature: signature('Fan', null, defaulted) }))
+    const changes: VisualGraph[] = []
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={current()} onSelect={() => {}} onChange={graph => { changes.push(graph); setCurrent(graph) }} />), el)
+    const row = (port: string) => card(el, 'fan').querySelector(`[data-input-id="${port}"]`)!
+    const args = () => (current().nodes.find(n => n.id === 'fan')!.config.arguments ?? {}) as Record<string, unknown>
+    // Opened, the switch is drawn on, as its default says, and nothing is stored.
+    row('Boxes').querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+    await vi.waitFor(() => expect(row('Boxes').querySelector('input[role="switch"]')).not.toBeNull())
+    const toggle = row('Boxes').querySelector<HTMLInputElement>('input[role="switch"]')!
+    expect(toggle.checked).toBe(true)
+    expect(row('Boxes').querySelector('.hs-widget-row .hs-muted')!.textContent).toBe('Default True')
+    expect(changes).toEqual([])
+    // Its first click stores the opposite of what is drawn.
+    toggle.click()
+    expect(args().Boxes).toEqual(lit('boolean', false))
+    // Value in the menu of an opened setting stores its default, and the lower end of its range without one.
+    for (const port of ['CheckEvery', 'Mode', 'Port']) {
+      row(port).querySelector<HTMLButtonElement>('button.hs-pin-set')!.click()
+      await vi.waitFor(() => expect(row(port).querySelector(`button[aria-label="${port} mode"]`)).not.toBeNull())
+      row(port).querySelector<HTMLButtonElement>(`button[aria-label="${port} mode"]`)!.click()
+      ;[...row(port).querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b => b.textContent === 'Value')!.click()
+    }
+    expect(args()).toEqual({ Boxes: lit('boolean', false), CheckEvery: lit('number', 0.5), Mode: lit('string', 'comfort'), Port: lit('number', 1) })
+  })
+
   it('marks a required entity setting as other required inputs are, shows its problem while empty, and picks a light for a LightEntity', async () => {
     const el = host()
     const entitySettings = [setting('Lamp', 'entity', { domain: 'light', required: true }), setting('Source', 'entity')]
