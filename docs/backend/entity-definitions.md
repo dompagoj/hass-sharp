@@ -240,7 +240,11 @@ node's `source`. A stored `signature` that differs from the class's in its `doma
 the keys of its settings or their order, or a setting's `type`, `secret`, `options`,
 `minimum`, `maximum`, `domain` or `required` is refused with `csharp.signature` on
 the node's `signature`: "The settings are out of date with the code: open Edit code and apply it"; one that
-differs in words only is refreshed. Then, for a node whose settings are current,
+differs in words only is refreshed. A node library save, import or delete, which
+rebuilds every definition while nobody has edited its code, is the exception: there
+each such node's `signature` is written from its class as compiled with the new
+libraries, its `source`, values and wires left as they are, and the rebuilt
+revision stores it. Then, for a node whose settings are current,
 each pin's value, typed or that of the Setting wired to it, is checked against its
 setting: a value the setting does not take is `setting.value` on the pin,
 "`{Label} takes {what it takes}`" (such as "Interval takes a whole number from 1 to

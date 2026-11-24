@@ -147,9 +147,9 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     }
     public VisualPreview Preview(JsonObject graph)=>Preview(graph,new NodeLibraryCompiler(diagnostics).Preview([]).Snapshot);
     public VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources)=>Preview(graph,sources,null);
-    VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources,IReadOnlyList<DefinitionSetting>? settings) {
+    VisualPreview Preview(JsonObject graph,IEnumerable<NodeLibrarySource> sources,IReadOnlyList<DefinitionSetting>? settings,bool settingsFromCode=false) {
         var libraries=new NodeLibraryCompiler(diagnostics).Preview(sources);
-        return libraries.Valid?Preview(graph,libraries.Snapshot,settings):new(false,"",[],libraries.Diagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
+        return libraries.Valid?Preview(graph,libraries.Snapshot,settings,settingsFromCode):new(false,"",[],libraries.Diagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
     }
     static bool IsCustom(JsonObject node,VisualCatalogSnapshot snapshot)=>Text(VisualNodeCatalog.Spec(node,snapshot),"dynamicInputs")=="custom";
     /// <summary>Whether the node is a C# entity, a C# device or a library's class (<see cref="VisualNodeCatalog.IsClassNode"/>).</summary>
@@ -361,10 +361,15 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
     /// (a library class node's the library's class): nothing is created here.
     /// </summary>
     /// <param name="settings">An entity definition's settings with their values, which no source or answer holds; none for an automation.</param>
-    internal VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot,IReadOnlyList<DefinitionSetting>? settings)
+    /// <param name="settingsFromCode">
+    /// For a library commit's rebuild, where nobody edited a node's code: each C# entity's and C# device's settings are
+    /// written from what its code gives (with the changed libraries), never out of date, and its values and wires are then
+    /// checked against them as a library class node's are against its kind's entry. Nothing of the node is removed.
+    /// </param>
+    internal VisualPreview Preview(JsonObject graph,VisualCatalogSnapshot snapshot,IReadOnlyList<DefinitionSetting>? settings,bool settingsFromCode=false)
     {
         // A descriptor from an invalid library preview is never an executable snapshot.
-        if(snapshot.Compilation==null)return Preview(graph,snapshot.Sources,settings);
+        if(snapshot.Compilation==null)return Preview(graph,snapshot.Sources,settings,settingsFromCode);
         if(snapshot.LibraryDiagnostics.Any(d=>d.Severity==3))return new(false,"",[],snapshot.LibraryDiagnostics.Select(d=>new VisualDiagnostic("$library:"+d.SourceId,d.Message,d.Severity,d.StartLine,d.StartColumn)).ToList());
         var libraryErrors=NodeLibraryCompiler.InSourceOrder(snapshot.Compilation).Where(d=>d.Severity==DiagnosticSeverity.Error).ToArray();
         if(libraryErrors.Length>0)return new(false,"",[],libraryErrors.Select(d=>new VisualDiagnostic("$library:"+d.Location.SourceTree?.FilePath,d.GetMessage())).ToList());
@@ -394,7 +399,7 @@ public sealed class VisualGenerator(DiagnosticsProvider diagnostics,GeneratedSer
             if(IsClass(node,snapshot)) {
                 // Settings that cannot be read are the validator's to report (csharp.signature, on the same input).
                 if(!custom.Valid||VisualNodeCatalog.ClassSignature(node,VisualNodeCatalog.Spec(node,snapshot)) is not {} classSignature)continue;
-                if(!SameSettings(classSignature,custom.Signature!)) {errors.Add(new(id,VisualGraphValidator.Words.OutOfDateSettings,InputId:"signature",Code:"csharp.signature"));continue;}
+                if(!settingsFromCode&&!SameSettings(classSignature,custom.Signature!)) {errors.Add(new(id,VisualGraphValidator.Words.OutOfDateSettings,InputId:"signature",Code:"csharp.signature"));continue;}
                 upToDate.Add(id);
                 if(!SameJson(classSignature,custom.Signature))Refresh(id,custom.Signature!);
                 continue;

@@ -37,7 +37,12 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     /// Every problem of the definition, in a fixed order. A definition is built from nodes: logic of any other kind, or
     /// none, is told so, beside its name's problem, with nothing else of it checked.
     /// </summary>
-    public DefinitionPreview Preview(DefinitionBody body, VisualCatalogSnapshot snapshot)
+    /// <param name="settingsFromCode">
+    /// For a library commit's rebuild, where nobody edited the definition: each C# entity's and C# device's settings are
+    /// what its code now gives, as <see cref="VisualGenerator.Preview(JsonObject, VisualCatalogSnapshot, IReadOnlyList{DefinitionSetting}?, bool)"/>
+    /// takes them; otherwise a node whose stored settings differ from its code's is out of date (<c>csharp.signature</c>).
+    /// </param>
+    public DefinitionPreview Preview(DefinitionBody body, VisualCatalogSnapshot snapshot, bool settingsFromCode = false)
     {
         var errors = new List<VisualDiagnostic>();
         void Error(string code, string message, string? input = null, string? port = null, string? node = null) => errors.Add(new(node, message, 3, InputId: input, PortId: port, Code: code));
@@ -68,7 +73,7 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
         // The document's problems come first: its graph is not checked against a definition that would only repeat them.
         // A problem on an Entity node is the graph's, reported with the rest of the graph's, and leaves it with no source.
         if (errors.Any(e => e.NodeId == null)) return new(false, errors, "");
-        var preview = GenerateGraph(body, snapshot);
+        var preview = GenerateGraph(body, snapshot, settingsFromCode);
         return errors.Count == 0 ? preview : preview with { Valid = false, Diagnostics = [.. errors, .. preview.Diagnostics], Source = "", SourceMap = [], EmbeddedCatalog = null };
     }
 
@@ -76,11 +81,11 @@ public sealed class DefinitionGenerator(DiagnosticsProvider? diagnostics = null,
     /// The graph with the document's definition composed into it, previewed as an automation's graph is: its problems
     /// and warnings each on its node, and when valid its source, source map and embedded catalog.
     /// </summary>
-    DefinitionPreview GenerateGraph(DefinitionBody body, VisualCatalogSnapshot snapshot)
+    DefinitionPreview GenerateGraph(DefinitionBody body, VisualCatalogSnapshot snapshot, bool settingsFromCode)
     {
         var graph = DefinitionGraph.Compose(body);
         // The settings with their values, which the graph does not carry: a C# node's pin wired to a Setting is checked with its value.
-        var preview = new VisualGenerator(diagnostics ?? Fallback.Value, serviceCalls).Preview(graph, snapshot, body.Settings ?? []);
+        var preview = new VisualGenerator(diagnostics ?? Fallback.Value, serviceCalls).Preview(graph, snapshot, body.Settings ?? [], settingsFromCode);
         return new(preview.Valid, preview.Diagnostics, preview.Valid ? preview.Source : "")
         {
             SourceMap = preview.Valid ? preview.SourceMap : [],

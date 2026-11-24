@@ -70,6 +70,20 @@ static class RelayHubFixture
         return node;
     }
 
+    /// <summary>
+    /// A C# device node (<paramref name="kind"/> <c>csharp_device</c>, named Hub) or C# entity node (<c>csharp_entity</c>)
+    /// of the id and key whose code is <paramref name="source"/>, such as <c>public class FrontHub : RelayHub { }</c>, its
+    /// settings as the editor's Apply writes them: as the code gives them against the relays library of
+    /// <paramref name="code"/>. With these values under arguments, Address 10.0.0.2 when none are given.
+    /// </summary>
+    internal static JsonObject Derived(string kind, string id, string key, string source, JsonObject? arguments = null, string code = Code)
+    {
+        var compiled = new NodeLibraryCompiler(Diagnostics).Preview([new NodeLibrarySource("relays", code, 1)], [new CustomNodeSource(id, source, kind)]).Snapshot.Custom[id];
+        Check(compiled.Valid, $"the {kind} code {source} compiles: " + string.Join(" | ", compiled.Diagnostics.Select(d => d.Message)));
+        var config = new JsonObject { ["source"] = source, ["signature"] = compiled.Signature!.DeepClone(), ["arguments"] = arguments ?? new JsonObject { ["Address"] = Lit("string", "10.0.0.2") } };
+        return kind == "csharp_device" ? EntityNodeTests.CSharpDevice(id, key, "Hub", config) : EntityNodeTests.CSharpEntity(id, key, config);
+    }
+
     /// <summary>A definition of the nodes and value wires, with these settings.</summary>
     internal static JsonObject Definition(string name, JsonObject[] nodes, JsonObject[]? edges = null, params JsonObject[] settings) => new()
     {

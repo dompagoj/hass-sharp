@@ -163,14 +163,17 @@ public partial class HassSharpManager
 
     /// <summary>
     /// Previews every definition, on or off, against the candidate libraries, as a library save previews the graphs: one
-    /// that is invalid with the saved libraries too does not block the save. Nothing is written.
+    /// that is invalid with the saved libraries too does not block the save. Nothing is written. Against the candidate,
+    /// each C# entity's and C# device's settings are what its code gives with it, since nobody edited that code: a class it
+    /// derives may have gained or lost settings, which its rebuilt revision holds; a value or wire of one that is gone, or
+    /// a new required one without a value, makes the definition invalid as on a library class node.
     /// </summary>
     /// <exception cref="JsonException">A definition file cannot be read: a library save cannot check it.</exception>
     DefinitionRebuild CheckDefinitions(VisualCatalogSnapshot candidate, VisualCatalogSnapshot saved, string generation)
     {
         var store = EntityDocuments;
         var generator = DefinitionGeneratorWith(null);
-        var all = store.List(strict: true).Select(d => (Document: d, Preview: generator.Preview(d.Body, candidate))).ToArray();
+        var all = store.List(strict: true).Select(d => (Document: d, Preview: generator.Preview(d.Body, candidate, settingsFromCode: true))).ToArray();
         var invalidBefore = all.Where(p => !p.Preview.Valid && !generator.Preview(p.Document.Body, saved).Valid).Select(p => p.Document.Id).ToHashSet(StringComparer.Ordinal);
         var previews = all.Where(p => !invalidBefore.Contains(p.Document.Id)).ToArray();
         var breaking = previews.Where(p => !p.Preview.Valid).Select(p => (object)new { id = p.Document.Id, name = p.Document.Name, diagnostics = p.Preview.Diagnostics }).ToArray();

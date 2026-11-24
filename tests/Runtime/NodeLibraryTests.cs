@@ -189,6 +189,12 @@ public static class NodeLibraryTests
         await ALibrarySaveThatRemovesAUsedParameterIsRefused();
         await ALibrarySaveThatRemovesAUsedSettingBehavesAsARemovedParameter();
         await ALibrarySaveThatAddsARequiredSettingIsRefused();
+        await ALibrarySaveTakesANewSettingIntoACSharpDeviceThatDerivesTheClass();
+        await ALibrarySaveThatAddsARequiredSettingToADerivedClassIsRefused();
+        await ALibrarySaveThatRemovesASettingOfADerivedClassIsRefusedOnlyWhenTheNodeSetsIt();
+        await ALibrarySaveTakesANewSettingIntoADerivingDefinitionThatIsOff();
+        await ADefinitionsOwnSaveOfAStaleSignatureIsStillRefused();
+        await ALibrarySaveTakesANewSettingIntoACSharpEntityThatDerivesTheClass();
     }
 
     // ---- A library save over a definition that uses a library class node ----
@@ -317,6 +323,152 @@ public static class NodeLibraryTests
         Check(rig.Stored("relays", "hub", "starts") == "j2", "the rebuilt hub counts on in its data: " + rig.Stored("relays", "hub", "starts"));
         Check((await next.UiAct("hub", "relays", "relay", "switch", new JsonObject())).Status == "done", "the rebuilt hub's action runs");
         Console.WriteLine("PASS rich node libraries: a library save that adds a required setting without a default is refused naming the definition; with a default it goes ahead and the definition runs the new code");
+    }
+
+    // ---- A library save over a definition whose C# node's class derives a library class ----
+
+    /// <summary>The code of the C# device the tests below run: a class that only derives the relays library's hub.</summary>
+    const string DerivedHub = "public class FrontHub : RelayHub { }";
+    const string HubConstructor = "    public RelayHub()";
+    const string TokenLine = "    [Setting(Secret = true)] public string? Token { get; set; }\n";
+    const string PollLine = "    [Setting(\"Poll every\", Minimum = 1, Maximum = 60)] public double PollEvery { get; set; } = 5;\n";
+    /// <summary>The relays library with a Room setting on the hub, of the initializer given (<c> = "hall";</c>, or none).</summary>
+    static string WithRoom(string initializer)
+    {
+        Check(RelayHubFixture.Code.Contains(HubConstructor, StringComparison.Ordinal), "the hub has its constructor");
+        return RelayHubFixture.Code.Replace(HubConstructor, $"    [Setting] public string Room {{ get; set; }}{initializer}\n" + HubConstructor);
+    }
+    /// <summary>The definition <c>relays</c>: a C# device of id front, keyed hub, deriving the hub, with these values.</summary>
+    static JsonObject DerivedHubs(JsonObject? arguments = null) => RelayHubFixture.Definition("Relays", [RelayHubFixture.Derived("csharp_device", "front", "hub", DerivedHub, arguments)]);
+    /// <summary>The settings' keys of the stored node front of the definition <c>relays</c>, in order, as its signature has them.</summary>
+    static async Task<string> StoredSettings(RelayHubFixture.Rig rig) =>
+        string.Join(",", StoredNode(await rig.Read("relays"))["config"]!["signature"]!["settings"]!.AsArray().Select(s => s!["key"]!.GetValue<string>()));
+    static JsonObject StoredNode(JsonObject read) => read["logic"]!["graph"]!["nodes"]!.AsArray().Single(n => n!["id"]!.GetValue<string>() == "front")!.AsObject();
+    /// <summary>The value of a property of the class the running definition's device (or, for an entity, the entity) has.</summary>
+    static object? Property(DefinitionHost host, string uniqueId, string name, bool device = true)
+    {
+        var entity = host.Entity(uniqueId) ?? throw new Exception($"{uniqueId} is not reported");
+        object instance = device ? entity.AddedTo ?? throw new Exception($"{uniqueId} was added by no device") : entity;
+        return instance.GetType().GetProperty(name)?.GetValue(instance);
+    }
+
+    // A library save that gives a class a C# device derives a new setting with a default writes that setting into the
+    // node's signature as its code now gives it, nobody having touched the code: the definition is rebuilt at its next
+    // revision and runs the new code, the setting at its default, the node's value and its wired Setting as they were.
+    // A later save that removes the setting a Setting is wired into is refused, naming the definition.
+    static async Task ALibrarySaveTakesANewSettingIntoACSharpDeviceThatDerivesTheClass()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("derived-setting-added");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var token = new JsonObject { ["key"] = "token", ["type"] = "string", ["label"] = "Token", ["value"] = "s3cret", ["secret"] = true };
+        var host = await rig.Running("relays", RelayHubFixture.Definition("Relays", [RelayHubFixture.Derived("csharp_device", "front", "hub", DerivedHub), VisualExecutionTests.N("token", "setting", new { key = "token" })],
+            [VisualExecutionTests.D("token", "front", "Token")], token));
+        Check(await StoredSettings(rig) == "Address,Token,PollEvery", "the C# device has the hub's settings: " + await StoredSettings(rig));
+        var saved = await rig.Saved("relays", 1, WithRoom(" = \"hall\";"));
+        var rebuilt = saved["definitions"]!.AsArray().SingleOrDefault(d => d!["id"]!.GetValue<string>() == "relays");
+        Check(rebuilt?["active"]?.GetValue<bool>() == true && rebuilt["document"]!["revision"]!.GetValue<long>() == 2, "the definition is rebuilt and runs: " + saved.ToJsonString());
+        var read = await rig.Read("relays");
+        var node = StoredNode(read);
+        Check(read["revision"]!.GetValue<long>() == 2 && await StoredSettings(rig) == "Address,Token,PollEvery,Room", "the stored node's signature has Room: " + node.ToJsonString());
+        Check(node["config"]!["source"]!.GetValue<string>() == DerivedHub && JsonNode.DeepEquals(node["config"]!["arguments"], new JsonObject { ["Address"] = VisualExecutionTests.Lit("string", "10.0.0.2") }),
+            "the node's code and its value of Address are as they were: " + node.ToJsonString());
+        Check(read["logic"]!["graph"]!["edges"]!.AsArray().Any(e => e!["source"]!.GetValue<string>() == "token" && e["target"]!.GetValue<string>() == "front" && e["targetPort"]!.GetValue<string>() == "Token"),
+            "the Setting is still wired into Token: " + read["logic"]!["graph"]!["edges"]!.ToJsonString());
+        var next = await rig.Started("relays");
+        Check(next != host && Property(next, "relays:hub:relay", "Room") as string == "hall" && Property(next, "relays:hub:relay", "Address") as string == "10.0.0.2" && Property(next, "relays:hub:relay", "Token") as string == "s3cret",
+            "the new code runs, Room its default, Address and Token as they were");
+        var gone = Refused(await rig.Library("relays", 2, WithRoom(" = \"hall\";").Replace(TokenLine, "")), "front", "Token removed under a wire");
+        Check(gone.SequenceEqual(["This value wire goes into Token, which this step does not have"]), "the wire into Token is told: " + string.Join(" | ", gone));
+        Check((await rig.Read("relays"))["revision"]!.GetValue<long>() == 2 && rig.Scripts.Entities.Host("relays") == next, "the definition runs as it was");
+        Console.WriteLine("PASS rich node libraries: a library save that adds a setting with a default to a class a C# device derives takes it into the node's signature, and the definition runs the new code at its next revision, its values and wires kept; removing a wired setting is refused");
+    }
+
+    // A library save that gives a class a C# device derives a new required setting is refused naming the definition, the
+    // setting told required as on the class's own node; the library and the definition stay as they were, which runs on.
+    static async Task ALibrarySaveThatAddsARequiredSettingToADerivedClassIsRefused()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("derived-required");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var host = await rig.Running("relays", DerivedHubs());
+        var messages = Refused(await rig.Library("relays", 1, WithRoom("")), "front", "a required Room under a C# device");
+        Check(messages.SequenceEqual(["Room is required"]), "the C# device's Room is told required: " + string.Join(" | ", messages));
+        await StillRuns(rig, host, "a required Room under a C# device");
+        var library = JsonNode.Parse(await rig.Api.NodeLibraryRequest(JsonSerializer.Serialize(new { operation = "read", id = "relays" })))!;
+        Check(library["result"]?["revision"]?.GetValue<long>() == 1 && library["result"]!["source"]!.GetValue<string>() == RelayHubFixture.Code, "the library is as it was: " + library.ToJsonString());
+        Check(await StoredSettings(rig) == "Address,Token,PollEvery", "the stored node is as it was: " + await StoredSettings(rig));
+        Console.WriteLine("PASS rich node libraries: a library save that adds a required setting to a class a C# device derives is refused naming the definition; nothing stored changes and it runs on");
+    }
+
+    // A library save that removes a setting of a class a C# device derives is refused, naming the definition, when the
+    // node has a value for it, as for the class's own node; one the node does not set goes, and the definition is rebuilt.
+    static async Task ALibrarySaveThatRemovesASettingOfADerivedClassIsRefusedOnlyWhenTheNodeSetsIt()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("derived-setting-gone");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var host = await rig.Running("relays", DerivedHubs(new JsonObject { ["Address"] = VisualExecutionTests.Lit("string", "10.0.0.2"), ["PollEvery"] = VisualExecutionTests.Lit("number", 10) }));
+        Check(RelayHubFixture.Code.Contains(PollLine, StringComparison.Ordinal) && RelayHubFixture.Code.Contains(TokenLine, StringComparison.Ordinal), "the hub has Poll every and Token");
+        var answer = await rig.Library("relays", 1, RelayHubFixture.Code.Replace(PollLine, ""));
+        Refused(answer, "front", "Poll every removed under a C# device");
+        var problems = answer["error"]!["detail"]!["definitions"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "relays")!["diagnostics"]!.AsArray()
+            .Where(d => d!["nodeId"]?.GetValue<string>() == "front").Select(d => $"{d!["inputId"]} {d["message"]}").ToArray();
+        Check(problems.SequenceEqual(["PollEvery Unknown input PollEvery"]), "the C# device's value is for an input it no longer has: " + string.Join(" | ", problems));
+        await StillRuns(rig, host, "Poll every removed under a C# device");
+        var saved = await rig.Saved("relays", 1, RelayHubFixture.Code.Replace(TokenLine, ""));
+        Check(saved["definitions"]!.AsArray().Single(d => d!["id"]!.GetValue<string>() == "relays")!["document"]!["revision"]!.GetValue<long>() == 2, "the definition is rebuilt: " + saved.ToJsonString());
+        Check(await StoredSettings(rig) == "Address,PollEvery", "the stored node's signature has no Token: " + await StoredSettings(rig));
+        var next = await rig.Started("relays");
+        Check(Property(next, "relays:hub:relay", "PollEvery") is 10.0, "the new code runs with Poll every as it was");
+        Console.WriteLine("PASS rich node libraries: a library save that removes a setting of a class a C# device derives is refused naming the definition when the node sets it, and goes ahead when it does not");
+    }
+
+    // A definition that is off is rebuilt by a library save as one that is on: a new setting with a default is taken into
+    // its C# device's signature, and turned on afterwards the definition runs the new code.
+    static async Task ALibrarySaveTakesANewSettingIntoADerivingDefinitionThatIsOff()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("derived-off");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        await rig.Running("relays", DerivedHubs());
+        await rig.Ok(new { operation = "set_enabled", id = "relays", enabled = false });
+        var saved = await rig.Saved("relays", 1, WithRoom(" = \"hall\";"));
+        var rebuilt = saved["definitions"]!.AsArray().SingleOrDefault(d => d!["id"]!.GetValue<string>() == "relays");
+        Check(rebuilt?["enabled"]?.GetValue<bool>() == false && rebuilt["document"]!["revision"]!.GetValue<long>() == 2, "the definition that is off is rebuilt: " + saved.ToJsonString());
+        Check(await StoredSettings(rig) == "Address,Token,PollEvery,Room", "the stored node's signature has Room: " + await StoredSettings(rig));
+        await rig.Ok(new { operation = "set_enabled", id = "relays", enabled = true });
+        var host = await rig.Started("relays");
+        Check(Property(host, "relays:hub:relay", "Room") as string == "hall", "turned on, it runs the new code, Room its default");
+        Console.WriteLine("PASS rich node libraries: a library save takes a new setting with a default into the C# device of a definition that is off, which runs the new code once turned on");
+    }
+
+    // A definition's own save of a C# device whose signature is not what its code gives is refused as out of date, as
+    // before: there the person who edited the code is asked to apply it. Only a library save refreshes the signature.
+    static async Task ADefinitionsOwnSaveOfAStaleSignatureIsStillRefused()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("derived-stale");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        var stale = RelayHubFixture.Definition("Relays", [RelayHubFixture.Derived("csharp_device", "front", "hub", DerivedHub, code: WithRoom(" = \"hall\";"))]);
+        var answer = await rig.Request(new { operation = "save", id = "relays", expectedRevision = 0, definition = stale });
+        Check(answer["ok"]?.GetValue<bool>() == false && answer["error"]!["code"]!.GetValue<string>() == "validation"
+            && answer["error"]!["detail"]!["diagnostics"]!.AsArray().Any(d => d!["code"]?.GetValue<string>() == "csharp.signature" && d["nodeId"]!.GetValue<string>() == "front"),
+            "the stale signature is refused: " + answer.ToJsonString());
+        Console.WriteLine("PASS rich node libraries: a definition's own save of a C# device whose signature is out of date with its code is still refused");
+    }
+
+    // A library save that gives a library entity class a C# entity derives a new setting with a default takes it into the
+    // node's signature, as for a C# device: the definition is rebuilt and runs the new code, the setting at its default.
+    static async Task ALibrarySaveTakesANewSettingIntoACSharpEntityThatDerivesTheClass()
+    {
+        await using var rig = await RelayHubFixture.Rig.Start("derived-entity");
+        await rig.Saved("relays", 0, RelayHubFixture.Code);
+        const string address = "[Setting] public string Address { get; set; } = \"\";";
+        Check(RelayHubFixture.OtherCode.Contains(address, StringComparison.Ordinal) && !RelayHubFixture.HubCode.Contains(address, StringComparison.Ordinal), "the relay has Address");
+        await rig.Running("relays", RelayHubFixture.Definition("Relays", [RelayHubFixture.Derived("csharp_entity", "front", "relay", "public class FrontRelay : Relay { }")]));
+        var saved = await rig.Saved("relays", 1, RelayHubFixture.Code.Replace(address, address + "\n    [Setting] public int Channel { get; set; } = 1;"));
+        var rebuilt = saved["definitions"]!.AsArray().SingleOrDefault(d => d!["id"]!.GetValue<string>() == "relays");
+        Check(rebuilt?["active"]?.GetValue<bool>() == true && rebuilt["document"]!["revision"]!.GetValue<long>() == 2, "the definition is rebuilt and runs: " + saved.ToJsonString());
+        Check(await StoredSettings(rig) == "Address,Channel", "the stored node's signature has Channel: " + await StoredSettings(rig));
+        var host = await rig.Started("relays");
+        Check(Property(host, "relays:relay", "Channel", device: false) is 1 && Property(host, "relays:relay", "Address", device: false) as string == "10.0.0.2", "the new code runs, Channel its default, Address as it was");
+        Console.WriteLine("PASS rich node libraries: a library save that adds a setting with a default to a class a C# entity derives takes it into the node's signature, and the definition runs the new code");
     }
     /// <summary>
     /// A pin type nested <paramref name="levels"/> levels deep: <c>int</c> is one level, and each list, array, tuple or

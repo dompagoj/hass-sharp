@@ -1014,6 +1014,15 @@ use as a node, that means:
   accepted: each definition is rebuilt and runs the new code, the setting at its
   default.
 
+The same holds for a C# entity or C# device node whose class derives from it, such
+as `public class FrontDoor : PeopleDetector { }`: the save gives the node the
+settings its code has with the new library, and nobody has to apply that code again.
+A new setting with a default is taken up at once. A new required setting that the
+node has no value for, or a removed setting that it has a value or a Setting wired
+for, refuses the save, naming the definition, with the same message as for the
+class's node. Its code that no longer compiles, such as when the class is gone,
+refuses it too.
+
 ### From a C# node to the class's node
 
 A C# node whose code only derives from a library class, such as
