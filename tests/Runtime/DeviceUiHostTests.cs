@@ -155,6 +155,9 @@ static class DeviceUiHostTests
     /// <summary>The values a press sends, as the panel's request is parsed.</summary>
     static JsonObject Sent(string json) => JsonNode.Parse(json)!.AsObject();
 
+    /// <summary>The values a press sends with a pick field's option chosen.</summary>
+    static JsonObject Picked(string key, string option) => new() { [key] = new JsonObject { ["picked"] = option } };
+
     /// <summary>A whole manager over a home of its own.</summary>
     sealed class Rig : IAsyncDisposable
     {
@@ -495,13 +498,20 @@ static class DeviceUiHostTests
         [.. page["lists"]!.AsArray().Single(each => (string)each!["id"]! == list)!["cards"]!.AsArray()
             .Select(card => ((string)card!["id"]!, (string?)card["title"], (string?)card["image"]))];
 
+    // The options of a page's set, each as its id, its title and its image's hash.
+    static (string Id, string Title, string? Image)[] OptionsOf(JsonObject page, string set) =>
+        [.. page["options"]!.AsArray().Single(each => (string)each!["id"]! == set)!["items"]!.AsArray()
+            .Select(option => ((string)option!["id"]!, (string)option["title"]!, (string?)option["image"]))];
+
     /// <summary>
     /// The Snapshot namer the custom entities guide shows, as written there (<see cref="ServiceCallTests.GuideCode"/>), on
-    /// two definitions over one camera whose pictures are 640 pixels wide: each draws its first snapshot at once, at most
-    /// 320 wide and waiting; Save refuses an empty name, and a name saved moves the snapshot to Named on both, the other
-    /// redrawn by Changed; a second Save of that card answers changed; Dismiss takes a snapshot whose name is empty away;
-    /// Rename refuses an empty name, a rename on one shows on the other, and a delete on the other, its name emptied,
-    /// empties Named on the first.
+    /// three definitions over one camera whose pictures are 640 pixels wide: each draws its first snapshot at once, at most
+    /// 320 wide and waiting; Save refuses no name and an empty new one, and a new name saved moves the snapshot to Named,
+    /// and to the options a Name picks from, on both, the other redrawn by Changed; a second Save of that card answers
+    /// changed; on the other, Save of an option the set has not answers changed, and Save of the named snapshot picked
+    /// gives its own the same name; Rename refuses an empty name, a rename on one shows on the other, and a delete on the
+    /// other, its name emptied, takes it from Named and from the options on the first; the third's Save of the deleted
+    /// snapshot, picked before it went, answers changed, and Dismiss takes a snapshot with no name chosen away.
     /// </summary>
     static async Task TheGuidesSnapshotNamerRuns()
     {
@@ -526,25 +536,47 @@ static class DeviceUiHostTests
         Check(image != null && SharpImage.Load(door.UiImage("namer", image)!).Width == 320, "the snapshot's picture is 320 pixels wide");
         Check(door.UiAttention()["namer"] == 1 && CardsOf(Page(door), "named").Length == 0, "the snapshot waits, and nothing is named yet: " + Page(door).ToJsonString());
 
-        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":"  "}"""))) == "refused: Name is required.", "Save refuses an empty name");
-        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":" Ivan "}"""))) == "done", "Save of a name");
+        Check(OptionsOf(Page(door), "named").Length == 0, "nothing to pick yet: " + Page(door).ToJsonString());
+        var pick = Page(door)["lists"]!.AsArray().Single(list => (string)list!["id"]! == "unnamed")!["cards"]![0]!["fields"]![0]!;
+        Check(pick.ToJsonString() == """{"key":"name","label":"Name","type":"pick","value":null,"set":"named","add":{"title":"New name","fields":[{"key":"name","label":"Name","type":"text","value":null,"required":true}]},"required":true}""",
+            "the snapshot's Name picks from the named ones, or takes a new name: " + pick.ToJsonString());
+
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":null}"""))) == "refused: Name is required.", "Save refuses no name");
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":{"new":{"name":"  "}}}"""))) == "refused: Name is required.", "Save refuses an empty new name");
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":{"new":{"name":" Ivan "}}}"""))) == "done", "Save of a new name");
         Check(CardsOf(Page(door), "unnamed").Length == 0 && CardsOf(Page(door), "named") is [(var named, "Ivan", not null)] && named == snapshot,
             "the snapshot is named Ivan, with its picture: " + Page(door).ToJsonString());
-        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":"Marko"}"""))) == "changed", "a second Save of the card answers changed");
+        Check(OptionsOf(Page(door), "named") is [(var option, "Ivan", not null)] && option == snapshot, "the named snapshot is an option, with its picture: " + Page(door).ToJsonString());
+        Check(Answer(await door.UiAct("namer", "unnamed", snapshot, "save", Sent("""{"name":{"new":{"name":"Marko"}}}"""))) == "changed", "a second Save of the card answers changed");
 
         var hall = await rig.Running("hall", Definition("Hall", Namer()));
         Check(CardsOf(Page(hall), "named") is [(var shared, "Ivan", not null)] && shared == snapshot, "another namer lists the name with its picture: " + Page(hall).ToJsonString());
-        // The other namer's own first snapshot, dismissed with its required Name empty.
+        // The other namer's own first snapshot, given the name of the one the first named by picking it.
         await EntityTestHome.Until(() => CardsOf(Page(hall), "unnamed").Length == 1, "the other namer draws its first snapshot: " + Page(hall).ToJsonString());
         var (own, _, _) = CardsOf(Page(hall), "unnamed")[0];
-        Check(Answer(await hall.UiAct("namer", "unnamed", own, "dismiss", Sent("""{"name":""}"""))) == "done", "Dismiss with the name empty");
-        Check(CardsOf(Page(hall), "unnamed").Length == 0 && hall.UiAttention().GetValueOrDefault("namer") == 0, "the dismissed snapshot is gone: " + Page(hall).ToJsonString());
+        Check(Answer(await hall.UiAct("namer", "unnamed", own, "save", Sent("""{"name":{"picked":"nothing"}}"""))) == "changed", "Save of an option the set has not");
+        Check(Answer(await hall.UiAct("namer", "unnamed", own, "save", Picked("name", snapshot))) == "done", "Save of the named snapshot picked");
+        Check(CardsOf(Page(hall), "unnamed").Length == 0 && hall.UiAttention().GetValueOrDefault("namer") == 0
+            && CardsOf(Page(hall), "named").Select(card => card.Title).SequenceEqual(["Ivan", "Ivan"]), "its own snapshot has the same name: " + Page(hall).ToJsonString());
+        await EntityTestHome.Until(() => OptionsOf(Page(door), "named").Length == 2, "the first namer offers both: " + Page(door).ToJsonString());
         Check(Answer(await door.UiAct("namer", "named", snapshot, "rename", Sent("""{"name":""}"""))) == "refused: Name is required.", "Rename refuses an empty name");
         Check(Answer(await door.UiAct("namer", "named", snapshot, "rename", Sent("""{"name":"Ana"}"""))) == "done", "Rename");
-        await EntityTestHome.Until(() => CardsOf(Page(hall), "named") is [(_, "Ana", _)], "the other namer shows the new name: " + Page(hall).ToJsonString());
+        await EntityTestHome.Until(() => CardsOf(Page(hall), "named").Select(card => card.Title).SequenceEqual(["Ana", "Ivan"]), "the other namer shows the new name: " + Page(hall).ToJsonString());
+
+        // A third namer's own snapshot waits while the first named one is deleted on the second.
+        var desk = await rig.Running("desk", Definition("Desk", Namer()));
+        await EntityTestHome.Until(() => CardsOf(Page(desk), "unnamed").Length == 1, "the third namer draws its first snapshot: " + Page(desk).ToJsonString());
+        var (third, _, _) = CardsOf(Page(desk), "unnamed")[0];
+        Check(OptionsOf(Page(desk), "named").Any(each => each.Id == snapshot), "the third namer offers the snapshot named Ana: " + Page(desk).ToJsonString());
         Check(Answer(await hall.UiAct("namer", "named", snapshot, "delete", Sent("""{"name":""}"""))) == "done", "Delete with the name emptied");
-        await EntityTestHome.Until(() => CardsOf(Page(door), "named").Length == 0, "the first namer no longer lists it: " + Page(door).ToJsonString());
-        Check(CardsOf(Page(hall), "named").Length == 0, "nor the one that deleted it: " + Page(hall).ToJsonString());
-        Console.WriteLine("PASS device ui host: the guide's Snapshot namer draws a snapshot to name, saves, dismisses, renames and deletes, a required name checked only where it is needed, and two of them share the names");
+        await EntityTestHome.Until(() => CardsOf(Page(door), "named").Length == 1 && OptionsOf(Page(door), "named") is [(var left, "Ivan", _)] && left == own,
+            "the first namer no longer lists or offers it: " + Page(door).ToJsonString());
+        Check(CardsOf(Page(hall), "named") is [(_, "Ivan", _)], "nor the one that deleted it: " + Page(hall).ToJsonString());
+        await EntityTestHome.Until(() => OptionsOf(Page(desk), "named").All(each => each.Id != snapshot), "the third namer no longer offers it: " + Page(desk).ToJsonString());
+        Check(Answer(await desk.UiAct("namer", "unnamed", third, "save", Picked("name", snapshot))) == "changed", "Save of the snapshot picked before it was deleted");
+        Check(CardsOf(Page(desk), "unnamed").Length == 1, "the snapshot whose Save answered changed still waits: " + Page(desk).ToJsonString());
+        Check(Answer(await desk.UiAct("namer", "unnamed", third, "dismiss", Sent("""{"name":null}"""))) == "done", "Dismiss with no name chosen");
+        Check(CardsOf(Page(desk), "unnamed").Length == 0 && desk.UiAttention().GetValueOrDefault("namer") == 0, "the dismissed snapshot is gone: " + Page(desk).ToJsonString());
+        Console.WriteLine("PASS device ui host: the guide's Snapshot namer draws a snapshot to name, saves a new name or a named snapshot's picked, dismisses, renames and deletes, an option gone answering changed, and three of them share the names");
     }
 }

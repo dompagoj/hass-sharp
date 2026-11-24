@@ -6,7 +6,9 @@ namespace HassSharp;
 /// <see cref="List"/> whenever its data changes, and again in <c>Start()</c>: nothing of the page is stored. A page has at
 /// most 20 lists, a list at most 200 cards, and a card at most 8 fields and 4 actions; a text takes at most 500
 /// characters and an image at most 1 MiB as JPEG. A list's and a card's id is 1 to 64 letters, digits, <c>_</c>,
-/// <c>.</c>, <c>:</c> and <c>-</c>, starting with a letter or a digit. Safe to use from any thread.
+/// <c>.</c>, <c>:</c> and <c>-</c>, starting with a letter or a digit. A card's pick field chooses from a set of options
+/// the device draws once for the page with <see cref="Options"/>: a page has at most 8 sets, a set at most 500 options,
+/// each with an id as a card's. Safe to use from any thread.
 /// </summary>
 public sealed class SharpUi
 {
@@ -23,7 +25,10 @@ public sealed class SharpUi
     /// <param name="cards">Its cards, each with an id unique in the list.</param>
     /// <param name="attention">Whether its cards count towards the number of things waiting for the user.</param>
     /// <param name="empty">What the list shows when it has no cards; nothing when null.</param>
-    /// <exception cref="ArgumentException">The page is not one, as the message says; the page is as it was.</exception>
+    /// <exception cref="ArgumentException">
+    /// The page is not one, as the message says, such as a pick field whose set is not drawn or whose value is not one of
+    /// the set's options now; the page is as it was.
+    /// </exception>
     /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
     public void List(string id, string title, IEnumerable<UiCard> cards, bool attention = false, string? empty = null) =>
         page.Draw(id, title, cards, attention, empty);
@@ -32,6 +37,123 @@ public sealed class SharpUi
     /// <returns>Whether there was a list with that id.</returns>
     /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
     public bool Remove(string id) => page.Remove(id);
+
+    /// <summary>
+    /// Draws a set of options the cards' pick fields choose from, or replaces the one with that id: the panel gets it once
+    /// for the page, whatever the number of cards that use it. Draw a set before the lists whose cards pick from it, and
+    /// again whenever its options change. Replacing a set takes away an option a drawn card's field has chosen: the field
+    /// then shows nothing chosen, and a press that still names that option answers that the page changed, running nothing.
+    /// </summary>
+    /// <param name="id">The set's id, unique on the page, as a card's.</param>
+    /// <param name="options">Its options, each with an id unique in the set; at most 500.</param>
+    /// <exception cref="ArgumentException">The set is not one, as the message says; the page is as it was.</exception>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    public void Options(string id, IEnumerable<UiOption> options) => page.DrawOptions(id, options);
+
+    /// <summary>Removes a set of options.</summary>
+    /// <returns>Whether there was a set with that id.</returns>
+    /// <exception cref="ArgumentException">A drawn card has a pick field on the set: redraw or remove its list first.</exception>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    public bool RemoveOptions(string id) => page.RemoveOptions(id);
+}
+
+/// <summary>
+/// An option of a set a card's pick field chooses from (<see cref="SharpUi.Options"/>): a title, a detail line under it
+/// and a picture, which the panel's dialog shows and searches. Nothing is checked until the set is drawn, which takes
+/// what it needs of it then.
+/// </summary>
+/// <param name="id">The option's id, unique in its set, as a card's: what a press names, so the same thing keeps the same id when redrawn.</param>
+/// <param name="title">What it is called: at most 500 characters, not empty.</param>
+/// <param name="detail">A line under the title; nothing when null.</param>
+public sealed class UiOption(string id, string title, string? detail = null)
+{
+    bool hasImage;
+    byte[]? jpeg;
+
+    /// <summary>Shows a picture, encoded to JPEG now with its drawings drawn in; replaces an earlier image.</summary>
+    public UiOption Image(SharpImage image)
+    {
+        hasImage = true;
+        jpeg = image?.ToJpeg();
+        return this;
+    }
+
+    /// <summary>Shows a JPEG, at most 1 MiB; replaces an earlier image.</summary>
+    public UiOption Image(byte[] jpeg)
+    {
+        hasImage = true;
+        this.jpeg = jpeg;
+        return this;
+    }
+
+    /// <summary>The option as drawn now, checked, and a copy of its JPEG.</summary>
+    /// <exception cref="ArgumentException">The option is not one.</exception>
+    internal (DrawnOption Option, byte[]? Jpeg) Draw()
+    {
+        DevicePage.CheckId(id, "option");
+        DevicePage.CheckText(title, $"The title of option '{id}'", required: true);
+        DevicePage.CheckText(detail, $"The detail line of option '{id}'");
+        var image = hasImage ? DevicePage.TakeJpeg(jpeg, $"option '{id}'") : null;
+        return (new DrawnOption(id, image == null ? null : DevicePage.Hash(image), title, detail), image);
+    }
+}
+
+/// <summary>
+/// The form a pick field offers for a new one instead of an option (<see cref="UiCard.Pick"/>): a title, and at most 4
+/// fields, added as a card's are. A press that fills it in gives its values with <see cref="UiValues.New"/>, checked as a
+/// card's are. Nothing is checked until the card is drawn.
+/// </summary>
+/// <param name="title">What the panel offers it as, such as "New person".</param>
+public sealed class UiForm(string title)
+{
+    readonly List<DrawnField> fields = [];
+
+    /// <summary>Adds a text field, as <see cref="UiCard.Field"/> does.</summary>
+    public UiForm Field(string key, string label, string? value = null, bool required = false, IEnumerable<string>? suggestions = null)
+    {
+        fields.Add(UiFields.Text(key, label, value, required, suggestions));
+        return this;
+    }
+
+    /// <summary>Adds a field the user picks one of its options in, as <see cref="UiCard.Select"/> does.</summary>
+    public UiForm Select(string key, string label, IEnumerable<string> options, string? value = null, bool required = false)
+    {
+        fields.Add(UiFields.Select(key, label, options, value, required));
+        return this;
+    }
+
+    /// <summary>Adds a number field, as <see cref="UiCard.Number"/> does.</summary>
+    public UiForm Number(string key, string label, double? value = null, double minimum = double.NaN, double maximum = double.NaN, bool required = false)
+    {
+        fields.Add(UiFields.Number(key, label, value, minimum, maximum, required));
+        return this;
+    }
+
+    /// <summary>Adds an on-off field, as <see cref="UiCard.Toggle"/> does.</summary>
+    public UiForm Toggle(string key, string label, bool value = false)
+    {
+        fields.Add(UiFields.Toggle(key, label, value));
+        return this;
+    }
+
+    /// <summary>The form as it is now, unchecked: the card checks it when it is drawn.</summary>
+    internal DrawnForm Taken() => new(title, [.. fields]);
+}
+
+/// <summary>The fields a card and a pick field's form are built with.</summary>
+static class UiFields
+{
+    internal static DrawnField Text(string key, string label, string? value, bool required, IEnumerable<string>? suggestions) =>
+        new(key, label, UiFieldType.Text, value, null, false, null, suggestions?.ToArray(), double.NaN, double.NaN, required);
+
+    internal static DrawnField Select(string key, string label, IEnumerable<string> options, string? value, bool required) =>
+        new(key, label, UiFieldType.Select, value, null, false, options?.ToArray(), null, double.NaN, double.NaN, required);
+
+    internal static DrawnField Number(string key, string label, double? value, double minimum, double maximum, bool required) =>
+        new(key, label, UiFieldType.Number, null, value, false, null, null, minimum, maximum, required);
+
+    internal static DrawnField Toggle(string key, string label, bool value) =>
+        new(key, label, UiFieldType.Toggle, null, null, value, null, null, double.NaN, double.NaN, false);
 }
 
 /// <summary>
@@ -80,7 +202,7 @@ public sealed class UiCard(string id)
     /// <param name="suggestions">Values the panel offers as the user types.</param>
     public UiCard Field(string key, string label, string? value = null, bool required = false, IEnumerable<string>? suggestions = null)
     {
-        fields.Add(new(key, label, UiFieldType.Text, value, null, false, null, suggestions?.ToArray(), double.NaN, double.NaN, required));
+        fields.Add(UiFields.Text(key, label, value, required, suggestions));
         return this;
     }
 
@@ -92,7 +214,7 @@ public sealed class UiCard(string id)
     /// <param name="required">Whether a press needs an option picked.</param>
     public UiCard Select(string key, string label, IEnumerable<string> options, string? value = null, bool required = false)
     {
-        fields.Add(new(key, label, UiFieldType.Select, value, null, false, options?.ToArray(), null, double.NaN, double.NaN, required));
+        fields.Add(UiFields.Select(key, label, options, value, required));
         return this;
     }
 
@@ -105,7 +227,7 @@ public sealed class UiCard(string id)
     /// <param name="required">Whether a press needs a number.</param>
     public UiCard Number(string key, string label, double? value = null, double minimum = double.NaN, double maximum = double.NaN, bool required = false)
     {
-        fields.Add(new(key, label, UiFieldType.Number, null, value, false, null, null, minimum, maximum, required));
+        fields.Add(UiFields.Number(key, label, value, minimum, maximum, required));
         return this;
     }
 
@@ -115,7 +237,26 @@ public sealed class UiCard(string id)
     /// <param name="value">Whether it is on until the user changes it.</param>
     public UiCard Toggle(string key, string label, bool value = false)
     {
-        fields.Add(new(key, label, UiFieldType.Toggle, null, null, value, null, null, double.NaN, double.NaN, false));
+        fields.Add(UiFields.Toggle(key, label, value));
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a field the user chooses one option of a set in (<see cref="SharpUi.Options"/>), in a dialog that shows each
+    /// option's picture, title and detail and searches them, or, when <paramref name="add"/> is given, fills in a form for
+    /// a new one instead. A press gives what was chosen with <see cref="UiValues.Picked"/> or <see cref="UiValues.New"/>.
+    /// </summary>
+    /// <param name="key">What its value is read by, as for <see cref="Field"/>.</param>
+    /// <param name="label">What it is called.</param>
+    /// <param name="options">The id of the set it chooses from, drawn before the card's list.</param>
+    /// <param name="value">The option chosen until the user changes it: one of the set's options when the list is drawn; none when null.</param>
+    /// <param name="required">Whether a press needs an option chosen or a new one filled in.</param>
+    /// <param name="add">The form of a new one, of at most 4 fields; none when null.</param>
+    /// <param name="except">The ids of options of the set this card does not offer, such as the card's own.</param>
+    public UiCard Pick(string key, string label, string options, string? value = null, bool required = false, UiForm? add = null, IEnumerable<string>? except = null)
+    {
+        fields.Add(new(key, label, UiFieldType.Pick, value, null, false, null, null, double.NaN, double.NaN, required)
+            { Set = options, Except = except?.ToArray(), Add = add?.Taken() });
         return this;
     }
 
@@ -149,14 +290,7 @@ public sealed class UiCard(string id)
         if (fields.Count > DevicePage.MaxFields) throw new ArgumentException($"Card '{id}' has {fields.Count} fields: a card has at most {DevicePage.MaxFields}");
         if (actions.Count > DevicePage.MaxActions) throw new ArgumentException($"Card '{id}' has {actions.Count} actions: a card has at most {DevicePage.MaxActions}");
 
-        byte[]? image = null;
-        if (hasImage)
-        {
-            if (jpeg == null) throw new ArgumentException($"The image of card '{id}' cannot be null: leave the image out instead");
-            if (jpeg.Length > DevicePage.MaxImageBytes) throw new ArgumentException($"The image of card '{id}' takes {jpeg.Length} bytes: an image takes at most 1 MiB (1,048,576 bytes)");
-            if (jpeg.Length < 2 || jpeg[0] != 0xFF || jpeg[1] != 0xD8) throw new ArgumentException($"The image of card '{id}' is not a JPEG: its bytes do not start with FF D8");
-            image = (byte[])jpeg.Clone();
-        }
+        var image = hasImage ? DevicePage.TakeJpeg(jpeg, $"card '{id}'") : null;
 
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var field in fields)
@@ -201,12 +335,15 @@ public sealed class UiValues
     readonly IReadOnlyDictionary<string, string> texts;
     readonly IReadOnlyDictionary<string, double?> numbers;
     readonly IReadOnlyDictionary<string, bool> toggles;
+    readonly IReadOnlyDictionary<string, UiPick> picks;
 
-    internal UiValues(IReadOnlyDictionary<string, string> texts, IReadOnlyDictionary<string, double?> numbers, IReadOnlyDictionary<string, bool> toggles)
+    internal UiValues(IReadOnlyDictionary<string, string> texts, IReadOnlyDictionary<string, double?> numbers, IReadOnlyDictionary<string, bool> toggles,
+        IReadOnlyDictionary<string, UiPick>? picks = null)
     {
         this.texts = texts;
         this.numbers = numbers;
         this.toggles = toggles;
+        this.picks = picks ?? new Dictionary<string, UiPick>();
     }
 
     /// <summary>A text field's value, or the option a select field has picked; empty when there is none.</summary>
@@ -223,6 +360,17 @@ public sealed class UiValues
     /// <exception cref="KeyNotFoundException">The card has no on-off field with the key.</exception>
     public bool Toggle(string key) =>
         key != null && toggles.TryGetValue(key, out var value) ? value : throw new KeyNotFoundException($"The card has no on-off field '{key}'");
+
+    /// <summary>The id of the option a pick field has chosen; null when the user filled in its form for a new one, or chose nothing.</summary>
+    /// <exception cref="KeyNotFoundException">The card has no pick field with the key.</exception>
+    public string? Picked(string key) => Pick(key).Id;
+
+    /// <summary>The values of the form a pick field's new one was filled in with, read as a card's are; null when the user chose an option, or nothing.</summary>
+    /// <exception cref="KeyNotFoundException">The card has no pick field with the key.</exception>
+    public UiValues? New(string key) => Pick(key).New;
+
+    UiPick Pick(string key) =>
+        key != null && picks.TryGetValue(key, out var value) ? value : throw new KeyNotFoundException($"The card has no pick field '{key}'");
 }
 
 /// <summary>Thrown by an action's handler to refuse the press: the panel shows the message on the card, as a plain sentence such as "Name is taken."</summary>

@@ -74,6 +74,15 @@ class DeviceUiTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(results, [(7, {'version': 1, 'ok': True, 'result': result})])
         self.env['logger'].exception.assert_not_called()
 
+    async def test_a_pick_fields_values_reach_dotnet_unchanged(self):
+        # A pick field's value is an object, the option chosen or the new one's form, or null: it reaches .NET as sent.
+        request = {**OPERATIONS['act'][0], 'values': {'person': {'picked': 'p:1'}, 'into': None,
+                                                     'other': {'new': {'first_name': 'Ana', 'last_name': '', 'age': 30, 'notify': True}}}}
+        results, errors = await self.send(request)
+        self.assertEqual(errors, [])
+        self.assertEqual(self.requests, [request])
+        self.assertEqual(results, [(7, {'version': 1, 'ok': True, 'result': OPERATIONS['act'][1]})])
+
     async def test_a_non_admin_is_refused(self):
         results, errors = await self.send(OPERATIONS['counts'][0], admin=False)
         self.assertEqual((results, errors), ([], [(7, 'unauthorized', 'Administrator required')]))

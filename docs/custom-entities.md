@@ -1140,6 +1140,15 @@ throws an `ObjectDisposedException`.
   takes what it needs of the cards as it is drawn, so changing a card afterwards
   changes nothing.
 - **`Ui.Remove(id)`** removes a list, and returns whether there was one.
+- **`Ui.Options(id, options)`** draws a set of options that cards' pick fields choose
+  from, or replaces the set with that id; sets keep their order as lists do. The
+  panel gets a set once for the page, however many cards pick from it. An option is
+  `new UiOption(id, title, detail)`, with an optional **`Image(picture)`** or
+  **`Image(jpeg)`** as a card has. Draw a set before the lists whose cards pick from
+  it, and again whenever its options change.
+- **`Ui.RemoveOptions(id)`** removes a set, and returns whether there was one. While a
+  drawn card still has a pick field on the set it throws an `ArgumentException`:
+  redraw or remove that list first.
 
 Nothing of the page is stored: a save, a node library save or a restart makes a new
 instance of the class, with an empty page. Draw every list in `Start()` from what the
@@ -1159,6 +1168,14 @@ A card is `new UiCard(id)` followed by calls that each return the card:
 - **`Number(key, label, value, minimum, maximum, required)`** adds a number field;
   `double.NaN`, the default, is no minimum or no maximum.
 - **`Toggle(key, label, value)`** adds an on-off field.
+- **`Pick(key, label, options, value, required, add, except)`** adds a pick field:
+  a button that opens a dialog over the set `options`, with each option's picture,
+  title and detail and a search box, where the user chooses one. `value` is the
+  option chosen until the user changes it; it must be an option of the set when the
+  list is drawn, and not one of `except`, the ids of options this card does not offer
+  (a person is not merged into themselves). `add` is a form for a new one instead of an
+  option: `new UiForm(title)` with up to 4 fields, added with `Field`, `Select`,
+  `Number` and `Toggle` as a card's are. Without `add` the user can only choose.
 - **`Action(label, handler, confirm, style, validate)`** adds a button. A `confirm`
   text is a question the panel asks before the press, with the label on its button.
   `style` is `UiActionStyle.Default`, `Primary` (the card's main action) or `Danger`
@@ -1177,32 +1194,49 @@ Ids and keys:
 - An action's id is made of its label: in lower case, each run of characters other
   than letters and digits made one `_`, trimmed of `_`, so "Merge into…" is
   `merge_into`. Two actions of one card need labels that make different ids.
+- A set's id is unique on the page and an option's id unique in its set, each as a
+  card's id. Give an option the id of the thing it is, as a card's: a press names the
+  option chosen by it.
 
 Limits: 20 lists on a page, 200 cards in a list, 8 fields and 4 actions on a card,
+8 sets of options on a page, 500 options in a set, 4 fields in a pick field's form,
 500 characters for each text (a title, a detail line, a list's empty text, a label, a
 field's value, an option, a suggestion, a confirm text), and 1 MiB (1,048,576 bytes)
-for a card's JPEG. A list that breaks a limit or a rule above, such as two cards with
-one id, an option given twice or a number outside its own range, makes `Ui.List`
-throw an `ArgumentException` that says which, and the page stays as it was.
+for a card's or an option's JPEG. A list that breaks a limit or a rule above, such as
+two cards with one id, an option given twice, a number outside its own range or a
+pick field whose set is not drawn, makes `Ui.List` throw an `ArgumentException` that
+says which, and the page stays as it was; `Ui.Options` does the same for a set. The
+pictures of the cards and of the options are kept once each and only while a card or
+an option shows them.
+
+Replacing a set never throws because a drawn card's field has chosen an option the
+set no longer has: the field then shows nothing chosen.
 
 ### Buttons and their handlers
 
 A handler is a `Func<UiValues, Task>`, given the card's values when its button is
 pressed. `values["name"]` is a text field's value, or the option a select has picked
 (empty when there is none); `values.Number("count")` is a number field's (null when
-it has none); `values.Toggle("notify")` says whether an on-off field is on. A key
-the card has no field of that kind for throws a `KeyNotFoundException`.
+it has none); `values.Toggle("notify")` says whether an on-off field is on. For a
+pick field, `values.Picked("person")` is the id of the option chosen, or null, and
+`values.New("person")` the values its form was filled in with, read the same way
+(`values.New("person")!["first_name"]`), or null: never both. A key the card has no
+field of that kind for throws a `KeyNotFoundException`.
 
 - **Checked first.** The panel, and then HassSharp again, refuses a press while a
   required field is empty, a number is outside its minimum or maximum, or a select's
   value is not one of its options, and says why on the card: "Name is required." A
+  required pick field needs an option chosen or its form filled in, whose fields are
+  checked as a card's are, the refusal naming the form's field. A
   required field is required by every button of its card that validates. A button
   that needs no value, such as Dismiss or Delete, passes `validate: false`: its press
   is not checked, and its handler gets the card's values as drawn, not what was
   typed.
 - **The card as drawn.** A press runs the handler of the card as it was last drawn.
   When the class has removed that card, or its button, since, nothing runs, and the
-  card says "This changed meanwhile; the page was refreshed."
+  card says "This changed meanwhile; the page was refreshed." The same when a pick
+  field's option is no longer in its set as the set is when the press's turn comes,
+  or is one the field does not offer: the handler never gets an option that has gone.
 - **One at a time.** The handlers of one page run one at a time, in the order the
   presses came, beside the class's timers and tracks: guard what they share with
   those. While a press runs, its card's buttons are disabled.
@@ -1295,12 +1329,13 @@ delete them, with a button of the device's own or in **Stored data**.
 
 This C# device takes a snapshot of its **Camera** every 30 seconds and asks for a name
 for it. Its page has two lists. **Unnamed snapshots**, which wait for the user, each
-have their picture, a **Name** field that offers the names already given, **Save**
-and **Dismiss**. **Named** ones each have their picture, their name, a **Name**
-field, **Rename**, and **Delete**, which asks first. It keeps the 5 newest unnamed
-snapshots, at most 320 pixels wide, in its own `Data`, and moves each one named to the
-store `example.names`, shared by every Snapshot namer, so that a name given on one
-shows on the others.
+have their picture, a **Name** pick field, **Save** and **Dismiss**: Name picks a
+named snapshot, by its picture and name, to give this one the same name, or takes a
+new name in its **New name** form. **Named** ones each have their picture, their
+name, a **Name** field, **Rename**, and **Delete**, which asks first. It keeps the 5
+newest unnamed snapshots, at most 320 pixels wide, in its own `Data`, and moves each
+one named to the store `example.names`, shared by every Snapshot namer, so that a
+name given on one shows on the others.
 
 <!-- compiled: SnapshotNamer -->
 ```csharp
@@ -1349,17 +1384,18 @@ public class SnapshotNamer : SharpDevice
         Draw();
     }
 
-    // Draws both lists from the stores, as nothing of the page is kept.
+    // Draws the named snapshots to pick from and both lists from the stores, as nothing of the page is kept.
     void Draw()
     {
         lock (drawing)
         {
             var names = Names.Get<Dictionary<string, string>>("names") ?? new();
-            var known = names.Values.Distinct().Order().ToArray();
+            // Before the list whose cards pick from it.
+            Ui.Options("named", names.OrderBy(pair => pair.Value).Take(500).Select(pair => Option(pair.Key, pair.Value, Names.GetBytes($"images/{pair.Key}"))));
             var unnamed = Data.Keys("snapshots/").Select(key => key["snapshots/".Length..]);
             Ui.List("unnamed", "Unnamed snapshots", unnamed.Select(id => Card(id, Data.GetBytes($"snapshots/{id}"))
-                    .Field("name", "Name", required: true, suggestions: known)
-                    .Action("Save", values => Save(id, values["name"]), style: UiActionStyle.Primary)
+                    .Pick("name", "Name", "named", required: true, add: new UiForm("New name").Field("name", "Name", required: true))
+                    .Action("Save", values => Save(id, values), style: UiActionStyle.Primary)
                     .Action("Dismiss", _ => Dismiss(id), validate: false)),
                 attention: true, empty: "Every snapshot has a name.");
             Ui.List("named", "Named", names.OrderBy(pair => pair.Value).Take(200).Select(pair => Card(pair.Key, Names.GetBytes($"images/{pair.Key}"))
@@ -1371,17 +1407,23 @@ public class SnapshotNamer : SharpDevice
         }
     }
 
-    // A card with its picture, or without one when the picture has gone meanwhile.
+    // A card with its picture, or without one when the picture has gone meanwhile; an option the same way.
     static UiCard Card(string id, byte[]? jpeg) => jpeg == null ? new UiCard(id) : new UiCard(id).Image(jpeg);
+    static UiOption Option(string id, string name, byte[]? jpeg) => jpeg == null ? new UiOption(id, name) : new UiOption(id, name).Image(jpeg);
 
-    // Gives the snapshot its name: its picture goes to the shared store first, then its name.
-    Task Save(string id, string name)
+    // Gives the snapshot a new name, or that of the named snapshot picked: its picture goes to the shared store first,
+    // then its name.
+    Task Save(string id, UiValues values)
     {
+        // The name of the one picked is read now: another device may have renamed or deleted it since.
+        var name = values.New("name")?["name"].Trim()
+            ?? Names.Get<Dictionary<string, string>>("names")?.GetValueOrDefault(values.Picked("name") ?? "")
+            ?? throw new UiRefusal("That snapshot was deleted meanwhile: pick another.");
         // A snapshot already named or dismissed has nothing left to save.
         if (Data.GetBytes($"snapshots/{id}") is { } jpeg)
         {
             Names.SetBytes($"images/{id}", jpeg);
-            ChangeNames(names => names[id] = name.Trim());
+            ChangeNames(names => names[id] = name);
             Data.Remove($"snapshots/{id}");
         }
         Draw();
@@ -1433,7 +1475,8 @@ the camera gives a frame, and another every 30 seconds. A second definition with
 same code, on any camera, lists the same names under **Named**.
 
 - The page is drawn from the stores alone, in `Start()` and after each change, so it
-  is the same after a save or a restart.
+  is the same after a save or a restart. The set **named** is drawn before the list
+  whose cards pick from it, and again with it.
 - The names are one value, `names`, a map from a snapshot's id to its name, and every
   change to it goes through `Update`, so that a name one device gives while another
   renames is not lost. A named snapshot's picture is written before its name and
@@ -1444,10 +1487,15 @@ same code, on any camera, lists the same names under **Named**.
   as after a press on another device, and `Card` leaves out a picture that has gone.
   `drawing` keeps the redraws from the timer, the handlers and `Changed` from drawing
   over each other.
-- The **Name** field is required, so **Save** and **Rename** are refused while it is
-  empty or only spaces, and their handlers get a name to trim. **Dismiss** and
-  **Delete** need no name: they pass `validate: false`, so they work with the field
-  empty.
+- The **Name** fields are required, so **Save** is refused while nothing is picked or
+  the new name is empty or only spaces, and **Rename** while its name is, and their
+  handlers get a name to trim. **Dismiss** and **Delete** need no name: they pass
+  `validate: false`, so they work with the field empty.
+- A named snapshot deleted on another device goes from the set when `Changed`
+  redraws it, and a **Save** that still picks it answers that the page changed:
+  its handler does not run. A rename or delete between that check and the handler's
+  read of the names is why `Save` reads the name it gives then, and refuses when it
+  has gone.
 
 ## Import from GitHub
 

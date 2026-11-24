@@ -190,6 +190,9 @@ static class DeviceUiApiTests
         // The values as the request's text has them are checked against the card's fields.
         var blank = await rig.Raw("""{"operation":"act","definitionId":"board","nodeKey":"board","list":"items","card":"1","action":"save","values":{"name":"  "}}""");
         Check(blank["result"]?.ToJsonString() == """{"status":"refused","message":"Name is required."}""", "a value that does not fit its field: " + blank.ToJsonString());
+        // A value that is an object, as a pick field's is, reaches the card's fields as sent: here a text field's, which refuses it.
+        var nested = await rig.Raw("""{"operation":"act","definitionId":"board","nodeKey":"board","list":"items","card":"1","action":"save","values":{"name":{"new":{"first_name":"Ana"}}}}""");
+        Check(nested["result"]?.ToJsonString() == """{"status":"refused","message":"Name must be text."}""", "a value that is an object: " + nested.ToJsonString());
         await rig.Off("board");
         var off = await rig.Error(Press("1", "save", new { name = "Ivan" }));
         Check(off.Code == "not_running", "a press of a definition turned off: " + off);

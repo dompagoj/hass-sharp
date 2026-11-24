@@ -316,7 +316,9 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     /// <summary>
     /// Runs the action a press in the panel names, on the C# node's page as it is when the press's turn comes: the presses
     /// of one page take turns in the order they came, each handler on the pool within <see cref="UiActionTimeout"/>.
-    /// <c>changed</c> when the page no longer has the list, card or action, or the definition the node: nothing runs.
+    /// <c>changed</c> when the page no longer has the list, card or action, or the definition the node, and when a pick
+    /// field's option is not one of its set's as the set is when the press's turn comes, or one the field does not
+    /// offer: nothing runs.
     /// <c>refused</c> with a sentence when a value does not fit its field, when the handler throws <see cref="UiRefusal"/>
     /// (its message), and while a handler that ran past its time still runs. <c>failed</c> when the handler ran past its
     /// time, which keeps the page's turn until it ends and is logged as a warning, and when it threw anything else, which
@@ -362,6 +364,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             UiValues given;
             try { given = press.Values(values); }
             catch (UiRefusal refusal) { return new("refused", Text(refusal)); }
+            catch (UiPageChanged) { return ActChanged; }
             // The async lambda makes a null task fail rather than look cancelled.
             var handler = Task.Run(async () => await press.Run(given));
             using (var timer = new CancellationTokenSource())
@@ -1528,7 +1531,7 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
 }
 
 /// <summary>How a press of a device page's action ended (<see cref="DefinitionHost.UiAct"/>).</summary>
-/// <param name="Status"><c>done</c>, <c>changed</c> (the page no longer has what it named; nothing ran), <c>refused</c> or <c>failed</c>.</param>
+/// <param name="Status"><c>done</c>, <c>changed</c> (the page no longer has what it named, an option picked included; nothing ran), <c>refused</c> or <c>failed</c>.</param>
 /// <param name="Message">For <c>refused</c> and <c>failed</c>, the sentence the panel shows on the card; null otherwise.</param>
 internal sealed record UiActResult(string Status, string? Message = null);
 

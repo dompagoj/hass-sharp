@@ -7,7 +7,11 @@ using HassSharp;
 /// of its first drawing, and a redraw that changes nothing raises no change; a bad page is refused and leaves the page
 /// as it was; an action's id comes from its label; only the images of the current cards are kept, each once by its
 /// hash; a press finds the handler of the card as last drawn; the values a press sent are checked against the card's
-/// fields, unless its action does not validate, which takes them as drawn; and a closed page keeps nothing.
+/// fields, unless its action does not validate, which takes them as drawn; and a closed page keeps nothing. Its sets of
+/// options are snapshot once for the page, kept in the order of their first drawing, checked whole and refused as lists
+/// are, and removed only while no card picks from them; a pick field is checked against its set when its list is drawn,
+/// shows no value once its option has gone, and a press of it is checked against the set as it was when the press was
+/// found, an option gone answering changed; and the options' images share the cards' store.
 /// </summary>
 static class DevicePageTests
 {
@@ -52,14 +56,26 @@ static class DevicePageTests
         AnActionCanSkipTheChecks();
         await PagesAreSafeFromAnyThread();
         AClosedPageKeepsNothing();
+        APageSnapshotsItsOptions();
+        SetsAreReplacedAndRemoved();
+        BadSetsAreRefused();
+        BadPickFieldsAreRefused();
+        OptionImagesShareTheStore();
+        PicksAreChecked();
+        APickIsCheckedAgainstTheSetAsFound();
+        AnActionThatDoesNotValidateTakesThePickAsDrawn();
     }
+
+    static string[] SetIds(DevicePage page) => page.Snapshot()["options"]!.AsArray().Select(set => (string)set!["id"]!).ToArray();
+
+    static JsonObject Sent(string json) => JsonNode.Parse(json)!.AsObject();
 
     /// <summary>Two lists, one counting towards attention, snapshot to the panel's shape, property by property and in order.</summary>
     static void APageSnapshotsItsLists()
     {
         var page = new DevicePage("node_1", "Front door");
         Check(!page.Used && page.Attention == 0, "a new page is used or has attention");
-        Check(page.Snapshot().ToJsonString() == """{"nodeKey":"node_1","title":"Front door","attention":0,"lists":[]}""", "a new page: " + Text(page));
+        Check(page.Snapshot().ToJsonString() == """{"nodeKey":"node_1","title":"Front door","attention":0,"lists":[],"options":[]}""", "a new page: " + Text(page));
 
         using var picture = SharpImage.Blank(16, 8, SharpColor.Blue);
         var hash = Hash(picture.ToJpeg());
@@ -95,7 +111,8 @@ static class DevicePageTests
                 {"id":"u2","image":null,"title":"Unknown 2","detail":null,"fields":[],"actions":[]}]},
               {"id":"people","title":"People","attention":false,"empty":null,"cards":[
                 {"id":"p:1","image":null,"title":null,"detail":null,"fields":[],
-                 "actions":[{"id":"open","label":"Open","style":"default","confirm":null,"validate":true}]}]}]}
+                 "actions":[{"id":"open","label":"Open","style":"default","confirm":null,"validate":true}]}]}],
+             "options":[]}
             """.Replace("HASH", hash);
         var want = JsonNode.Parse(expected)!.ToJsonString();
         var got = Text(page);
@@ -432,6 +449,7 @@ static class DevicePageTests
                 var id = $"l{(worker + i) % 10}";
                 page.Ui.List(id, "T", [new UiCard($"c{i}").Image(Jpeg(64, worker * 1000 + i)).Action("Go", Nothing)], attention: i % 2 == 0);
                 if (i % 7 == 0) page.Ui.Remove(id);
+                page.Ui.Options($"s{(worker + i) % 3}", [new UiOption($"o{i}", "O").Image(Jpeg(64, 100_000 + worker * 1000 + i))]);
                 _ = page.Snapshot();
                 _ = page.Find(id, $"c{i}", "go");
                 _ = page.Attention;
@@ -442,6 +460,9 @@ static class DevicePageTests
         Check(lists.Count <= 10, $"{lists.Count} lists");
         var hashes = lists.SelectMany(list => list!["cards"]!.AsArray()).Select(card => (string)card!["image"]!).ToArray();
         Check(hashes.All(hash => page.Image(hash) != null), "a current card's image is not kept");
+        var sets = page.Snapshot()["options"]!.AsArray();
+        Check(sets.Count == 3, $"{sets.Count} sets");
+        Check(sets.SelectMany(set => set!["items"]!.AsArray()).All(option => page.Image((string)option!["image"]!) != null), "a current option's image is not kept");
         Check(changes > 0, "no change was raised");
         Console.WriteLine("PASS device page: drawing, removing, reading and finding from many threads at once leave a consistent page");
     }
@@ -451,16 +472,363 @@ static class DevicePageTests
     {
         var page = new DevicePage("node", "Device");
         var bytes = Jpeg(128);
-        page.Ui.List("l", "T", [new UiCard("c").Image(bytes).Action("Go", Nothing)], attention: true);
-        Check(page.Find("l", "c", "go") != null && page.Image(Hash(bytes)) != null, "the page before closing");
+        var optionBytes = Jpeg(128, 1);
+        page.Ui.Options("people", [new UiOption("p1", "Ana").Image(optionBytes)]);
+        page.Ui.List("l", "T", [new UiCard("c").Image(bytes).Pick("person", "Person", "people").Action("Go", Nothing)], attention: true);
+        Check(page.Find("l", "c", "go") != null && page.Image(Hash(bytes)) != null && page.Image(Hash(optionBytes)) != null, "the page before closing");
         page.Close();
         Check(page.Find("l", "c", "go") == null, "a closed page finds a handler");
         Check(page.Image(Hash(bytes)) == null, "a closed page keeps an image");
-        Check(Text(page) == """{"nodeKey":"node","title":"Device","attention":0,"lists":[]}""", "a closed page's snapshot: " + Text(page));
+        Check(page.Image(Hash(optionBytes)) == null, "a closed page keeps an option's image");
+        Check(Text(page) == """{"nodeKey":"node","title":"Device","attention":0,"lists":[],"options":[]}""", "a closed page's snapshot: " + Text(page));
         Check(page.Attention == 0, $"a closed page's attention is {page.Attention}");
         Throws<ObjectDisposedException>(() => page.Ui.List("l", "T", []), "List on a closed page");
         Throws<ObjectDisposedException>(() => page.Ui.Remove("l"), "Remove on a closed page");
+        Throws<ObjectDisposedException>(() => page.Ui.Options("people", []), "Options on a closed page");
+        Throws<ObjectDisposedException>(() => page.Ui.RemoveOptions("people"), "RemoveOptions on a closed page");
         page.Close();
-        Console.WriteLine("PASS device page: a closed page keeps no list, handler or image, and List and Remove throw");
+        Console.WriteLine("PASS device page: a closed page keeps no list, set, handler or image, and List, Remove, Options and RemoveOptions throw");
+    }
+
+    /// <summary>A set of options and two pick fields that choose from it, one with a new form, snapshot to the panel's shape: the options once for the page.</summary>
+    static void APageSnapshotsItsOptions()
+    {
+        var page = new DevicePage("node", "Device");
+        var changes = 0;
+        page.Changed += () => changes++;
+        var bytes = Jpeg(128, 7);
+        var option = new UiOption("p1", "Ana Horvat", "12 samples").Image(bytes);
+        page.Ui.Options("people", [option, new UiOption("p:2", "Ivan Horvat")]);
+        page.Ui.List("unknown", "Unknown", [new UiCard("u1")
+            .Pick("person", "Person", "people", "p:2", required: true, add: new UiForm("New person")
+                .Field("first_name", "First name", required: true, suggestions: ["Ana"])
+                .Select("kind", "Kind", ["friend", "family"], "friend")
+                .Number("age", "Age", minimum: 0, maximum: 120)
+                .Toggle("notify", "Notify", true))
+            .Pick("into", "Merge into", "people", except: ["p1"])
+            .Action("Save", Nothing), new UiCard("u2").Pick("person", "Person", "people")]);
+        var expected = """
+            {"nodeKey":"node","title":"Device","attention":0,"lists":[
+              {"id":"unknown","title":"Unknown","attention":false,"empty":null,"cards":[
+                {"id":"u1","image":null,"title":null,"detail":null,"fields":[
+                  {"key":"person","label":"Person","type":"pick","value":"p:2","set":"people","add":{"title":"New person","fields":[
+                    {"key":"first_name","label":"First name","type":"text","value":null,"suggestions":["Ana"],"required":true},
+                    {"key":"kind","label":"Kind","type":"select","value":"friend","options":["friend","family"],"required":false},
+                    {"key":"age","label":"Age","type":"number","value":null,"minimum":0,"maximum":120,"required":false},
+                    {"key":"notify","label":"Notify","type":"toggle","value":true,"required":false}]},"required":true},
+                  {"key":"into","label":"Merge into","type":"pick","value":null,"set":"people","except":["p1"],"required":false}],
+                 "actions":[{"id":"save","label":"Save","style":"default","confirm":null,"validate":true}]},
+                {"id":"u2","image":null,"title":null,"detail":null,"fields":[
+                  {"key":"person","label":"Person","type":"pick","value":null,"set":"people","required":false}],"actions":[]}]}],
+             "options":[{"id":"people","items":[
+               {"id":"p1","image":"HASH","title":"Ana Horvat","detail":"12 samples"},
+               {"id":"p:2","image":null,"title":"Ivan Horvat","detail":null}]}]}
+            """.Replace("HASH", Hash(bytes));
+        var want = JsonNode.Parse(expected)!.ToJsonString();
+        Check(Text(page) == want, $"the snapshot:\n  got  {Text(page)}\n  want {want}");
+        Check(changes == 2, $"{changes} changes after a set and a list");
+        Check(page.Image(Hash(bytes)) is { } kept && kept.SequenceEqual(bytes), "the option's image is not kept by its hash");
+        // The page took what it needs of the options: changing one afterwards, or a snapshot, changes nothing.
+        option.Image(Jpeg(64, 8));
+        page.Snapshot()["options"]!.AsArray().Clear();
+        Check(Text(page) == want, "changing an option or a snapshot after drawing changed the page");
+        page.Ui.Options("people", [new UiOption("p1", "Ana Horvat", "12 samples").Image((byte[])bytes.Clone()), new UiOption("p:2", "Ivan Horvat")]);
+        Check(changes == 2, $"{changes} changes after a set drawn again as it was");
+        page.Ui.Options("people", [new UiOption("p1", "Ana Horvat", "13 samples").Image(bytes), new UiOption("p:2", "Ivan Horvat")]);
+        Check(changes == 3, $"{changes} changes after a set whose data changed");
+        Console.WriteLine("PASS device page: a set of options is snapshot once for the page, and a pick field names it, with its form and the options it does not offer");
+    }
+
+    /// <summary>A replaced set keeps its place; one a drawn card picks from is not removed; a card's value that is no longer an option shows as none.</summary>
+    static void SetsAreReplacedAndRemoved()
+    {
+        var page = new DevicePage("node", "Device");
+        var changes = 0;
+        page.Changed += () => changes++;
+        page.Ui.Options("a", [new UiOption("1", "One")]);
+        page.Ui.Options("b", []);
+        page.Ui.Options("a", [new UiOption("1", "One"), new UiOption("2", "Two")]);
+        Check(SetIds(page).SequenceEqual(["a", "b"]), "the order after replacing a: " + string.Join(", ", SetIds(page)));
+        Check(page.Snapshot()["options"]![0]!["items"]!.AsArray().Count == 2, "the replaced set: " + Text(page));
+        Check(changes == 3, $"{changes} changes after three drawings");
+        page.Ui.Options("b", []);
+        Check(changes == 3, $"{changes} changes after a set drawn again as it is");
+        Check(!page.Used, "a page with sets and no list is used");
+
+        // Replacing a set never throws for a drawn card's value or except naming an option it loses; the value shows as none.
+        page.Ui.List("l", "T", [new UiCard("c").Pick("pick", "Pick", "a", "2", except: ["1"]).Action("Go", Nothing)]);
+        page.Ui.Options("a", [new UiOption("3", "Three")]);
+        Check(changes == 5, $"{changes} changes after a list and a replaced set");
+        var field = page.Snapshot()["lists"]![0]!["cards"]![0]!["fields"]![0]!;
+        Check(field["value"] == null && field["except"]!.ToJsonString() == """["1"]""", "the field whose option has gone: " + field.ToJsonString());
+
+        // A set a drawn card picks from is not removed, and the page stays as it was.
+        var before = Text(page);
+        var error = Throws<ArgumentException>(() => page.Ui.RemoveOptions("a"), "removing a set a card picks from");
+        Check(error.GetType() == typeof(ArgumentException) && error.ParamName == null && error.Message.Contains("'c'", StringComparison.Ordinal), "the refusal names the card: " + error.Message);
+        Check(Text(page) == before && changes == 5, "a refused remove changed the page");
+        Check(page.Ui.RemoveOptions("b"), "removing a set there was");
+        Check(!page.Ui.RemoveOptions("b") && !page.Ui.RemoveOptions("never"), "removing a set twice, or one never drawn");
+        Check(changes == 6, $"{changes} changes after removes");
+        page.Ui.List("l", "T", [new UiCard("c")]);
+        Check(page.Ui.RemoveOptions("a") && SetIds(page).Length == 0, "the set no card picks from any more is removed: " + Text(page));
+        page.Ui.Options("b", []);
+        page.Ui.Options("a", []);
+        Check(SetIds(page).SequenceEqual(["b", "a"]), "sets drawn again after their removal go last: " + string.Join(", ", SetIds(page)));
+        Console.WriteLine("PASS device page: a replaced set keeps its place, one a card picks from is not removed, and a value no longer an option shows as none");
+    }
+
+    /// <summary>Every bad set throws ArgumentException in Options and leaves the page as it was; the limits themselves are allowed.</summary>
+    static void BadSetsAreRefused()
+    {
+        var page = new DevicePage("node", "Device");
+        var ui = page.Ui;
+        ui.Options("kept", [new UiOption("1", "One").Image(Jpeg(64))]);
+        var changes = 0;
+        page.Changed += () => changes++;
+        var before = Text(page);
+        var tooLong = new string('x', 501);
+        var cases = new (string What, Action Draw)[]
+        {
+            ("an empty set id", () => ui.Options("", [])),
+            ("a set id with a space", () => ui.Options("a b", [])),
+            ("a set id of 65 characters", () => ui.Options(new string('a', 65), [])),
+            ("a null set id", () => ui.Options(null!, [])),
+            ("null options", () => ui.Options("s", null!)),
+            ("a null option", () => ui.Options("s", [null!])),
+            ("an option id with a slash", () => ui.Options("s", [new UiOption("a/b", "T")])),
+            ("a null option id", () => ui.Options("s", [new UiOption(null!, "T")])),
+            ("two options with one id", () => ui.Options("s", [new UiOption("a", "A"), new UiOption("a", "B")])),
+            ("an empty option title", () => ui.Options("s", [new UiOption("a", "")])),
+            ("a null option title", () => ui.Options("s", [new UiOption("a", null!)])),
+            ("an option title too long", () => ui.Options("s", [new UiOption("a", tooLong)])),
+            ("an option detail too long", () => ui.Options("s", [new UiOption("a", "A", tooLong)])),
+            ("an option image over 1 MiB", () => ui.Options("s", [new UiOption("a", "A").Image(Jpeg(1024 * 1024 + 1))])),
+            ("option image bytes without the JPEG marker", () => ui.Options("s", [new UiOption("a", "A").Image([0x89, 0x50])])),
+            ("null option image bytes", () => ui.Options("s", [new UiOption("a", "A").Image((byte[])null!)])),
+            ("a null option image", () => ui.Options("s", [new UiOption("a", "A").Image((SharpImage)null!)])),
+            ("501 options", () => ui.Options("s", Enumerable.Range(0, 501).Select(i => new UiOption($"o{i}", "O")))),
+            ("a replacement of the kept set that is bad", () => ui.Options("kept", [new UiOption("1", "One"), new UiOption("1", "Two")])),
+        };
+        foreach (var (what, draw) in cases)
+        {
+            var error = Throws<ArgumentException>(draw, what);
+            Check(error.GetType() == typeof(ArgumentException), $"{what}: threw {error.GetType().Name}");
+            Check(error.ParamName == null && !string.IsNullOrWhiteSpace(error.Message), $"{what}: the message names a parameter: {error.Message}");
+            Check(Text(page) == before, $"{what}: the page changed to {Text(page)}");
+        }
+        Check(changes == 0, $"{changes} changes raised by refused sets");
+
+        // 500 options, an image of 1 MiB, ids of 64 characters and texts of 500 are allowed.
+        ui.Options(new string('s', 64), [
+            new UiOption(new string('o', 64), new string('x', 500), new string('d', 500)).Image(Jpeg(1024 * 1024)),
+            .. Enumerable.Range(0, 499).Select(i => new UiOption($"o{i}", "O")),
+        ]);
+        Check(page.Snapshot()["options"]![1]!["items"]!.AsArray().Count == 500, "500 options were not drawn");
+
+        // A 9th set is refused; an 8th, and a replacement of any of them, are not.
+        var full = new DevicePage("node", "Device");
+        for (var i = 0; i < 8; i++) full.Ui.Options($"s{i}", []);
+        var eight = Text(full);
+        Throws<ArgumentException>(() => full.Ui.Options("s8", []), "a 9th set");
+        Check(Text(full) == eight, "a 9th set changed the page");
+        full.Ui.Options("s3", [new UiOption("a", "A")]);
+        Check(full.Snapshot()["options"]![3]!["items"]!.AsArray().Count == 1, "a full page's set was not replaced");
+        full.Ui.RemoveOptions("s0");
+        full.Ui.Options("s8", []);
+        Console.WriteLine($"PASS device page: {cases.Length + 1} bad sets are refused in Options and leave the page as it was");
+    }
+
+    /// <summary>Every bad pick field throws ArgumentException in List and leaves the page as it was.</summary>
+    static void BadPickFieldsAreRefused()
+    {
+        var page = new DevicePage("node", "Device");
+        var ui = page.Ui;
+        ui.Options("people", [new UiOption("p1", "Ana"), new UiOption("p2", "Ivan")]);
+        ui.List("kept", "Kept", [new UiCard("1").Pick("person", "Person", "people", "p1")]);
+        var changes = 0;
+        page.Changed += () => changes++;
+        var before = Text(page);
+        UiCard Card() => new("c");
+        UiForm Form(int fields) => Enumerable.Range(0, fields).Aggregate(new UiForm("New"), (form, i) => form.Toggle($"f{i}", "F"));
+        var cases = new (string What, Action Draw)[]
+        {
+            ("a set not drawn", () => ui.List("l", "T", [Card().Pick("person", "Person", "nobody")])),
+            ("a null set", () => ui.List("l", "T", [Card().Pick("person", "Person", null!)])),
+            ("a value that is not an option", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", "p9")])),
+            ("a value in except", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", "p1", except: ["p1"])])),
+            ("an except id that is null", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", except: [null!])])),
+            ("an except id with a space", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", except: ["p 1"])])),
+            ("a form of 5 fields", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: Form(5))])),
+            ("a form with two fields of one key", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: new UiForm("New").Field("name", "Name").Toggle("name", "On"))])),
+            ("a form with an empty title", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: new UiForm(""))])),
+            ("a form with a null title", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: new UiForm(null!))])),
+            ("a form field with a bad key", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: new UiForm("New").Field("First", "First"))])),
+            ("a form select whose value is not an option", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: new UiForm("New").Select("kind", "Kind", ["a"], "b"))])),
+            ("a form number above its maximum", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: new UiForm("New").Number("n", "N", 11, maximum: 10))])),
+            ("a pick key another field's", () => ui.List("l", "T", [Card().Field("person", "Name").Pick("person", "Person", "people")])),
+            ("a pick key with a capital", () => ui.List("l", "T", [Card().Pick("Person", "Person", "people")])),
+            ("an empty pick label", () => ui.List("l", "T", [Card().Pick("person", "", "people")])),
+            ("a pick value too long", () => ui.List("l", "T", [Card().Pick("person", "Person", "people", new string('p', 501))])),
+            ("a replacement of the kept list with a value gone", () => ui.List("kept", "Kept", [new UiCard("1").Pick("person", "Person", "people", "p3")])),
+        };
+        foreach (var (what, draw) in cases)
+        {
+            var error = Throws<ArgumentException>(draw, what);
+            Check(error.GetType() == typeof(ArgumentException), $"{what}: threw {error.GetType().Name}");
+            Check(error.ParamName == null && !string.IsNullOrWhiteSpace(error.Message), $"{what}: the message names a parameter: {error.Message}");
+            Check(Text(page) == before, $"{what}: the page changed to {Text(page)}");
+        }
+        Check(changes == 0, $"{changes} changes raised by refused pick fields");
+
+        // A form of 4 fields, a form field with the key of a card's field, and an except naming no option are allowed.
+        ui.List("l", "T", [Card().Field("name", "Name").Pick("person", "Person", "people", "p2", required: true, add: Form(3).Field("name", "Name"), except: ["p1", "p9"])]);
+        Throws<ArgumentException>(() => ui.List("l", "T", [Card().Pick("person", "Person", "people", add: Form(3).Field("name", "Name").Field("more", "More"))]), "a form of 5 fields after 4 were allowed");
+        // A value is checked against the set as it is when the list is drawn.
+        ui.Options("people", [new UiOption("p3", "Marko")]);
+        Throws<ArgumentException>(() => ui.List("kept", "Kept", [new UiCard("1").Pick("person", "Person", "people", "p1")]), "a value its set no longer has");
+        ui.List("kept", "Kept", [new UiCard("1").Pick("person", "Person", "people", "p3")]);
+        Console.WriteLine($"PASS device page: {cases.Length + 1} bad pick fields are refused in List and leave the page as it was");
+    }
+
+    /// <summary>The options' images are kept with the cards' by their hash, each once, and only while a card or an option shows them.</summary>
+    static void OptionImagesShareTheStore()
+    {
+        var page = new DevicePage("node", "Device");
+        var shared = Jpeg(256, 1);
+        var own = Jpeg(256, 2);
+        page.Ui.Options("people", [new UiOption("a", "A").Image(shared), new UiOption("b", "B").Image(own), new UiOption("c", "C").Image((byte[])own.Clone())]);
+        page.Ui.List("l", "T", [new UiCard("x").Image((byte[])shared.Clone())]);
+        var items = page.Snapshot()["options"]![0]!["items"]!.AsArray();
+        Check((string?)items[1]!["image"] == Hash(own) && (string?)items[2]!["image"] == Hash(own), "two options of equal bytes share one hash: " + items.ToJsonString());
+        Check((string?)page.Snapshot()["lists"]![0]!["cards"]![0]!["image"] == Hash(shared), "a card and an option of equal bytes share one hash");
+        Check(page.Image(Hash(shared)) != null && page.Image(Hash(own)) != null, "the options' images are not kept");
+        shared[100] ^= 0xFF;
+        Check(page.Image(Hash(Jpeg(256, 1))) is { } kept && Hash(kept) == Hash(Jpeg(256, 1)), "changing the bytes drawn changed the page's image");
+
+        // Replaced without them, the option's own image goes, and the one a card still shows stays.
+        page.Ui.Options("people", [new UiOption("a", "A")]);
+        Check(page.Image(Hash(own)) == null, "the image no option or card shows any more is kept");
+        Check(page.Image(Hash(Jpeg(256, 1))) != null, "the image a card still shows was dropped");
+        // The other way round: the card goes, the option still shows it.
+        var third = Jpeg(256, 3);
+        page.Ui.Options("people", [new UiOption("a", "A").Image(third)]);
+        page.Ui.List("l", "T", [new UiCard("x").Image((byte[])third.Clone())]);
+        page.Ui.Remove("l");
+        Check(page.Image(Hash(third)) != null && page.Image(Hash(Jpeg(256, 1))) == null, "the card's removal dropped the option's image, or kept its own");
+        Check(page.Ui.RemoveOptions("people") && page.Image(Hash(third)) == null, "a removed set's images are kept");
+        Console.WriteLine("PASS device page: the options' images share the cards' store, each once by its hash, and go when nothing shows them");
+    }
+
+    // A page whose card has a required Person with a new form and Merge into, which does not offer p3; Save validates and
+    // Dismiss does not.
+    static DevicePage PickPage()
+    {
+        var page = new DevicePage("node", "Device");
+        page.Ui.Options("people", [new UiOption("p1", "Ana"), new UiOption("p2", "Ivan"), new UiOption("p3", "Marko")]);
+        page.Ui.List("l", "T", [new UiCard("c")
+            .Field("note", "Note", "drawn")
+            .Pick("person", "Person", "people", "p1", required: true, add: new UiForm("New person")
+                .Field("first_name", "First name", required: true)
+                .Field("last_name", "Last name", "Horvat")
+                .Number("age", "Age", minimum: 0, maximum: 120)
+                .Select("kind", "Kind", ["friend", "family"]))
+            .Pick("into", "Merge into", "people", except: ["p3"])
+            .Action("Save", Nothing)
+            .Action("Dismiss", Nothing, validate: false)]);
+        return page;
+    }
+
+    /// <summary>What a press sent for a pick field is checked: one of its options, a new one through its form, or none, each refused with a sentence when it does not fit.</summary>
+    static void PicksAreChecked()
+    {
+        var page = PickPage();
+        var press = page.Find("l", "c", "save")!;
+        string Refused(string json) => Throws<UiRefusal>(() => press.Values(Sent(json)), json).Message;
+        var refusals = new (string Json, string Message)[]
+        {
+            ("""{"person":null}""", "Person is required."),
+            ("""{"person":"p1"}""", "Person must be one of its options or a new one."),
+            ("""{"person":{}}""", "Person must be one of its options or a new one."),
+            ("""{"person":{"picked":5}}""", "Person must be one of its options or a new one."),
+            ("""{"person":{"picked":null}}""", "Person must be one of its options or a new one."),
+            ("""{"person":{"new":"Ana"}}""", "Person must be one of its options or a new one."),
+            ("""{"person":{"new":null}}""", "Person must be one of its options or a new one."),
+            ("""{"person":{"picked":"p2","new":{"first_name":"Ana"}}}""", "Person cannot be both one of its options and a new one."),
+            ("""{"into":{"new":{}}}""", "Merge into cannot be a new one."),
+            ("""{"into":["p1"]}""", "Merge into must be one of its options."),
+            ("""{"person":{"new":{}}}""", "First name is required."),
+            ("""{"person":{"new":{"first_name":"  "}}}""", "First name is required."),
+            ("""{"person":{"new":{"first_name":"Ana","age":-1}}}""", "Age must be at least 0."),
+            ("""{"person":{"new":{"first_name":"Ana","age":"5"}}}""", "Age must be a number."),
+            ("""{"person":{"new":{"first_name":"Ana","kind":"pet"}}}""", "Kind must be one of its options."),
+            ("{\"person\":{\"new\":{\"first_name\":\"" + new string('x', 501) + "\"}}}", "First name takes at most 500 characters."),
+        };
+        foreach (var (json, message) in refusals)
+            Check(Refused(json) == message, $"{json}: refused with '{Refused(json)}', not '{message}'");
+
+        // An option the set has not, or one the field does not offer, is a page that changed: no refusal, no values.
+        foreach (var json in new[] { """{"person":{"picked":"p9"}}""", """{"into":{"picked":"p3"}}""", """{"person":{"picked":"P1"}}""" })
+            Throws<UiPageChanged>(() => press.Values(Sent(json)), json);
+
+        var drawn = press.Values(Sent("{}"));
+        Check(drawn.Picked("person") == "p1" && drawn.New("person") == null && drawn.Picked("into") == null && drawn.New("into") == null, "the picks not sent read as drawn");
+        var picked = press.Values(Sent("""{"person":{"picked":"p2","other":1},"into":{"picked":"p1"}}"""));
+        Check(picked.Picked("person") == "p2" && picked.New("person") == null && picked.Picked("into") == "p1", "the options picked");
+        var none = press.Values(Sent("""{"person":{"picked":"p2"},"into":null}"""));
+        Check(none.Picked("into") == null && none.New("into") == null, "an optional pick sent as none");
+        var made = press.Values(Sent("""{"person":{"new":{"first_name":"Ana","age":30,"unknown":1}},"note":"typed"}"""));
+        var form = made.New("person");
+        Check(made.Picked("person") == null && form != null, "a new one is no option picked");
+        Check(form!["first_name"] == "Ana" && form["last_name"] == "Horvat" && form.Number("age") == 30 && form["kind"] == "" && made["note"] == "typed",
+            $"the new one's values, a field not sent as drawn: {form["first_name"]}, {form["last_name"]}, {form.Number("age")}, '{form["kind"]}'");
+
+        // A pick field's key is read only with Picked and New, and theirs only for a pick field.
+        Throws<KeyNotFoundException>(() => _ = drawn["person"], "a pick read as text");
+        Throws<KeyNotFoundException>(() => drawn.Number("person"), "a pick read as a number");
+        Throws<KeyNotFoundException>(() => drawn.Toggle("person"), "a pick read as a toggle");
+        Throws<KeyNotFoundException>(() => drawn.Picked("note"), "a text read as a pick");
+        Throws<KeyNotFoundException>(() => drawn.New("note"), "a text read as a new one");
+        Throws<KeyNotFoundException>(() => drawn.Picked("missing"), "a key the card has not, picked");
+        Throws<KeyNotFoundException>(() => drawn.New(null!), "a null key, new");
+        Throws<KeyNotFoundException>(() => form.Picked("first_name"), "a new form's text read as a pick");
+        Console.WriteLine($"PASS device page: {refusals.Length} picks that do not fit are refused with a sentence, an option gone or not offered is a changed page, and the picks that fit read as sent or drawn");
+    }
+
+    /// <summary>A press's pick is checked against the set as it was when the press was found, not as drawn or as it is later.</summary>
+    static void APickIsCheckedAgainstTheSetAsFound()
+    {
+        var page = PickPage();
+        var early = page.Find("l", "c", "save")!;
+        // p2 goes from the set, and p4 comes, after the press was found: the press still sees p2 and not p4.
+        page.Ui.Options("people", [new UiOption("p1", "Ana"), new UiOption("p3", "Marko"), new UiOption("p4", "Petra")]);
+        Check(early.Values(Sent("""{"person":{"picked":"p2"}}""")).Picked("person") == "p2", "a press found before the set lost p2");
+        Throws<UiPageChanged>(() => early.Values(Sent("""{"person":{"picked":"p4"}}""")), "an option that came after the press was found");
+        var late = page.Find("l", "c", "save")!;
+        Throws<UiPageChanged>(() => late.Values(Sent("""{"person":{"picked":"p2"}}""")), "a press found after the set lost p2");
+        Check(late.Values(Sent("""{"person":{"picked":"p4"}}""")).Picked("person") == "p4", "a press found after p4 came");
+
+        // The drawn value gone from the set: sent as none it is required, not sent it reads as drawn, which has gone.
+        page.Ui.Options("people", [new UiOption("p2", "Ivan")]);
+        var gone = page.Find("l", "c", "save")!;
+        Check(Throws<UiRefusal>(() => gone.Values(Sent("""{"person":null}""")), "none sent").Message == "Person is required.", "none sent for the value gone");
+        Throws<UiPageChanged>(() => gone.Values(Sent("{}")), "the value gone, not sent");
+        Check(gone.Values(Sent("""{"person":{"new":{"first_name":"Ana"}}}""")).New("person") != null, "a new one with the drawn value gone");
+        Console.WriteLine("PASS device page: a press's pick is checked against its set as it was when the press was found");
+    }
+
+    /// <summary>An action that does not validate gets each pick as drawn while its option is in the set, else none, and never a new one.</summary>
+    static void AnActionThatDoesNotValidateTakesThePickAsDrawn()
+    {
+        var page = PickPage();
+        foreach (var json in new[] { "{}", """{"person":{"picked":"p9"},"into":{"new":{"x":1}}}""", """{"person":{"new":{"first_name":"Ana"}}}""" })
+        {
+            var values = page.Find("l", "c", "dismiss")!.Values(Sent(json));
+            Check(values.Picked("person") == "p1" && values.New("person") == null && values.Picked("into") == null && values.New("into") == null, $"{json}: the picks as drawn");
+        }
+        page.Ui.Options("people", [new UiOption("p2", "Ivan")]);
+        var gone = page.Find("l", "c", "dismiss")!.Values(Sent("""{"person":{"picked":"p2"}}"""));
+        Check(gone.Picked("person") == null && gone.New("person") == null, "the drawn value gone from the set reads as none: " + gone.Picked("person"));
+        Console.WriteLine("PASS device page: an action that does not validate gets each pick as drawn while its option is in the set, else none");
     }
 }
