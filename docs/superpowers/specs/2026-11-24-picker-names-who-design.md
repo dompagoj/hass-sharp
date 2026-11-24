@@ -252,6 +252,10 @@ One `SharpSensor("recognised", "Recognised")` for each detector, added with the 
   was gone).
 - In the dialog the mouse moves the active row, so one row is highlighted; on the card's button the chosen one's
   title and detail are a line each.
+- The unknown faces' cards are drawn in the order they were first shown, not the newest sighting first: a card
+  keeps its place for as long as it is there and a new one is last. Found by the live check, where a new card at
+  the head moved the others under the pointer and a Save landed on the next card. A group stores when it was
+  first shown (optional; absent in stores written before, which read as the group's first sighting).
 
 ### Documentation
 
