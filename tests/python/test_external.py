@@ -231,6 +231,23 @@ class Ids(unittest.TestCase):
         self.assertEqual(graph['nodes'][2]['config']['entity'], 'camera.front_door')
         self.assertEqual(x.rewrite_library_kinds({'edges': []}, {'vision': 'v'}), {'edges': []})
 
+    def test_rewrite_library_kinds_rewrites_a_class_kind(self):
+        # A library class's kind has no method name: its identity, escaped, is all that follows the library's id.
+        people = 'library:vision:global%3A%3ANodeLib.PeopleDetector'
+        nested = 'library:vision:global%3A%3ANodeLib.Vision.PeopleDetector%2BOuter'
+        graph = {'nodes': [{'id': 'front_door', 'kind': people, 'config': {'key': 'front_door', 'name': 'Front door', 'arguments': {}}},
+                           {'id': 'inner', 'kind': nested, 'config': {}}], 'edges': []}
+        # A stored id is never escaped: NodeLibraryStore.ValidateId allows only a-z, 0-9, _ and -, which Uri.EscapeDataString
+        # leaves as they are, such as the library-<uuid> id an import gives a library whose manifest id is taken.
+        stored = 'library-0f3e9a2c-5b1d-4e8a-9c7f-2d6b8e4a1c3f'
+        rewritten = x.rewrite_library_kinds(graph, {'vision': stored})
+        self.assertEqual([n['kind'] for n in rewritten['nodes']],
+                         [f'library:{stored}:global%3A%3ANodeLib.PeopleDetector', f'library:{stored}:global%3A%3ANodeLib.Vision.PeopleDetector%2BOuter'])
+        self.assertEqual(rewritten['nodes'][0]['config'], graph['nodes'][0]['config'])
+        self.assertEqual(x.rewrite_library_kinds(graph, {'vision': 'face_and-people_2'})['nodes'][0]['kind'],
+                         'library:face_and-people_2:global%3A%3ANodeLib.PeopleDetector')
+        self.assertEqual(graph['nodes'][0]['kind'], people)
+
 
 class Items(unittest.TestCase):
     entity = x.Item('entity', 'Front door people', 'nodes/front_door_people.json', '', None)
@@ -423,6 +440,27 @@ def device_node(camera='camera.front_door', *, kind='csharp_device', setting_typ
                        if arguments is None else arguments}}
 
 
+PEOPLE_CLASS = 'library:people_detector:global%3A%3ANodeLib.PeopleDetector'
+CAMERA_SETTING = {'key': 'Camera', 'label': 'Camera', 'description': '', 'type': 'entity', 'secret': False, 'domain': 'camera', 'required': True}
+
+
+def library_node(camera='camera.front_door', *, kind=PEOPLE_CLASS, arguments=None):
+    """The People detector as its library's class node, `front_door`: no code and no signature, its Camera typed in."""
+    return {'id': 'front_door', 'kind': kind, 'position': {'x': 0, 'y': 0},
+            'config': {'key': 'front_door', 'name': 'Front door',
+                       'arguments': {'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': camera}} if arguments is None else arguments}}
+
+
+def class_catalog(settings=None, kind=PEOPLE_CLASS):
+    """A catalog, as the node library's `catalog` answers it, with the People detector's class as a node of its own."""
+    return {'nodes': {kind: {'title': 'People detector', 'dynamicInputs': 'settings', 'declares': 'device', 'documents': ['entity'],
+                             'sourceId': 'people_detector', 'config': {}, 'inputs': {}, 'outputs': {},
+                             'classSignature': {'title': 'People detector', 'description': '', 'domain': None,
+                                                'settings': [CAMERA_SETTING] if settings is None else settings}},
+                      'csharp_device': {'title': 'C# device', 'dynamicInputs': 'settings', 'declares': 'device', 'documents': ['entity']},
+                      DETECT: {'title': 'Detect faces', 'inputs': {}, 'outputs': {}}}}
+
+
 def graph(*nodes):
     return {'nodes': list(nodes), 'edges': []}
 
@@ -474,13 +512,21 @@ def refused(code, detail):
 
 class Backend:
     """HassSharp's stores, faked, recording every call: `libraries` and `definitions` are summaries, `stored` the
-    definitions a read answers, `imported` the import's answer and `saved` each save's in turn (None: saved)."""
+    definitions a read answers, `imported` the import's answer and `saved` each save's in turn (None: saved), `catalog`
+    the node catalog the import answers and `catalog()` reads (an exception given as it is raised by `catalog()`)."""
 
-    def __init__(self, libraries=(), definitions=(), unreadable=(), stored=None, imported=None, saved=()):
+    def __init__(self, libraries=(), definitions=(), unreadable=(), stored=None, imported=None, saved=(), catalog=None):
         self.listed_libraries, self.listed_definitions = list(libraries), list(definitions)
         self.unreadable, self.stored = list(unreadable), stored or {}
         self.imported, self.saved = imported, list(saved)
+        self.listed_catalog = catalog
         self.calls = []
+
+    async def catalog(self):
+        self.calls.append(('catalog',))
+        if isinstance(self.listed_catalog, BaseException):
+            raise self.listed_catalog
+        return copy.deepcopy(self.listed_catalog if self.listed_catalog is not None else {'nodes': {}})
 
     async def libraries(self):
         self.calls.append(('libraries',))
@@ -498,8 +544,9 @@ class Backend:
 
     async def import_libraries(self, libraries):
         self.calls.append(('import', copy.deepcopy(libraries)))
+        catalog = self.listed_catalog if isinstance(self.listed_catalog, dict) else {}
         return self.imported or ok({'saved': True, 'documents': [{**l, 'revision': l['expectedRevision'] + 1} for l in libraries],
-                                    'generation': 'g2', 'catalog': {}, 'automations': [], 'invalid': [], 'definitions': [],
+                                    'generation': 'g2', 'catalog': copy.deepcopy(catalog), 'automations': [], 'invalid': [], 'definitions': [],
                                     'invalidDefinitions': []})
 
     async def save_definition(self, request):
@@ -891,6 +938,137 @@ class Importing(unittest.TestCase):
         self.assertEqual(x.keep_device_inputs({'nodes': [3, {'id': 'front_door'}]}, graph(device_node())), {'nodes': [3, {'id': 'front_door'}]})
         self.assertEqual(x.keep_device_inputs(graph(bare), graph(device_node(arguments={}))), graph(bare))
 
+    def overwriting(self, stored_node, file_node, picks=(), **more):
+        """Front door people overwritten by a file whose one node is `file_node`, over a stored definition whose one node
+        is `stored_node`: the answer, the saved node and the backend."""
+        stored = {'front_door_people': {'id': 'front_door_people', 'revision': 3, 'name': 'Front door people', 'settings': [],
+                                        'logic': {'kind': 'graph', 'graph': graph(stored_node)}}}
+        listed = [{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3}]
+        body = {'name': 'Named in the file', 'settings': [], 'logic': {'kind': 'graph', 'graph': graph(file_node)}}
+        repo = Repository(files={'nodes/front_door_people.json': json.dumps(body)})
+        answer, _, backend = self.importing(
+            [*picks, pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)],
+            repo, Backend(definitions=listed, stored=stored, **more))
+        [saved] = backend.saves()
+        [node] = saved['definition']['logic']['graph']['nodes']
+        return answer, node, backend
+
+    def test_overwrite_keeps_inputs_from_a_csharp_node_to_a_library_node(self):
+        # hass-sharp-vision moves Front door people from a C# device node to the People detector's own node, of the same
+        # id: the camera the user typed in stays. The catalog is the one the libraries' import answers, read after the save.
+        answer, node, backend = self.overwriting(device_node('camera.mine'), library_node(), [pick('nodes/PeopleDetector.cs')], catalog=class_catalog())
+        self.assertEqual(node, library_node('camera.mine'))
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'import', 'read', 'save'])
+        self.assertEqual([i['outcome'] for i in answer['items']], ['imported', 'overwritten'])
+        # Given no source and no signature: a library class node has none, and the save derives none for it.
+        self.assertNotIn('source', node['config']); self.assertNotIn('signature', node['config'])
+        # With no library imported, the catalog of the libraries stored is read, once, before the definitions.
+        answer, node, backend = self.overwriting(device_node('camera.mine'), library_node(), catalog=class_catalog())
+        self.assertEqual(node, library_node('camera.mine'))
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'catalog', 'read', 'save'])
+        # A C# node whose kind changed, a C# entity to a C# device, is a class node on both sides too.
+        kept = x.keep_device_inputs(graph(device_node()), graph(device_node('camera.mine', kind='csharp_entity')), class_catalog())
+        self.assertEqual(kept['nodes'][0]['config']['arguments']['Camera']['value'], 'camera.mine')
+
+    def test_overwrite_keeps_inputs_from_a_library_node_to_a_library_node(self):
+        settings = [CAMERA_SETTING, {'key': 'PollEvery', 'label': 'Poll every', 'description': '', 'type': 'number', 'secret': False,
+                                     'minimum': 1, 'maximum': 60}]
+        tuned = library_node('camera.mine', arguments={'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.mine'},
+                                                       'PollEvery': {'kind': 'literal', 'type': 'number', 'value': 10}})
+        imported = graph(library_node())
+        before = copy.deepcopy(imported)
+        kept = x.keep_device_inputs(imported, graph(tuned), class_catalog(settings))
+        self.assertEqual(kept['nodes'][0], tuned)
+        self.assertEqual(imported, before)
+        # The library is stored under another id than its manifest's: the file's kind is rewritten to it first, so the
+        # entry read is the stored library's, the one the stored node has.
+        moved = PEOPLE_CLASS.replace('people_detector', 'library-1234')
+        _, node, _ = self.overwriting({**tuned, 'kind': moved}, library_node(), catalog=class_catalog(settings, moved),
+                                      libraries=[{'id': 'library-1234', 'name': 'PeopleDetector.cs', 'revision': 1}])
+        self.assertEqual(node, {**tuned, 'kind': moved})
+
+    def test_overwrite_keeps_inputs_from_a_library_node_to_a_csharp_node(self):
+        answer, node, _ = self.overwriting(library_node('camera.mine'), device_node(), catalog=class_catalog())
+        self.assertEqual(node, device_node('camera.mine'))
+        self.assertEqual(answer['items'][0]['outcome'], 'overwritten')
+        # A file's C# node without a signature has no settings known before its save works them out: the file's values.
+        unsigned = device_node()
+        del unsigned['config']['signature']
+        kept = x.keep_device_inputs(graph(unsigned), graph(library_node('camera.mine')), class_catalog())
+        self.assertEqual(kept, graph(unsigned))
+
+    def test_overwrite_takes_the_files_value_where_the_kept_one_does_not_fit(self):
+        poll = {'key': 'PollEvery', 'label': 'Poll every', 'description': '', 'type': 'number', 'secret': False}
+        token = {'key': 'Token', 'label': 'Token', 'description': '', 'type': 'string', 'secret': True}
+        stored = library_node('camera.mine', arguments={'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.mine'},
+                                                        'PollEvery': {'kind': 'literal', 'type': 'string', 'value': '5'},
+                                                        'Token': {'kind': 'literal', 'type': 'string', 'value': 'abc'},
+                                                        'Gone': {'kind': 'literal', 'type': 'string', 'value': 'x'}})
+        file_arguments = {'Camera': {'kind': 'literal', 'type': 'entity_id:camera', 'value': 'camera.front_door'},
+                          'PollEvery': {'kind': 'literal', 'type': 'number', 'value': 5}}
+        imported = graph(library_node(arguments=file_arguments))
+        arguments = lambda g: g['nodes'][0]['config']['arguments']
+        # The stored text is not the number the setting now takes, a secret takes no value typed in, and a setting the
+        # class no longer has is not added; the camera, which fits, is kept.
+        kept = x.keep_device_inputs(imported, graph(stored), class_catalog([CAMERA_SETTING, poll, token]))
+        self.assertEqual(arguments(kept), {**file_arguments, 'Camera': stored['config']['arguments']['Camera']})
+        # A camera setting that now takes images: the file's camera.
+        image = {**CAMERA_SETTING, 'domain': 'image'}
+        self.assertEqual(arguments(x.keep_device_inputs(imported, graph(stored), class_catalog([image, poll]))), file_arguments)
+        # Of any entity: entity_id, not entity_id:camera.
+        anything = {k: v for k, v in CAMERA_SETTING.items() if k != 'domain'}
+        self.assertEqual(arguments(x.keep_device_inputs(imported, graph(stored), class_catalog([anything]))), file_arguments)
+        # A pin the file wires is the wire's; a stored value other than a typed one (cleared) is the file's.
+        wired = graph(library_node(arguments={'Camera': {'kind': 'unset'}}), {'id': 'pick', 'kind': 'setting', 'config': {'key': 'camera'}})
+        wired['edges'] = [{'id': 'e', 'kind': 'data', 'source': 'pick', 'sourcePort': 'value', 'target': 'front_door', 'targetPort': 'Camera'}]
+        self.assertEqual(arguments(x.keep_device_inputs(wired, graph(stored), class_catalog())), {'Camera': {'kind': 'unset'}})
+        cleared = library_node(arguments={'Camera': {'kind': 'unset'}})
+        self.assertEqual(arguments(x.keep_device_inputs(imported, graph(cleared), class_catalog())), file_arguments)
+        # A node that is no class node on either side keeps nothing: a library's node method, a kind the catalog lacks.
+        method = {**stored, 'kind': DETECT}
+        self.assertEqual(x.keep_device_inputs(imported, graph(method), class_catalog()), imported)
+        self.assertEqual(x.keep_device_inputs(graph({**library_node(), 'kind': DETECT}), graph(stored), class_catalog()),
+                         graph({**library_node(), 'kind': DETECT}))
+        self.assertEqual(x.keep_device_inputs(imported, graph(device_node('camera.mine')), {'nodes': {}}), imported)
+        # Without a catalog only a C# node of the kind it was keeps its values, as before.
+        self.assertEqual(x.keep_device_inputs(imported, graph(device_node('camera.mine'))), imported)
+        self.assertEqual(x.keep_device_inputs(imported, graph(stored)), imported)
+        self.assertEqual(x.keep_device_inputs(graph(device_node()), graph(device_node('camera.mine', kind='csharp_entity'))), graph(device_node()))
+        # Of the same C# kind, the rule is the one without a catalog, the stored signature included.
+        signed = device_node('camera.mine', settings=[{**CAMERA_SETTING, 'type': 'string'}])
+        self.assertEqual(x.keep_device_inputs(graph(device_node()), graph(signed), class_catalog()), graph(device_node()))
+
+    def test_overwrite_keeps_nothing_across_node_ids(self):
+        for stored in ({**device_node('camera.mine'), 'id': 'back_door'}, {**library_node('camera.mine'), 'id': 'back_door'}):
+            _, node, _ = self.overwriting(stored, library_node(), catalog=class_catalog())
+            self.assertEqual(node, library_node(), stored['kind'])
+        _, node, _ = self.overwriting({**library_node('camera.mine'), 'id': 'back_door'}, device_node(), catalog=class_catalog())
+        self.assertEqual(node, device_node())
+
+    def test_overwrite_reads_the_catalog_once_and_goes_on_without_it(self):
+        manifest = ('[[entity]]\nname = "Front door people"\npath = "a.json"\n'
+                    '[[entity]]\nname = "Back door people"\npath = "b.json"\n')
+        body = {'name': 'x', 'settings': [], 'logic': {'kind': 'graph', 'graph': graph(library_node())}}
+        repo = lambda: Repository(manifest, {'a.json': json.dumps(body), 'b.json': json.dumps(body)})
+        stored = {id: {'id': id, 'revision': 3, 'name': name, 'settings': [], 'logic': {'kind': 'graph', 'graph': graph(device_node('camera.mine'))}}
+                  for id, name in (('front', 'Front door people'), ('back', 'Back door people'))}
+        listed = [{'id': id, 'name': d['name'], 'revision': 3} for id, d in stored.items()]
+        picks = [pick('a.json', 'overwrite', target='front', expectedRevision=3), pick('b.json', 'overwrite', target='back', expectedRevision=3)]
+        answer, _, backend = self.importing(picks, repo(), Backend(definitions=listed, stored=stored, catalog=class_catalog()))
+        self.assertEqual([call[0] for call in backend.calls], ['libraries', 'definitions', 'catalog', 'read', 'save', 'read', 'save'])
+        self.assertEqual([s['definition']['logic']['graph']['nodes'][0] for s in backend.saves()], [library_node('camera.mine')] * 2)
+        # A catalog that cannot be read: each definition is imported as before, keeping no value across a change of kind.
+        with self.assertLogs('custom_components.HassSharp.external', 'WARNING') as logged:
+            answer, _, backend = self.importing(picks, repo(), Backend(definitions=listed, stored=stored,
+                                                                      catalog=x.ExternalError('storage', 'The node library folder cannot be read')))
+        self.assertEqual([s['definition']['logic']['graph']['nodes'][0] for s in backend.saves()], [library_node()] * 2)
+        self.assertEqual([(i['outcome'], i['message']) for i in answer['items']], [('overwritten', None)] * 2)
+        self.assertEqual([r.levelname for r in logged.records], ['WARNING'])
+        self.assertIn('The node library folder cannot be read', logged.output[0])
+        # A new definition keeps nothing, so nothing is read for it.
+        _, _, backend = self.importing([pick('nodes/front_door_people.json')])
+        self.assertNotIn(('catalog',), backend.calls)
+
     def test_an_entity_that_raises_still_gets_its_line(self):
         # An exception (not a refusal) after the libraries are stored: that entity fails, the next is still imported.
         class Raising(Backend):
@@ -939,12 +1117,16 @@ class Route(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.dotnet = []
         self.libraries = [{'version': 1, 'id': 'shared', 'name': 'Shared.cs', 'revision': 2, 'source': '//'}]
+        self.definitions = [{'id': 'porch', 'name': 'Porch', 'revision': 1, 'enabled': True}]
+        self.stored, self.catalog = {}, {'nodes': {}}
 
         def library_request(raw):
             request = json.loads(raw)
             self.dotnet.append(('library', request))
             if request['operation'] == 'list':
                 return json.dumps(ok({'documents': self.libraries, 'generation': 'g1'}))
+            if request['operation'] == 'catalog':
+                return json.dumps(ok({'catalog': self.catalog, 'generation': 'g1', 'saved': True, 'valid': True, 'diagnostics': []}))
             return json.dumps(ok({'saved': True, 'documents': [{'version': 1, **l, 'revision': 1} for l in request['libraries']],
                                   'generation': 'g2', 'catalog': {'nodes': {}}, 'automations': [{'id': 'porch'}], 'invalid': [],
                                   'definitions': [], 'invalidDefinitions': []}))
@@ -953,8 +1135,9 @@ class Route(unittest.IsolatedAsyncioTestCase):
             request = json.loads(raw)
             self.dotnet.append(('entity', request))
             if request['operation'] == 'list':
-                return json.dumps({**ok([{'id': 'porch', 'name': 'Porch', 'revision': 1, 'enabled': True}]),
-                                   'unreadable': [{'id': 'broken', 'reason': 'bad', 'deletable': True}]})
+                return json.dumps({**ok(self.definitions), 'unreadable': [{'id': 'broken', 'reason': 'bad', 'deletable': True}]})
+            if request['operation'] == 'read':
+                return json.dumps(ok(self.stored[request['id']]))
             if request['operation'] == 'preview':
                 return json.dumps(ok({'valid': True, 'diagnostics': []}))
             return json.dumps(ok({'id': request['id'], 'saved': True, 'document': {'id': request['id'], 'enabled': False}}))
@@ -1019,6 +1202,24 @@ class Route(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((save['id'], save['expectedRevision'], save['enabled'], save['deriveSignatures']), ('front_door_people', 0, False, True))
         self.assertEqual(self.session.calls[0][0], RAW + 'hass_sharp.toml')
         self.assertFalse(any(url.startswith('https://api.github.com') for url, _ in self.session.calls))
+
+    async def test_external_overwrite_reads_the_catalog_through_the_stores(self):
+        # No library picked: the catalog of the stored libraries is read with the node library's catalog request.
+        self.definitions = [{'id': 'front_door_people', 'name': 'Front door people', 'revision': 3, 'enabled': True}]
+        self.stored = {'front_door_people': {'id': 'front_door_people', 'revision': 3, 'name': 'Front door people', 'settings': [],
+                                             'logic': {'kind': 'graph', 'graph': graph(device_node('camera.mine'))}}}
+        self.catalog = class_catalog()
+        body = {'name': 'x', 'settings': [], 'logic': {'kind': 'graph', 'graph': graph(library_node())}}
+        self.session.answer[RAW + 'nodes/front_door_people.json'] = FakeResponse(json.dumps(body).encode())
+        results, errors = await self.send({'operation': 'import', 'owner': 'o', 'repo': 'r', 'sha': REPO_SHA, 'picks': [
+            pick('nodes/front_door_people.json', 'overwrite', target='front_door_people', expectedRevision=3)]})
+        self.assertEqual(errors, [])
+        [(_, answer)] = results
+        self.assertEqual([i['outcome'] for i in answer['result']['items']], ['overwritten'])
+        self.assertEqual([(side, request['operation']) for side, request in self.dotnet],
+                         [('library', 'list'), ('entity', 'list'), ('library', 'catalog'), ('entity', 'read'), ('entity', 'preview'), ('entity', 'save')])
+        self.assertEqual(self.dotnet[2][1], {'operation': 'catalog'})
+        self.assertEqual(self.dotnet[5][1]['definition']['logic']['graph']['nodes'], [library_node('camera.mine')])
 
     async def test_external_refusal_of_a_list_is_the_answer(self):
         async def storage(hass, method, request):

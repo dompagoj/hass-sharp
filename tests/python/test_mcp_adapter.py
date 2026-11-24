@@ -661,6 +661,82 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('entities [{key, domain, name, device, entityId}]',description)
         self.assertIn('C# device',description)
 
+    THERMOMETER='library:sensors:global%3A%3ANodeLib.Thermometer'
+    HUB='library:sensors:global%3A%3ANodeLib.RelayHub'
+    def library_class_catalog(self):
+        """The catalog with a node library's entity class and device class, each a node of its own (no code), their entries
+        made as NodeLibraryCompiler makes them: the C# node's, without its code, with the class's signature."""
+        address={'key':'Address','label':'Address','description':'','type':'string','secret':False,'required':True}
+        token={'key':'Token','label':'Token','description':'','type':'string','secret':True}
+        def entry(kind,title,domain,settings):
+            spec=json.loads(json.dumps(self.CATALOG['nodes'][kind]))
+            spec.pop('keywords',None); spec['config'].pop('source',None); spec['config'].pop('signature',None)
+            spec.update(label=title,category='Sensors',description='One '+title.lower()+'.',sourceId='sensors',
+                        classSignature={'title':title,'description':'One '+title.lower()+'.','domain':domain,'settings':settings})
+            return spec
+        nodes={**self.CATALOG['nodes'],self.THERMOMETER:entry('csharp_entity','Thermometer','sensor',[address]),
+               self.HUB:entry('csharp_device','Relay hub',None,[address,token])}
+        return {**self.CATALOG,'nodes':nodes}
+
+    async def test_catalog_tools_list_a_library_class_node_for_entity_definitions_only(self):
+        catalog=self.library_class_catalog()
+        async def library(request,is_admin):
+            if request['operation']=='catalog': return {'version':1,'ok':True,'result':{'catalog':catalog,'generation':'g'}}
+            return {'version':1,'ok':True,'result':{'valid':True,'diagnostics':[],'catalog':catalog}}
+        self.service.node_library.side_effect=library
+        for name,args in (('get_capabilities',{'document':'entity'}),('get_node_schema',{'document':'entity'})):
+            nodes=(await self.call(name,args)).data['result']['catalog']['nodes']
+            self.assertEqual((nodes[self.THERMOMETER],nodes[self.HUB]),(catalog['nodes'][self.THERMOMETER],catalog['nodes'][self.HUB]),name)
+        for name,args in (('get_capabilities',{}),('get_node_schema',{'document':'automation'}),('library_preview',{'id':'sensors','source':'','workspaceVersion':'1'})):
+            nodes=(await self.call(name,args)).data['result']['catalog']['nodes']
+            self.assertFalse({self.THERMOMETER,self.HUB}&set(nodes),name)
+            self.assertIn('log',nodes)
+        # Asked for by kind, as a C# node's: its entry with its settings, and an entity class's the entity domains.
+        schema=(await self.call('get_node_schema',{'kind':self.THERMOMETER,'document':'entity'})).data['result']
+        self.assertEqual((schema['node']['classSignature']['settings'][0]['key'],schema['entityDomains']),('Address',self.CATALOG['entityDomains']))
+        self.assertNotIn('entityDomains',(await self.call('get_node_schema',{'kind':self.HUB,'document':'entity'})).data['result'])
+
+    async def test_entities_list_summarises_a_library_class_node_as_a_csharp_node(self):
+        # A library's entity class temp and device class hub, nodes of their own with no code: listed by the server as a C#
+        # entity and a C# device are (csharp: true, name null), and summarised alike: temp named as Home Assistant has it,
+        # else by its class's title, from the catalog; the entities hub's class adds known once it has run.
+        temp_node={'id':'temp','kind':self.THERMOMETER,'config':{'key':'temp','arguments':{'Address':{'kind':'literal','type':'string','value':'http://thermo'}}}}
+        hub_node={'id':'hub','kind':self.HUB,'config':{'key':'hub','name':'Hub','arguments':{'Address':{'kind':'literal','type':'string','value':'http://hub'}}}}
+        graph={'version':5,'name':'Hall','nodes':[temp_node,hub_node],'edges':[]}
+        declared=[{'key':'temp','domain':'sensor','name':None,'device':None,'csharp':True}]
+        registered=[{'uniqueId':'hall:hub:relay','entityId':'switch.hub_relay','domain':'switch','name':'Relay','disabled':False},
+                    {'uniqueId':'hall:temp','entityId':'sensor.hall_temperature','domain':'sensor','name':'Hall temperature','disabled':False}]
+        running=self.entity_document(id='hall',name='Hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph},registeredEntities=registered,liveEntities=[])
+        new=self.entity_document(id='new_hall',name='New hall',entities=declared,devices=1,logic={'kind':'graph','graph':graph},registeredEntities=[],liveEntities=[],status='off')
+        catalog=self.library_class_catalog()
+        async def library(request,is_admin):
+            return {'version':1,'ok':True,'result':{'catalog':catalog,'generation':'g'}}
+        self.service.node_library.side_effect=library
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[running,new]})
+        result={d['id']:d for d in (await self.call('entities_list',{})).data['result']}
+        self.assertEqual(result['hall']['entities'],[
+            {'key':'temp','domain':'sensor','name':'Hall temperature','device':None,'entityId':'sensor.hall_temperature'},
+            {'key':'relay','domain':'switch','name':'Relay','device':'hub','entityId':'switch.hub_relay'}])
+        self.assertEqual(result['new_hall']['entities'],[{'key':'temp','domain':'sensor','name':'Thermometer','device':None,'entityId':None}])
+        self.assertEqual((result['hall']['devices'],result['new_hall']['devices']),(1,1))
+        # The catalog is read once for the whole list, and only because a class's title is not in the graph.
+        self.assertEqual([c.args[0] for c in self.service.node_library.await_args_list],[{'operation':'catalog'}])
+        text=json.dumps(result)
+        for absent in ('http://thermo','http://hub','classSignature','library:','csharp','Address','Token'):
+            self.assertNotIn(absent,text)
+        # A catalog that cannot be read leaves the class unnamed, as a C# entity without a signature is.
+        async def refused(request,is_admin):
+            return {'version':1,'ok':False,'error':{'code':'storage','detail':'The node library folder cannot be read'}}
+        self.service.node_library.side_effect=refused
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[running,new]})
+        result=(await self.call('entities_list',{})).data['result']
+        self.assertEqual(result[1]['entities'],[{'key':'temp','domain':'sensor','name':None,'device':None,'entityId':None}])
+        # With only C# nodes nothing is read: a C# entity's title is in its signature.
+        self.service.node_library.reset_mock()
+        self.service.entities=AsyncMock(return_value={'version':1,'ok':True,'result':[self.entity_document()]})
+        self.assertFalse((await self.call('entities_list',{})).error)
+        self.service.node_library.assert_not_called()
+
     async def test_entities_list_names_the_definitions_that_cannot_be_read(self):
         # A file the server cannot read (one an earlier build saved, or any other) is named apart, with why, so that a model
         # can say so and delete it at revision 0; the readable ones are summarised as ever.
@@ -1303,6 +1379,22 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('While off, the entities it has created stay in Home Assistant as unavailable; a definition saved off creates its entities the first time it is turned on. Ask the user first.',
                       descriptions['entities_set_enabled'])
         self.assertIn('remove its entities and devices from Home Assistant. Ask the user first.',descriptions['entities_delete'])
+
+    async def test_the_texts_say_a_library_may_offer_a_class_as_a_node(self):
+        # Where the texts describe C# entity and C# device nodes, they also say that a node library may offer a device or
+        # entity class as a node of its own, used without code, whose inputs are the class's settings.
+        definitions=self.adapter.SEMANTICS['definitions']
+        descriptions={t.name.split('__')[1]:t.description for t in self.instance.tools}
+        self.assertIn('A node library may also offer a device or entity class as a node of its own, used without code',self.adapter.PROMPT)
+        for phrase in ('A node library may also offer a device or entity class as a node of its own, a library class node, used without code',
+                       "its catalog entry's classSignature lists its settings",'{key, arguments?} for an entity, {key, name, via?, arguments?} for a device',
+                       'a secret one only by a wire from a Setting step','It is listed (csharp: true), keyed, named and run as a C# node of its class is'):
+            self.assertIn(phrase,definitions)
+        self.assertIn('is offered to entity definitions as a node of its own: see definitions',self.adapter.SEMANTICS['csharp'])
+        self.assertIn('A library class node (a kind starting with library: whose entry has classSignature',descriptions['get_node_schema'])
+        self.assertIn("and a library class node's as a C# node's",descriptions['entities_read'])
+        # It never asks for code or a signature: nothing is worked out for it.
+        self.assertIn('nothing works out a signature for it',definitions)
 
     def test_the_llm_tools_platform_adds_no_tools_to_any_api(self):
         # Home Assistant asks every integration's llm platform for tools on each build of an API; HassSharp's tools are

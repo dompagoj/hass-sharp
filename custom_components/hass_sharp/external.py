@@ -36,6 +36,7 @@ _LIMIT = "GitHub refused the request: it allows 60 requests an hour without sign
 _EXTENSIONS = {"library": ".cs", "entity": ".json"}
 _CONFLICT = "It changed after you inspected the repository; inspect it again"
 _NOT_ATTEMPTED = "Not imported, because the node libraries were not"
+# The class nodes whose code is in their config (config.source, config.signature): a library's class node has none.
 _C_SHARP_NODES = frozenset({"csharp_entity", "csharp_device"})
 # Under the integration's logger (const.py), so its level setting reaches this module's messages.
 _LOGGER = logging.getLogger("custom_components.HassSharp.external")
@@ -406,6 +407,9 @@ class Backend(Protocol):
     async def save_definition(self, request: dict) -> dict:
         """An entity definition `save` request's envelope."""
 
+    async def catalog(self) -> dict:
+        """The node catalog of the stored libraries, as the node library `catalog` request answers it."""
+
 
 async def _manifest(github: GitHub, owner: str, repo: str, sha: str) -> list[Item]:
     try:
@@ -543,10 +547,36 @@ def _kept_settings(settings: object, stored: object) -> object:
     return kept
 
 
-def _signature_settings(config: dict) -> dict[str, dict]:
-    signature = config.get("signature")
+def _settings(signature: object) -> dict[str, dict]:
+    """A class's settings by key, from its signature."""
     settings = signature.get("settings") if isinstance(signature, dict) else None
     return {s["key"]: s for s in settings if isinstance(s, dict) and isinstance(s.get("key"), str)} if isinstance(settings, list) else {}
+
+
+def _signature_settings(config: dict) -> dict[str, dict]:
+    return _settings(config.get("signature"))
+
+
+def _class_settings(node: dict, catalog: dict) -> dict[str, dict] | None:
+    """A class node's settings by key: a C# node's from its config's signature (none when it has none), a library
+    class node's from its kind's catalog entry (`classSignature`); None for a node that is no class node."""
+    kind = node.get("kind")
+    if kind in _C_SHARP_NODES:
+        config = node.get("config")
+        return _signature_settings(config) if isinstance(config, dict) else {}
+    nodes = catalog.get("nodes") if isinstance(catalog, dict) else None
+    entry = nodes.get(kind) if isinstance(nodes, dict) and isinstance(kind, str) else None
+    signature = entry.get("classSignature") if isinstance(entry, dict) else None
+    return _settings(signature) if isinstance(signature, dict) else None
+
+
+def _setting_pin_type(setting: dict) -> str | None:
+    """The pin type of a class's setting, as VisualNodeCatalog.SettingPinType gives it; None for a type it does not know."""
+    kind, domain = setting.get("type"), setting.get("domain")
+    if kind == "entity":
+        return f"entity_id:{domain}" if isinstance(domain, str) else "entity_id"
+    return {"string": "string", "enum": "string", "integer": "number", "number": "number", "boolean": "boolean"}.get(kind) \
+        if isinstance(kind, str) else None
 
 
 def _nodes(graph: object) -> list[dict]:
@@ -561,20 +591,30 @@ def _pins_wired(graph: dict) -> set[tuple[object, object]]:
         if isinstance(edges, list) else set()
 
 
-def keep_device_inputs(imported: dict, existing: dict) -> dict:
+def keep_device_inputs(imported: dict, existing: dict, catalog: dict | None = None) -> dict:
     """A copy of the imported graph in which each C# entity or device node keeps the values typed into the stored
     graph's node of the same id and kind: each stored literal argument whose setting has the same type and domain in
     the imported node's signature as in the stored one's, and whose pin no edge of the imported graph fills. A file's
     node without a signature is taken to have the stored node's settings: the save works its pins out from its code
     again (Ruling 14) and refuses an argument that does not fit them. A stored argument of another kind, such as a value
     cleared, is kept only where the file's node sets that argument too, and only when both signatures give its setting
-    the same type and domain."""
+    the same type and domain.
+
+    With the `catalog` of the libraries as they are after the import, a node of the same id whose kind changed between
+    two class nodes (a C# entity or device node, or a library's class node: one whose catalog entry has a
+    `classSignature`), in either direction, or that is a library's class node on both sides, keeps each stored literal
+    argument that the file's node takes: it has a setting of that key (in its kind's `classSignature`, or a C# node's
+    own signature: none when it has none), not secret, whose pin no edge of the imported graph fills and whose pin type
+    is the literal's type. Anything else is the file's."""
     graph = copy.deepcopy(imported)
     stored = {n.get("id"): n for n in _nodes(existing)}
     wired = _pins_wired(graph)
     for node in _nodes(graph):
         before = stored.get(node.get("id"))
-        if node.get("kind") not in _C_SHARP_NODES or before is None or before.get("kind") != node.get("kind"):
+        if before is None:
+            continue
+        same_csharp = node.get("kind") in _C_SHARP_NODES and before.get("kind") == node.get("kind")
+        if not same_csharp and catalog is None:
             continue
         config, old = node.get("config"), before.get("config")
         if not isinstance(config, dict) or not isinstance(old, dict):
@@ -585,20 +625,39 @@ def keep_device_inputs(imported: dict, existing: dict) -> dict:
         arguments = config.get("arguments", {})
         if not isinstance(arguments, dict):
             continue
-        old_settings = _signature_settings(old)
-        has_signature = isinstance(config.get("signature"), dict)
-        settings = _signature_settings(config) if has_signature else old_settings
+        if same_csharp:
+            _keep_same_class_inputs(node, config, old, old_arguments, arguments, wired)
+            continue
+        settings = _class_settings(node, catalog)
+        if settings is None or _class_settings(before, catalog) is None:
+            continue
         for key, value in old_arguments.items():
-            setting, old_setting = settings.get(key), old_settings.get(key)
-            if setting is None or old_setting is None or (node.get("id"), key) in wired:
+            setting = settings.get(key)
+            if setting is None or setting.get("secret") is True or (node.get("id"), key) in wired:
                 continue
-            if (setting.get("type"), setting.get("domain")) != (old_setting.get("type"), old_setting.get("domain")):
-                continue
-            literal = isinstance(value, dict) and value.get("kind") == "literal"
-            if literal or (key in arguments and has_signature):
+            pin = _setting_pin_type(setting)
+            if pin is not None and isinstance(value, dict) and value.get("kind") == "literal" and value.get("type") == pin:
                 arguments[key] = copy.deepcopy(value)
                 config["arguments"] = arguments
     return graph
+
+
+def _keep_same_class_inputs(node: dict, config: dict, old: dict, old_arguments: dict, arguments: dict,
+                            wired: set[tuple[object, object]]) -> None:
+    """keep_device_inputs' rule for a C# node of the kind it was."""
+    old_settings = _signature_settings(old)
+    has_signature = isinstance(config.get("signature"), dict)
+    settings = _signature_settings(config) if has_signature else old_settings
+    for key, value in old_arguments.items():
+        setting, old_setting = settings.get(key), old_settings.get(key)
+        if setting is None or old_setting is None or (node.get("id"), key) in wired:
+            continue
+        if (setting.get("type"), setting.get("domain")) != (old_setting.get("type"), old_setting.get("domain")):
+            continue
+        literal = isinstance(value, dict) and value.get("kind") == "literal"
+        if literal or (key in arguments and has_signature):
+            arguments[key] = copy.deepcopy(value)
+            config["arguments"] = arguments
 
 
 def _outcome(item: Item, outcome: str, id: str | None = None, enabled: bool | None = None, message: str | None = None) -> dict:
@@ -643,6 +702,7 @@ async def import_items(github: GitHub, backend: Backend, request: dict) -> dict:
                 kinds[item.id] = same[0]
     answer = {"owner": owner, "repo": repo, "sha": sha, "items": [], "libraries": None}
     rebuilt: dict[str, int] = {}
+    stored_catalog = None
     library_picks = [(item, pick) for item, pick in chosen if item.kind == "library"]
     entity_picks = [(item, pick) for item, pick in chosen if item.kind == "entity"]
     if library_picks:
@@ -657,17 +717,35 @@ async def import_items(github: GitHub, backend: Backend, request: dict) -> dict:
             return answer
         answer["libraries"] = _stored_libraries(imported.get("result"))
         rebuilt = _rebuilt_revisions(imported.get("result"))
+        stored_catalog = (imported.get("result") or {}).get("catalog")
         answer["items"] = [_outcome(item, "overwritten" if pick["mode"] == "overwrite" else "imported", used[item])
                            for item, pick in library_picks]
     taken = {d["id"] for d in definitions} | set(unreadable)
+    # Read once, after the libraries are stored: their class nodes' kinds are in it only then, under the ids `kinds` gives.
+    # The libraries' import answers it; without one, it is the stored libraries'. Only an overwrite keeps typed values.
+    catalog = None
+    if any(pick["mode"] == "overwrite" for _, pick in entity_picks):
+        catalog = stored_catalog if isinstance(stored_catalog, dict) else await _catalog(backend)
     for item, pick in entity_picks:
         try:
-            outcome = await _import_entity(backend, item, pick, contents[item], kinds, taken, rebuilt)
+            outcome = await _import_entity(backend, item, pick, contents[item], kinds, taken, rebuilt, catalog)
         except Exception as ex:  # noqa: BLE001 - the libraries are stored: each item still gets its line
             _LOGGER.exception("External import of %s failed", item.path)
             outcome = _outcome(item, "failed", message=f"Not imported: {str(ex) or type(ex).__name__}")
         answer["items"].append(outcome)
     return answer
+
+
+async def _catalog(backend: Backend) -> dict | None:
+    """The stored libraries' node catalog, or None when it cannot be read: the definitions are still imported, and a
+    node whose kind the import changes keeps none of the values typed into it."""
+    try:
+        catalog = await backend.catalog()
+    except Exception as ex:  # noqa: BLE001 - the import goes on as it did before there was a catalog to read
+        _LOGGER.warning("External import could not read the node catalog, so no node whose kind it changes keeps the values "
+                        "typed into it: %s", str(ex) or type(ex).__name__)
+        return None
+    return catalog if isinstance(catalog, dict) else None
 
 
 def _stored_libraries(result: object) -> dict | None:
@@ -693,7 +771,7 @@ def _rebuilt_revisions(result: object) -> dict[str, int]:
 
 
 async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, kinds: dict[str, str], taken: set[str],
-                         rebuilt: dict[str, int]) -> dict:
+                         rebuilt: dict[str, int], catalog: dict | None) -> dict:
     graph = rewrite_library_kinds(body["logic"]["graph"], kinds)
     settings = body["settings"]
     if pick["mode"] == "new":
@@ -708,14 +786,15 @@ async def _import_entity(backend: Backend, item: Item, pick: dict, body: dict, k
             return _outcome(item, "failed", message=_CONFLICT if ex.code == "not_found" else ex.message)
         logic = stored.get("logic")
         settings = _kept_settings(settings, stored.get("settings"))
-        graph = keep_device_inputs(graph, logic.get("graph") if isinstance(logic, dict) else {})
+        graph = keep_device_inputs(graph, logic.get("graph") if isinstance(logic, dict) else {}, catalog)
         # The libraries' import rebuilt it at its next revision: from the revision inspect answered, the rebuild is the
         # only change since. From any other, something else changed it, and the save at the picked revision conflicts.
         expected = pick["expectedRevision"]
         if rebuilt.get(id) == expected + 1:
             expected = rebuilt[id]
         request = {"operation": "save", "id": id, "expectedRevision": expected}
-    # deriveSignatures: each C# node's pins are written from the code of the libraries now stored (Ruling 14).
+    # deriveSignatures: each C# node's pins are written from the code of the libraries now stored (Ruling 14). A library's
+    # class node has no code and is given no signature: its settings are its catalog entry's.
     request |= {"deriveSignatures": True, "definition": {**body, "settings": settings, "logic": {**body["logic"], "graph": graph}}}
     saved = await backend.save_definition(request)
     if not saved.get("ok"):

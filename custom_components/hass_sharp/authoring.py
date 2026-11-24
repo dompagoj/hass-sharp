@@ -104,6 +104,9 @@ class ExternalBackend:
     async def save_definition(self, request):
         return await self.service.entities(request, is_admin=True)
 
+    async def catalog(self):
+        return (await self._result(self.service.manager.NodeLibraryRequest, {"operation": "catalog"}))["result"]["catalog"]
+
 
 class AuthoringService:
     def __init__(self, hass, manager):
