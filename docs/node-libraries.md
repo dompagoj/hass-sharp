@@ -965,8 +965,10 @@ Once the library is saved, an entity definition's step list has **Relay hub** un
   device or entity, the key cannot change once saved.
 - **At run time** it is a C# node of its class: its constructor, `Setup()`,
   `Start()` and `Stop()` run, its entities, its [page](custom-entities.md#a-page-for-your-device)
-  and its [data](custom-entities.md#keeping-data) are kept under its key, and each
-  entity it adds is `<definition id>:<key>:<entity key>` in Home Assistant.
+  and its [data](custom-entities.md#keeping-data) are kept under its key. In Home
+  Assistant an entity class's node is the entity `<definition id>:<key>`, as a C#
+  entity is; a device class's node is the device `<definition id>:<key>`, and each
+  entity it adds is `<definition id>:<key>:<entity key>`.
 
 As a document, the node's kind is `library:<library id>:<type>`, here
 `library:relays:global%3A%3ANodeLib.RelayHub` for a library stored under the id
