@@ -241,6 +241,10 @@ describe('the in-memory entities backend', () => {
     expect(await codes({ ...body(), name: 'x'.repeat(121) })).toEqual(['definition.name'])
     // No Entity node.
     expect(await codes({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [], edges: [] } } })).toEqual(['definition.entitiesRequired'])
+    // Nor is one whose node makes entities of its own: a C# entity, a C# device or a library's class, or a node of a
+    // library kind the catalog lacks, which may be a library class that made them.
+    for (const kind of ['csharp_entity', 'csharp_device', 'library:relays:global%3A%3ANodeLib.RelayHub'])
+      expect(await codes({ ...body(), logic: { kind: 'graph', graph: { version: 5, name: 'Any motion', nodes: [{ id: 'n', kind, config: {} }], edges: [] } } }), kind).toEqual([undefined])
     // A graph request that lists entities, even none, is told to use Entity nodes, and only that, its name's problem
     // aside: its graph is not checked, so a graph with no Entity node is not said to need one.
     const listed = (entities: unknown) => ({ ...body(), entities } as unknown as DefinitionBody)

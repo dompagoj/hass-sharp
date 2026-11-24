@@ -1,4 +1,4 @@
-import { addGraphNode, declaredEntities, listedEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
+import { addGraphNode, declaredEntities, isClassNode, listedEntities, nodeCatalog, withGraphTypes, words, type Graph, type ServicesSection, type VisualCatalogSnapshot } from '../src/visual/contract'
 import type { GraphOutline, HomeAutomation, VisualDiagnostic, VisualDocument, VisualPreview } from '../src/visual/api'
 import type { DefinitionBody, DefinitionEntity, DerivedDevice, EntityDocument, RegisteredEntity } from '../src/entities/model'
 import { updateNode, type VisualGraph } from '../src/visual/graph'
@@ -196,7 +196,7 @@ export type FixtureActivation = 'running' | 'setup' | 'failed' | 'stopped' | 'no
  * The document checks are the real ones a test meets most (codes of `DefinitionDocument`/`DefinitionGenerator`): a name
  * of 1–120 characters (`definition.name`), no list of entities (`definition.entitiesNotAllowed`: at all, even empty or
  * null), no device (`definition.deviceNotAllowed`: one that is not null) and at least one Entity node
- * (`definition.entitiesRequired`),
+ * (`definition.entitiesRequired`) unless a class node, or a node of a library kind the catalog lacks, makes its own,
  * each with options as `DefinitionDocument.Options` checks them (`definition.entityOption`, on the node: one its domain
  * has, of its type, not an empty list, a number Home Assistant takes and within its rule's range, a pattern that is a
  * regular expression, every option the domain needs, a min below the max); with any of them the seeded diagnostics are
@@ -266,8 +266,12 @@ function entitiesFixture(generation: () => string) {
     // As DefinitionDocument.Check: graph logic with no graph (null or left out) is told to give one.
     if (body.logic.graph == null) problems.push(problem('definition.graph', 'Give the definition a graph: its logic is a graph of nodes, and none was given'))
     const nodes = declaredEntities(body.logic.graph)
-    // A graph whose nodes are not a list is the validator's to tell (graph.shape), as the server has it.
-    if (!nodes.length && Array.isArray((body.logic.graph as { nodes?: unknown } | undefined)?.nodes)) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
+    // A graph whose nodes are not a list is the validator's to tell (graph.shape), as the server has it. A C# entity, a
+    // C# device or a library's class makes entities of its own, so a graph with one needs no Entity node; nor does one
+    // with a node of a library kind the catalog lacks, which may be a library class that made them.
+    const all = (body.logic.graph as { nodes?: unknown } | undefined)?.nodes
+    const makesOwn = (kind: unknown) => typeof kind === 'string' && (Object.hasOwn(nodeCatalog.nodes, kind) ? isClassNode(nodeCatalog.nodes[kind]) : kind.startsWith('library:'))
+    if (!nodes.length && Array.isArray(all) && !all.some(node => makesOwn((node as { kind?: unknown } | null)?.kind))) problems.push(problem('definition.entitiesRequired', 'Add an Entity node: an entity definition creates the entities on its canvas, and has none'))
     for (const { nodeId, entity } of nodes) {
       const domain = entity.domain, options = entity.options
       if (typeof domain !== 'string' || !Object.hasOwn(nodeCatalog.entityDomains ?? {}, domain) || (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options)))) continue

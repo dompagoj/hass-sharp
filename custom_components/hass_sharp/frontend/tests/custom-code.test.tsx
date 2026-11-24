@@ -1017,7 +1017,9 @@ it('keeps a C# device\'s unapplied code in the draft by its kind, opens it again
   await vi.waitFor(() => expect(editors).toHaveLength(1))
   expect(kindLine()).toBe('C# device code')
   expect(editors[0].model.getValue()).toBe(`${plugCode()}\n// typed, not applied`)
-  await vi.waitFor(() => expect(second.dirty()).toBe(true))
+  // It can be applied once checked. The page's chip counts the graph's changes only, and the graph is still the saved one.
+  await vi.waitFor(() => expect(apply().disabled).toBe(false))
+  expect(second.dirty()).toBe(false)
   dispose?.(); dispose = undefined
   document.body.innerHTML = ''
   // The same draft as a Custom C# step's (no kind): the node of that id is a C# device, so the code is only offered to copy.
