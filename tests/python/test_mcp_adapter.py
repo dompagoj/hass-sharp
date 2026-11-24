@@ -1295,7 +1295,9 @@ class McpTests(unittest.IsolatedAsyncioTestCase):
         # setting with no initializer and no ? is required, and fails the start when the Setting wired to it has no value;
         # the class follows a handle with Track and calls services with the typed methods of Services.
         for phrase in ('a string, bool, int, long, double, enum or entity handle: Entity for any entity, or a domain\'s class such as LightEntity or SensorEntity',
-                       'Secret = true (never for an entity)','domain?, required?}]}',
+                       'Secret = true (never for an entity)','domain?, required?, default?}]}',
+                       # A setting's default is what it is when the node gives it no value, there only when the code says.
+                       'default, what the setting is when given no value, only when the code says',
                        '{kind: literal, type: entity_id:light, value: light.kitchen}','entity_id:<domain> for a domain\'s class',
                        'for a LightEntity with {Label} is not a valid Light entity value',
                        'A string or entity setting with no initializer and no ? (public SensorEntity Source { get; set; }) is required',

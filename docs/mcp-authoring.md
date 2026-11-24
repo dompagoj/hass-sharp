@@ -495,7 +495,7 @@ values and wires as below.
   class has are in [custom entities](custom-entities.md#c-nodes).
 - **The signature.** `config.signature`, `{title, description, domain, settings:
   [{key, label, description, type, secret, options?, minimum?, maximum?, domain?,
-  required?}]}`, is worked
+  required?, default?}]}`, is worked
   out from the code: `entities_preview` and `entities_save` do it (they pass
   `deriveSignatures: true`) and preview returns the `graph` with it, so leave it out.
   A signature out of date with the code is an error (`csharp.signature`); a value or
