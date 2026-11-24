@@ -188,6 +188,10 @@ it('refuses a paste only by structural codes the validator really produces', () 
       const wire = (source: string, target: string) => ({ id: `${source}-${target}`, kind: 'data', source, target, sourcePort: 'value', targetPort: 'left' })
       return { ...g, edges: [...g.edges, wire('a', 'b'), wire('b', 'a')] }
     })()],
+    'scope.settingSource': [(() => {
+      const g = add(add(empty(), 'csharp_device', 'plug', { key: 'plug', name: 'Plug' }), 'convert', 'text', { type: 'string' })
+      return { ...g, edges: [{ id: 'into-setting', kind: 'data', source: 'text', sourcePort: 'value', target: 'plug', targetPort: 'Address' }] }
+    })()],
   } as Record<DiagnosticCode, [unknown, VisualCatalogSnapshot?]>
   for (const code of pasteRefusals) {
     expect(crafted[code], code).toBeDefined()

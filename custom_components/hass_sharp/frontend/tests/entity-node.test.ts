@@ -2,8 +2,8 @@ import { expect, it } from 'vitest'
 import { addGraphNode, classSignature, connectData, csharpEntities, listedEntities, entityKeyHolders, hasCode, isClassNode, isHub, wellFormedClassSignature, dataInputs, declaredDevices, definitionDeviceKeys, definitionEntityKeys, derivedDevices, deviceNodeOf, disconnectData, isPure, valueUpstream, dataOutputs, declaredEntities, definitionCatalog, diagnosticCodes, entityNodeName, executionLabel, executionPorts, flowMethod, isDeclaration, listedTypes, nodeCatalog, setInput, settingPinType, stateInputs, structural, validateGraph, withGraphTypes, words, type ClassSetting, type Graph, type GraphNode, type NodeSpec, type VisualCatalogSnapshot } from '../src/visual/contract'
 import { hubKind, relayKind, relaysCase, relaysGraph, withRelays } from './relays-library'
 import { definitionNames, runName, summarizeTrigger } from '../src/components/TriggerSummary'
-import { canConnect, catalogPalette, connectNodes, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
-import { addConnected } from '../src/visual/flow/autoConnect'
+import { canConnect, catalogPalette, connectNodes, createGraph, createNodeAt, dataConnectionError, removeNode, updateNode, type VisualGraph } from '../src/visual/graph'
+import { addConnected, canAddFor } from '../src/visual/flow/autoConnect'
 import { connectionIndex } from '../src/visual/connectionIndex'
 import { buildNodeView } from '../src/visual/flow/flowModel'
 import { copySteps, pasteSteps } from '../src/visual/clipboard'
@@ -621,6 +621,60 @@ it('a setting pin takes a typed value or a Setting node, and a secret only a Set
   expect(problems(other)).toEqual([{ nodeId: 'plug', message: 'Address has an invalid value', severity: 3, inputId: 'Address' }])
   // A secret left unset is no problem: the class keeps what it starts with.
   expect(problems(updateNode(typed, 'plug', { config: { ...typed.nodes.find(n => n.id === 'plug')!.config, arguments: {} } }))).toEqual([])
+})
+
+it('a class node\'s settings and a Setting\'s value are setting pins, and no other pin is', () => {
+  let graph = withSettings()
+  graph = add(graph, 'device', 'hall', { key: 'hall', name: 'Hall' })
+  graph = connectData(graph, 'hall', 'entities', 'thermo', 'device')
+  graph = add(graph, 'entity', 'lamp', { key: 'lamp', domain: 'light', name: 'Lamp' })
+  const automation = createGraph('Lights')
+  const view = (value: VisualGraph, id: string) => buildNodeView(value.nodes.find(n => n.id === id)!, { graph: value, catalog: nodeCatalog, diagnostics: [] })
+  const pins = (value: VisualGraph, id: string) => {
+    const card = view(value, id)
+    return [card.execIn, card.headerInput?.pin, card.next, card.footer, ...card.rows.flatMap(row => [row.input?.pin, row.output])].filter(pin => pin !== undefined)
+  }
+  const settingPins = (value: VisualGraph, id: string) => pins(value, id).filter(pin => pin.setting).map(pin => `${pin.side} ${pin.id}`)
+  // The C# device's settings; the C# entity's settings, and not its Device pin; the Setting's value.
+  expect(settingPins(graph, 'plug')).toEqual(['in data:Address', 'in data:Token'])
+  expect(settingPins(graph, 'thermo')).toEqual(['in data:Address'])
+  expect(view(graph, 'thermo').headerInput?.pin.setting).toBeFalsy()
+  expect(settingPins(graph, 'address')).toEqual(['out data:value'])
+  // No pin of a value node, a step, a root, a Device node, an Entity node or a trigger.
+  for (const id of ['text', 'http', 'start', 'hall', 'lamp']) {
+    expect(pins(graph, id).length, id).toBeGreaterThan(0)
+    expect(settingPins(graph, id), id).toEqual([])
+  }
+  expect(pins(automation, 'trigger-1').length).toBeGreaterThan(0)
+  for (const node of automation.nodes) expect(settingPins(automation, node.id), node.id).toEqual([])
+  // A setting pin says what it takes, after what any input says; a Setting's value says where else it goes.
+  const address = pins(graph, 'plug').find(pin => pin.id === 'data:Address')!
+  expect(address.name).toBe('Input Address, Text, not connected. Takes a typed value or a Setting node')
+  expect(pins(graph, 'address').find(pin => pin.side === 'out')!.name).toBe('Output Value, Text, connected. Can also set a setting of a C# entity or C# device')
+  expect(pins(graph, 'text').find(pin => pin.side === 'in')!.name).toBe('Input Value, Text, required, connected to Setting · Value')
+})
+
+it('auto-connect offers no step for a setting pin but a Setting, and no class node for a step\'s value, and a paste does not bring such a wire', () => {
+  const graph = withSettings()
+  const setting = { nodeId: 'plug', handle: 'data:Address', type: 'target' as const }
+  const convert = { nodeId: 'text', handle: 'data:value', type: 'source' as const }
+  // From a setting pin: a value node whose output fits is not offered, and adding it anyway makes no wire.
+  expect(canAddFor(graph, 'convert', setting, nodeCatalog)).toBe(false)
+  expect(addConnected(graph, 'convert', { x: 0, y: 0 }, setting, nodeCatalog, 'new')).toBeUndefined()
+  // From a value node's output: a C# device or a C# entity is not offered (its settings take no such wire).
+  for (const kind of ['csharp_device', 'csharp_entity']) {
+    expect(canAddFor(graph, kind, convert, nodeCatalog), kind).toBe(false)
+    expect(addConnected(graph, kind, { x: 0, y: 0 }, convert, nodeCatalog, 'new'), kind).toBeUndefined()
+  }
+  // From a Setting's output a C# device is offered, and its setting gets the wire.
+  const fromSetting = addConnected(graph, 'csharp_device', { x: 0, y: 0 }, { nodeId: 'address', handle: 'data:value', type: 'source' }, nodeCatalog, 'new')
+  expect(fromSetting?.graph.edges.at(-1)).toMatchObject({ kind: 'data', source: 'address', target: 'new', targetPort: 'Address' })
+  // A paste of steps with a wire a setting does not take is refused, in the validator's words; one with a Setting's wire is not.
+  const stepWired = { ...graph, edges: [...graph.edges, { id: 'w', kind: 'data' as const, source: 'text', sourcePort: 'value', target: 'plug', targetPort: 'Address' }] }
+  expect(pasteSteps(graph, copySteps(stepWired, ['text', 'plug'])!, nodeCatalog, { offset: { x: 40, y: 40 } })).toEqual({ error: words.settingSource('Address') })
+  const settingWired = connectData(graph, 'address', 'value', 'plug', 'Address')
+  const pasted = pasteSteps(graph, copySteps(settingWired, ['address', 'plug'])!, nodeCatalog, { offset: { x: 40, y: 40 } })
+  expect('graph' in pasted && pasted.graph.edges.length).toBe(graph.edges.length + 1)
 })
 
 it('deleting a Device node asks nothing', () => {

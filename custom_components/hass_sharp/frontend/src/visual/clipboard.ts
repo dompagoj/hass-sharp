@@ -114,14 +114,16 @@ export async function readSteps(): Promise<StepClipboard | undefined> {
 /**
  * Diagnostic codes that mean the editor would refuse the graph or a wire in it, as opposed to the problems pasted
  * steps normally have until they are connected (`node.unreachable`, and `scope.*` for their value wires, which cannot
- * be checked against a scope yet; a value not set): those are fixed by editing, these only by undoing.
+ * be checked against a scope yet; a value not set): those are fixed by editing, these only by undoing. A wire into a
+ * class node's setting from anything but a Setting (`scope.settingSource`) depends on no scope, and no edit makes it
+ * fit: the canvas never makes one, and neither does a paste.
  */
 export const pasteRefusals: ReadonlySet<DiagnosticCode> = new Set<DiagnosticCode>([
   'graph.version', 'graph.shape', 'graph.limit',
   'node.invalid', 'node.duplicate', 'node.unknownKind', 'limit.nesting',
   'edge.invalid', 'edge.duplicate', 'edge.endpoint', 'edge.unknownKind', 'edge.valueWirePins', 'edge.orderWirePins', 'edge.orderPinName',
   'port.unknownExecution', 'port.executionTaken', 'port.unknownOutput', 'port.unknownInput', 'port.inputTaken', 'trigger.incoming',
-  'cycle.execution', 'cycle.data',
+  'cycle.execution', 'cycle.data', 'scope.settingSource',
 ])
 
 export type PasteResult = { graph: VisualGraph; ids: string[] } | { error: string }

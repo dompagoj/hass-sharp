@@ -127,7 +127,8 @@
 /*
  * Pins. The handle is a zero-size point on the card edge, so wires attach to the pin centre for every row height.
  * ::after draws it; ::before is the 24 px target. Data pins are circles in their type colour (filled once
- * connected, rounded squares for lists); execution pins are arrows.
+ * connected, rounded squares for lists, square-cornered squares for a class node's settings and a Setting's value, which
+ * is all such a setting takes a wire from); execution pins are arrows.
  */
 .hs-app .hs-flow .solid-flow__handle.hs-pin { position: absolute; top: 50%; width: 0; height: 0; min-width: 0; min-height: 0; border: 0; border-radius: 0; background: none; transform: none; z-index: 1; }
 .hs-app .hs-flow .hs-pin-line > .hs-pin--in { left: calc(-1 * var(--hs-card-pad) - 1px); }
@@ -151,6 +152,7 @@
 }
 .hs-app .hs-flow .hs-pin--data.hs-pin--connected::after { background: var(--hs-pin-color); }
 .hs-app .hs-flow .hs-pin--list::after { border-radius: 3px; }
+.hs-app .hs-flow .hs-pin--setting::after { border-radius: 0; }
 /* Execution pins: an arrow with a pointed right edge, hollow until connected, then filled. */
 .hs-app .hs-flow .hs-pin--exec::after {
   left: -9px;

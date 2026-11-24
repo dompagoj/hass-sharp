@@ -67,6 +67,11 @@ export interface PinView {
   connected: boolean
   /** The execution error output: red and secondary. */
   error: boolean
+  /**
+   * A class node's setting (a C# entity's, a C# device's, a library class's) or a Setting node's value: drawn as a square,
+   * since such a setting takes a wire from a Setting node only (`settingSourceError`).
+   */
+  setting?: boolean
   description?: string
 }
 /** How an input row shows its value. */
@@ -229,6 +234,10 @@ export function execLabel(node: GraphNode, port: string, catalog: VisualCatalogS
   return executionLabel(node, port, catalog) ?? portLabel(port)
 }
 const connectedText = (connected: boolean) => (connected ? 'connected' : 'not connected')
+/** What a setting pin's name adds: the one wire it takes. */
+const settingTakes = 'Takes a typed value or a Setting node'
+/** What a Setting node's value's name adds: it fits a setting pin too. */
+const settingSets = 'Can also set a setting of a C# entity or C# device'
 
 /** Everything the per-node view depends on besides the node itself. */
 export interface ViewContext {
@@ -341,13 +350,14 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     // even with a wire into it from an older graph: that wire does not work, and the row shows the editor with its error.
     const mode: InputMode = wire && input.connectable !== false ? 'connected' : widgetFor(input, catalog).kind === 'none' && input.connectable !== false ? 'wire' : unset && !input.required ? 'muted' : 'value'
     const errors = messagesFor(port)
+    const setting = isClassNode(spec) && record(input.setting)
     return {
       port, spec: input, mode, source, sourceNode: wire?.source, errors,
       pin: {
         id: dataHandle(port), side: 'in', kind: 'data', label, typeId, typeName: typeText,
-        name: `Input ${label}, ${typeText}${input.required ? ', required' : ''}, ${source ? `connected to ${source}` : unset || mode === 'wire' ? 'not connected' : 'not connected, has a value'}`,
+        name: `Input ${label}, ${typeText}${input.required ? ', required' : ''}, ${source ? `connected to ${source}` : unset || mode === 'wire' ? 'not connected' : 'not connected, has a value'}${setting ? `. ${settingTakes}` : ''}`,
         color: typeId ? typeColor(typeId, catalog) : 'var(--hs-muted)', list: typeId ? typeIsList(typeId, catalog) : false,
-        connected: !!wire, error: false, description: input.description,
+        connected: !!wire, error: false, ...(setting ? { setting } : {}), description: input.description,
       },
     }
   })
@@ -371,10 +381,11 @@ export function buildNodeView(node: GraphNode, ctx: ViewContext): NodeView {
     // A Select property node's output has its property's type, and none until one is chosen and found.
     const untyped = !!output.propertyOf && !output.type
     const typeText = untyped ? (text(node.config.property) ? 'Unknown type' : 'No property chosen') : typeLabel(output.type, catalog)
+    const setting = node.kind === 'setting'
     return {
       id: dataHandle(port), side: 'out', kind: 'data', label, ...(spoken ? { spoken } : {}), typeId: untyped ? undefined : output.type, typeName: typeText,
-      name: `Output ${spoken ?? label}, ${typeText}, ${connectedText(connected)}`, color: untyped ? 'var(--hs-muted)' : typeColor(output.type, catalog),
-      list: !untyped && typeIsList(output.type, catalog), connected, error: false, description: output.description,
+      name: `Output ${spoken ?? label}, ${typeText}, ${connectedText(connected)}${setting ? `. ${settingSets}` : ''}`, color: untyped ? 'var(--hs-muted)' : typeColor(output.type, catalog),
+      list: !untyped && typeIsList(output.type, catalog), connected, error: false, ...(setting ? { setting } : {}), description: output.description,
     }
   })
   // A value read in one of the step's scopes (a flow's value, For each's item) sits right under that scope's pin, and so

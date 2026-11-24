@@ -24,6 +24,7 @@ export function Pin(props: { nodeId: string; pin: PinView; errors?: string[]; de
       `hs-pin--${props.pin.side}`,
       props.pin.connected && 'hs-pin--connected',
       props.pin.list && 'hs-pin--list',
+      props.pin.setting && 'hs-pin--setting',
       props.pin.error && 'hs-pin--error',
       errors().length && 'hs-pin--invalid',
       state() && `hs-pin--${state()}`,

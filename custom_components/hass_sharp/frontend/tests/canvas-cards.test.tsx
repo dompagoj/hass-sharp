@@ -1505,6 +1505,101 @@ describe('the C# entity and C# device cards', () => {
     await vi.waitFor(() => expect((current().nodes.find(n => n.id === 'dimmer')!.config.arguments as Record<string, unknown>).Lamp).toEqual(lit('entity_id:light', 'light.kitchen')))
   })
 
+  /** The nodes, a Setting of the definition's token, and a Convert to text, a value made while a flow runs. */
+  const withSources = () => add(add(nodes(), 'setting', 'tok', { key: 'token' }), 'convert', 'text', { type: 'string' })
+  const handle = (el: Element, id: string, port: string, side: 'source' | 'target') => el.querySelector<HTMLElement>(`[data-id="${id}"] .${side}[data-handleid="data:${port}"]`)!
+
+  it('draws a setting\'s pin and a Setting\'s value as squares, says what the pin takes, and every other pin as it was', () => {
+    const el = host()
+    dispose = render(() => providers(() => <FlowAdapter graph={withSources()} onSelect={() => {}} onChange={() => {}} />), el)
+    for (const id of ['plug', 'thermo']) for (const port of ['Address', 'Port', 'Token']) {
+      const pin = handle(el, id, port, 'target')
+      expect(pin.classList, `${id} ${port}`).toContain('hs-pin--setting')
+      expect(pin.classList, `${id} ${port}`).toContain('hs-pin--data')
+    }
+    const address = handle(el, 'plug', 'Address', 'target')
+    expect(address.getAttribute('aria-label')).toBe('Input Address, Text, not connected. Takes a typed value or a Setting node')
+    expect(address.getAttribute('title')).toBe(address.getAttribute('aria-label'))
+    const value = handle(el, 'tok', 'value', 'source')
+    expect(value.classList).toContain('hs-pin--setting')
+    expect(value.getAttribute('aria-label')).toBe('Output Value, Text, not connected. Can also set a setting of a C# entity or C# device')
+    // The C# entity's Device pin, a Device node's entities, a value node's pins: as any data pin.
+    for (const pin of [el.querySelector('[data-id="thermo"] .hs-card__head [data-handleid="data:device"]')!, handle(el, 'hall', 'entities', 'source'), handle(el, 'text', 'value', 'target'), handle(el, 'text', 'value', 'source')]) {
+      expect(pin.classList).toContain('hs-pin--data')
+      expect(pin.classList).not.toContain('hs-pin--setting')
+      expect(pin.getAttribute('aria-label')).not.toContain('Setting node')
+    }
+  })
+
+  it('offers a setting\'s pin to a dragged Setting only, and drops nothing else on it', async () => {
+    layout()
+    const el = host()
+    const history = createGraphHistory(withSources())
+    dispose = render(() => providers(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />), el)
+    await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge')).not.toBeNull())
+    const before = history.graph().edges.length
+    const drag = (source: HTMLElement, target: HTMLElement, check: () => void) => {
+      vi.spyOn(document, 'elementFromPoint').mockReturnValue(target)
+      source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }))
+      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 150, clientY: 150 }))
+      check()
+      document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 200, clientY: 200 }))
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 200, clientY: 200 }))
+    }
+    // From a value made while a flow runs: no setting is offered, and the drop is refused with the reason beside the pin.
+    drag(handle(el, 'text', 'value', 'source'), handle(el, 'plug', 'Address', 'target'), () => {
+      for (const port of ['Address', 'Token']) expect(handle(el, 'plug', port, 'target').classList, port).toContain('hs-pin--incompatible')
+      expect(handle(el, 'plug', 'Address', 'target').tabIndex).toBe(-1)
+    })
+    expect(history.graph().edges).toHaveLength(before)
+    await vi.waitFor(() => expect(el.querySelector('[data-id="plug"] .hs-pin-refusal')?.textContent).toBe(contract.words.settingSource('Address')))
+    // From the Setting: the setting pins are offered, and the drop makes the wire.
+    drag(handle(el, 'tok', 'value', 'source'), handle(el, 'plug', 'Address', 'target'), () => {
+      expect(handle(el, 'plug', 'Address', 'target').classList).toContain('hs-pin--compatible')
+      expect(handle(el, 'thermo', 'Token', 'target').classList).toContain('hs-pin--compatible')
+    })
+    expect(history.graph().edges).toHaveLength(before + 1)
+    expect(history.graph().edges.at(-1)).toMatchObject({ kind: 'data', source: 'tok', target: 'plug', targetPort: 'Address' })
+  })
+
+  it('makes no wire into a setting from a step\'s value by clicking or pressing Enter on its pins, and makes the Setting\'s', async () => {
+    const el = host()
+    const history = createGraphHistory(withSources())
+    dispose = render(() => providers(() => <FlowAdapter graph={history.graph()} onSelect={() => {}} onChange={history.commit} />), el)
+    const before = history.graph().edges.length
+    const enter = (pin: HTMLElement) => pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    const click = (pin: HTMLElement) => pin.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    for (const press of [enter, click]) {
+      press(handle(el, 'text', 'value', 'source'))
+      press(handle(el, 'thermo', 'Address', 'target'))
+      expect(history.graph().edges).toHaveLength(before)
+      await vi.waitFor(() => expect(el.querySelector('[data-id="thermo"] .hs-pin-refusal')?.textContent).toBe(contract.words.settingSource('Address')))
+      expect(handle(el, 'thermo', 'Address', 'target').getAttribute('aria-invalid')).toBe('true')
+      // Escape leaves the picked pin.
+      el.querySelector('.solid-flow')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    }
+    click(handle(el, 'tok', 'value', 'source'))
+    click(handle(el, 'thermo', 'Address', 'target'))
+    expect(history.graph().edges.at(-1)).toMatchObject({ kind: 'data', source: 'tok', target: 'thermo', targetPort: 'Address' })
+  })
+
+  it('keeps and shows a wire into a setting from a step\'s value that the graph already has, with its problem', async () => {
+    layout()
+    const el = host()
+    const loaded = withSources()
+    const graph = { ...loaded, edges: [...loaded.edges, { id: 'old', kind: 'data' as const, source: 'text', sourcePort: 'value', target: 'plug', targetPort: 'Address' }] }
+    const diagnostics = contract.validateGraph(graph, contract.nodeCatalog)
+    expect(diagnostics.filter(d => d.code === 'scope.settingSource')).toEqual([{ nodeId: 'plug', message: contract.words.settingSource('Address'), severity: 3, inputId: 'Address', portId: 'Address', code: 'scope.settingSource' }])
+    dispose = render(() => providers(() => <FlowAdapter graph={graph} onSelect={() => {}} onChange={() => {}} diagnostics={diagnostics as never} />), el)
+    await vi.waitFor(() => expect(el.querySelector('.solid-flow__edge[data-id="old"]')).not.toBeNull())
+    const pin = handle(el, 'plug', 'Address', 'target')
+    expect(pin.classList).toContain('hs-pin--connected')
+    expect(pin.classList).toContain('hs-pin--setting')
+    expect(pin.getAttribute('aria-invalid')).toBe('true')
+    expect(pin.getAttribute('title')).toBe(contract.words.settingSource('Address'))
+    expect(card(el, 'plug').querySelector('.hs-node-errors')!.textContent).toContain(contract.words.settingSource('Address'))
+  })
+
   it('shows a setting relabelled by applied code on the card at once', async () => {
     const el = host()
     const [graph, setGraph] = createSignal(nodes())
@@ -1584,6 +1679,8 @@ describe('the library class node cards', () => {
     // Its required Address is marked as a required input is.
     expect(rowLabels(el, 'hub')).toEqual([['Address', 'Address*'], ['Token', 'Token'], ['PollEvery', 'Poll every']])
     expect(hub.querySelector('[data-input-id="Address"] .hs-required')!.getAttribute('title')).toBe('Required')
+    // Its settings' pins are a setting's squares, as a C# device's are.
+    for (const port of ['Address', 'Token', 'PollEvery']) expect(hub.querySelector(`.target[data-handleid="data:${port}"]`)!.classList, port).toContain('hs-pin--setting')
     expect(hub.querySelector('.hs-card__none')!.textContent).toBe('Its entities appear here after it has started once')
     expect(hub.querySelector('.hs-card__badge--attention')!.textContent).toBe('2')
     expect(hub.querySelector('.hs-card__code')).toBeNull()

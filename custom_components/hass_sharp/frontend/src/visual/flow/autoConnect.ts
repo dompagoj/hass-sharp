@@ -1,4 +1,4 @@
-import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isDeclaration, isPure, isRoot, selectsProperties, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
+import { addGraphNode, analyzeGraph, blockingDiagnostic, connectData, dataOutputs, executionPorts, isAssignable, isDeclaration, isPure, isRoot, selectsProperties, settingSourceError, typeProperties, withGraphTypes, type GraphEdge, type GraphNode, type OutputSpec, type VisualCatalogSnapshot } from '../contract'
 import { canConnect, connectNodes, nodeInputs, outputPort, removeEdge, updateNode, type VisualGraph } from '../graph'
 import { createUuid } from '../id'
 import { dataPortOf, nodeTitle } from './flowModel'
@@ -75,13 +75,15 @@ function portFor(graph: VisualGraph, kind: string, pin: PinRef, catalog: VisualC
     const output = dataOutputs(pinNode, types)[data]
     if (!output) return
     // An input that takes a value only (a Constant's) has no pin to connect; one that reads a property takes a value
-    // whose own type has properties, never one that only converts to such a type.
+    // whose own type has properties, never one that only converts to such a type; a class node's setting takes a
+    // Setting's value only.
     const spec = Object.hasOwn(types.nodes, kind) ? types.nodes[kind] : undefined
-    const inputs = Object.entries(nodeInputs(next, node, types)).filter(([port, input]) => input.connectable !== false && (!selectsProperties(spec, port) || typeProperties(types, output.type).length > 0))
+    const inputs = Object.entries(nodeInputs(next, node, types)).filter(([port, input]) => input.connectable !== false && (!selectsProperties(spec, port) || typeProperties(types, output.type).length > 0) && !settingSourceError(pinNode, node, input, port, types))
     return bestMatch(inputs, input => input.types.includes(output.type), input => input.types.some(t => isAssignable(output.type, t, types)))
   }
   const input = nodeInputs(graph, pinNode, catalog)[data]
-  if (!input) return
+  // A class node's setting is fed by a new Setting only: any other step's output is refused there.
+  if (!input || settingSourceError(node, pinNode, input, data, types)) return
   // An output whose type comes from a property not chosen yet (a new Select property node's) fits no input.
   const outputs = Object.entries(dataOutputs(node, types)).filter(([, output]) => output.type !== '')
   return bestMatch(outputs, output => input.types.includes(output.type), output => input.types.some(t => isAssignable(output.type, t, types)))
