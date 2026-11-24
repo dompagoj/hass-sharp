@@ -58,11 +58,11 @@ internal sealed record NodeClassSetup(string Class, Func<NodeSetupContext, Task>
 /// and an Entity node's command flow for each command; beside them it creates each C# entity and C# device node's class,
 /// applies its settings and sets it up, after the <c>[NodeSetup]</c> of each node library class its graph uses. It tells
 /// Home Assistant which entities exist, starts and stops them, and carries their states, timers, tracks and commands. It
-/// owns the definition's HTTP client and downloads, its C# nodes' handles on their data stores and their pages, and what
-/// its node setups own (<see cref="Own"/>), which it ends once the definition has stopped; it prunes the stores of nodes
-/// a saved revision no longer has as that revision starts. It answers Home Assistant's requests for its cameras'
-/// pictures, making their frames (<see cref="CameraImage"/>), and the panel's for its pages, running their actions'
-/// handlers (<see cref="UiAct"/>).
+/// owns the definition's HTTP client and downloads, its C# nodes' handles on their data stores, their media folders and
+/// their pages, and what its node setups own (<see cref="Own"/>), which it ends once the definition has stopped; it prunes
+/// the stores and media folders of nodes a saved revision no longer has as that revision starts. It answers Home
+/// Assistant's requests for its cameras' pictures, making their frames (<see cref="CameraImage"/>), and the panel's for
+/// its pages, running their actions' handlers (<see cref="UiAct"/>).
 /// </summary>
 internal sealed partial class DefinitionHost(UserScript script, CompiledDefinition definition) : IComponentHost, IDefinitionRuntime
 {
@@ -120,10 +120,10 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
     // Why the When started flow last failed, as FlowFailed words it (the step's sentence, with its cause), for its start's error.
     volatile string? setupFailure;
     // The components whose Start() the host has begun, or whose Stop() it runs: what works only from Start() on (Data,
-    // Shared) works for these alone. Under the gate; emptied once stopped.
+    // Shared, Media) works for these alone. Under the gate; emptied once stopped.
     readonly HashSet<SharpComponent> begun = new(ReferenceEqualityComparer.Instance);
-    // Guards the data stores the C# nodes opened, by node key, and whether they are closed; taken alone, never under the
-    // gate, and before the stores' own locks.
+    // Guards the data stores and media folders the C# nodes opened, by node key, and whether they are closed; taken alone,
+    // never under the gate, and before the stores' and the folders' own locks.
     readonly Lock dataGate = new();
     readonly Dictionary<string, NodeData> nodeData = new(StringComparer.Ordinal);
     bool dataClosed;
@@ -211,6 +211,21 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
     }
 
+    /// <inheritdoc/>
+    public SharpMedia Media(SharpComponent component)
+    {
+        var folders = Manager.Media ?? throw new InvalidOperationException(MediaFolders.NoFolder);
+        lock (dataGate)
+        {
+            if (dataClosed) throw new ObjectDisposedException(null, $"{definition.Name} has stopped: its media folders are closed");
+            // Under the data lock, which closing takes before the components are let go: begun is not emptied meanwhile.
+            CheckBegun(component, "Media");
+            var node = NodeOf(component) ?? throw new InvalidOperationException($"{component.GetType().Name} is no C# node of {definition.Name}, so it keeps no media files");
+            if (!nodeData.TryGetValue(node.Key, out var data)) nodeData[node.Key] = data = new(new DataUser(definition.Id, node.Key, RunChanged));
+            return data.Media ??= folders.Open(definition.Id, node.Key);
+        }
+    }
+
     /// <summary>
     /// Throws what <paramref name="what"/>, a member of the component's that works only from <c>Start()</c> on, throws
     /// before it (<see cref="SharpComponent.NotStarted"/>), unless the host has begun the component's <c>Start()</c> or runs
@@ -248,7 +263,8 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         }
     }
 
-    // Closes the data stores the C# nodes opened: from now on each refuses, and its Changed actions run no more. Never throws.
+    // Closes the data stores and media folders the C# nodes opened: from now on each refuses, and its Changed actions run
+    // no more. Never throws.
     void CloseData()
     {
         NodeData[] opened;
@@ -258,18 +274,26 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
             opened = [.. nodeData.Values];
             nodeData.Clear();
         }
+        foreach (var data in opened)
+            if (data.Media is { } media)
+                try { media.Close(); }
+                catch (Exception failure) { Report("closing its media folders failed", failure, PyLogLevel.Warn); }
         if (opened.Length == 0 || Manager.Data is not { } stores) return;
         foreach (var data in opened)
             try { stores.Close(data.User); }
             catch (Exception failure) { Report("closing its data stores failed", failure, PyLogLevel.Warn); }
     }
 
-    /// <summary>One C# node's user of the data stores, and the handles it opened: on its own store, and on each shared one by name.</summary>
+    /// <summary>
+    /// One C# node's user of the data stores, and the handles it opened: on its own store, on each shared one by name, and
+    /// on its media folder.
+    /// </summary>
     sealed class NodeData(DataUser user)
     {
         public DataUser User { get; } = user;
         public SharpData? Device { get; set; }
         public Dictionary<string, SharpData> Shared { get; } = new(StringComparer.Ordinal);
+        public SharpMedia? Media { get; set; }
     }
 
     /// <inheritdoc/>
@@ -733,8 +757,12 @@ internal sealed partial class DefinitionHost(UserScript script, CompiledDefiniti
         // The revision this one replaced has stopped by now.
         ReleasePredecessor();
         // The data of a C# node this revision no longer has goes now, never while that revision ran: it has closed its stores.
-        try { Manager.Data?.PruneDevice(definition.Id, definition.Components.Select(node => node.Key).ToHashSet(StringComparer.Ordinal)); }
+        var nodeKeys = definition.Components.Select(node => node.Key).ToHashSet(StringComparer.Ordinal);
+        try { Manager.Data?.PruneDevice(definition.Id, nodeKeys); }
         catch (Exception failure) { Report("deleting the data of the C# nodes the definition no longer has failed", failure, PyLogLevel.Warn); }
+        // Their media files alike.
+        try { Manager.Media?.PruneDevice(definition.Id, nodeKeys); }
+        catch (Exception failure) { Report("deleting the media files of the C# nodes the definition no longer has failed", failure, PyLogLevel.Warn); }
         // A replaced revision may have sent the same states: they are sent again, as the new entities' first.
         try { Manager.Pump.Forget(all.Select(UniqueId)); }
         catch (Exception failure) { Report("forgetting the states of the replaced revision failed", failure, PyLogLevel.Warn); }

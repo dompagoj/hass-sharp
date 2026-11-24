@@ -6,8 +6,8 @@ namespace HassSharp;
 /// <summary>
 /// What hosts a custom device or entity while its definition runs: it publishes state to Home Assistant, owns the
 /// timers and entity tracks the component starts, the definition's HTTP client and downloads, its C# nodes' handles
-/// on their data stores and their pages, and says when the definition is stopping. A component without one (built but
-/// not yet attached, or in a test) publishes nothing.
+/// on their data stores, their media folders and their pages, and says when the definition is stopping. A component
+/// without one (built but not yet attached, or in a test) publishes nothing.
 /// </summary>
 internal interface IComponentHost
 {
@@ -42,6 +42,11 @@ internal interface IComponentHost
     SharpData Data(SharpComponent component);
     /// <summary>The shared store of that name, opened for the component's C# node, the same handle on each use; as <see cref="Data"/>.</summary>
     SharpData Shared(SharpComponent component, string name);
+    /// <summary>
+    /// The folder of the component's C# node in Home Assistant's media folder, the same handle on each use; as
+    /// <see cref="Data"/>.
+    /// </summary>
+    SharpMedia Media(SharpComponent component);
     /// <summary>
     /// What the component draws the page of its C# node with, the same for the node's device and every entity it added;
     /// only once the host has run the component's <c>Start()</c>. Closed once the definition has stopped: drawing on it
@@ -190,6 +195,21 @@ public abstract class SharpComponent
     /// <exception cref="InvalidOperationException">The component has not started yet.</exception>
     /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
     protected SharpData Shared(string name) => Started(nameof(Shared)).Shared(this, name);
+
+    /// <summary>
+    /// Files the component keeps in Home Assistant's media folder, such as <c>var path = Media.Save("visitor.jpg", jpeg)</c>
+    /// (<see cref="SharpMedia"/>): the folder of its C# node, which a C# device shares with the entities it adds, under
+    /// <c>&lt;media folder&gt;/hass_sharp/&lt;definition&gt;/&lt;node&gt;/</c>. Each file is served at the path
+    /// <see cref="SharpMedia.Save"/> gives, such as <c>/media/local/hass_sharp/porch/door/visitor.jpg</c>, to anyone logged
+    /// in to Home Assistant, and a phone notification can show it: keep nothing there that only an administrator may see.
+    /// The same handle on each use. Its files go as <see cref="Data"/>'s values go: when the definition is deleted, and when
+    /// a saved revision of it no longer has the node, as that revision starts; turning the definition off keeps them. Only
+    /// from <see cref="Start"/> on, as <see cref="Data"/>; once the definition has stopped the handle throws
+    /// <see cref="ObjectDisposedException"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The component has not started yet.</exception>
+    /// <exception cref="ObjectDisposedException">The definition has stopped.</exception>
+    protected SharpMedia Media => Started(nameof(Media)).Media(this);
 
     /// <summary>
     /// The page of the component's C# node in the HassSharp panel (<see cref="SharpUi"/>), which a C# device shares with

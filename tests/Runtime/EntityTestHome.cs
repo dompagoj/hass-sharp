@@ -69,6 +69,21 @@ sealed class EntityTestHome : IAsyncDisposable
     /// <summary>Every picture of a camera asked for so far: the asking definition's id and the camera's entity id.</summary>
     public (string DefinitionId, string EntityId)[] Pictures() { lock (pictures) return [.. pictures]; }
 
+    /// <summary>
+    /// Gives the manager Home Assistant's media folder as Python does (<see cref="HassSharpManager.SetMediaFolders"/>): the
+    /// entry <paramref name="entry"/>, at <c>media</c> in this home, which is not made until a file is saved in it; before
+    /// or after <see cref="HassSharpManager.Init"/>. A C# node's files are then in
+    /// <c>&lt;folder&gt;/hass_sharp/&lt;definition id&gt;/&lt;node key&gt;/</c>, served at
+    /// <c>/media/&lt;entry&gt;/hass_sharp/&lt;definition id&gt;/&lt;node key&gt;/&lt;name&gt;</c>.
+    /// </summary>
+    /// <returns>The media folder.</returns>
+    public string MediaFolder(HassSharpManager api, string entry = "local")
+    {
+        var folder = Path.Combine(Root, "media");
+        api.SetMediaFolders(new JsonObject { [entry] = folder }.ToJsonString());
+        return folder;
+    }
+
     /// <summary>Every sync of the definition sent so far, as JSON.</summary>
     public string[] Syncs(string definitionId)
     {

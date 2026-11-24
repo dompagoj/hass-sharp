@@ -898,9 +898,10 @@ they had (see [restored state](#http-downloads-and-restored-state)) unless
   for a service known only when the code runs.
 
 `Every`, `Track`, `Http` and `Files` work from `Setup()` on (start timers and tracks in
-`Start()`); in the constructor they throw. `Ui`, `Data` and `Shared` work only from
-`Start()` on (see [A page for your device](#a-page-for-your-device) and
-[Keeping data](#keeping-data)).
+`Start()`); in the constructor they throw. `Ui`, `Data`, `Shared` and `Media` work
+only from `Start()` on (see [A page for your device](#a-page-for-your-device),
+[Keeping data](#keeping-data) and
+[Files in Home Assistant's media folder](#files-in-home-assistants-media-folder)).
 
 ### Follow another entity
 
@@ -1506,6 +1507,119 @@ same code, on any camera, lists the same names under **Named**.
   read of the names is why `Save` reads the name it gives then, and refuses when it
   has gone.
 
+## Files in Home Assistant's media folder
+
+`Media` keeps files where Home Assistant serves them, such as the picture of a
+doorbell ring that a phone notification shows. Each C# node has its own folder,
+which a C# device shares with the entities it adds:
+`<media folder>/hass_sharp/<definition id>/<node key>/`. The media folder is
+the entry `local` of Home Assistant's `media_dirs`, else its first entry by name.
+Without `media_dirs` in `configuration.yaml`, `local` is `/media` when Home
+Assistant runs in a container, as on Home Assistant OS, and else `media` in its
+configuration folder, which the first save makes.
+
+- **`Save(name, bytes)`** writes the file and returns the path Home Assistant serves
+  it at, such as `/media/local/hass_sharp/front/door/ring.jpg`. A file of that name
+  is replaced. The file is on disk, whole, before `Save` returns, so a state that
+  names the path never names a file that is not there yet.
+- **`Path(name)`** gives that path while the file is there, else null.
+- **`Remove(name)`** removes a file and returns whether it was there;
+  **`Clear()`** removes every file.
+- **`Files()`** lists the files, newest first, each with its name, path, size and
+  when it was written.
+
+A name is 1 to 100 letters, digits, `.`, `_` and `-`, does not start with a dot,
+and has an extension, such as `ring-20261124T101500.jpg`. A file takes at most
+10 MiB, as the phone apps show no larger picture, and a node keeps at most 200; a
+save past either throws an `InvalidOperationException` and writes nothing. Remove
+the old files yourself, as the example does. `Media` works where `Data` does, from
+`Start()` on, and from any thread; once the definition has stopped it throws an
+`ObjectDisposedException`. When Home Assistant has no media folder every call
+throws an `InvalidOperationException` that says so.
+
+The files go as a node's data goes: with its definition, and when the definition is
+saved without a node of that key, as the new revision starts. Turning the
+definition off, a start that fails and a save that fails to compile keep them.
+
+Anyone logged in to Home Assistant can open the media folder in **Media**, and
+any of its files by its path, not only administrators. Keep there only what every
+user of the Home Assistant may see, and keep what is private in `Data`. A face is
+biometric data: save one only when the user has chosen to, and keep few and for a
+short time.
+
+### Example: a picture of each ring
+
+This C# device keeps a picture of the door each time the doorbell rings, and its
+sensor **Last ring** names it in the attribute `picture`, in the same state change
+that says when it rang. It keeps the 10 newest.
+
+<!-- compiled: DoorbellPicture -->
+```csharp
+/// <summary>Keeps a picture of the door each time the doorbell rings, and names it on its sensor Last ring.</summary>
+public class DoorbellPicture : SharpDevice
+{
+    /// <summary>The camera that sees the door.</summary>
+    [Setting("Camera")]
+    public CameraEntity Camera { get; set; }
+
+    /// <summary>The doorbell's button, on while it is pressed.</summary>
+    [Setting("Doorbell")]
+    public BinarySensorEntity Doorbell { get; set; }
+
+    readonly SharpSensor lastRing;
+    SharpVideo? video;
+
+    public DoorbellPicture()
+    {
+        lastRing = Add(new SharpSensor("last_ring", "Last ring") { DeviceClass = "timestamp" });
+    }
+
+    protected override Task Start()
+    {
+        video = SharpVideo.Open(Camera);
+        Track(Doorbell, Ring);
+        return Task.CompletedTask;
+    }
+
+    protected override async Task Stop()
+    {
+        if (video != null) await video.DisposeAsync();
+    }
+
+    // Saves the camera's next frame, then names it in the state that says when the doorbell rang.
+    async Task Ring(EntityChange change)
+    {
+        if (change.To.State != "on") return;
+        using var frame = await video!.NextFrameAsync(Stopping);
+        if (frame == null) return;
+        var now = DateTimeOffset.UtcNow;
+        var picture = Media.Save($"ring-{now:yyyyMMddTHHmmssfff}.jpg", frame.ToJpeg());
+        // Newest first: keep 10.
+        foreach (var old in Media.Files().Skip(10)) Media.Remove(old.Name);
+        lastRing.Attributes["picture"] = picture;
+        lastRing.Value = now;
+    }
+}
+```
+
+An automation then sends the picture of the ring that triggered it, never a later
+one, as the trigger's state keeps its attributes:
+
+```yaml
+triggers:
+  - trigger: state
+    entity_id: sensor.door_last_ring
+actions:
+  - action: notify.mobile_app_my_phone
+    data:
+      message: Someone is at the door
+      data:
+        image: "{{ trigger.to_state.attributes.picture }}"
+```
+
+The phone app loads `/media/local/…` with the user's own login, so the picture is
+never public.
+
 ## Import from GitHub
 
 A definition can also come from a public GitHub repository: **Add external**, on the
@@ -1584,7 +1698,9 @@ node's code does is not recorded: it has no steps to trace.
 - **Delete** is in a card's menu and, as **Delete entity definition**, at the bottom
   of the definition's form. Deleting removes the entities and the devices, the run
   history, the entities' stored states and what the definition's C# nodes keep in
-  `Data` (not a shared store; see [Keeping data](#keeping-data)), and cannot be undone.
+  `Data` (not a shared store; see [Keeping data](#keeping-data)) and in `Media`
+  (see [Files in Home Assistant's media folder](#files-in-home-assistants-media-folder)),
+  and cannot be undone.
 - An entity removed from a saved definition, or given another Type, is removed from
   Home Assistant when the saved definition next starts. So is an entity a C# device's
   code no longer adds, or a C# entity whose class now derives from another entity

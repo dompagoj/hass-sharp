@@ -33,6 +33,7 @@ static class SharpEntityTests
         public SharpData Data(SharpComponent component) => throw new NotSupportedException("this host stores nothing");
         public SharpData Shared(SharpComponent component, string name) => throw new NotSupportedException("this host stores nothing");
         public SharpUi Ui(SharpComponent component) => throw new NotSupportedException("this host has no pages");
+        public SharpMedia Media(SharpComponent component) => throw new NotSupportedException("this host keeps no media files");
     }
 
     // Reaches the protected services a component's own code uses.

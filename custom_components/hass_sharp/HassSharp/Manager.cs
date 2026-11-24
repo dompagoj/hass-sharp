@@ -46,13 +46,24 @@ public partial class HassSharpManager
         _serviceCallSchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "service_schema.json"));
         _entitySchema = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "entity_schema.json"), "entity");
         // One state pump carries every entity definition's states to Home Assistant; one store keeps those they come back
-        // with; their downloads are kept in one directory, and their C# nodes' data in another.
+        // with; their downloads are kept in one directory, their C# nodes' data in another, and their media files in Home
+        // Assistant's media folder, which Python names (SetMediaFolders).
         _userScriptManager = new()
         {
             History = _history, Pump = new(), States = new(EntityStatesPath), FilesRoot = FilesPath,
             Data = new(Path.Combine(hassConfigPath, ".storage", "hass_sharp", "data")),
+            Media = new(),
         };
     }
+
+    /// <summary>
+    /// Home Assistant's media folders, its <c>media_dirs</c>, as a JSON object of each entry's name to its folder, such as
+    /// <c>{"local": "/media"}</c>: the C# nodes keep their media files (<see cref="SharpMedia"/>) in the entry
+    /// <c>local</c>, else in the first by name, and none without any. Python gives them once the manager is made; until
+    /// then, and after <c>{}</c>, a media file's call throws that Home Assistant has no media folder.
+    /// </summary>
+    /// <exception cref="ArgumentException">The text is not such an object.</exception>
+    public void SetMediaFolders(string json) => _userScriptManager.Media!.Set(json);
 
     public async Task Init()
     {

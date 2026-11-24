@@ -61,6 +61,8 @@ class UserScriptManager
     public string? FilesRoot { get; init; }
     /// <summary>The data stores the entity definitions' C# nodes keep their data in (<see cref="SharpData"/>); null for none, which refuses them.</summary>
     public DataStores? Data { get; init; }
+    /// <summary>The folders in Home Assistant's media folder the entity definitions' C# nodes keep files in (<see cref="SharpMedia"/>); null for none, which refuses them.</summary>
+    public MediaFolders? Media { get; init; }
     public ScriptSyncRunner SyncRunner { get; } = new();
 
     public List<UserScript> GetUserScripts() { lock (ActivationGate) return _userScripts.ToList(); }
