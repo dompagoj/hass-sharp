@@ -151,6 +151,17 @@ export function PickField(props: {
     }
     choose({ new: new Map(formFields().map(field => [field.key, formValue(field)])) })
   }
+  // Enter in a text or a number of the form presses Use; a select and a toggle keep their own keys.
+  const formKeydown = (event: KeyboardEvent) => {
+    const input = event.target
+    if (event.key !== 'Enter' || event.isComposing || !(input instanceof HTMLInputElement) || input.type === 'checkbox') return
+    event.preventDefault()
+    // Blurred, the field takes its text, as a number holds it until then; one it cannot take keeps the focus and its message.
+    input.blur()
+    const key = input.closest<HTMLElement>('[data-field]')?.dataset.field
+    if (input.getAttribute('aria-invalid') === 'true' && key !== undefined && !problems().has(key)) { input.focus(); return }
+    use()
+  }
   const keydown = (event: KeyboardEvent & { currentTarget: HTMLInputElement }) => {
     const count = rows().length
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -224,7 +235,8 @@ export function PickField(props: {
             </div>
           </>}>
             <h3 class="hs-pick__form-title">{props.field.add?.title}</h3>
-            <div class="hs-pick__form">
+            {/* Native: Dialog stops keydown at the dialog, so a delegated handler, which listens on the document, never runs. */}
+            <div class="hs-pick__form" on:keydown={formKeydown}>
               <For each={formFields().map(field => field.key)}>
                 {key => (
                   <Show when={formFields().find(field => field.key === key)}>

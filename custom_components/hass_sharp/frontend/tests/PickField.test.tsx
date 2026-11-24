@@ -465,6 +465,87 @@ it('drops an option that goes from the open list, and a chosen one that goes fro
   expect(field(f1).textContent).toContain('Person is required.')
 })
 
+/** Opens the form of a new one from the dialog of the card's pick field, with `typed` in the search box. */
+const openForm = async (within: Element, typed = '') => {
+  await open(within)
+  type(search(), typed)
+  rows().at(-1)!.click()
+  await settle()
+  const shown = dialog()!
+  return { shown, input: (label: string) => shown.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)! }
+}
+/** Enter in `input`, which has the focus, as the person presses it. */
+const enter = (input: HTMLInputElement, init: KeyboardEventInit = {}) => { input.focus(); input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init })) }
+
+it('presses Use on Enter in a text field of the form', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([faceCard('f1', pick({ required: true, add: newPerson }))])]
+  const host = mount(device)
+  await settle()
+  const f1 = card(host, 'f1')
+  const { shown, input } = await openForm(f1)
+  // A required field empty: marked, and the dialog stays.
+  enter(input('First name'))
+  await settle()
+  expect(dialog()).toBe(shown)
+  expect(shown.querySelector('[data-field="first_name"]')!.getAttribute('aria-invalid')).toBe('true')
+  expect(shown.textContent).toContain('First name is required.')
+  expect(document.activeElement).toBe(input('First name'))
+  // Valid: the new one chosen, and the focus on the field.
+  type(input('First name'), 'Marko')
+  type(input('Last name'), 'Novak')
+  enter(input('Last name'))
+  await settle()
+  expect(dialog()).toBeNull()
+  expect(pickButton(f1).textContent).toContain('Marko Novak')
+  expect(document.activeElement).toBe(pickButton(f1))
+})
+
+it('does nothing on Enter while composing', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([faceCard('f1', pick({ add: newPerson }))])]
+  const host = mount(device)
+  await settle()
+  const { shown, input } = await openForm(card(host, 'f1'))
+  enter(input('First name'), { isComposing: true })
+  await settle()
+  expect(dialog()).toBe(shown)
+  expect(shown.querySelectorAll('[aria-invalid="true"]')).toHaveLength(0)
+  type(input('First name'), 'Marko')
+  enter(input('First name'), { isComposing: true })
+  await settle()
+  expect(dialog()).toBe(shown)
+})
+
+it('takes a number typed in the form before Enter checks it', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([faceCard('f1', pick({ add: newPerson }))])]
+  const host = mount(device)
+  await settle()
+  const f1 = card(host, 'f1')
+  const { shown, input } = await openForm(f1, 'Marko')
+  // Not a number: the field keeps the focus and says why, and nothing is used.
+  type(input('Age'), 'abc')
+  enter(input('Age'))
+  await settle()
+  expect(dialog()).toBe(shown)
+  expect(input('Age').getAttribute('aria-invalid')).toBe('true')
+  expect(document.activeElement).toBe(input('Age'))
+  // Out of range: refused, not the earlier value used.
+  type(input('Age'), '130')
+  enter(input('Age'))
+  await settle()
+  expect(dialog()).toBe(shown)
+  expect(shown.textContent).toContain('Age must be at most 120.')
+  type(input('Age'), '5')
+  enter(input('Age'))
+  await settle()
+  expect(dialog()).toBeNull()
+  button(f1, 'Save').click()
+  await settle()
+  expect(acts(device).map(r => r.values)).toEqual([{ person: { new: { first_name: 'Marko', last_name: '', age: 5 } } }])
+})
+
 it('gives the search, the list and its rows their roles', async () => {
   const device = backend()
   device.state.pages = [doorPage([faceCard('f1', pick({ add: newPerson }))])]

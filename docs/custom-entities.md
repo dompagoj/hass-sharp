@@ -1181,9 +1181,10 @@ A card is `new UiCard(id)` followed by calls that each return the card:
   and detail; it lists at most 50 at a time and counts the rest ("70 more: type to
   narrow"). The arrow keys and Enter choose, as a click does, and Escape closes it
   with nothing changed. With `add`, its last row, "+ " and the form's title, shows the
-  form, its first text field holding what was typed in the search box; **Use** checks
-  it as a press checks a card and chooses the new one, and **Back** returns to the
-  list. The choice is sent with the card's next press.
+  form, its first text field holding what was typed in the search box; **Use**, or
+  Enter in one of its text or number fields, checks it as a press checks a card and
+  chooses the new one, and **Back** returns to the list. The choice is sent with the
+  card's next press.
 - **`Action(label, handler, confirm, style, validate)`** adds a button. A `confirm`
   text is a question the panel asks before the press, with the label on its button.
   `style` is `UiActionStyle.Default`, `Primary` (the card's main action) or `Danger`
