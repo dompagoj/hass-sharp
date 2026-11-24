@@ -48,9 +48,9 @@ const summary = (field: DeviceField, values: ReadonlyMap<string, FormValue>) =>
  * A card's pick field: under its label, a button showing the option chosen (its picture, title and detail), a new
  * one's summary with a "New" mark, or "Choose…", marked as the card's other fields are. The button opens a dialog
  * titled with the label: a search box (a combobox, focused) over a list of the set's options the field offers, at most
- * 50 rendered and the rest counted, filtered by title and detail without regard to case. Arrow keys move, Enter or a
- * click chooses, which closes the dialog and gives the focus back to the button; Escape or Cancel closes it with no
- * change. With a form, a last row "+ {title}" shows the form in place of the list, its first text field holding what
+ * 50 rendered and the rest counted, filtered by title and detail without regard to case. The arrow keys, or the
+ * mouse over a row, make it the active one (the one highlighted); Enter or a click chooses, which closes the dialog
+ * and gives the focus back to the button; Escape or Cancel closes it with no change. With a form, a last row "+ {title}" shows the form in place of the list, its first text field holding what
  * was typed; **Use** checks it as a card's fields are checked and closes with the new one chosen, **Back** returns to
  * the list. The dialog's state lives as long as the field does, so a refresh leaves it, its text and its scroll, and
  * drops from it only the options that went. The field asks for the chosen option's picture, and while the dialog is
@@ -97,6 +97,11 @@ export function PickField(props: {
   const picked = () => (props.choice && 'picked' in props.choice ? props.choice.picked : undefined)
   const chosen = () => { const option = picked(); return option === undefined ? undefined : byId().get(option) }
   const made = () => (props.choice && 'new' in props.choice ? props.choice.new : undefined)
+  // The button's text whole, as its title: on the button the title and the detail are cut to a line each.
+  const whole = () => {
+    const option = chosen(), values = made()
+    return option ? (option.detail ? `${option.title}\n${option.detail}` : option.title) : values ? `New: ${summary(props.field, values)}` : undefined
+  }
   const picture = (hash: string | null) => (hash ? props.options.images.get(hash) ?? undefined : undefined)
 
   createEffect(() => {
@@ -189,7 +194,7 @@ export function PickField(props: {
       <label id={labelId} class="hs-insp-field__label" for={id}>{props.field.label}</label>
       <button ref={button} id={id} type="button" class="hs-input hs-pick__button" aria-haspopup="dialog" aria-expanded={open()}
         aria-labelledby={`${labelId} ${id}`} aria-describedby={describedBy(!!props.hint && hintId, props.errors.length > 0 && errorsId)}
-        aria-invalid={props.errors.length > 0 || undefined} onClick={show}>
+        aria-invalid={props.errors.length > 0 || undefined} title={whole()} onClick={show}>
         <Switch fallback={<span class="hs-pick__text hs-muted">Choose…</span>}>
           <Match when={chosen()}>{option => <Face option={option()} />}</Match>
           <Match when={made()}>{values => <span class="hs-pick__text"><span><span class="hs-pick__new">New</span> {summary(props.field, values())}</span></span>}</Match>
@@ -219,7 +224,7 @@ export function PickField(props: {
                   <Show when={byId().get(option)}>
                     {shown => (
                       <div role="option" id={rowId(index())} class="hs-pick__row" classList={{ 'hs-search-current': option === picked() }}
-                        aria-selected={activeIndex() === index()} onClick={() => choose({ picked: option })}>
+                        aria-selected={activeIndex() === index()} onMouseMove={() => setActive(option)} onClick={() => choose({ picked: option })}>
                         <Face option={shown()} />
                         <Show when={option === picked()}><span class="hs-pick__chosen">Chosen</span></Show>
                       </div>
@@ -230,7 +235,8 @@ export function PickField(props: {
               <Show when={more() > 0}><div class="hs-pick__more hs-muted" role="presentation">{more()} more: type to narrow</div></Show>
               <Show when={props.field.add}>
                 {add => (
-                  <div role="option" id={`${listId}-add`} class="hs-pick__row hs-pick__add" aria-selected={activeIndex() === rows().length - 1} onClick={showForm}>
+                  <div role="option" id={`${listId}-add`} class="hs-pick__row hs-pick__add" aria-selected={activeIndex() === rows().length - 1}
+                    onMouseMove={() => setActive(addRow)} onClick={showForm}>
                     + {add().title}
                   </div>
                 )}

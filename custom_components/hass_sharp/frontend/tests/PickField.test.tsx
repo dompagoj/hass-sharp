@@ -252,6 +252,48 @@ it('chooses with the arrow keys and Enter, or a click, and gives the focus back 
   expect(document.activeElement).toBe(pickButton(f1))
 })
 
+it('makes the row under the mouse the active one, the one Enter chooses', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([faceCard('f1', pick({ value: 'p1', add: newPerson }))])]
+  const host = mount(device)
+  await settle()
+  const f1 = card(host, 'f1')
+  await open(f1)
+  const active = () => document.getElementById(search().getAttribute('aria-activedescendant')!)
+  const selected = () => rows().filter(row => row.getAttribute('aria-selected') === 'true')
+  rows()[2].dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  expect(active()).toBe(rows()[2])
+  expect(selected()).toEqual([rows()[2]])
+  // The chosen mark stays on its own row.
+  expect(rows()[0].textContent).toContain('Chosen')
+  // The arrow keys go on from there, and the form's row is reached by the mouse too.
+  key(search(), 'ArrowUp')
+  expect(selected()).toEqual([rows()[1]])
+  rows()[3].dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  expect(selected()).toEqual([rows()[3]])
+  rows()[2].dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  key(search(), 'Enter')
+  await settle()
+  expect(pickButton(f1).textContent).toContain('Marko Kovač')
+})
+
+it('gives the button the chosen one\'s whole text as its title', async () => {
+  const device = backend()
+  device.state.pages = [doorPage([faceCard('f1', pick({ value: 'p1' })), faceCard('f2', pick({ add: newPerson })), faceCard('f3')])]
+  const host = mount(device)
+  await settle()
+  expect(pickButton(card(host, 'f1')).title).toBe('Ivan Horvat\n41 samples')
+  expect(pickButton(card(host, 'f3')).hasAttribute('title')).toBe(false)
+  const f2 = card(host, 'f2')
+  await open(f2)
+  type(search(), 'Ema')
+  rows().at(-1)!.click()
+  await settle()
+  button(dialog()!, 'Use').click()
+  await settle()
+  expect(pickButton(f2).title).toBe('New: Ema')
+})
+
 it('closes on Escape or Cancel with no change, and closes nothing behind it', async () => {
   const device = backend()
   device.state.pages = [doorPage([faceCard('f1', pick({ value: 'p1' }))])]

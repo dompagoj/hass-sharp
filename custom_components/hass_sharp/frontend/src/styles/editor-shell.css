@@ -227,10 +227,15 @@
 .hs-app .hs-pick__text small { color: var(--hs-muted); }
 .hs-app .hs-pick__new { margin-right: 6px; padding: 1px 6px; border-radius: 999px; background: var(--hs-soft); color: var(--hs-accent); font-size: 11px; font-weight: 650; }
 .hs-app .hs-pick__caret { flex: none; color: var(--hs-muted); }
+/* On the button, the title and the detail are a line each, cut; the button's title has them whole. */
+.hs-app .hs-pick__button .hs-pick__text { grid-template-columns: minmax(0, 1fr); overflow-wrap: normal; }
+.hs-app .hs-pick__button .hs-pick__text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hs-app .hs-pick { display: grid; gap: 8px; min-width: 0; }
 .hs-app .hs-pick > p { margin: 0; }
 .hs-app .hs-pick__list { max-height: min(50dvh, 420px); overflow-y: auto; padding: 4px; border: 1px solid var(--hs-line); border-radius: 8px; }
 .hs-app .hs-pick__row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow-wrap: anywhere; }
+/* One highlight: the active row, which the mouse moves too; not also the row under the pointer. */
+.hs-app .hs-pick__row:hover:not([aria-selected="true"]) { background: transparent; }
 .hs-app .hs-pick__chosen { flex: none; color: var(--hs-accent); font-size: 12px; font-weight: 650; }
 .hs-app .hs-pick__more { padding: 6px 8px; font-size: 12px; }
 .hs-app .hs-pick__add { margin-top: 4px; border-top: 1px solid var(--hs-line); border-radius: 0 0 6px 6px; font-weight: 650; }
