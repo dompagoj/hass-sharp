@@ -275,7 +275,8 @@ envelope; validation, conflicts and revisions work as above.
    definition's `source`. A definition that carries `entities`, even an empty
    list, is refused with the server's own sentence, `definition.entitiesNotAllowed`:
    "Entities are Entity nodes in the graph now: leave entities out and add one Entity
-   node for each". One with no Entity node, C# entity node or C# device node gets
+   node for each". One with no Entity node, C# entity node, C# device node or
+   library class node, nor a node of a `library:` kind the catalog lacks, gets
    `definition.entitiesRequired`, "Add an Entity node: an entity definition creates
    the entities on its canvas, and has none".
 4. `entities_save({id, expectedRevision, definition, enabled?})` saves it and
@@ -473,6 +474,14 @@ entity is a C# entity node (kind `csharp_entity`) and a device a C# device node 
 `{key, source, signature?, arguments?}`, and a C# device node's
 <!-- config: csharp_device -->
 `{key, name, via?, source, signature?, arguments?}`.
+
+A node library may also offer a device or entity class as a node of its own, a
+library class node, used without code (see
+[A class as a node](node-libraries.md#a-class-as-a-node)). Its kind starts with
+`library:`: copy it from the catalog of `get_capabilities({document:"entity"})`,
+never build it. Its `config` is the C# node's of its class without `source` and
+`signature`, and its inputs are the settings its catalog entry lists, which take
+values and wires as below.
 
 - **The class.** A C# entity's class derives from an entity class (`SharpBinarySensor`,
   `SharpSensor`, `SharpSwitch`, `SharpButton`, `SharpNumber`, `SharpSelect`,

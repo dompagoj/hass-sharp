@@ -557,7 +557,9 @@ and are returned by `get_capabilities`. Preview the graph, save it, then run its
 
 A library node's kind is `library:<source id>:<type>.<method>`. Each segment is
 URI-escaped, as in `library:example:global%3A%3ANodeLib.Samples.Describe`. Changing a
-method's parameters keeps its kind; renaming the method or its type changes it.
+method's parameters keeps its kind; renaming the method or its type changes it. A
+class offered as a node has the kind `library:<source id>:<type>`, without a method
+(see [A class as a node](#a-class-as-a-node)).
 Renaming a file keeps its stable ID and kinds. Preview inspects symbols without
 invoking attributes, static initializers or methods.
 
@@ -672,6 +674,12 @@ Overwrite keeps what you filled in:
   node's; the import works the pins out from the code again, and a value that no
   longer fits them is refused on the definition's line rather than dropped. A setting
   whose type or domain changed, or that the file wires, takes the file's.
+- The same holds when the file's node of that id is of another kind, one a C# node
+  and the other the node of a library's class (see
+  [A class as a node](#a-class-as-a-node)), in either direction: a value typed into a
+  setting that both have, of the same type, is kept, unless the setting is secret or
+  the file wires it. So a definition whose C# device moves to the library's node under
+  the same node id keeps what you typed into its settings.
 
 An import is a one-time copy. Nothing keeps track of the repository or updates from
 it: to take a newer version, run **Add external** again and overwrite.
@@ -719,7 +727,8 @@ id the definitions' kinds use (`library:<id>:…`). A new library is stored unde
 `id` when it has one that no stored library has, and otherwise under a new id
 `library-<uuid>`, as a file added in the panel is; an overwritten library keeps the
 stored file's id.
-The import rewrites the `library:<id>:` kinds of the definitions it imports to the id
+The import rewrites the `library:<id>:` kinds of the definitions it imports, a class
+node's such as `library:relays:global%3A%3ANodeLib.RelayHub` too, to the id
 each library has: the one it is stored under, or, for a library left unchecked, the
 id of the one stored file of its name (with none or several, the kind stays as it
 is). A class a C# node's code derives from, as in
@@ -843,10 +852,128 @@ detector it opens.
 
 A node library can hold classes for [entity definitions](custom-entities.md),
 deriving from `SharpDevice` or from an entity class such as `SharpSwitch` or
-`SharpCamera`. One is used by deriving from it in a node's code: the class of a C#
-entity or a C# device node derives from the library's class and takes its settings
-and its code, so several nodes, in one definition or several, share it. It needs no
-`[Node]` method, and a library may hold classes and node methods side by side.
+`SharpCamera`. Such a class is used in either of two ways:
+
+- **As a node of its own.** `[Node("Title")]` on the class offers it in the step
+  list of entity definitions. You drop it on the canvas, fill in its settings and
+  write no code.
+- **As a base class.** The class of a C# entity or a C# device node derives from it
+  and takes its settings and its code, so several nodes, in one definition or
+  several, share it.
+
+A library that holds such a class needs no node method, and may hold classes and
+node methods side by side.
+
+### A class as a node
+
+This device class is a hub of relays that answers HTTP at its address, with a switch
+for each of its four relays:
+
+<!-- compiled: RelayHubNode -->
+```csharp
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text.Json.Nodes;
+
+/// <summary>A hub of four relays that answers HTTP at its address: a switch for each relay.</summary>
+[Node("Relay hub", Category = "Relays")]
+public class RelayHub : SharpDevice
+{
+    /// <summary>Where the hub answers, such as http://192.168.1.40/.</summary>
+    [Setting("Address")]
+    public string Address { get; set; }
+
+    /// <summary>The token the hub asks for; none when it asks for none.</summary>
+    [Setting("Token", Secret = true)]
+    public string? Token { get; set; }
+
+    /// <summary>How many seconds pass between two readings.</summary>
+    [Setting("Poll every", Minimum = 1, Maximum = 60)]
+    public double PollEvery { get; set; } = 5;
+
+    readonly SharpSwitch[] relays = new SharpSwitch[4];
+
+    /// <summary>Adds a switch for each relay, which turns that relay on and off.</summary>
+    public RelayHub()
+    {
+        for (var i = 0; i < relays.Length; i++)
+        {
+            var relay = i;
+            relays[i] = Add(new SharpSwitch($"relay_{i + 1}", $"Relay {i + 1}") { OnTurnOn = () => Turn(relay, true), OnTurnOff = () => Turn(relay, false) });
+        }
+    }
+
+    /// <summary>Reads the relays every Poll every seconds while the definition runs.</summary>
+    protected override Task Start()
+    {
+        Every(TimeSpan.FromSeconds(PollEvery), Poll);
+        return Task.CompletedTask;
+    }
+
+    // The hub answers GET relays with one true or false for each relay.
+    async Task Poll()
+    {
+        var states = JsonNode.Parse(await Send(HttpMethod.Get, "relays"))!.AsArray();
+        for (var i = 0; i < relays.Length; i++) relays[i].IsOn = states[i]?.GetValue<bool>();
+    }
+
+    async Task Turn(int relay, bool on)
+    {
+        await Send(HttpMethod.Post, $"relays/{relay}/{(on ? "on" : "off")}");
+        relays[relay].IsOn = on;
+    }
+
+    async Task<string> Send(HttpMethod method, string path)
+    {
+        using var request = new HttpRequestMessage(method, new Uri(new Uri(Address), path));
+        if (Token != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+        using var response = await Http.SendAsync(request, Stopping);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(Stopping);
+    }
+}
+```
+
+Once the library is saved, an entity definition's step list has **Relay hub** under
+**Relays**. An automation's has not: a class is a node of entity definitions only.
+
+- **Which classes.** A class marked `[Node]` that derives from `SharpDevice` or from
+  an entity class is offered when a definition can create it: it is public, not
+  nested in another type, not abstract and not generic, and has a public constructor
+  without parameters. One that is not is left out of the step list, and the library
+  compiles with a warning at the class's name, such as "`RelayHub has [Node] but is
+  not offered as a step: a class a definition creates is public, not abstract or
+  generic, and has a public constructor without parameters`". A class meant only as
+  a base, such as an abstract one, has no `[Node]`. A class without `[Node]` is never
+  a step, so a helper class that a device adds does not show up.
+- **Its title and place.** The text of `[Node("…")]` is the step's title, and
+  `Category` the group it is listed under: **Custom** when the class gives none. Its
+  `<summary>` is its description.
+- **The node.** It is drawn and edited as a C# device or a C# entity node is (see
+  [C# nodes](custom-entities.md#c-nodes)), without code: there is no **Edit code**,
+  and the right panel says which library it comes from ("From the node library
+  relays."). A device class's node has a **Key**, a **Device name** and **Part of**;
+  an entity class's has a **Key** and a **Device** pin. Its inputs are the class's
+  `[Setting]` properties, a base class's first, and each takes a value typed into
+  the node, a Setting step or nothing, as a C# node's settings do (see
+  [Settings as inputs](custom-entities.md#settings-as-inputs)). Here **Address** is
+  required, **Poll every** is 5 unless set, and **Token**, a secret, takes only a
+  Setting step.
+- **Its key.** A dropped node is keyed by its title, `relay_hub`, then `relay_hub_2`
+  when that is taken, and a device class's node is named by its title. As for any
+  device or entity, the key cannot change once saved.
+- **At run time** it is a C# node of its class: its constructor, `Setup()`,
+  `Start()` and `Stop()` run, its entities, its [page](custom-entities.md#a-page-for-your-device)
+  and its [data](custom-entities.md#keeping-data) are kept under its key, and each
+  entity it adds is `<definition id>:<key>:<entity key>` in Home Assistant.
+
+As a document, the node's kind is `library:<library id>:<type>`, here
+`library:relays:global%3A%3ANodeLib.RelayHub` for a library stored under the id
+`relays`, and its `config` is a C# node's without `source` and `signature`:
+`{key, name, via?, arguments?}` for a device class, `{key, arguments?}` for an entity
+class.
+
+### A class as a base
 
 ```csharp
 /// <summary>A relay that answers HTTP at its address.</summary>
@@ -858,11 +985,44 @@ public abstract class HttpRelay : SharpSwitch
 ```
 
 A C# entity's code is then `public class KitchenRelay : HttpRelay { … }`, and the
-node has the Address input with the settings of its own class after it.
+node has the Address input with the settings of its own class after it. A class
+offered as a node can be a base class too: a C# node that derives from `RelayHub`
+works as before, and adds what its own code does.
 
 [C# nodes](custom-entities.md#c-nodes) has complete classes, the base classes,
 settings, the life cycle (`Setup`, `Start`, `Stop`), timers, entity tracks, HTTP,
 downloads and cameras.
+
+### Changing a class that definitions use
+
+A library save rebuilds every entity definition, and is refused when it would break
+one, naming it (see [Node libraries](#node-libraries)). For a class that definitions
+use as a node, that means:
+
+- Removing the class, or its `[Node]`, is refused while a definition has a node of
+  it: that node would be "This step is no longer in its node library; delete it and
+  add it again from the node library".
+- Removing a setting that a node has a value for is refused, as removing a parameter
+  of a node method is: "Unknown input PollEvery".
+- A new required setting (a `string` or an entity with no initializer and no `?`) is
+  refused while a definition has a node of the class without a value for it: "Room
+  is required". Give a new setting a default (`= "hall"`, or a `?`), or ship the
+  library together with a definition that sets it. A new setting with a default is
+  accepted: each definition is rebuilt and runs the new code, the setting at its
+  default.
+
+### From a C# node to the class's node
+
+A C# node whose code only derives from a library class, such as
+`public class FrontDoorPeople : PeopleDetector { }`, can be replaced by the node of
+that class once the library marks it `[Node]`. Delete the C# node, drop the class's
+node, and give it the old node's key under **Key** before you save. Deleting the C#
+node asks about its stored data, if it has some ("{name} has stored data. It is
+deleted when you save the entity definition without a node keyed {key}."): the new
+node has that key, so the data is kept.
+Its device, its entities with their entity ids and history, its page and its data are
+all kept by the definition's id and the node's key, so the new node takes them over.
+Type its settings again, or wire them to the Setting steps the old node had.
 
 ## Scope snapshots
 

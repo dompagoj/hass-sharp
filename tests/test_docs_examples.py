@@ -174,8 +174,8 @@ class DocsExamplesTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIsNone(re.search(r"Entity nodes \(kind `entity`, at least one\)|no Entity node gets|A graph with no Entity node is", text))
         said = {
-            MCP.name: "One with no Entity node, C# entity node or C# device node gets `definition.entitiesRequired`",
-            "entity-definitions.md": "A graph with no Entity node, C# entity node or C# device node (whose code makes its entities) is refused with `definition.entitiesRequired`",
+            MCP.name: "One with no Entity node, C# entity node, C# device node or library class node, nor a node of a `library:` kind the catalog lacks, gets `definition.entitiesRequired`",
+            "entity-definitions.md": "A graph with no Entity node, C# entity node, C# device node (whose code makes its entities) or library class node (whose class does) is refused with `definition.entitiesRequired`",
         }
         for name, sentence in said.items():
             with self.subTest(name, said=True):

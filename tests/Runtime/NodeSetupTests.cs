@@ -48,6 +48,7 @@ static class NodeSetupTests
         foreach (var (name, test) in new (string, Func<Task>)[] {
             (nameof(CompilerChecksTheSetup), () => { CompilerChecksTheSetup(); return Task.CompletedTask; }),
             (nameof(TheGuidesClass), () => { TheGuidesClass(); return Task.CompletedTask; }),
+            (nameof(TheGuidesClassNode), () => { TheGuidesClassNode(); return Task.CompletedTask; }),
             (nameof(RefusedInAnAutomation), () => { RefusedInAnAutomation(); return Task.CompletedTask; }),
             (nameof(AddingASetupToAClassAnAutomationUsesIsRefused), AddingASetupToAClassAnAutomationUsesIsRefused),
             (nameof(OnlyAGraphWithASetupClassGetsSharpNodeSetups), () => { OnlyAGraphWithASetupClassGetsSharpNodeSetups(); return Task.CompletedTask; }),
@@ -137,6 +138,36 @@ static class NodeSetupTests
         Check(preview.Snapshot.Methods.TryGetValue(kind, out var method) && method.Setup == new NodeSetupDescriptor("Table", "global::NodeLib.Table", "Setup"),
             "the guide's node Table byte is set up by Table's setup: " + string.Join(", ", preview.Snapshot.Methods.Keys));
         Console.WriteLine("PASS node setup: the class the node libraries guide shows compiles without a diagnostic, and its setup sets up its node");
+    }
+
+    // The device class the node libraries guide shows under "Entity classes", read from its block marked
+    // <!-- compiled: RelayHubNode -->: saved as the library relays it compiles with no diagnostic, warning included, and is
+    // offered to entity definitions as the step Relay hub under Relays, a device with the settings the guide names.
+    static void TheGuidesClassNode()
+    {
+        var lines = File.ReadAllLines("docs/node-libraries.md");
+        var marker = Array.IndexOf(lines, "<!-- compiled: RelayHubNode -->");
+        Check(marker >= 0, "the guide marks no block <!-- compiled: RelayHubNode -->");
+        var opening = Array.FindIndex(lines, marker + 1, l => l.StartsWith("```", StringComparison.Ordinal));
+        Check(opening == marker + 1 && lines[opening] == "```csharp", "the marker is not right before a csharp block: " + (opening >= 0 ? lines[opening] : "none"));
+        var closing = Array.IndexOf(lines, "```", opening + 1);
+        var source = string.Join("\n", lines[(opening + 1)..closing]);
+        var preview = new NodeLibraryCompiler(Diagnostics).Preview([new NodeLibrarySource("relays", source, 1)], []);
+        Check(preview.Valid && preview.Diagnostics.IsEmpty, "the guide's class compiles without a diagnostic: " + Listed(preview.Diagnostics));
+        var kind = "library:relays:" + Uri.EscapeDataString("global::NodeLib.RelayHub");
+        Check(kind == "library:relays:global%3A%3ANodeLib.RelayHub" && preview.Snapshot.Catalog["nodes"]?[kind] is JsonObject,
+            "the guide's class is a kind: " + string.Join(", ", preview.Snapshot.Catalog["nodes"]!.AsObject().Select(n => n.Key).Where(k => k.StartsWith("library:", StringComparison.Ordinal))));
+        var hub = preview.Snapshot.Catalog["nodes"]![kind]!.AsObject();
+        Check(VisualNodeCatalog.Text(hub, "declares") == "device" && hub["documents"]?.ToJsonString() == """["entity"]"""
+            && VisualNodeCatalog.Text(hub, "label") == "Relay hub" && VisualNodeCatalog.Text(hub, "category") == "Relays",
+            "the guide's class is the device step Relay hub under Relays, for entity definitions: " + hub.ToJsonString());
+        var settings = hub["classSignature"]!["settings"]!.AsArray();
+        JsonNode? Setting(string key) => settings.FirstOrDefault(s => VisualNodeCatalog.Text(s, "key") == key);
+        Check(string.Join(",", settings.Select(s => $"{VisualNodeCatalog.Text(s, "key")}:{VisualNodeCatalog.Text(s, "label")}")) == "Address:Address,Token:Token,PollEvery:Poll every"
+            && Setting("Address")?["required"]?.GetValue<bool>() == true && Setting("Token")?["secret"]?.GetValue<bool>() == true
+            && Setting("PollEvery")?["minimum"]?.GetValue<double>() == 1 && Setting("PollEvery")?["maximum"]?.GetValue<double>() == 60,
+            "the guide's class has Address (required), Token (secret) and Poll every (1 to 60): " + settings.ToJsonString());
+        Console.WriteLine("PASS node setup: the device class the node libraries guide offers as a node compiles without a diagnostic and is the step Relay hub with its three settings");
     }
 
     /// <summary>A pure Probe of <paramref name="type"/> into a Log, run by a manual trigger.</summary>

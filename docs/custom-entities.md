@@ -19,7 +19,8 @@ What the entities do is a graph of the same kind as an automation's (graph versi
 
 One definition can hold Entity nodes, Device nodes, C# entities and C# devices
 together. A [node library](node-libraries.md) can hold base classes that the code
-of C# nodes derives from.
+of C# nodes derives from, and device and entity classes that are nodes of their own,
+which you use without writing code (see [From a node library](#from-a-node-library)).
 
 Definitions live in the panel's **Entities** section, beside Automations and Node
 library. An assistant can build them too; see [Through MCP](#through-mcp).
@@ -265,7 +266,8 @@ takes only an entity picked in the node (see
 
 A device groups entities on one device page in Home Assistant. Each device is a
 **Device** node, from the **Entity** category of the step library (a node of kind
-`device`), or a [C# device](#c-nodes) node, whose code adds its own entities; a
+`device`), or a [C# device](#c-nodes) node, whose code adds its own entities, or the
+node of a node library's device class, which does the same; a
 definition can have several, or none, and is not a device itself. This section is
 about the Device node.
 
@@ -534,6 +536,20 @@ In the right panel, a C# entity has its **Key** and its **Device** (None, or a D
 node), and a C# device its **Device name** at the top, its **Key** and **Part of**.
 Both have **Edit code**, and under **Settings** a field for each setting of the class
 (see [Settings as inputs](#settings-as-inputs)). Once saved, the key cannot change.
+
+### From a node library
+
+A node library can offer a device or entity class as a node of its own: a class
+marked `[Node("Title")]` is listed in the step library under its category, by its
+title (see [A class as a node](node-libraries.md#a-class-as-a-node)). Its node is a C#
+device or a C# entity node without code: the same card, the same **Key**, **Device
+name** and **Part of** for a device or **Device** pin for an entity, the class's
+settings as its inputs, a page and data of its own kept under its key, and no
+**Edit code**. The right panel names the library it comes from: "From the node
+library relays." A dropped one is keyed by its title (`relay_hub` for **Relay hub**, then
+`relay_hub_2`). What this section says of a C# device or a C# entity holds for it,
+except what is about its code. To change what the class does, derive from it in a C#
+node's code instead.
 
 ### Write the code
 
@@ -1088,10 +1104,10 @@ public class BoxedDoor : SharpCamera
 
 ## A page for your device
 
-A C# device or a C# entity can keep a page in the HassSharp panel: lists of cards,
-each with a picture, a title, fields to fill in and buttons, whose handlers run in
-the class's code when someone presses them. It is not the device page Home Assistant
-shows: it is in the definition's editor, under **Device** in the bottom drawer,
+A C# device or a C# entity, and the node of a library's class, can keep a page in
+the HassSharp panel: lists of cards, each with a picture, a title, fields to fill in
+and buttons, whose handlers run in the class's code when someone presses them. It
+is not the device page Home Assistant shows: it is in the definition's editor, under **Device** in the bottom drawer,
 beside **Problems**, **Generated C#** and **Runs**. A device and the entities it adds
 share one page, their C# node's, and the tab lists each C# node's page under the
 node's name.
@@ -1256,9 +1272,14 @@ The stores are under `.storage/hass_sharp/data/`: a node's own in
 `devices/<definition id>/<node key>/`, a shared one in `shared/<name>/`.
 
 - **A node's own data** is deleted with its definition, and when the definition is
-  saved without that node, as the new revision starts. Turning the definition off,
-  a start that fails and a save that fails to compile keep it. Deleting a saved C#
-  device or C# entity whose code has stored data asks first in the editor.
+  saved without a node of that key, as the new revision starts. Turning the
+  definition off, a start that fails and a save that fails to compile keep it.
+  Deleting a saved C# device, C# entity or library class's node that has stored
+  data asks first in the editor: "{name} has stored data. It is deleted when you
+  save the entity definition without a node keyed {key}." A node given that key
+  before the save, such as the node of the library class the deleted one derived
+  from, keeps the data (see
+  [From a C# node to the class's node](node-libraries.md#from-a-c-node-to-the-classs-node)).
 - **A shared store** stays until an administrator deletes it. **Stored data**, in the
   **Entities** page's header, lists each shared store with its size and the
   definitions that have it open, and deletes one after asking; it refuses while a

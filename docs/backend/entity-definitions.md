@@ -67,9 +67,12 @@ definition envelope"), `storage` (the file could not be read or written) and
   frame or a Draw step gives and which reads no step, `scope.frameSource`; one with
   no wire is the warning `camera.no_frame`) and `options`; `entityCategory` is `config` or `diagnostic`. An entity on no device
   needs a `name`; a name that is blank once trimmed is no name (the entity has
-  none). A graph with no Entity node, C# entity node or C# device node (whose code
-  makes its entities) is refused with `definition.entitiesRequired`, "Add an Entity
-  node: an entity definition creates the entities on its canvas, and has none". The answered document lists them under
+  none). A graph with no Entity node, C# entity node, C# device node (whose code
+  makes its entities) or library class node (whose class does) is refused with
+  `definition.entitiesRequired`, "Add an Entity node: an entity definition creates
+  the entities on its canvas, and has none". A node of a `library:` kind the catalog
+  lacks counts as one too, since it may be a class gone from its node library; the
+  validator reports that node instead. The answered document lists them under
   `entities`, for reading only, then its C# entities (see below).
 - A graph's devices are its Device nodes (kind `device`, any number), each with
   `config`
@@ -114,6 +117,14 @@ definition envelope"), `storage` (the file could not be read or written) and
   `device` input as an Entity node has; a C# device node has no `device` input (its
   only inputs are its setting pins, and no entity is wired to it), and `via` as a
   Device node's. Neither has outputs or execution ports.
+- A graph's library class nodes, of a node library's device or entity class marked
+  `[Node]` (kind `library:<library id>:<type>`; see
+  [A class as a node](../node-libraries.md#a-class-as-a-node)), have the `config` of
+  the C# node of their class without `source` and `signature`: `{key, name, via?,
+  arguments?}` for a device class and `{key, arguments?}` for an entity class. Their
+  setting pins are their class's `[Setting]` properties, as the node's catalog entry
+  lists them, and take values and Setting wires as a C# node's do. Their devices and
+  entities are listed as a C# node's, with `csharp: true`.
 - The derived lists. `entities` holds each Entity node's entity, then each C# entity
   node's, `{key, domain, name: null, device, csharp: true}` (its class names it, so
   no name is stored); `devices` holds each Device node's device, then each C# device
